@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.katabai" path="/org/gnome/shell/extensions/katabai/">
+    <key name="provider" type="s">
+      <default>'unsloth'</default>
+      <summary>AI Model Provider</summary>
+      <description>The AI provider to use. Valid values are 'unsloth', 'openai', 'anthropic', or 'ollama'.</description>
+    </key>
+    
+    <!-- Unsloth Settings -->
+    <key name="unsloth-url" type="s">
+      <default>'http://localhost:8888/v1'</default>
+      <summary>Unsloth Base URL</summary>
+      <description>The base URL for the Unsloth Studio API.</description>
+    </key>
+    <key name="unsloth-api-key" type="s">
+      <default>''</default>
+      <summary>Unsloth API Key</summary>
+      <description>The API key for Unsloth Studio.</description>
+    </key>
+    <key name="unsloth-model" type="s">
+      <default>'default'</default>
+      <summary>Unsloth Model</summary>
+      <description>The specific local model to run through Unsloth.</description>
+    </key>
+
+    <!-- OpenAI Settings -->
+    <key name="openai-url" type="s">
+      <default>'https://api.openai.com/v1'</default>
+      <summary>OpenAI Base URL</summary>
+      <description>The base URL for the OpenAI API.</description>
+    </key>
+    <key name="openai-api-key" type="s">
+      <default>''</default>
+      <summary>OpenAI API Key</summary>
+      <description>The API key for OpenAI.</description>
+    </key>
+    <key name="openai-model" type="s">
+      <default>'gpt-4o'</default>
+      <summary>OpenAI Model</summary>
+      <description>The model to use with OpenAI.</description>
+    </key>
+
+    <!-- Anthropic Settings -->
+    <key name="anthropic-url" type="s">
+      <default>'https://api.anthropic.com'</default>
+      <summary>Anthropic Base URL</summary>
+      <description>The base URL for the Anthropic API.</description>
+    </key>
+    <key name="anthropic-api-key" type="s">
+      <default>''</default>
+      <summary>Anthropic API Key</summary>
+      <description>The API key for Anthropic.</description>
+    </key>
+    <key name="anthropic-model" type="s">
+      <default>'claude-3-5-sonnet-20241022'</default>
+      <summary>Anthropic Model</summary>
+      <description>The model to use with Anthropic.</description>
+    </key>
+
+    <!-- Ollama Settings -->
+    <key name="ollama-url" type="s">
+      <default>'http://localhost:11434'</default>
+      <summary>Ollama Base URL</summary>
+      <description>The base URL for the Ollama API.</description>
+    </key>
+    <key name="ollama-model" type="s">
+      <default>'llama3'</default>
+      <summary>Ollama Model</summary>
+      <description>The model to use with Ollama.</description>
+    </key>
+  </schema>
+</schemalist>

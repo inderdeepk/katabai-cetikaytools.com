@@ -1,0 +1,888 @@
+/* extension.js
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+import GObject from 'gi://GObject';
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+import Pango from 'gi://Pango';
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
+import Soup from 'gi://Soup?version=3.0';
+
+import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+class KatabDialog {
+    constructor(extension) {
+        this._extension = extension;
+        this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
+        this._currentProvider = this._settings.get_string('provider');
+
+        this._settings.connect('changed::provider', () => {
+            this._currentProvider = this._settings.get_string('provider');
+            this._addSystemMessage(`Switched engine to ${this._currentProvider === 'ollama' ? 'Ollama (Local)' : this._currentProvider === 'unsloth' ? 'Unsloth Studio' : this._currentProvider}.`);
+        });
+
+        this._monitorChangedId = 0;
+        this.isOpen = false;
+        this._messageHistory = [];
+        this._soupSession = new Soup.Session();
+        this._soupSession.timeout = 30; // 30 seconds
+        this._cancellable = null;
+
+        this.actor = new St.Widget({
+            style_class: 'katab-shell-overlay',
+            reactive: true,
+            can_focus: true,
+            visible: false,
+            x_expand: true,
+            y_expand: true,
+            layout_manager: new Clutter.BinLayout(),
+        });
+
+        this.dialogLayout = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-dialog-container',
+            reactive: true,
+            can_focus: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this.actor.add_child(this.dialogLayout);
+
+        this.contentLayout = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_expand: true,
+        });
+        this.dialogLayout.add_child(this.contentLayout);
+
+        this.actor.connect('button-press-event', (_actor, event) => {
+            if (event.get_source() === this.actor) {
+                this.close();
+                return Clutter.EVENT_STOP;
+            }
+
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this.actor.connect('key-press-event', (_actor, event) => this._handleKeyPress(event));
+
+        this._monitorChangedId = Main.layoutManager.connect('monitors-changed', () => {
+            if (this.isOpen) {
+                this._syncGeometry();
+            }
+        });
+        this._syncGeometry();
+
+        this._buildUI();
+    }
+
+    _syncGeometry() {
+        let monitor = Main.layoutManager.primaryMonitor;
+        if (!monitor)
+            return;
+
+        this.actor.set_position(monitor.x, monitor.y);
+        this.actor.set_size(monitor.width, monitor.height);
+    }
+
+    _handleKeyPress(event) {
+        let symbol = event.get_key_symbol();
+        if (symbol === Clutter.KEY_Escape) {
+            this.close();
+            return Clutter.EVENT_STOP;
+        }
+
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    _buildUI() {
+
+        let headerBox = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-header-box',
+        });
+        this.contentLayout.add_child(headerBox);
+
+        let titleWrapper = new St.BoxLayout({
+            style_class: 'katab-title-wrapper',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        headerBox.add_child(titleWrapper);
+
+        let logoGicon = Gio.icon_new_for_string(`${this._extension.path}/icons/katab-logo.svg`);
+        let logoIcon = new St.Icon({
+            gicon: logoGicon,
+            style_class: 'katab-logo-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        titleWrapper.add_child(logoIcon);
+
+        let titleLabel = new St.Label({
+            text: 'Katab AI',
+            style_class: 'katab-title-label',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        titleWrapper.add_child(titleLabel);
+
+        let headerSpacer = new St.Widget({
+            x_expand: true,
+            y_expand: true,
+        });
+        headerBox.add_child(headerSpacer);
+
+        let historyBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'document-open-recent-symbolic',
+                style_class: 'katab-history-icon',
+            }),
+            style_class: 'katab-history-btn',
+            can_focus: true,
+            reactive: true,
+        });
+        historyBtn.connect('clicked', () => this._toggleHistoryView());
+        headerBox.add_child(historyBtn);
+
+        let newChatBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'document-new-symbolic',
+                style_class: 'katab-new-chat-icon',
+            }),
+            style_class: 'katab-new-chat-btn',
+            can_focus: true,
+        });
+        newChatBtn.connect('clicked', () => this._newChat());
+        headerBox.add_child(newChatBtn);
+
+        let settingsBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'emblem-system-symbolic',
+                style_class: 'katab-settings-icon',
+            }),
+            style_class: 'katab-settings-btn',
+            can_focus: true,
+        });
+        headerBox.add_child(settingsBtn);
+
+        settingsBtn.connect('clicked', () => {
+            this._extension.openPreferences();
+            this.close();
+        });
+
+        let closeBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'window-close-symbolic',
+                style_class: 'katab-close-icon',
+            }),
+            style_class: 'katab-close-btn',
+            can_focus: true,
+        });
+        closeBtn.connect('clicked', () => this.close());
+        headerBox.add_child(closeBtn);
+
+        this._chatScroll = new St.ScrollView({
+            style_class: 'katab-chat-scroll',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            x_expand: true,
+            y_expand: true,
+        });
+        this.contentLayout.add_child(this._chatScroll);
+
+        this._chatContainer = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-chat-container',
+        });
+        this._chatScroll.add_child(this._chatContainer);
+
+        // History view (hidden by default)
+        this._historyView = new St.ScrollView({
+            style_class: 'katab-history-view',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            x_expand: true,
+            y_expand: true,
+            visible: false,
+        });
+        this.contentLayout.add_child(this._historyView);
+
+        this._historyContainer = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-history-container',
+        });
+        this._historyView.add_child(this._historyContainer);
+
+        this._footerBox = new St.BoxLayout({
+            style_class: 'katab-footer-box',
+            vertical: false,
+        });
+        this.contentLayout.add_child(this._footerBox);
+        let footerBox = this._footerBox;
+
+        this._entry = new St.Entry({
+            hint_text: 'Ask Katab (Punjabi book of knowledge)...',
+            style_class: 'katab-prompt-entry',
+            can_focus: true,
+            x_expand: true,
+        });
+        footerBox.add_child(this._entry);
+
+        this._entry.clutter_text.connect('key-press-event', (_actor, event) => {
+            let symbol = event.get_key_symbol();
+            if (symbol === Clutter.KEY_Escape) {
+                this.close();
+                return Clutter.EVENT_STOP;
+            }
+
+            if (symbol === Clutter.KEY_Return || symbol === Clutter.KEY_KP_Enter) {
+                this._sendMessage();
+                return Clutter.EVENT_STOP;
+            }
+
+            return Clutter.EVENT_PROPAGATE;
+        });
+
+        let sendBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'mail-send-symbolic',
+                style_class: 'katab-send-icon',
+            }),
+            style_class: 'katab-send-btn',
+            can_focus: true,
+        });
+        sendBtn.connect('clicked', () => this._sendMessage());
+        footerBox.add_child(sendBtn);
+
+        this._addWelcomeMessage();
+    }
+
+    open() {
+        if (!this.actor.get_parent()) {
+            Main.layoutManager.addTopChrome(this.actor, { trackFullscreen: true });
+        }
+        this._syncGeometry();
+        this.actor.show();
+        this.isOpen = true;
+        this._entry.grab_key_focus();
+        return true;
+    }
+
+    close() {
+        this.isOpen = false;
+        this.actor.hide();
+        if (this.actor.get_parent()) {
+            Main.layoutManager.removeChrome(this.actor);
+        }
+    }
+
+    destroy() {
+        if (this._monitorChangedId) {
+            Main.layoutManager.disconnect(this._monitorChangedId);
+            this._monitorChangedId = 0;
+        }
+
+        this.close();
+        if (this.actor) {
+            this.actor.destroy();
+        }
+    }
+
+    // ── History persistence ──────────────────────────────────────────────
+
+    _historyFilePath() {
+        return GLib.build_filenamev([
+            GLib.get_user_data_dir(), 'katabai', 'history.json'
+        ]);
+    }
+
+    _ensureHistoryDir() {
+        let dir = Gio.File.new_for_path(
+            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai'])
+        );
+        try {
+            dir.make_directory_with_parents(null);
+        } catch (_e) {
+            // already exists — that's fine
+        }
+    }
+
+    _loadHistoryFromDisk() {
+        try {
+            let file = Gio.File.new_for_path(this._historyFilePath());
+            let [, bytes] = file.load_contents(null);
+            return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+        } catch (_e) {
+            return [];
+        }
+    }
+
+    _saveHistoryToDisk(arr) {
+        try {
+            this._ensureHistoryDir();
+            let file = Gio.File.new_for_path(this._historyFilePath());
+            let data = new TextEncoder().encode(JSON.stringify(arr, null, 2));
+            file.replace_contents(data, null, false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        } catch (e) {
+            log(`Katab: failed to save history: ${e.message}`);
+        }
+    }
+
+    _saveCurrentConversation() {
+        let userMsgs = this._messageHistory.filter(m => m.role === 'user');
+        if (userMsgs.length === 0) return;
+
+        let title = userMsgs[0].content.slice(0, 60);
+        if (userMsgs[0].content.length > 60) title += '…';
+
+        let entry = {
+            id: `conv_${Date.now()}`,
+            title: title,
+            timestamp: Math.floor(Date.now() / 1000),
+            messages: [...this._messageHistory],
+        };
+
+        let arr = this._loadHistoryFromDisk();
+        arr.unshift(entry);
+        if (arr.length > 50) arr.length = 50;
+        this._saveHistoryToDisk(arr);
+    }
+
+    _deleteConversation(id) {
+        let arr = this._loadHistoryFromDisk().filter(e => e.id !== id);
+        this._saveHistoryToDisk(arr);
+    }
+
+    _loadConversation(entry) {
+        this._cancelStream();
+        this._messageHistory = [...entry.messages];
+        this._chatContainer.destroy_all_children();
+        for (let msg of entry.messages) {
+            if (msg.role === 'user') {
+                this._addChatMessage('You', msg.content, 'user');
+            } else if (msg.role === 'assistant') {
+                this._addChatMessage('Katab AI', msg.content, 'assistant');
+            }
+        }
+        this._showChatView();
+    }
+
+    // ── View switching ───────────────────────────────────────────────────
+
+    _showChatView() {
+        this._historyView.visible = false;
+        this._chatScroll.visible = true;
+        this._footerBox.visible = true;
+        this._entry.grab_key_focus();
+    }
+
+    _showHistoryView() {
+        this._chatScroll.visible = false;
+        this._footerBox.visible = false;
+        this._historyView.visible = true;
+        this._renderHistoryList();
+    }
+
+    _toggleHistoryView() {
+        if (this._historyView.visible) {
+            this._showChatView();
+        } else {
+            this._showHistoryView();
+        }
+    }
+
+    _renderHistoryList() {
+        this._historyContainer.destroy_all_children();
+        let arr = this._loadHistoryFromDisk();
+
+        if (arr.length === 0) {
+            let emptyLabel = new St.Label({
+                text: 'No saved conversations yet.\nStart chatting and use New Chat to save.',
+                style_class: 'katab-history-empty',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: true,
+            });
+            emptyLabel.clutter_text.line_wrap = true;
+            emptyLabel.clutter_text.single_line_mode = false;
+            this._historyContainer.add_child(emptyLabel);
+            return;
+        }
+
+        for (let entry of arr) {
+            let row = new St.BoxLayout({
+                vertical: false,
+                style_class: 'katab-history-row',
+                x_expand: true,
+            });
+
+            let textCol = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+                style_class: 'katab-history-text-col',
+            });
+
+            let titleLabel = new St.Label({
+                text: entry.title,
+                style_class: 'katab-history-title',
+                x_expand: true,
+            });
+            titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            titleLabel.clutter_text.single_line_mode = true;
+            textCol.add_child(titleLabel);
+
+            let date = new Date(entry.timestamp * 1000);
+            let dateStr = date.toLocaleDateString(undefined, {
+                month: 'short', day: 'numeric',
+            }) + ' · ' + date.toLocaleTimeString(undefined, {
+                hour: '2-digit', minute: '2-digit',
+            });
+            let dateLabel = new St.Label({
+                text: dateStr,
+                style_class: 'katab-history-date',
+            });
+            textCol.add_child(dateLabel);
+            row.add_child(textCol);
+
+            let loadBtn = new St.Button({
+                label: 'Load',
+                style_class: 'katab-history-load-btn',
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            loadBtn.connect('clicked', () => this._loadConversation(entry));
+            row.add_child(loadBtn);
+
+            let deleteBtn = new St.Button({
+                child: new St.Icon({
+                    icon_name: 'user-trash-symbolic',
+                    style_class: 'katab-history-delete-icon',
+                }),
+                style_class: 'katab-history-delete-btn',
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            deleteBtn.connect('clicked', () => {
+                this._deleteConversation(entry.id);
+                this._renderHistoryList();
+            });
+            row.add_child(deleteBtn);
+
+            this._historyContainer.add_child(row);
+        }
+    }
+
+    // ── Chat management ──────────────────────────────────────────────────
+
+    _cancelStream() {
+        if (this._cancellable) {
+            this._cancellable.cancel();
+            this._cancellable = null;
+        }
+    }
+
+    _newChat() {
+        this._cancelStream();
+        this._saveCurrentConversation();
+        this._messageHistory = [];
+        this._chatContainer.destroy_all_children();
+        this._showChatView();
+        this._addWelcomeMessage();
+    }
+
+    _addWelcomeMessage() {
+        this._addChatMessage(
+            'Katab Assistant',
+            'Hello! I am Katab, your Punjabi book of knowledge and AI assistant.\n\nI can help you explore ideas, explain concepts, and access local or remote AI models directly from your GNOME desktop.',
+            'assistant'
+        );
+    }
+
+    _addSystemMessage(text) {
+        let msgBox = new St.BoxLayout({
+            style_class: 'katab-system-message-box',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        let label = new St.Label({
+            text: text,
+            style_class: 'katab-system-message-text',
+        });
+        msgBox.add_child(label);
+        this._chatContainer.add_child(msgBox);
+        this._scrollToBottom();
+    }
+
+    _addChatMessage(sender, text, type) {
+        let isUser = type === 'user';
+
+        let rowBox = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-chat-row',
+            x_align: isUser ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
+            x_expand: true,
+        });
+
+        let bubbleBox = new St.BoxLayout({
+            vertical: true,
+            style_class: isUser ? 'katab-chat-bubble user' : 'katab-chat-bubble assistant',
+            x_expand: true,
+        });
+
+        let senderLabel = new St.Label({
+            text: sender,
+            style_class: 'katab-chat-sender-label',
+        });
+        bubbleBox.add_child(senderLabel);
+
+        let thinkWrapper = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-think-wrapper',
+            visible: false,
+        });
+
+        let thinkButton = new St.Button({
+            label: 'Show Thinking',
+            style_class: 'katab-think-toggle-btn',
+            toggle_mode: true,
+            can_focus: true,
+        });
+
+        let thinkLabel = new St.Label({
+            text: '',
+            style_class: 'katab-think-label',
+            visible: false,
+            x_expand: true,
+        });
+        thinkLabel.clutter_text.line_wrap = true;
+        thinkLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        thinkLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        thinkLabel.clutter_text.single_line_mode = false;
+
+        thinkButton.connect('notify::checked', () => {
+            thinkLabel.visible = thinkButton.checked;
+            thinkButton.label = thinkButton.checked ? 'Hide Thinking' : 'Show Thinking';
+        });
+
+        thinkWrapper.add_child(thinkButton);
+        thinkWrapper.add_child(thinkLabel);
+        bubbleBox.add_child(thinkWrapper);
+
+        let contentLabel = new St.Label({
+            text: text,
+            style_class: 'katab-chat-content-label',
+            x_expand: true,
+        });
+        contentLabel.clutter_text.line_wrap = true;
+        contentLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        contentLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        contentLabel.clutter_text.single_line_mode = false;
+
+        bubbleBox.add_child(contentLabel);
+        rowBox.add_child(bubbleBox);
+        this._chatContainer.add_child(rowBox);
+
+        this._scrollToBottom();
+
+        return { contentLabel, thinkLabel, thinkWrapper };
+    }
+
+    _scrollToBottom() {
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            let adj = this._chatScroll.get_vscroll_bar().get_adjustment();
+            adj.value = adj.upper - adj.page_size;
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _sendMessage() {
+        let promptText = this._entry.get_text().trim();
+        if (promptText === '')
+            return;
+
+        this._entry.set_text('');
+        this._addChatMessage('You', promptText, 'user');
+
+        this._messageHistory.push({ role: 'user', content: promptText });
+
+        let uiElements = this._addChatMessage('Katab AI', '...', 'assistant');
+
+        this._streamResponse(uiElements);
+    }
+
+    _streamResponse(uiElements) {
+        const provider = this._settings.get_string('provider');
+        let url = this._settings.get_string(`${provider}-url`);
+        let apiKey = this._settings.get_string(`${provider}-api-key`);
+        let model = this._settings.get_string(`${provider}-model`);
+
+        let endpoint = url;
+        if (!endpoint.endsWith('/')) endpoint += '/';
+
+        let headers = {};
+        if (apiKey) {
+            headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+
+        let payload = {};
+
+        // Prepare Dialects
+        if (provider === 'unsloth' || provider === 'openai') {
+            if (!endpoint.endsWith('chat/completions') && !endpoint.includes('v1/chat')) {
+                endpoint += 'chat/completions';
+            }
+            headers['Content-Type'] = 'application/json';
+            payload = {
+                model: model,
+                messages: this._messageHistory,
+                stream: true
+            };
+            if (provider === 'unsloth') {
+                payload.extra_body = {
+                    enable_tools: true,
+                    enabled_tools: ["python", "web_search"]
+                };
+            }
+        } else if (provider === 'anthropic') {
+            if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
+                endpoint += 'v1/messages';
+            }
+            // Anthropic specific headers
+            headers['x-api-key'] = apiKey;
+            headers['anthropic-version'] = '2023-06-01';
+            headers['Content-Type'] = 'application/json';
+
+            // Format Anthropic messages (remove system prompts from history or map them)
+            let anthropicMessages = this._messageHistory.filter(m => m.role !== 'system');
+
+            payload = {
+                model: model,
+                messages: anthropicMessages,
+                stream: true,
+                max_tokens: 4096
+            };
+        } else if (provider === 'ollama') {
+            if (!endpoint.endsWith('api/chat')) {
+                endpoint += 'api/chat';
+            }
+            headers['Content-Type'] = 'application/json';
+            payload = {
+                model: model,
+                messages: this._messageHistory,
+                stream: true
+            };
+        }
+
+        let message = Soup.Message.new('POST', endpoint);
+
+        for (let key in headers) {
+            message.get_request_headers().append(key, headers[key]);
+        }
+
+        let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
+        message.set_request_body_from_bytes('application/json', bodyBytes);
+
+        let { contentLabel, thinkLabel, thinkWrapper } = uiElements;
+        let accumulatedText = "";
+        let accumulatedThink = "";
+        let isThinking = false;
+
+        contentLabel.set_text("Waiting for response...");
+        this._cancelStream();
+        this._cancellable = new Gio.Cancellable();
+        let currentCancellable = this._cancellable;
+
+        this._soupSession.send_async(message, GLib.PRIORITY_DEFAULT, currentCancellable, (session, res) => {
+            if (currentCancellable.is_cancelled()) return;
+            try {
+                let inputStream = session.send_finish(res);
+                if (message.status_code !== 200) {
+                    contentLabel.set_text(`Error: HTTP ${message.status_code}`);
+                    return;
+                }
+
+                let dataInputStream = new Gio.DataInputStream({
+                    base_stream: inputStream,
+                    close_base_stream: true
+                });
+
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, currentCancellable);
+
+            } catch (e) {
+                if (currentCancellable.is_cancelled()) return;
+                contentLabel.set_text(`Request Failed: ${e.message}`);
+            }
+        });
+    }
+
+    _readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable) {
+        if (cancellable && cancellable.is_cancelled()) return;
+
+        let { contentLabel, thinkLabel, thinkWrapper } = uiElements;
+        dataInputStream.read_line_async(GLib.PRIORITY_DEFAULT, cancellable, (stream, res) => {
+            if (cancellable && cancellable.is_cancelled()) return;
+            try {
+                let [lineBytes, length] = stream.read_line_finish(res);
+                if (lineBytes === null) {
+                    // Stream ended
+                    let finalContent = accumulatedText;
+                    if (accumulatedThink && !finalContent) finalContent = "Finished thinking, but no response provided.";
+                    this._messageHistory.push({ role: 'assistant', content: finalContent });
+                    return;
+                }
+
+                let lineStr = new TextDecoder('utf-8').decode(lineBytes).trim();
+                let deltaText = "";
+
+                if (provider === 'ollama' && lineStr.startsWith('{')) {
+                    let parsed = JSON.parse(lineStr);
+                    if (parsed.message && parsed.message.content) {
+                        deltaText = parsed.message.content;
+                    }
+                } else if (lineStr.startsWith('data: ')) {
+                    let jsonStr = lineStr.substring(6).trim();
+                    if (jsonStr && jsonStr !== '[DONE]') {
+                        let parsed = JSON.parse(jsonStr);
+                        if (provider === 'anthropic') {
+                            if (parsed.type === 'content_block_delta' && parsed.delta && parsed.delta.text) {
+                                deltaText = parsed.delta.text;
+                            }
+                        } else {
+                            // OpenAI / Unsloth
+                            if (parsed.choices && parsed.choices.length > 0) {
+                                let delta = parsed.choices[0].delta;
+                                if (delta && delta.content) {
+                                    deltaText = delta.content;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (deltaText) {
+                    // Split the text based on igid and igr tags
+                    let i = 0;
+                    while (i < deltaText.length) {
+                        if (!isThinking && deltaText.substring(i).startsWith('igid')) {
+                            isThinking = true;
+                            thinkWrapper.visible = true;
+                            i += 7; // skip igid
+                        } else if (isThinking && deltaText.substring(i).startsWith('igr')) {
+                            isThinking = false;
+                            i += 8; // skip igr
+                        } else {
+                            if (isThinking) {
+                                accumulatedThink += deltaText[i];
+                            } else {
+                                accumulatedText += deltaText[i];
+                            }
+                            i++;
+                        }
+                    }
+
+                    if (accumulatedThink) {
+                        thinkLabel.set_text(accumulatedThink);
+                    }
+                    if (accumulatedText) {
+                        contentLabel.set_text(accumulatedText);
+                    }
+
+                    this._scrollToBottom();
+                }
+
+                // Read next line
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable);
+
+            } catch (e) {
+                if (cancellable && cancellable.is_cancelled()) return;
+                // Ignore parse errors from partial or non-json lines and continue
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable);
+            }
+        });
+    }
+
+    _getMockResponse(prompt) {
+        let lower = prompt.toLowerCase();
+        if (lower.includes('hi') || lower.includes('hello') || lower.includes('hey')) {
+            return `Sata srī akāla! 👋 Welcome back to Katab.\n\nI am configured with physical placeholders for Ollama and OpenAI/Unsloth interfaces. Ask me specific questions about your setups!`;
+        }
+        if (lower.includes('ollama') || lower.includes('local')) {
+            return `[Ollama Mock Integration]\nHost detected: http://localhost:11434\nCurrent model active: llama3 (or unsloth fine-tuned)\n\nI will interface directly with local Ollama streams under prompt: "${prompt}". Ready for full local execution!`;
+        }
+        if (lower.includes('openai') || lower.includes('unsloth') || lower.includes('remote') || lower.includes('api')) {
+            return `[OpenAI / Unsloth Mock Integration]\nEndpoint targeted: https://api.openai.com/v1 (or custom studio proxy)\nCredentials placeholder status: Active\n\nThis action would trigger a secure chat completions API payload using the model parameters specified in settings.`;
+        }
+        if (lower.includes('book') || lower.includes('katab') || lower.includes('punjabi')) {
+            return `Katab (ਕਿਤਾਬ) means 'book' in Punjabi 📚.\n\nHistorically, books are vessels for preserving and spreading knowledge. In the same spirit, this GNOME extension transforms your desktop into an immediate gateway to open intelligence, whether run locally on your hardware or through custom cloud APIs.`;
+        }
+
+        return `I successfully registered your request:\n"${prompt}"\n\nWe are currently operating in UI layout mock mode. Under production, this message is passed straight to the ${this._currentProvider === 'ollama' ? 'Local Ollama daemon at port 11434' : 'OpenAI endpoint'}.`;
+    }
+}
+
+const Indicator = GObject.registerClass(
+    class Indicator extends PanelMenu.Button {
+        _init(extension) {
+            super._init(0.0, 'Katab Menu');
+            this._extension = extension;
+
+            let panelGicon = Gio.icon_new_for_string(`${extension.path}/icons/katab-panel-icon.svg`);
+            this.add_child(new St.Icon({
+                gicon: panelGicon,
+                style_class: 'system-status-icon',
+            }));
+
+            this.connect('button-press-event', (actor, event) => {
+                if (event.get_button() === 1) { // Left click
+                    this._extension.toggleDialog();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+        }
+    });
+
+export default class KatabExtension extends Extension {
+    enable() {
+        this._indicator = new Indicator(this);
+        Main.panel.addToStatusArea(this.uuid, this._indicator);
+        this._dialog = null;
+    }
+
+    disable() {
+        if (this._dialog) {
+            this._dialog.destroy();
+            this._dialog = null;
+        }
+        this._indicator.destroy();
+        this._indicator = null;
+    }
+
+    toggleDialog() {
+        if (!this._dialog) {
+            this._dialog = new KatabDialog(this);
+        }
+
+        if (this._dialog.isOpen) {
+            this._dialog.close();
+        } else {
+            this._dialog.open();
+        }
+    }
+}
