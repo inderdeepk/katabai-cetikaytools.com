@@ -26,7 +26,74 @@ import Soup from 'gi://Soup?version=3.0';
 
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+
+class HistoryManager {
+    static get filePath() {
+        return GLib.build_filenamev([
+            GLib.get_user_data_dir(), 'katabai', 'history.json'
+        ]);
+    }
+
+    static ensureDir() {
+        let dir = Gio.File.new_for_path(
+            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai'])
+        );
+        try {
+            dir.make_directory_with_parents(null);
+        } catch (_e) {
+            // already exists
+        }
+    }
+
+    static load() {
+        try {
+            let file = Gio.File.new_for_path(this.filePath);
+            let [, bytes] = file.load_contents(null);
+            return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+        } catch (_e) {
+            return [];
+        }
+    }
+
+    static save(arr) {
+        try {
+            this.ensureDir();
+            let file = Gio.File.new_for_path(this.filePath);
+            let data = new TextEncoder().encode(JSON.stringify(arr, null, 2));
+            file.replace_contents(data, null, false,
+                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        } catch (e) {
+            log(`Katab: failed to save history: ${e.message}`);
+        }
+    }
+
+    static saveConversation(messageHistory) {
+        let userMsgs = messageHistory.filter(m => m.role === 'user');
+        if (userMsgs.length === 0) return;
+
+        let title = userMsgs[0].content.slice(0, 60);
+        if (userMsgs[0].content.length > 60) title += '…';
+
+        let entry = {
+            id: `conv_${Date.now()}`,
+            title: title,
+            timestamp: Math.floor(Date.now() / 1000),
+            messages: [...messageHistory],
+        };
+
+        let arr = this.load();
+        arr.unshift(entry);
+        if (arr.length > 50) arr.length = 50;
+        this.save(arr);
+    }
+
+    static deleteConversation(id) {
+        let arr = this.load().filter(e => e.id !== id);
+        this.save(arr);
+    }
+}
 
 class KatabDialog {
     constructor(extension) {
@@ -303,70 +370,14 @@ class KatabDialog {
         }
     }
 
-    // ── History persistence ──────────────────────────────────────────────
-
-    _historyFilePath() {
-        return GLib.build_filenamev([
-            GLib.get_user_data_dir(), 'katabai', 'history.json'
-        ]);
-    }
-
-    _ensureHistoryDir() {
-        let dir = Gio.File.new_for_path(
-            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai'])
-        );
-        try {
-            dir.make_directory_with_parents(null);
-        } catch (_e) {
-            // already exists — that's fine
-        }
-    }
-
-    _loadHistoryFromDisk() {
-        try {
-            let file = Gio.File.new_for_path(this._historyFilePath());
-            let [, bytes] = file.load_contents(null);
-            return JSON.parse(new TextDecoder('utf-8').decode(bytes));
-        } catch (_e) {
-            return [];
-        }
-    }
-
-    _saveHistoryToDisk(arr) {
-        try {
-            this._ensureHistoryDir();
-            let file = Gio.File.new_for_path(this._historyFilePath());
-            let data = new TextEncoder().encode(JSON.stringify(arr, null, 2));
-            file.replace_contents(data, null, false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
-        } catch (e) {
-            log(`Katab: failed to save history: ${e.message}`);
-        }
-    }
+    // ── History management ──────────────────────────────────────────────
 
     _saveCurrentConversation() {
-        let userMsgs = this._messageHistory.filter(m => m.role === 'user');
-        if (userMsgs.length === 0) return;
-
-        let title = userMsgs[0].content.slice(0, 60);
-        if (userMsgs[0].content.length > 60) title += '…';
-
-        let entry = {
-            id: `conv_${Date.now()}`,
-            title: title,
-            timestamp: Math.floor(Date.now() / 1000),
-            messages: [...this._messageHistory],
-        };
-
-        let arr = this._loadHistoryFromDisk();
-        arr.unshift(entry);
-        if (arr.length > 50) arr.length = 50;
-        this._saveHistoryToDisk(arr);
+        HistoryManager.saveConversation(this._messageHistory);
     }
 
     _deleteConversation(id) {
-        let arr = this._loadHistoryFromDisk().filter(e => e.id !== id);
-        this._saveHistoryToDisk(arr);
+        HistoryManager.deleteConversation(id);
     }
 
     _loadConversation(entry) {
@@ -409,7 +420,7 @@ class KatabDialog {
 
     _renderHistoryList() {
         this._historyContainer.destroy_all_children();
-        let arr = this._loadHistoryFromDisk();
+        let arr = HistoryManager.load();
 
         if (arr.length === 0) {
             let emptyLabel = new St.Label({
@@ -841,6 +852,7 @@ const Indicator = GObject.registerClass(
         _init(extension) {
             super._init(0.0, 'Katab Menu');
             this._extension = extension;
+            this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
 
             let panelGicon = Gio.icon_new_for_string(`${extension.path}/icons/katab-panel-icon.svg`);
             this.add_child(new St.Icon({
@@ -848,13 +860,150 @@ const Indicator = GObject.registerClass(
                 style_class: 'system-status-icon',
             }));
 
+            // Actions Section
+            this._newChatMenuItem = new PopupMenu.PopupMenuItem('New Chat');
+            let newChatIcon = new St.Icon({ icon_name: 'document-new-symbolic', style_class: 'popup-menu-icon' });
+            this._newChatMenuItem.insert_child_at_index(newChatIcon, 0);
+            this._newChatMenuItem.connect('activate', () => {
+                if (!this._extension._dialog) this._extension.toggleDialog();
+                if (!this._extension._dialog.isOpen) this._extension._dialog.open();
+                this._extension._dialog._newChat();
+            });
+            this.menu.addMenuItem(this._newChatMenuItem);
+
+            this._settingsMenuItem = new PopupMenu.PopupMenuItem('Settings');
+            let settingsIcon = new St.Icon({ icon_name: 'emblem-system-symbolic', style_class: 'popup-menu-icon' });
+            this._settingsMenuItem.insert_child_at_index(settingsIcon, 0);
+            this._settingsMenuItem.connect('activate', () => {
+                this._extension.openPreferences();
+            });
+            this.menu.addMenuItem(this._settingsMenuItem);
+
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+            // Provider Switcher
+            this._providerMenu = new PopupMenu.PopupSubMenuMenuItem('Model Provider');
+            this.menu.addMenuItem(this._providerMenu);
+            this._providerItems = {};
+            const providers = {
+                'unsloth': 'Unsloth Studio',
+                'openai': 'OpenAI',
+                'anthropic': 'Anthropic',
+                'ollama': 'Ollama (Local)'
+            };
+
+            for (let [key, name] of Object.entries(providers)) {
+                let item = new PopupMenu.PopupMenuItem(name);
+                item.connect('activate', () => {
+                    this._settings.set_string('provider', key);
+                });
+                this._providerItems[key] = item;
+                this._providerMenu.menu.addMenuItem(item);
+            }
+
+            this._syncProvider();
+            this._settings.connect('changed::provider', () => this._syncProvider());
+
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+            // History Section
+            this._historySection = new PopupMenu.PopupMenuSection();
+            this.menu.addMenuItem(this._historySection);
+
+            this.menu.connect('open-state-changed', (menu, open) => {
+                if (open) {
+                    this._updateHistoryMenu();
+                }
+            });
+
+            // Hover to open
+            this.connect('enter-event', () => {
+                if (!this.menu.isOpen) {
+                    this.menu.open(true);
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+
             this.connect('button-press-event', (actor, event) => {
                 if (event.get_button() === 1) { // Left click
+                    this.menu.close();
                     this._extension.toggleDialog();
                     return Clutter.EVENT_STOP;
                 }
                 return Clutter.EVENT_PROPAGATE;
             });
+        }
+
+        _syncProvider() {
+            let current = this._settings.get_string('provider');
+            for (let [key, item] of Object.entries(this._providerItems)) {
+                item.setOrnament(current === key ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE);
+            }
+        }
+
+        _updateHistoryMenu() {
+            this._historySection.removeAll();
+            let arr = HistoryManager.load();
+
+            if (arr.length === 0) {
+                let emptyItem = new PopupMenu.PopupMenuItem('No history', { reactive: false });
+                this._historySection.addMenuItem(emptyItem);
+                return;
+            }
+
+            let historyTitle = new PopupMenu.PopupSeparatorMenuItem('Recent Chats');
+            this._historySection.addMenuItem(historyTitle);
+
+            for (let i = 0; i < Math.min(arr.length, 5); i++) {
+                let entry = arr[i];
+                let item = new PopupMenu.PopupBaseMenuItem();
+
+                let titleLabel = new St.Label({
+                    text: entry.title,
+                    x_expand: true,
+                    y_align: Clutter.ActorAlign.CENTER
+                });
+                titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                item.add_child(titleLabel);
+
+                let loadBtn = new St.Button({
+                    child: new St.Icon({ icon_name: 'document-open-symbolic', style_class: 'popup-menu-icon' }),
+                    style_class: 'katab-history-load-btn',
+                    can_focus: true,
+                    y_align: Clutter.ActorAlign.CENTER,
+                    x_align: Clutter.ActorAlign.CENTER
+                });
+                loadBtn.connect('clicked', () => {
+                    this.menu.close();
+                    if (!this._extension._dialog) this._extension.toggleDialog();
+                    if (!this._extension._dialog.isOpen) this._extension._dialog.open();
+                    this._extension._dialog._loadConversation(entry);
+                });
+                item.add_child(loadBtn);
+
+                let deleteBtn = new St.Button({
+                    child: new St.Icon({ icon_name: 'user-trash-symbolic', style_class: 'popup-menu-icon' }),
+                    style_class: 'katab-history-delete-btn',
+                    can_focus: true,
+                    y_align: Clutter.ActorAlign.CENTER,
+                    x_align: Clutter.ActorAlign.CENTER
+                });
+                // Avoid bubbling the clicked event to the main item
+                deleteBtn.connect('clicked', () => {
+                    HistoryManager.deleteConversation(entry.id);
+                    this._updateHistoryMenu();
+                });
+                item.add_child(deleteBtn);
+
+                item.connect('activate', () => {
+                    this.menu.close();
+                    if (!this._extension._dialog) this._extension.toggleDialog();
+                    if (!this._extension._dialog.isOpen) this._extension._dialog.open();
+                    this._extension._dialog._loadConversation(entry);
+                });
+
+                this._historySection.addMenuItem(item);
+            }
         }
     });
 
