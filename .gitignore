@@ -1,0 +1,19 @@
+# Build artifacts
+schemas/gschemas.compiled
+*.zip
+*.tar.gz
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# IDE configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
