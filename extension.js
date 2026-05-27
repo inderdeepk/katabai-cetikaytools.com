@@ -586,14 +586,12 @@ class KatabDialog {
         let rowBox = new St.BoxLayout({
             vertical: false,
             style_class: 'katab-chat-row',
-            x_align: isUser ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
             x_expand: true,
         });
 
         let bubbleBox = new St.BoxLayout({
             vertical: true,
             style_class: isUser ? 'katab-chat-bubble user' : 'katab-chat-bubble assistant',
-            x_expand: true,
         });
 
         let senderLabel = new St.Label({
@@ -620,11 +618,14 @@ class KatabDialog {
             style_class: 'katab-think-label',
             visible: false,
             x_expand: true,
+            reactive: true,
         });
         thinkLabel.clutter_text.line_wrap = true;
         thinkLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         thinkLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         thinkLabel.clutter_text.single_line_mode = false;
+        thinkLabel.clutter_text.selectable = true;
+        thinkLabel.clutter_text.reactive = true;
 
         thinkButton.connect('notify::checked', () => {
             thinkLabel.visible = thinkButton.checked;
@@ -639,14 +640,26 @@ class KatabDialog {
             text: text,
             style_class: 'katab-chat-content-label',
             x_expand: true,
+            reactive: true,
         });
         contentLabel.clutter_text.line_wrap = true;
         contentLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         contentLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         contentLabel.clutter_text.single_line_mode = false;
+        contentLabel.clutter_text.selectable = true;
+        contentLabel.clutter_text.reactive = true;
 
         bubbleBox.add_child(contentLabel);
-        rowBox.add_child(bubbleBox);
+
+        let spacer = new St.Widget({ x_expand: true });
+        if (isUser) {
+            rowBox.add_child(spacer);
+            rowBox.add_child(bubbleBox);
+        } else {
+            rowBox.add_child(bubbleBox);
+            rowBox.add_child(spacer);
+        }
+
         this._chatContainer.add_child(rowBox);
 
         this._scrollToBottom();
