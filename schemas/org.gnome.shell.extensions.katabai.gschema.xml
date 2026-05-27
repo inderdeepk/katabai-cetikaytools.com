@@ -69,5 +69,20 @@
       <summary>Ollama Model</summary>
       <description>The model to use with Ollama.</description>
     </key>
+    <key name="ollama-num-ctx" type="i">
+      <default>4096</default>
+      <summary>Context Window Size</summary>
+      <description>The context window size for the Ollama model (e.g., 4096, 8192).</description>
+    </key>
+    <key name="ollama-keep-alive" type="s">
+      <default>'5m'</default>
+      <summary>Keep Alive Duration</summary>
+      <description>How long to retain the model in VRAM (e.g., '5m', '0' to unload immediately, '-1' for indefinite).</description>
+    </key>
+    <key name="ollama-temperature" type="d">
+      <default>0.7</default>
+      <summary>Temperature</summary>
+      <description>The temperature for model generation (e.g., 0.7 for balance, 0.0 for deterministic).</description>
+    </key>
   </schema>
 </schemalist>

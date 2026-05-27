@@ -63,6 +63,43 @@ export default class KatabPreferences extends ExtensionPreferences {
             return row;
         };
 
+        const createIntRow = (title, key, group, min, max, step) => {
+            const row = new Adw.SpinRow({
+                title: title,
+                adjustment: new Gtk.Adjustment({
+                    lower: min,
+                    upper: max,
+                    step_increment: step,
+                }),
+                numeric: true
+            });
+            row.value = settings.get_int(key);
+            row.connect('notify::value', () => {
+                settings.set_int(key, row.value);
+            });
+            group.add(row);
+            return row;
+        };
+
+        const createDoubleRow = (title, key, group, min, max, step) => {
+            const row = new Adw.SpinRow({
+                title: title,
+                adjustment: new Gtk.Adjustment({
+                    lower: min,
+                    upper: max,
+                    step_increment: step,
+                }),
+                numeric: true,
+                digits: 2
+            });
+            row.value = settings.get_double(key);
+            row.connect('notify::value', () => {
+                settings.set_double(key, row.value);
+            });
+            group.add(row);
+            return row;
+        };
+
         // --- Unsloth Settings ---
         const unslothGroup = new Adw.PreferencesGroup({
             title: 'Unsloth Studio Settings',
@@ -78,6 +115,9 @@ export default class KatabPreferences extends ExtensionPreferences {
         });
         createStringRow('Base URL', 'ollama-url', ollamaGroup);
         createStringRow('Model', 'ollama-model', ollamaGroup);
+        createIntRow('Context Window Size', 'ollama-num-ctx', ollamaGroup, 1024, 128000, 1024);
+        createStringRow('Keep Alive (e.g., 5m, 0, -1)', 'ollama-keep-alive', ollamaGroup);
+        createDoubleRow('Temperature', 'ollama-temperature', ollamaGroup, 0.0, 2.0, 0.1);
         page.add(ollamaGroup);
 
         // --- OpenAI Settings ---

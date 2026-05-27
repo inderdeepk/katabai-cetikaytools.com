@@ -351,6 +351,7 @@ class KatabDialog {
     }
 
     close() {
+        this._cancelStream();
         this.isOpen = false;
         this.actor.hide();
         if (this.actor.get_parent()) {
@@ -359,6 +360,8 @@ class KatabDialog {
     }
 
     destroy() {
+        this._cancelStream();
+
         if (this._monitorChangedId) {
             Main.layoutManager.disconnect(this._monitorChangedId);
             this._monitorChangedId = 0;
@@ -634,13 +637,20 @@ class KatabDialog {
 
         let uiElements = this._addChatMessage('Katab AI', '...', 'assistant');
 
-        this._streamResponse(uiElements);
+        try {
+            this._streamResponse(uiElements);
+        } catch (e) {
+            uiElements.contentLabel.set_text(`Error constructing request: ${e.message}`);
+        }
     }
 
     _streamResponse(uiElements) {
         const provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
-        let apiKey = this._settings.get_string(`${provider}-api-key`);
+        let apiKey = '';
+        if (provider !== 'ollama') {
+            try { apiKey = this._settings.get_string(`${provider}-api-key`); } catch (e) { }
+        }
         let model = this._settings.get_string(`${provider}-model`);
 
         let endpoint = url;
@@ -693,10 +703,40 @@ class KatabDialog {
                 endpoint += 'api/chat';
             }
             headers['Content-Type'] = 'application/json';
+
+            let numCtx = this._settings.get_int('ollama-num-ctx');
+            let keepAlive = this._settings.get_string('ollama-keep-alive');
+            let temp = this._settings.get_double('ollama-temperature');
+
             payload = {
                 model: model,
                 messages: this._messageHistory,
-                stream: true
+                stream: true,
+                keep_alive: keepAlive || "5m",
+                think: true,
+                options: {
+                    temperature: temp,
+                    num_ctx: numCtx
+                },
+                tools: [
+                    {
+                        type: "function",
+                        function: {
+                            name: "dummy_calculator",
+                            description: "Calculates mathematical expressions. Use this tool any time the user asks a math question.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    expression: {
+                                        type: "string",
+                                        description: "The mathematical expression to evaluate"
+                                    }
+                                },
+                                required: ["expression"]
+                            }
+                        }
+                    }
+                ]
             };
         }
 
@@ -723,7 +763,10 @@ class KatabDialog {
             if (currentCancellable.is_cancelled()) return;
             try {
                 let inputStream = session.send_finish(res);
-                if (message.status_code !== 200) {
+                if (message.status_code === 404 && provider === 'ollama') {
+                    this._promptOllamaPull(inputStream, model, uiElements);
+                    return;
+                } else if (message.status_code !== 200) {
                     contentLabel.set_text(`Error: HTTP ${message.status_code}`);
                     return;
                 }
@@ -733,7 +776,7 @@ class KatabDialog {
                     close_base_stream: true
                 });
 
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, currentCancellable);
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, currentCancellable, []);
 
             } catch (e) {
                 if (currentCancellable.is_cancelled()) return;
@@ -742,7 +785,7 @@ class KatabDialog {
         });
     }
 
-    _readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable) {
+    _readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls) {
         if (cancellable && cancellable.is_cancelled()) return;
 
         let { contentLabel, thinkLabel, thinkWrapper } = uiElements;
@@ -753,8 +796,13 @@ class KatabDialog {
                 if (lineBytes === null) {
                     // Stream ended
                     let finalContent = accumulatedText;
-                    if (accumulatedThink && !finalContent) finalContent = "Finished thinking, but no response provided.";
-                    this._messageHistory.push({ role: 'assistant', content: finalContent });
+                    if (accumulatedThink && !finalContent && (!accumulatedToolCalls || accumulatedToolCalls.length === 0)) finalContent = "Finished thinking, but no response provided.";
+
+                    if (accumulatedToolCalls && accumulatedToolCalls.length > 0) {
+                        this._handleToolCalls(accumulatedToolCalls, uiElements);
+                    } else {
+                        this._messageHistory.push({ role: 'assistant', content: finalContent });
+                    }
                     return;
                 }
 
@@ -763,8 +811,21 @@ class KatabDialog {
 
                 if (provider === 'ollama' && lineStr.startsWith('{')) {
                     let parsed = JSON.parse(lineStr);
-                    if (parsed.message && parsed.message.content) {
-                        deltaText = parsed.message.content;
+                    if (parsed.message) {
+                        if (parsed.message.content) {
+                            deltaText = parsed.message.content;
+                        }
+                        if (parsed.message.reasoning) {
+                            isThinking = true;
+                            thinkWrapper.visible = true;
+                            accumulatedThink += parsed.message.reasoning;
+                            thinkLabel.set_text(accumulatedThink);
+                        }
+                        if (parsed.message.tool_calls) {
+                            for (let tc of parsed.message.tool_calls) {
+                                accumulatedToolCalls.push(tc);
+                            }
+                        }
                     }
                 } else if (lineStr.startsWith('data: ')) {
                     let jsonStr = lineStr.substring(6).trim();
@@ -787,16 +848,16 @@ class KatabDialog {
                 }
 
                 if (deltaText) {
-                    // Split the text based on igid and igr tags
+                    // Split the text based on tags
                     let i = 0;
                     while (i < deltaText.length) {
-                        if (!isThinking && deltaText.substring(i).startsWith('igid')) {
+                        if (!isThinking && (deltaText.substring(i).startsWith('igid') || deltaText.substring(i).startsWith('<think>'))) {
                             isThinking = true;
                             thinkWrapper.visible = true;
-                            i += 7; // skip igid
-                        } else if (isThinking && deltaText.substring(i).startsWith('igr')) {
+                            i += deltaText.substring(i).startsWith('<think>') ? 7 : 4; // skip tag
+                        } else if (isThinking && (deltaText.substring(i).startsWith('igr') || deltaText.substring(i).startsWith('</think>'))) {
                             isThinking = false;
-                            i += 8; // skip igr
+                            i += deltaText.substring(i).startsWith('</think>') ? 8 : 3; // skip tag
                         } else {
                             if (isThinking) {
                                 accumulatedThink += deltaText[i];
@@ -818,12 +879,194 @@ class KatabDialog {
                 }
 
                 // Read next line
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable);
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls);
 
             } catch (e) {
                 if (cancellable && cancellable.is_cancelled()) return;
                 // Ignore parse errors from partial or non-json lines and continue
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable);
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls);
+            }
+        });
+    }
+
+    _handleToolCalls(toolCalls, uiElements) {
+        let { contentLabel } = uiElements;
+        contentLabel.set_text("Executing requested tools...");
+
+        // Push the assistant's tool call message
+        this._messageHistory.push({
+            role: 'assistant',
+            content: '',
+            tool_calls: toolCalls
+        });
+
+        for (let tc of toolCalls) {
+            let result = "";
+            try {
+                if (tc.function.name === "dummy_calculator") {
+                    let args = JSON.parse(tc.function.arguments);
+                    // Safe mock eval for demonstration
+                    result = `Calculated result: Evaluated ${args.expression} successfully (mocked).`;
+                } else {
+                    result = `Tool ${tc.function.name} not found.`;
+                }
+            } catch (e) {
+                result = `Error executing tool: ${e.message}`;
+            }
+
+            this._messageHistory.push({
+                role: 'tool',
+                name: tc.function.name,
+                content: result
+            });
+        }
+
+        // Bounce back to API with the tool results
+        contentLabel.set_text("Waiting for final response...");
+        this._streamResponse(uiElements);
+    }
+
+    _promptOllamaPull(inputStream, model, uiElements) {
+        // Need to close stream since we got a 404
+        try { inputStream.close(null); } catch (e) { }
+
+        let { contentLabel } = uiElements;
+        contentLabel.set_text(`Model '${model}' not found locally.\n\nDo you want to download it now?`);
+
+        // Let's create an interactive prompt inline
+        let box = new St.BoxLayout({ vertical: false, style_class: 'katab-prompt-box' });
+
+        let confirmBtn = new St.Button({
+            label: "Yes, Download",
+            style_class: 'katab-prompt-btn-yes',
+            x_expand: true
+        });
+
+        let cancelBtn = new St.Button({
+            label: "No, Cancel",
+            style_class: 'katab-prompt-btn-no',
+            x_expand: true
+        });
+
+        confirmBtn.connect('clicked', () => {
+            box.destroy();
+            this._pullOllamaModel(model, uiElements);
+        });
+
+        cancelBtn.connect('clicked', () => {
+            box.destroy();
+            contentLabel.set_text("Download cancelled.");
+        });
+
+        box.add_child(confirmBtn);
+        box.add_child(cancelBtn);
+
+        // Find the container parent of contentLabel and push the box there
+        contentLabel.get_parent().add_child(box);
+    }
+
+    _pullOllamaModel(model, uiElements) {
+        let { contentLabel } = uiElements;
+        contentLabel.set_text(`Downloading model '${model}'... (0%)`);
+
+        let provider = this._settings.get_string('provider');
+        let url = this._settings.get_string(`${provider}-url`);
+        let endpoint = url;
+        if (!endpoint.endsWith('/')) endpoint += '/';
+        endpoint += 'api/pull';
+
+        let payload = {
+            name: model,
+            stream: true
+        };
+
+        let message = Soup.Message.new('POST', endpoint);
+        let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
+        message.set_request_body_from_bytes('application/json', bodyBytes);
+
+        this._cancelStream(); // cancel any active stream
+        this._cancellable = new Gio.Cancellable();
+        let currentCancellable = this._cancellable;
+
+        let cancelBtn = new St.Button({
+            label: "Cancel Download",
+            style_class: 'katab-prompt-btn-no',
+            x_expand: false
+        });
+        cancelBtn.connect('clicked', () => {
+            currentCancellable.cancel();
+            contentLabel.set_text("Download cancelled.");
+            cancelBtn.destroy();
+        });
+        contentLabel.get_parent().add_child(cancelBtn);
+
+        this._soupSession.send_async(message, GLib.PRIORITY_DEFAULT, currentCancellable, (session, res) => {
+            if (currentCancellable.is_cancelled()) {
+                if (cancelBtn) cancelBtn.destroy();
+                return;
+            }
+            try {
+                let inputStream = session.send_finish(res);
+                if (message.status_code !== 200) {
+                    cancelBtn.destroy();
+                    contentLabel.set_text(`Pull Error: HTTP ${message.status_code}`);
+                    return;
+                }
+
+                let dataInputStream = new Gio.DataInputStream({
+                    base_stream: inputStream,
+                    close_base_stream: true
+                });
+
+                this._readPullSSE(dataInputStream, model, uiElements, currentCancellable, cancelBtn);
+
+            } catch (e) {
+                if (cancelBtn) cancelBtn.destroy();
+                if (currentCancellable.is_cancelled()) return;
+                contentLabel.set_text(`Pull Failed: ${e.message}`);
+            }
+        });
+    }
+
+    _readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn) {
+        if (cancellable && cancellable.is_cancelled()) return;
+
+        let { contentLabel } = uiElements;
+        dataInputStream.read_line_async(GLib.PRIORITY_DEFAULT, cancellable, (stream, res) => {
+            if (cancellable && cancellable.is_cancelled()) {
+                if (cancelBtn) cancelBtn.destroy();
+                return;
+            }
+            try {
+                let [lineBytes, length] = stream.read_line_finish(res);
+                if (lineBytes === null) {
+                    // Pull finished
+                    if (cancelBtn) cancelBtn.destroy();
+                    contentLabel.set_text(`Model '${model}' pulled. Resuming request...`);
+                    this._streamResponse(uiElements);
+                    return;
+                }
+
+                let lineStr = new TextDecoder('utf-8').decode(lineBytes).trim();
+                let parsed = JSON.parse(lineStr);
+
+                if (parsed.status) {
+                    let text = `Downloading model '${model}'...\n${parsed.status}`;
+                    if (parsed.completed && parsed.total) {
+                        let pct = Math.round((parsed.completed / parsed.total) * 100);
+                        text += ` (${pct}%)`;
+                    }
+                    contentLabel.set_text(text);
+                }
+
+                this._readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn);
+
+            } catch (e) {
+                if (cancellable && cancellable.is_cancelled()) {
+                    if (cancelBtn) cancelBtn.destroy();
+                    return;
+                }
+                this._readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn);
             }
         });
     }
@@ -914,23 +1157,6 @@ const Indicator = GObject.registerClass(
                 if (open) {
                     this._updateHistoryMenu();
                 }
-            });
-
-            // Hover to open
-            this.connect('enter-event', () => {
-                if (!this.menu.isOpen) {
-                    this.menu.open(true);
-                }
-                return Clutter.EVENT_PROPAGATE;
-            });
-
-            this.connect('button-press-event', (actor, event) => {
-                if (event.get_button() === 1) { // Left click
-                    this.menu.close();
-                    this._extension.toggleDialog();
-                    return Clutter.EVENT_STOP;
-                }
-                return Clutter.EVENT_PROPAGATE;
             });
         }
 
