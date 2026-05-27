@@ -69,24 +69,29 @@ class HistoryManager {
         }
     }
 
-    static saveConversation(messageHistory) {
+    static saveConversation(messageHistory, existingId = null) {
         let userMsgs = messageHistory.filter(m => m.role === 'user');
-        if (userMsgs.length === 0) return;
+        if (userMsgs.length === 0) return null;
 
         let title = userMsgs[0].content.slice(0, 60);
         if (userMsgs[0].content.length > 60) title += '…';
 
+        let id = existingId || `conv_${Date.now()}`;
         let entry = {
-            id: `conv_${Date.now()}`,
+            id: id,
             title: title,
             timestamp: Math.floor(Date.now() / 1000),
             messages: [...messageHistory],
         };
 
         let arr = this.load();
+        if (existingId) {
+            arr = arr.filter(e => e.id !== existingId);
+        }
         arr.unshift(entry);
         if (arr.length > 50) arr.length = 50;
         this.save(arr);
+        return id;
     }
 
     static deleteConversation(id) {
@@ -100,6 +105,7 @@ class KatabDialog {
         this._extension = extension;
         this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
         this._currentProvider = this._settings.get_string('provider');
+        this._currentConversationId = null;
 
         this._settings.connect('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
@@ -368,6 +374,7 @@ class KatabDialog {
         if (!this.isOpen) return;
 
         this._cancelStream();
+        this._saveCurrentConversation();
         this.isOpen = false;
         this.actor.hide();
         if (this.actor.get_parent()) {
@@ -392,15 +399,22 @@ class KatabDialog {
     // ── History management ──────────────────────────────────────────────
 
     _saveCurrentConversation() {
-        HistoryManager.saveConversation(this._messageHistory);
+        let newId = HistoryManager.saveConversation(this._messageHistory, this._currentConversationId);
+        if (newId) {
+            this._currentConversationId = newId;
+        }
     }
 
     _deleteConversation(id) {
         HistoryManager.deleteConversation(id);
+        if (this._currentConversationId === id) {
+            this._currentConversationId = null;
+        }
     }
 
     _loadConversation(entry) {
         this._cancelStream();
+        this._currentConversationId = entry.id;
         this._messageHistory = [...entry.messages];
         this._chatContainer.destroy_all_children();
         for (let msg of entry.messages) {
@@ -537,6 +551,7 @@ class KatabDialog {
     _newChat() {
         this._cancelStream();
         this._saveCurrentConversation();
+        this._currentConversationId = null;
         this._messageHistory = [];
         this._chatContainer.destroy_all_children();
         this._showChatView();
@@ -656,6 +671,7 @@ class KatabDialog {
         this._addChatMessage('You', promptText, 'user');
 
         this._messageHistory.push({ role: 'user', content: promptText });
+        this._saveCurrentConversation();
 
         let uiElements = this._addChatMessage('Katab AI', '...', 'assistant');
 
@@ -824,6 +840,7 @@ class KatabDialog {
                         this._handleToolCalls(accumulatedToolCalls, uiElements);
                     } else {
                         this._messageHistory.push({ role: 'assistant', content: finalContent });
+                        this._saveCurrentConversation();
                     }
                     return;
                 }
