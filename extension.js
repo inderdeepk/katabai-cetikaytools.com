@@ -340,17 +340,33 @@ class KatabDialog {
     }
 
     open() {
+        if (this.isOpen) return true;
+
         if (!this.actor.get_parent()) {
             Main.layoutManager.addTopChrome(this.actor, { trackFullscreen: true });
         }
         this._syncGeometry();
         this.actor.show();
+
         this.isOpen = true;
-        this._entry.grab_key_focus();
+
+        // A slight timeout is often needed in GNOME Shell to reliably grab focus
+        // after opening a window/overlay.
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            if (this.isOpen && this._entry && this._entry.clutter_text) {
+                this._entry.clutter_text.grab_key_focus();
+                // Ensure stage focus goes to text
+                global.stage.set_key_focus(this._entry.clutter_text);
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+
         return true;
     }
 
     close() {
+        if (!this.isOpen) return;
+
         this._cancelStream();
         this.isOpen = false;
         this.actor.hide();
@@ -403,7 +419,13 @@ class KatabDialog {
         this._historyView.visible = false;
         this._chatScroll.visible = true;
         this._footerBox.visible = true;
-        this._entry.grab_key_focus();
+
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+            if (this.isOpen && this._entry && this._entry.clutter_text) {
+                this._entry.clutter_text.grab_key_focus();
+            }
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _showHistoryView() {
