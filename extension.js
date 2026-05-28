@@ -29,6 +29,19 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+const PROVIDER_TOOLS = {
+    'unsloth': [
+        { label: 'Web Search', command: '/search', icon: 'system-search-symbolic', toolName: 'web_search' },
+        { label: 'Python', command: '/python', icon: 'applications-development-symbolic', toolName: 'python' },
+        { label: 'Terminal', command: '/terminal', icon: 'utilities-terminal-symbolic', toolName: 'terminal' }
+    ],
+    'ollama': [
+        { label: 'Calculator', command: '/calc', icon: 'accessories-calculator-symbolic', toolName: 'dummy_calculator' }
+    ],
+    'openai': [],
+    'anthropic': []
+};
+
 class HistoryManager {
     static get filePath() {
         return GLib.build_filenamev([
@@ -110,6 +123,11 @@ class KatabDialog {
         this._settings.connect('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
             this._addSystemMessage(`Switched engine to ${this._currentProvider === 'ollama' ? 'Ollama (Local)' : this._currentProvider === 'unsloth' ? 'Unsloth Studio' : this._currentProvider}.`);
+            if (this._toolsBox) this._updateToolButtons();
+
+            // Re-fetch context size when switching providers
+            this._maxContextSize = 0;
+            this._fetchMaxContext();
         });
 
         this._monitorChangedId = 0;
@@ -118,6 +136,11 @@ class KatabDialog {
         this._soupSession = new Soup.Session();
         this._soupSession.timeout = 30; // 30 seconds
         this._cancellable = null;
+
+        this._maxContextSize = 0;
+        this._currentUsage = 0;
+        this._draftUsage = 0;
+        this._tokenUpdateTimeout = 0;
 
         this.actor = new St.Widget({
             style_class: 'katab-shell-overlay',
@@ -183,6 +206,54 @@ class KatabDialog {
         }
 
         return Clutter.EVENT_PROPAGATE;
+    }
+
+    _releasePromptFocus() {
+        if (!this._entry || !this._entry.clutter_text) {
+            return;
+        }
+
+        let keyFocus = global.stage.get_key_focus();
+        if (keyFocus !== this._entry && keyFocus !== this._entry.clutter_text) {
+            return;
+        }
+
+        if (this.dialogLayout && this.dialogLayout.can_focus) {
+            this.dialogLayout.grab_key_focus();
+        }
+    }
+
+    _updateToolButtons() {
+        if (!this._toolsBox) return;
+        this._toolsBox.destroy_all_children();
+
+        const tools = PROVIDER_TOOLS[this._currentProvider] || [];
+        for (const tool of tools) {
+            let btn = new St.Button({
+                child: new St.Icon({
+                    icon_name: tool.icon,
+                    style_class: 'katab-tool-icon',
+                }),
+                style_class: 'katab-tool-btn',
+                can_focus: true,
+                x_expand: false,
+                y_expand: false,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            btn.connect('clicked', () => {
+                let currentText = this._entry.get_text().trim();
+                // Add the slash command, appending to existing text if any, or just starting it
+                if (currentText && !currentText.includes(tool.command)) {
+                    this._entry.set_text(currentText + ' ' + tool.command + ' ');
+                } else {
+                    this._entry.set_text(tool.command + ' ');
+                }
+                this._entry.grab_key_focus();
+                // move cursor to end
+                this._entry.clutter_text.set_cursor_position(-1);
+            });
+            this._toolsBox.add_child(btn);
+        }
     }
 
     _buildUI() {
@@ -308,6 +379,35 @@ class KatabDialog {
         this.contentLayout.add_child(this._footerBox);
         let footerBox = this._footerBox;
 
+        // Add the token indicator to the footer Box
+        this._tokenBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-token-box',
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false // hide by default until context limit is known
+        });
+
+        this._tokenLabel = new St.Label({
+            text: '0 / 0',
+            style_class: 'katab-token-label',
+            x_align: Clutter.ActorAlign.CENTER
+        });
+        this._tokenBox.add_child(this._tokenLabel);
+
+        this._tokenProgressWrap = new St.Widget({
+            style_class: 'katab-token-progress',
+            layout_manager: new Clutter.BinLayout(),
+        });
+        this._tokenProgressFill = new St.Widget({
+            style_class: 'katab-token-progress-fill',
+            x_align: Clutter.ActorAlign.START,
+            width: 0,
+        });
+        this._tokenProgressWrap.add_child(this._tokenProgressFill);
+        this._tokenBox.add_child(this._tokenProgressWrap);
+
+        footerBox.add_child(this._tokenBox);
+
         this._entry = new St.Entry({
             hint_text: 'Ask Katab (Punjabi book of knowledge)...',
             style_class: 'katab-prompt-entry',
@@ -315,6 +415,23 @@ class KatabDialog {
             x_expand: true,
         });
         footerBox.add_child(this._entry);
+
+        this._toolsBox = new St.BoxLayout({
+            style_class: 'katab-tools-box',
+            vertical: false,
+        });
+        footerBox.add_child(this._toolsBox);
+
+        this._entry.clutter_text.connect('text-changed', () => {
+            if (this._tokenUpdateTimeout) {
+                GLib.source_remove(this._tokenUpdateTimeout);
+            }
+            this._tokenUpdateTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
+                this._updateDraftTokenCount();
+                this._tokenUpdateTimeout = 0;
+                return GLib.SOURCE_REMOVE;
+            });
+        });
 
         this._entry.clutter_text.connect('key-press-event', (_actor, event) => {
             let symbol = event.get_key_symbol();
@@ -343,6 +460,7 @@ class KatabDialog {
         footerBox.add_child(sendBtn);
 
         this._addWelcomeMessage();
+        this._updateToolButtons();
     }
 
     open() {
@@ -356,13 +474,13 @@ class KatabDialog {
 
         this.isOpen = true;
 
+        this._fetchMaxContext();
+
         // A slight timeout is often needed in GNOME Shell to reliably grab focus
         // after opening a window/overlay.
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-            if (this.isOpen && this._entry && this._entry.clutter_text) {
-                this._entry.clutter_text.grab_key_focus();
-                // Ensure stage focus goes to text
-                global.stage.set_key_focus(this._entry.clutter_text);
+            if (this.isOpen && this._entry) {
+                this._entry.grab_key_focus();
             }
             return GLib.SOURCE_REMOVE;
         });
@@ -397,6 +515,110 @@ class KatabDialog {
     }
 
     // ── History management ──────────────────────────────────────────────
+
+    async _updateDraftTokenCount() {
+        let text = this._entry.get_text();
+        if (!text) {
+            this._draftUsage = 0;
+            this._renderTokenCounter();
+            return;
+        }
+
+        if (this._currentProvider === 'unsloth' || this._currentProvider === 'ollama') {
+            try {
+                let url;
+                if (this._currentProvider === 'unsloth') {
+                    let baseUrl = this._settings.get_string('unsloth-url') || 'http://127.0.0.1:8080';
+                    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+                    if (baseUrl.endsWith('/v1')) baseUrl = baseUrl.slice(0, -3);
+                    url = baseUrl + '/tokenize';
+                } else {
+                    let baseUrl = this._settings.get_string('ollama-url') || 'http://127.0.0.1:11434';
+                    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+                    url = baseUrl + '/api/tokenize';
+                }
+
+                let body = this._currentProvider === 'ollama'
+                    ? JSON.stringify({ model: this._settings.get_string('ollama-model') || 'llama3', prompt: text })
+                    : JSON.stringify({ content: text });
+
+                let message = Soup.Message.new('POST', url);
+                message.set_request_body_from_bytes(
+                    'application/json',
+                    new GLib.Bytes(new TextEncoder().encode(body))
+                );
+                if (this._currentProvider === 'unsloth') {
+                    let apiKey = '';
+                    try { apiKey = this._settings.get_string('unsloth-api-key'); } catch (_e) { }
+                    if (apiKey) message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
+                }
+
+                let bytes = await new Promise((resolve, reject) => {
+                    this._soupSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, res) => {
+                        try {
+                            resolve(session.send_and_read_finish(res));
+                        } catch (e) { reject(e); }
+                    });
+                });
+
+                let data = JSON.parse(new TextDecoder('utf-8').decode(bytes.get_data()));
+
+                this._draftUsage = data.tokens ? data.tokens.length : Math.ceil(text.length / 4);
+            } catch (e) {
+                this._draftUsage = Math.ceil(text.length / 4);
+            }
+            this._renderTokenCounter();
+        }
+    }
+
+    async _fetchMaxContext() {
+        if (this._currentProvider === 'unsloth') {
+            let val = this._settings.get_int('unsloth-num-ctx');
+            this._maxContextSize = val > 0 ? val : -1;
+        } else if (this._currentProvider === 'ollama') {
+            let val = this._settings.get_int('ollama-num-ctx');
+            this._maxContextSize = val > 0 ? val : -1;
+        } else {
+            // openai / anthropic — context size not configurable here
+            this._maxContextSize = -1;
+        }
+        this._renderTokenCounter();
+    }
+
+    _renderTokenCounter() {
+        if (this._maxContextSize === 0) {
+            // Still loading — keep hidden
+            this._tokenBox.visible = false;
+            return;
+        }
+        this._tokenBox.visible = true;
+
+        if (this._maxContextSize < 0) {
+            // Unknown context size — show warning icon, hide progress bar
+            this._tokenLabel.set_text('⚠');
+            this._tokenLabel.add_style_class_name('katab-token-warn');
+            this._tokenProgressWrap.visible = false;
+            return;
+        }
+
+        // Known context size — show counter and progress bar
+        this._tokenLabel.remove_style_class_name('katab-token-warn');
+        this._tokenProgressWrap.visible = true;
+
+        let total = this._currentUsage + this._draftUsage;
+        this._tokenLabel.set_text(`${total} / ${this._maxContextSize}`);
+
+        let ratio = Math.min(total / this._maxContextSize, 1.0);
+        this._tokenProgressFill.set_width(ratio * 60);
+
+        this._tokenProgressFill.remove_style_class_name('warn');
+        this._tokenProgressFill.remove_style_class_name('danger');
+        if (ratio >= 0.9) {
+            this._tokenProgressFill.add_style_class_name('danger');
+        } else if (ratio >= 0.75) {
+            this._tokenProgressFill.add_style_class_name('warn');
+        }
+    }
 
     _saveCurrentConversation() {
         let newId = HistoryManager.saveConversation(this._messageHistory, this._currentConversationId);
@@ -435,8 +657,8 @@ class KatabDialog {
         this._footerBox.visible = true;
 
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-            if (this.isOpen && this._entry && this._entry.clutter_text) {
-                this._entry.clutter_text.grab_key_focus();
+            if (this.isOpen && this._entry) {
+                this._entry.grab_key_focus();
             }
             return GLib.SOURCE_REMOVE;
         });
@@ -553,6 +775,9 @@ class KatabDialog {
         this._saveCurrentConversation();
         this._currentConversationId = null;
         this._messageHistory = [];
+        this._currentUsage = 0;
+        this._draftUsage = 0;
+        this._renderTokenCounter();
         this._chatContainer.destroy_all_children();
         this._showChatView();
         this._addWelcomeMessage();
@@ -888,14 +1113,12 @@ class KatabDialog {
             style_class: 'katab-think-label',
             visible: false,
             x_expand: true,
-            reactive: true,
         });
         thinkLabel.clutter_text.line_wrap = true;
         thinkLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         thinkLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         thinkLabel.clutter_text.single_line_mode = false;
-        thinkLabel.clutter_text.selectable = true;
-        thinkLabel.clutter_text.reactive = true;
+        thinkLabel.clutter_text.can_focus = false;
 
         thinkButton.connect('notify::checked', () => {
             thinkLabel.visible = thinkButton.checked;
@@ -910,16 +1133,46 @@ class KatabDialog {
             text: '',
             style_class: 'katab-chat-content-label',
             x_expand: true,
-            reactive: true,
         });
         contentLabel.clutter_text.line_wrap = true;
         contentLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         contentLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         contentLabel.clutter_text.single_line_mode = false;
-        contentLabel.clutter_text.selectable = true;
-        contentLabel.clutter_text.reactive = true;
+        contentLabel.clutter_text.can_focus = false;
 
         bubbleBox.add_child(contentLabel);
+
+        let copyBtnRow = new St.BoxLayout({
+            vertical: false,
+            x_expand: true,
+            x_align: isUser ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
+        });
+        let copyBtn = new St.Button({
+            style_class: 'katab-copy-btn',
+            child: new St.Icon({
+                gicon: Gio.ThemedIcon.new('edit-copy-symbolic'),
+                icon_size: 14,
+            }),
+        });
+        copyBtn.connect('clicked', () => {
+            let txt = contentLabel.get_text();
+            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, txt);
+        });
+        copyBtnRow.add_child(copyBtn);
+
+        let tokenCountLabel = new St.Label({
+            text: '',
+            style_class: 'katab-message-token-label',
+            visible: false
+        });
+        copyBtnRow.add_child(tokenCountLabel);
+
+        // Push copy btn to right if user, otherwise keep it left and tokens right
+        if (isUser) {
+            copyBtnRow.set_pack_start(true);
+        }
+
+        bubbleBox.add_child(copyBtnRow);
 
         let linkBox = null;
         if (!isUser) {
@@ -967,6 +1220,15 @@ class KatabDialog {
         if (promptText === '')
             return;
 
+        this._forcedTool = null;
+        const tools = PROVIDER_TOOLS[this._currentProvider] || [];
+        for (const t of tools) {
+            if (promptText.startsWith(t.command + ' ') || promptText === t.command) {
+                this._forcedTool = t.toolName;
+                break;
+            }
+        }
+
         this._entry.set_text('');
         this._addChatMessage('You', promptText, 'user');
 
@@ -1012,11 +1274,13 @@ class KatabDialog {
                 messages: this._messageHistory,
                 stream: true
             };
+            if (this._forcedTool) {
+                payload.tool_choice = { type: "function", function: { name: this._forcedTool } };
+            }
             if (provider === 'unsloth') {
-                payload.extra_body = {
-                    enable_tools: true,
-                    enabled_tools: ["python", "web_search"]
-                };
+                payload.enable_tools = true;
+                payload.enabled_tools = ["web_search", "python", "terminal"];
+                payload.session_id = this._currentConversationId || `session_${Date.now()}`;
             }
         } else if (provider === 'anthropic') {
             if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
@@ -1076,6 +1340,10 @@ class KatabDialog {
                     }
                 ]
             };
+            if (this._forcedTool) {
+                // Ollama tool choice (some versions/models may ignore it)
+                payload.tool_choice = { type: "function", function: { name: this._forcedTool } };
+            }
         }
 
         let message = Soup.Message.new('POST', endpoint);
@@ -1167,6 +1435,10 @@ class KatabDialog {
                             }
                         }
                     }
+                    if (parsed.done === true && parsed.prompt_eval_count !== undefined && parsed.eval_count !== undefined) {
+                        this._currentUsage += parsed.prompt_eval_count + parsed.eval_count;
+                        this._renderTokenCounter();
+                    }
                 } else if (lineStr.startsWith('data: ')) {
                     let jsonStr = lineStr.substring(6).trim();
                     if (jsonStr && jsonStr !== '[DONE]') {
@@ -1175,13 +1447,27 @@ class KatabDialog {
                             if (parsed.type === 'content_block_delta' && parsed.delta && parsed.delta.text) {
                                 deltaText = parsed.delta.text;
                             }
+                            if (parsed.type === 'message_stop') {
+                                // For Anthropic usage requires usage endpoint or parsing message start/stop
+                            }
                         } else {
                             // OpenAI / Unsloth
-                            if (parsed.choices && parsed.choices.length > 0) {
+                            if (parsed.type === 'tool_result') {
+                                let toolContent = parsed.content || 'No output.';
+                                let toolName = parsed.tool_use_id || 'Tool';
+                                deltaText = `\n\n> **Server-side tool executed (${toolName})**:\n> \`\`\`\n> ${toolContent.split('\\n').join('\\n> ')}\n> \`\`\`\n\n`;
+                            } else if (parsed.choices && parsed.choices.length > 0) {
                                 let delta = parsed.choices[0].delta;
                                 if (delta && delta.content) {
                                     deltaText = delta.content;
                                 }
+                            }
+                        }
+                        if (parsed.usage) {
+                            let u = parsed.usage;
+                            if (u.prompt_tokens !== undefined && u.completion_tokens !== undefined) {
+                                this._currentUsage += u.prompt_tokens + u.completion_tokens;
+                                this._renderTokenCounter();
                             }
                         }
                     }
@@ -1468,10 +1754,10 @@ const Indicator = GObject.registerClass(
             this.menu.addMenuItem(this._providerMenu);
             this._providerItems = {};
             const providers = {
+                'ollama': 'Ollama (Local)',
                 'unsloth': 'Unsloth Studio',
                 'openai': 'OpenAI',
-                'anthropic': 'Anthropic',
-                'ollama': 'Ollama (Local)'
+                'anthropic': 'Anthropic'
             };
 
             for (let [key, name] of Object.entries(providers)) {

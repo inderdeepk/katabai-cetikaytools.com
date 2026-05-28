@@ -4,9 +4,36 @@
     <key name="provider" type="s">
       <default>'unsloth'</default>
       <summary>AI Model Provider</summary>
-      <description>The AI provider to use. Valid values are 'unsloth', 'openai', 'anthropic', or 'ollama'.</description>
+      <description>The AI provider to use. Valid values are 'ollama', 'unsloth', 'openai', or 'anthropic'.</description>
     </key>
     
+    <!-- Ollama Settings -->
+    <key name="ollama-url" type="s">
+      <default>'http://localhost:11434'</default>
+      <summary>Ollama Base URL</summary>
+      <description>The base URL for the Ollama API.</description>
+    </key>
+    <key name="ollama-model" type="s">
+      <default>'llama3'</default>
+      <summary>Ollama Model</summary>
+      <description>The model to use with Ollama.</description>
+    </key>
+    <key name="ollama-num-ctx" type="i">
+      <default>4096</default>
+      <summary>Context Window Size</summary>
+      <description>The context window size for the Ollama model (e.g., 4096, 8192).</description>
+    </key>
+    <key name="ollama-keep-alive" type="s">
+      <default>'5m'</default>
+      <summary>Keep Alive Duration</summary>
+      <description>How long to retain the model in VRAM (e.g., '5m', '0' to unload immediately, '-1' for indefinite).</description>
+    </key>
+    <key name="ollama-temperature" type="d">
+      <default>0.7</default>
+      <summary>Temperature</summary>
+      <description>The temperature for model generation (e.g., 0.7 for balance, 0.0 for deterministic).</description>
+    </key>
+
     <!-- Unsloth Settings -->
     <key name="unsloth-url" type="s">
       <default>'http://localhost:8888/v1'</default>
@@ -22,6 +49,11 @@
       <default>'default'</default>
       <summary>Unsloth Model</summary>
       <description>The specific local model to run through Unsloth.</description>
+    </key>
+    <key name="unsloth-num-ctx" type="i">
+      <default>8192</default>
+      <summary>Context Window Size</summary>
+      <description>The context window size configured in Unsloth Studio (e.g., 8192, 131072).</description>
     </key>
 
     <!-- OpenAI Settings -->
@@ -56,33 +88,6 @@
       <default>'claude-3-5-sonnet-20241022'</default>
       <summary>Anthropic Model</summary>
       <description>The model to use with Anthropic.</description>
-    </key>
-
-    <!-- Ollama Settings -->
-    <key name="ollama-url" type="s">
-      <default>'http://localhost:11434'</default>
-      <summary>Ollama Base URL</summary>
-      <description>The base URL for the Ollama API.</description>
-    </key>
-    <key name="ollama-model" type="s">
-      <default>'llama3'</default>
-      <summary>Ollama Model</summary>
-      <description>The model to use with Ollama.</description>
-    </key>
-    <key name="ollama-num-ctx" type="i">
-      <default>4096</default>
-      <summary>Context Window Size</summary>
-      <description>The context window size for the Ollama model (e.g., 4096, 8192).</description>
-    </key>
-    <key name="ollama-keep-alive" type="s">
-      <default>'5m'</default>
-      <summary>Keep Alive Duration</summary>
-      <description>How long to retain the model in VRAM (e.g., '5m', '0' to unload immediately, '-1' for indefinite).</description>
-    </key>
-    <key name="ollama-temperature" type="d">
-      <default>0.7</default>
-      <summary>Temperature</summary>
-      <description>The temperature for model generation (e.g., 0.7 for balance, 0.0 for deterministic).</description>
     </key>
   </schema>
 </schemalist>

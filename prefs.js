@@ -27,13 +27,13 @@ export default class KatabPreferences extends ExtensionPreferences {
         });
 
         const providerList = new Gtk.StringList();
-        providerList.append('Unsloth Studio (Local)');
         providerList.append('Ollama (Local)');
+        providerList.append('Unsloth Studio (Local)');
         providerList.append('OpenAI');
         providerList.append('Anthropic');
         providerRow.model = providerList;
 
-        const providerMap = ['unsloth', 'ollama', 'openai', 'anthropic'];
+        const providerMap = ['ollama', 'unsloth', 'openai', 'anthropic'];
         const currentProvider = settings.get_string('provider');
         providerRow.selected = Math.max(0, providerMap.indexOf(currentProvider));
 
@@ -100,15 +100,6 @@ export default class KatabPreferences extends ExtensionPreferences {
             return row;
         };
 
-        // --- Unsloth Settings ---
-        const unslothGroup = new Adw.PreferencesGroup({
-            title: 'Unsloth Studio Settings',
-        });
-        createStringRow('Base URL', 'unsloth-url', unslothGroup);
-        createStringRow('API Key', 'unsloth-api-key', unslothGroup, true);
-        createStringRow('Model', 'unsloth-model', unslothGroup);
-        page.add(unslothGroup);
-
         // --- Ollama Settings ---
         const ollamaGroup = new Adw.PreferencesGroup({
             title: 'Ollama Settings',
@@ -119,6 +110,16 @@ export default class KatabPreferences extends ExtensionPreferences {
         createStringRow('Keep Alive (e.g., 5m, 0, -1)', 'ollama-keep-alive', ollamaGroup);
         createDoubleRow('Temperature', 'ollama-temperature', ollamaGroup, 0.0, 2.0, 0.1);
         page.add(ollamaGroup);
+
+        // --- Unsloth Settings ---
+        const unslothGroup = new Adw.PreferencesGroup({
+            title: 'Unsloth Studio Settings',
+        });
+        createStringRow('Base URL', 'unsloth-url', unslothGroup);
+        createStringRow('API Key', 'unsloth-api-key', unslothGroup, true);
+        createStringRow('Model', 'unsloth-model', unslothGroup);
+        createIntRow('Context Window Size', 'unsloth-num-ctx', unslothGroup, 1024, 1048576, 1024);
+        page.add(unslothGroup);
 
         // --- OpenAI Settings ---
         const openaiGroup = new Adw.PreferencesGroup({
