@@ -40,6 +40,12 @@ To configure your API keys:
 3. Enter your API keys for Unsloth, OpenAI, or Anthropic in the Preferences window.
 4. The extension will securely save these keys using GSettings.
 
+## Chat Formatting
+
+Assistant responses now render a chat-friendly markdown subset instead of showing raw formatting markers. Supported formatting includes headings, bold text, italics, bullet and numbered lists, blockquotes, inline code, and fenced code blocks.
+
+Links are extracted from assistant responses and shown as clickable actions below the message bubble so they can be opened with your default browser. Tables, images, and full CommonMark edge cases are still treated as plain text.
+
 ## Contribution Guidelines
 
 * **NEVER commit any API keys, credentials, or secrets to the repository.**

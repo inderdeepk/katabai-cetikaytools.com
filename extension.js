@@ -558,6 +558,276 @@ class KatabDialog {
         this._addWelcomeMessage();
     }
 
+    _escapeMarkup(text) {
+        return String(text ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    _setLabelMarkup(label, markup, fallbackText) {
+        try {
+            label.clutter_text.set_markup(markup);
+        } catch (e) {
+            log(`Katab: failed to render formatted text: ${e.message}`);
+            label.set_text(fallbackText);
+        }
+    }
+
+    _renderPlainMarkup(text) {
+        return this._escapeMarkup(text).replace(/\t/g, '    ');
+    }
+
+    _truncateText(text, maxLength = 48) {
+        if (text.length <= maxLength) {
+            return text;
+        }
+
+        return `${text.slice(0, maxLength - 3)}...`;
+    }
+
+    _normalizeUrl(url) {
+        let trimmed = String(url ?? '').trim().replace(/[.,!?;:]+$/g, '');
+        return /^https?:\/\/\S+$/i.test(trimmed) ? trimmed : null;
+    }
+
+    _extractLinks(text) {
+        let collectedLinks = [];
+
+        let transformedText = String(text ?? '').replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => {
+            let normalizedUrl = this._normalizeUrl(url);
+            if (normalizedUrl) {
+                collectedLinks.push({
+                    label: label.trim(),
+                    url: normalizedUrl,
+                });
+
+                return label;
+            }
+
+            return _match;
+        });
+
+        transformedText = transformedText.replace(/https?:\/\/[^\s<>()]+/g, match => {
+            let normalizedUrl = this._normalizeUrl(match);
+            if (!normalizedUrl) {
+                return match;
+            }
+
+            collectedLinks.push({
+                label: '',
+                url: normalizedUrl,
+            });
+
+            return normalizedUrl + match.slice(normalizedUrl.length);
+        });
+
+        let links = [];
+        let seen = new Set();
+        for (let link of collectedLinks) {
+            if (seen.has(link.url)) {
+                continue;
+            }
+
+            seen.add(link.url);
+            links.push(link);
+        }
+
+        return {
+            text: transformedText,
+            links: links,
+        };
+    }
+
+    _formatInlineMarkdown(text) {
+        let escapedText = this._escapeMarkup(text);
+        let codeTokens = [];
+
+        escapedText = escapedText.replace(/`([^`\n]+)`/g, (_match, code) => {
+            let token = `@@KATAB_CODE_${codeTokens.length}@@`;
+            codeTokens.push(
+                `<span font_family="monospace" foreground="#f9e2af" background="#11111b">${code}</span>`
+            );
+            return token;
+        });
+
+        escapedText = escapedText.replace(/\*\*([^\n]+?)\*\*/g, '<b>$1</b>');
+        escapedText = escapedText.replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
+        escapedText = escapedText.replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
+
+        for (let i = 0; i < codeTokens.length; i++) {
+            escapedText = escapedText.replace(`@@KATAB_CODE_${i}@@`, codeTokens[i]);
+        }
+
+        return escapedText;
+    }
+
+    _formatMarkdownLine(line) {
+        if (line === '') {
+            return '';
+        }
+
+        let headingMatch = line.match(/^\s{0,3}(#{1,3})\s+(.*)$/);
+        if (headingMatch) {
+            let headingSizes = {
+                1: 'x-large',
+                2: 'large',
+                3: 'medium',
+            };
+
+            return `<span size="${headingSizes[headingMatch[1].length]}" weight="bold">${this._formatInlineMarkdown(headingMatch[2].trim())}</span>`;
+        }
+
+        let quoteMatch = line.match(/^\s{0,3}>\s?(.*)$/);
+        if (quoteMatch) {
+            return `<span foreground="#a6adc8" style="italic">| ${this._formatInlineMarkdown(quoteMatch[1])}</span>`;
+        }
+
+        let bulletMatch = line.match(/^\s{0,3}[-*]\s+(.*)$/);
+        if (bulletMatch) {
+            return `• ${this._formatInlineMarkdown(bulletMatch[1])}`;
+        }
+
+        let orderedMatch = line.match(/^\s{0,3}(\d+)\.\s+(.*)$/);
+        if (orderedMatch) {
+            return `${orderedMatch[1]}. ${this._formatInlineMarkdown(orderedMatch[2])}`;
+        }
+
+        return this._formatInlineMarkdown(line);
+    }
+
+    _formatMarkdownTextSegment(text) {
+        return String(text ?? '')
+            .split('\n')
+            .map(line => this._formatMarkdownLine(line))
+            .join('\n');
+    }
+
+    _formatCodeBlock(language, codeText) {
+        let safeLanguage = this._escapeMarkup(String(language ?? '').trim());
+        let safeCode = this._escapeMarkup(String(codeText ?? '').replace(/\t/g, '    ').replace(/\n$/, ''));
+        let header = safeLanguage
+            ? `<span weight="bold" foreground="#89b4fa">${safeLanguage}</span>\n`
+            : '';
+
+        return `<span font_family="monospace" foreground="#f9e2af" background="#11111b">${header}${safeCode}</span>`;
+    }
+
+    _buildAssistantMarkup(rawText, { final = false, plain = false } = {}) {
+        let sourceText = String(rawText ?? '');
+        if (plain) {
+            return {
+                markup: this._renderPlainMarkup(sourceText),
+                links: [],
+            };
+        }
+
+        let parseableText = sourceText;
+        let trailingPlainText = '';
+        let fenceMatches = parseableText.match(/```/g) || [];
+        if (!final && fenceMatches.length % 2 === 1) {
+            let lastFenceIndex = parseableText.lastIndexOf('```');
+            trailingPlainText = parseableText.slice(lastFenceIndex);
+            parseableText = parseableText.slice(0, lastFenceIndex);
+        }
+
+        let markupParts = [];
+        let links = [];
+        let codeBlockRegex = /```([^\n`]*)\n([\s\S]*?)```/g;
+        let lastIndex = 0;
+        let match;
+
+        while ((match = codeBlockRegex.exec(parseableText)) !== null) {
+            if (match.index > lastIndex) {
+                let extracted = this._extractLinks(parseableText.slice(lastIndex, match.index));
+                links.push(...extracted.links);
+                markupParts.push(this._formatMarkdownTextSegment(extracted.text));
+            }
+
+            markupParts.push(this._formatCodeBlock(match[1], match[2]));
+            lastIndex = codeBlockRegex.lastIndex;
+        }
+
+        if (lastIndex < parseableText.length) {
+            let extracted = this._extractLinks(parseableText.slice(lastIndex));
+            links.push(...extracted.links);
+            markupParts.push(this._formatMarkdownTextSegment(extracted.text));
+        }
+
+        if (trailingPlainText) {
+            markupParts.push(this._renderPlainMarkup(trailingPlainText));
+        }
+
+        let uniqueLinks = [];
+        let seen = new Set();
+        for (let link of links) {
+            if (seen.has(link.url)) {
+                continue;
+            }
+
+            seen.add(link.url);
+            uniqueLinks.push(link);
+        }
+
+        return {
+            markup: markupParts.join(''),
+            links: uniqueLinks,
+        };
+    }
+
+    _getLinkButtonLabel(link) {
+        let labelText = link.label && link.label !== link.url
+            ? link.label
+            : link.url.replace(/^https?:\/\//i, '');
+        return this._truncateText(labelText, 54);
+    }
+
+    _openExternalLink(url) {
+        try {
+            Gio.AppInfo.launch_default_for_uri(url, null);
+        } catch (e) {
+            this._addSystemMessage(`Failed to open link: ${e.message}`);
+        }
+    }
+
+    _updateLinkActions(linkBox, links) {
+        if (!linkBox) {
+            return;
+        }
+
+        linkBox.destroy_all_children();
+
+        if (!links || links.length === 0) {
+            linkBox.visible = false;
+            return;
+        }
+
+        for (let link of links) {
+            let button = new St.Button({
+                label: this._getLinkButtonLabel(link),
+                style_class: 'katab-chat-link-button',
+                can_focus: true,
+                x_expand: true,
+                x_align: Clutter.ActorAlign.START,
+            });
+            button.connect('clicked', () => this._openExternalLink(link.url));
+            linkBox.add_child(button);
+        }
+
+        linkBox.visible = true;
+    }
+
+    _applyAssistantRender(uiElements, rawText, options = {}) {
+        if (!uiElements || !uiElements.contentLabel) {
+            return;
+        }
+
+        let sourceText = String(rawText ?? '');
+        let rendered = this._buildAssistantMarkup(sourceText, options);
+        this._setLabelMarkup(uiElements.contentLabel, rendered.markup, sourceText);
+        this._updateLinkActions(uiElements.linkBox, rendered.links);
+    }
+
     _addWelcomeMessage() {
         this._addChatMessage(
             'Katab Assistant',
@@ -637,7 +907,7 @@ class KatabDialog {
         bubbleBox.add_child(thinkWrapper);
 
         let contentLabel = new St.Label({
-            text: text,
+            text: '',
             style_class: 'katab-chat-content-label',
             x_expand: true,
             reactive: true,
@@ -651,6 +921,17 @@ class KatabDialog {
 
         bubbleBox.add_child(contentLabel);
 
+        let linkBox = null;
+        if (!isUser) {
+            linkBox = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-chat-link-list',
+                x_expand: true,
+                visible: false,
+            });
+            bubbleBox.add_child(linkBox);
+        }
+
         let spacer = new St.Widget({ x_expand: true });
         if (isUser) {
             rowBox.add_child(spacer);
@@ -662,9 +943,15 @@ class KatabDialog {
 
         this._chatContainer.add_child(rowBox);
 
+        if (isUser) {
+            contentLabel.set_text(text);
+        } else {
+            this._applyAssistantRender({ contentLabel, linkBox }, text, { final: true });
+        }
+
         this._scrollToBottom();
 
-        return { contentLabel, thinkLabel, thinkWrapper };
+        return { contentLabel, thinkLabel, thinkWrapper, linkBox };
     }
 
     _scrollToBottom() {
@@ -691,7 +978,7 @@ class KatabDialog {
         try {
             this._streamResponse(uiElements);
         } catch (e) {
-            uiElements.contentLabel.set_text(`Error constructing request: ${e.message}`);
+            this._applyAssistantRender(uiElements, `Error constructing request: ${e.message}`, { plain: true });
         }
     }
 
@@ -800,12 +1087,12 @@ class KatabDialog {
         let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
         message.set_request_body_from_bytes('application/json', bodyBytes);
 
-        let { contentLabel, thinkLabel, thinkWrapper } = uiElements;
+        let { thinkLabel, thinkWrapper } = uiElements;
         let accumulatedText = "";
         let accumulatedThink = "";
         let isThinking = false;
 
-        contentLabel.set_text("Waiting for response...");
+        this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
         this._cancelStream();
         this._cancellable = new Gio.Cancellable();
         let currentCancellable = this._cancellable;
@@ -818,7 +1105,7 @@ class KatabDialog {
                     this._promptOllamaPull(inputStream, model, uiElements);
                     return;
                 } else if (message.status_code !== 200) {
-                    contentLabel.set_text(`Error: HTTP ${message.status_code}`);
+                    this._applyAssistantRender(uiElements, `Error: HTTP ${message.status_code}`, { plain: true });
                     return;
                 }
 
@@ -831,7 +1118,7 @@ class KatabDialog {
 
             } catch (e) {
                 if (currentCancellable.is_cancelled()) return;
-                contentLabel.set_text(`Request Failed: ${e.message}`);
+                this._applyAssistantRender(uiElements, `Request Failed: ${e.message}`, { plain: true });
             }
         });
     }
@@ -839,7 +1126,7 @@ class KatabDialog {
     _readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls) {
         if (cancellable && cancellable.is_cancelled()) return;
 
-        let { contentLabel, thinkLabel, thinkWrapper } = uiElements;
+        let { thinkLabel, thinkWrapper } = uiElements;
         dataInputStream.read_line_async(GLib.PRIORITY_DEFAULT, cancellable, (stream, res) => {
             if (cancellable && cancellable.is_cancelled()) return;
             try {
@@ -852,6 +1139,7 @@ class KatabDialog {
                     if (accumulatedToolCalls && accumulatedToolCalls.length > 0) {
                         this._handleToolCalls(accumulatedToolCalls, uiElements);
                     } else {
+                        this._applyAssistantRender(uiElements, finalContent, { final: true });
                         this._messageHistory.push({ role: 'assistant', content: finalContent });
                         this._saveCurrentConversation();
                     }
@@ -924,7 +1212,7 @@ class KatabDialog {
                         thinkLabel.set_text(accumulatedThink);
                     }
                     if (accumulatedText) {
-                        contentLabel.set_text(accumulatedText);
+                        this._applyAssistantRender(uiElements, accumulatedText, { final: false });
                     }
 
                     this._scrollToBottom();
@@ -942,8 +1230,7 @@ class KatabDialog {
     }
 
     _handleToolCalls(toolCalls, uiElements) {
-        let { contentLabel } = uiElements;
-        contentLabel.set_text("Executing requested tools...");
+        this._applyAssistantRender(uiElements, 'Executing requested tools...', { plain: true });
 
         // Push the assistant's tool call message
         this._messageHistory.push({
@@ -974,7 +1261,7 @@ class KatabDialog {
         }
 
         // Bounce back to API with the tool results
-        contentLabel.set_text("Waiting for final response...");
+        this._applyAssistantRender(uiElements, 'Waiting for final response...', { plain: true });
         this._streamResponse(uiElements);
     }
 
@@ -983,7 +1270,7 @@ class KatabDialog {
         try { inputStream.close(null); } catch (e) { }
 
         let { contentLabel } = uiElements;
-        contentLabel.set_text(`Model '${model}' not found locally.\n\nDo you want to download it now?`);
+        this._applyAssistantRender(uiElements, `Model '${model}' not found locally.\n\nDo you want to download it now?`, { plain: true });
 
         // Let's create an interactive prompt inline
         let box = new St.BoxLayout({ vertical: false, style_class: 'katab-prompt-box' });
@@ -1007,7 +1294,7 @@ class KatabDialog {
 
         cancelBtn.connect('clicked', () => {
             box.destroy();
-            contentLabel.set_text("Download cancelled.");
+            this._applyAssistantRender(uiElements, 'Download cancelled.', { plain: true });
         });
 
         box.add_child(confirmBtn);
@@ -1019,7 +1306,7 @@ class KatabDialog {
 
     _pullOllamaModel(model, uiElements) {
         let { contentLabel } = uiElements;
-        contentLabel.set_text(`Downloading model '${model}'... (0%)`);
+        this._applyAssistantRender(uiElements, `Downloading model '${model}'... (0%)`, { plain: true });
 
         let provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
@@ -1047,7 +1334,7 @@ class KatabDialog {
         });
         cancelBtn.connect('clicked', () => {
             currentCancellable.cancel();
-            contentLabel.set_text("Download cancelled.");
+            this._applyAssistantRender(uiElements, 'Download cancelled.', { plain: true });
             cancelBtn.destroy();
         });
         contentLabel.get_parent().add_child(cancelBtn);
@@ -1061,7 +1348,7 @@ class KatabDialog {
                 let inputStream = session.send_finish(res);
                 if (message.status_code !== 200) {
                     cancelBtn.destroy();
-                    contentLabel.set_text(`Pull Error: HTTP ${message.status_code}`);
+                    this._applyAssistantRender(uiElements, `Pull Error: HTTP ${message.status_code}`, { plain: true });
                     return;
                 }
 
@@ -1075,7 +1362,7 @@ class KatabDialog {
             } catch (e) {
                 if (cancelBtn) cancelBtn.destroy();
                 if (currentCancellable.is_cancelled()) return;
-                contentLabel.set_text(`Pull Failed: ${e.message}`);
+                this._applyAssistantRender(uiElements, `Pull Failed: ${e.message}`, { plain: true });
             }
         });
     }
@@ -1094,7 +1381,7 @@ class KatabDialog {
                 if (lineBytes === null) {
                     // Pull finished
                     if (cancelBtn) cancelBtn.destroy();
-                    contentLabel.set_text(`Model '${model}' pulled. Resuming request...`);
+                    this._applyAssistantRender(uiElements, `Model '${model}' pulled. Resuming request...`, { plain: true });
                     this._streamResponse(uiElements);
                     return;
                 }
@@ -1108,7 +1395,7 @@ class KatabDialog {
                         let pct = Math.round((parsed.completed / parsed.total) * 100);
                         text += ` (${pct}%)`;
                     }
-                    contentLabel.set_text(text);
+                    this._applyAssistantRender(uiElements, text, { plain: true });
                 }
 
                 this._readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn);

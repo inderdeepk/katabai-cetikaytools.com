@@ -194,6 +194,26 @@
     font-size: 10.5pt;
 }
 
+.katab-chat-link-list {
+    spacing: 6px;
+    margin-top: 10px;
+}
+
+.katab-chat-link-button {
+    background-color: rgba(53, 132, 228, 0.12);
+    color: #89b4fa;
+    border-radius: 8px;
+    border: 1px solid rgba(53, 132, 228, 0.25);
+    padding: 6px 10px;
+    font-size: 9pt;
+}
+
+.katab-chat-link-button:hover,
+.katab-chat-link-button:focus {
+    background-color: rgba(53, 132, 228, 0.2);
+    border-color: rgba(53, 132, 228, 0.4);
+}
+
 /* Status / System Toasts */
 .katab-system-message-box {
     margin: 4px 0;
