@@ -40,6 +40,506 @@ const PROVIDER_TOOLS = {
     'anthropic': []
 };
 
+const PROVIDER_LABELS = {
+    'ollama': 'Ollama',
+    'unsloth': 'Unsloth Studio',
+    'openai': 'OpenAI',
+    'anthropic': 'Anthropic'
+};
+
+const PROVIDER_STATUS = {
+    CHECKING: 'checking',
+    ONLINE: 'online',
+    DOWN: 'down',
+    NEEDS_SETUP: 'needs-setup'
+};
+
+const PROVIDER_STATUS_STYLE_CLASSES = Object.values(PROVIDER_STATUS)
+    .map(status => `katab-provider-status-${status}`);
+
+const PROVIDER_STATUS_POLL_MS = 15000;
+const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
+
+function getProviderLabel(provider) {
+    return PROVIDER_LABELS[provider] || provider;
+}
+
+function getProviderStatusText(status) {
+    if (status === PROVIDER_STATUS.ONLINE) {
+        return 'Online';
+    }
+    if (status === PROVIDER_STATUS.DOWN) {
+        return 'Down';
+    }
+    if (status === PROVIDER_STATUS.NEEDS_SETUP) {
+        return 'Needs setup';
+    }
+    return 'Checking';
+}
+
+function syncProviderStatusClasses(actor, status) {
+    if (!actor) {
+        return;
+    }
+
+    for (let className of PROVIDER_STATUS_STYLE_CLASSES) {
+        actor.remove_style_class_name(className);
+    }
+
+    actor.add_style_class_name(`katab-provider-status-${status}`);
+}
+
+function trimTrailingSlash(value) {
+    let next = `${value || ''}`.trim();
+    while (next.length > 1 && next.endsWith('/')) {
+        next = next.slice(0, -1);
+    }
+    return next;
+}
+
+function joinUrl(baseUrl, path) {
+    let base = trimTrailingSlash(baseUrl);
+    let suffix = `${path || ''}`;
+    if (!suffix.startsWith('/')) {
+        suffix = `/${suffix}`;
+    }
+    return `${base}${suffix}`;
+}
+
+function getProviderBaseUrl(provider, rawUrl) {
+    let baseUrl = trimTrailingSlash(rawUrl);
+    if (!baseUrl) {
+        return '';
+    }
+
+    if (provider !== 'ollama' && baseUrl.endsWith('/v1')) {
+        return baseUrl.slice(0, -3);
+    }
+
+    return baseUrl;
+}
+
+function getProviderConfig(settings, provider = null) {
+    let activeProvider = provider || settings.get_string('provider');
+    let baseUrl = '';
+    let apiKey = '';
+    let model = '';
+
+    try {
+        baseUrl = getProviderBaseUrl(activeProvider, settings.get_string(`${activeProvider}-url`));
+    } catch (_e) {
+    }
+
+    if (activeProvider !== 'ollama') {
+        try {
+            apiKey = settings.get_string(`${activeProvider}-api-key`).trim();
+        } catch (_e) {
+        }
+    }
+
+    try {
+        model = settings.get_string(`${activeProvider}-model`).trim();
+    } catch (_e) {
+    }
+
+    return {
+        provider: activeProvider,
+        label: getProviderLabel(activeProvider),
+        baseUrl,
+        apiKey,
+        model,
+    };
+}
+
+function decodeBytes(bytes) {
+    if (!bytes) {
+        return '';
+    }
+
+    let data = bytes.get_data();
+    if (!data) {
+        return '';
+    }
+
+    return new TextDecoder('utf-8').decode(data).trim();
+}
+
+function extractErrorSummary(responseBody) {
+    if (!responseBody) {
+        return '';
+    }
+
+    try {
+        let parsed = JSON.parse(responseBody);
+        if (typeof parsed.error === 'string' && parsed.error.trim()) {
+            return parsed.error.trim();
+        }
+        if (typeof parsed.message === 'string' && parsed.message.trim()) {
+            return parsed.message.trim();
+        }
+    } catch (_e) {
+    }
+
+    let firstLine = responseBody.split('\n').map(line => line.trim()).find(Boolean);
+    return firstLine || '';
+}
+
+class ProviderHealthMonitor {
+    constructor(extension) {
+        this._extension = extension;
+        this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
+        this._listeners = new Set();
+        this._soupSession = new Soup.Session();
+        this._soupSession.timeout = PROVIDER_STATUS_TIMEOUT_SECONDS;
+        this._cancellables = new Map();
+        this._refreshSerials = new Map();
+        this._pollSourceId = 0;
+        this._states = new Map();
+
+        for (let provider of Object.keys(PROVIDER_LABELS)) {
+            this._states.set(provider, this._getInitialState(provider));
+        }
+
+        this._settingsChangedId = this._settings.connect('changed', (_settings, key) => {
+            if (!key || !this._shouldRefreshForKey(key)) {
+                return;
+            }
+
+            if (key === 'provider') {
+                this._emit();
+                this.refresh({ immediate: true });
+                return;
+            }
+
+            let provider = this._getProviderFromKey(key);
+            if (provider) {
+                this.refresh({ provider, immediate: true });
+            }
+        });
+    }
+
+    _shouldRefreshForKey(key) {
+        return key === 'provider' || key.endsWith('-url') || key.endsWith('-api-key') || key.endsWith('-model');
+    }
+
+    _getProviderFromKey(key) {
+        return Object.keys(PROVIDER_LABELS).find(provider => key.startsWith(`${provider}-`)) || null;
+    }
+
+    _buildState({ provider, status, detail = '', lastChecked = 0 }) {
+        return {
+            provider,
+            label: getProviderLabel(provider),
+            status,
+            detail,
+            lastChecked,
+        };
+    }
+
+    _getInitialState(provider) {
+        let config = getProviderConfig(this._settings, provider);
+        return this._getSetupState(config) || this._buildState({
+            provider,
+            status: PROVIDER_STATUS.CHECKING,
+            detail: `Check ${getProviderLabel(provider)} availability.`,
+            lastChecked: 0,
+        });
+    }
+
+    _emit() {
+        let activeState = this.getState();
+        let allStates = this.getAllStates();
+        for (let listener of this._listeners) {
+            listener(activeState, allStates);
+        }
+    }
+
+    _setProviderState(nextState) {
+        let previous = this._states.get(nextState.provider);
+        if (previous
+            && previous.provider === nextState.provider
+            && previous.status === nextState.status
+            && previous.detail === nextState.detail
+            && previous.lastChecked === nextState.lastChecked) {
+            return;
+        }
+
+        this._states.set(nextState.provider, nextState);
+        this._emit();
+    }
+
+    _scheduleNextPoll(delayMs = PROVIDER_STATUS_POLL_MS) {
+        if (this._pollSourceId) {
+            GLib.source_remove(this._pollSourceId);
+        }
+
+        this._pollSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+            this._pollSourceId = 0;
+            this.refresh();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _getSetupState(config) {
+        if (!config.baseUrl) {
+            return this._buildState({
+                provider: config.provider,
+                status: PROVIDER_STATUS.NEEDS_SETUP,
+                detail: 'Set the provider URL.',
+                lastChecked: Date.now(),
+            });
+        }
+
+        if ((config.provider === 'openai' || config.provider === 'anthropic') && !config.apiKey) {
+            return this._buildState({
+                provider: config.provider,
+                status: PROVIDER_STATUS.NEEDS_SETUP,
+                detail: 'Add the API key.',
+                lastChecked: Date.now(),
+            });
+        }
+
+        return null;
+    }
+
+    _buildProbe(config) {
+        if (config.provider === 'ollama') {
+            return {
+                method: 'GET',
+                url: joinUrl(config.baseUrl, '/api/tags'),
+                headers: {},
+                body: null,
+            };
+        }
+
+        if (config.provider === 'unsloth') {
+            let headers = {};
+            if (config.apiKey) {
+                headers['Authorization'] = `Bearer ${config.apiKey}`;
+            }
+            return {
+                method: 'POST',
+                url: joinUrl(config.baseUrl, '/tokenize'),
+                headers,
+                body: { content: 'ping' },
+            };
+        }
+
+        if (config.provider === 'openai') {
+            return {
+                method: 'GET',
+                url: joinUrl(config.baseUrl, '/v1/models'),
+                headers: {
+                    'Authorization': `Bearer ${config.apiKey}`,
+                },
+                body: null,
+            };
+        }
+
+        return {
+            method: 'GET',
+            url: joinUrl(config.baseUrl, '/v1/models'),
+            headers: {
+                'x-api-key': config.apiKey,
+                'anthropic-version': '2023-06-01',
+            },
+            body: null,
+        };
+    }
+
+    async _probeProvider(config, cancellable) {
+        let probe = this._buildProbe(config);
+        let message = Soup.Message.new(probe.method, probe.url);
+        for (let [key, value] of Object.entries(probe.headers)) {
+            if (value) {
+                message.get_request_headers().append(key, value);
+            }
+        }
+
+        if (probe.body !== null) {
+            message.set_request_body_from_bytes(
+                'application/json',
+                new GLib.Bytes(new TextEncoder().encode(JSON.stringify(probe.body)))
+            );
+        }
+
+        let bytes = await new Promise((resolve, reject) => {
+            this._soupSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, cancellable, (session, res) => {
+                try {
+                    resolve(session.send_and_read_finish(res));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+
+        if (message.status_code < 200 || message.status_code >= 300) {
+            let responseBody = decodeBytes(bytes);
+            let summary = extractErrorSummary(responseBody);
+            if (summary) {
+                throw new Error(`HTTP ${message.status_code}: ${summary}`);
+            }
+            throw new Error(`HTTP ${message.status_code}`);
+        }
+    }
+
+    _cancelRefresh(provider) {
+        let cancellable = this._cancellables.get(provider);
+        if (!cancellable) {
+            return;
+        }
+
+        cancellable.cancel();
+        this._cancellables.delete(provider);
+    }
+
+    getState(provider = null) {
+        let targetProvider = provider || this._settings.get_string('provider');
+        if (!this._states.has(targetProvider)) {
+            this._states.set(targetProvider, this._getInitialState(targetProvider));
+        }
+
+        return { ...this._states.get(targetProvider) };
+    }
+
+    getAllStates() {
+        let states = {};
+        for (let provider of Object.keys(PROVIDER_LABELS)) {
+            states[provider] = this.getState(provider);
+        }
+        return states;
+    }
+
+    subscribe(listener) {
+        this._listeners.add(listener);
+        listener(this.getState(), this.getAllStates());
+        return listener;
+    }
+
+    unsubscribe(listener) {
+        this._listeners.delete(listener);
+    }
+
+    markRequestSuccess(provider, detail = 'Provider reachable.') {
+        this._setProviderState(this._buildState({
+            provider,
+            status: PROVIDER_STATUS.ONLINE,
+            detail,
+            lastChecked: Date.now(),
+        }));
+        if (provider === this._settings.get_string('provider')) {
+            this._scheduleNextPoll();
+        }
+    }
+
+    markRequestFailure(provider, detail = 'Provider unavailable.') {
+        this._setProviderState(this._buildState({
+            provider,
+            status: PROVIDER_STATUS.DOWN,
+            detail,
+            lastChecked: Date.now(),
+        }));
+        if (provider === this._settings.get_string('provider')) {
+            this._scheduleNextPoll();
+        }
+    }
+
+    async _refreshProvider(provider, { immediate = false } = {}) {
+        let config = getProviderConfig(this._settings, provider);
+        let setupState = this._getSetupState(config);
+        let isActiveProvider = provider === this._settings.get_string('provider');
+
+        if (setupState) {
+            this._cancelRefresh(provider);
+            this._setProviderState(setupState);
+            if (isActiveProvider) {
+                this._scheduleNextPoll();
+            }
+            return;
+        }
+
+        this._cancelRefresh(provider);
+
+        let currentCancellable = new Gio.Cancellable();
+        this._cancellables.set(provider, currentCancellable);
+
+        let refreshSerial = (this._refreshSerials.get(provider) || 0) + 1;
+        this._refreshSerials.set(provider, refreshSerial);
+
+        let currentState = this.getState(provider);
+
+        if (immediate || currentState.status === PROVIDER_STATUS.NEEDS_SETUP || !currentState.lastChecked) {
+            this._setProviderState(this._buildState({
+                provider: config.provider,
+                status: PROVIDER_STATUS.CHECKING,
+                detail: `Checking ${config.label}…`,
+                lastChecked: currentState.lastChecked,
+            }));
+        }
+
+        try {
+            await this._probeProvider(config, currentCancellable);
+            if (currentCancellable.is_cancelled() || refreshSerial !== this._refreshSerials.get(provider)) {
+                return;
+            }
+
+            this._setProviderState(this._buildState({
+                provider: config.provider,
+                status: PROVIDER_STATUS.ONLINE,
+                detail: `${config.label} is online.`,
+                lastChecked: Date.now(),
+            }));
+        } catch (e) {
+            if (currentCancellable.is_cancelled() || refreshSerial !== this._refreshSerials.get(provider)) {
+                return;
+            }
+
+            this._setProviderState(this._buildState({
+                provider: config.provider,
+                status: PROVIDER_STATUS.DOWN,
+                detail: e.message || `${config.label} is unavailable.`,
+                lastChecked: Date.now(),
+            }));
+        } finally {
+            if (this._cancellables.get(provider) === currentCancellable) {
+                this._cancellables.delete(provider);
+            }
+            if (isActiveProvider) {
+                this._scheduleNextPoll();
+            }
+        }
+    }
+
+    async refresh({ immediate = false, provider = null } = {}) {
+        return this._refreshProvider(provider || this._settings.get_string('provider'), { immediate });
+    }
+
+    refreshAll({ immediate = false } = {}) {
+        for (let provider of Object.keys(PROVIDER_LABELS)) {
+            this._refreshProvider(provider, { immediate });
+        }
+    }
+
+    destroy() {
+        if (this._pollSourceId) {
+            GLib.source_remove(this._pollSourceId);
+            this._pollSourceId = 0;
+        }
+
+        for (let cancellable of this._cancellables.values()) {
+            cancellable.cancel();
+        }
+        this._cancellables.clear();
+
+        if (this._settingsChangedId) {
+            this._settings.disconnect(this._settingsChangedId);
+            this._settingsChangedId = 0;
+        }
+
+        this._listeners.clear();
+    }
+}
+
 class HistoryManager {
     static get filePath() {
         return GLib.build_filenamev([
@@ -120,8 +620,11 @@ class KatabDialog {
 
         this._settings.connect('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
-            this._addSystemMessage(`Switched engine to ${this._currentProvider === 'ollama' ? 'Ollama' : this._currentProvider === 'unsloth' ? 'Unsloth Studio' : this._currentProvider}.`);
+            this._addSystemMessage(`Switched engine to ${getProviderLabel(this._currentProvider)}.`);
             if (this._toolsBox) this._updateToolButtons();
+            if (this._extension.providerHealthMonitor) {
+                this._extension.providerHealthMonitor.refresh({ immediate: true });
+            }
 
             // Re-fetch context size when switching providers
             this._maxContextSize = 0;
@@ -185,6 +688,12 @@ class KatabDialog {
         this._syncGeometry();
 
         this._buildUI();
+
+        this._providerHealthListener = null;
+        if (this._extension.providerHealthMonitor) {
+            this._providerHealthListener = state => this._renderProviderStatus(state);
+            this._extension.providerHealthMonitor.subscribe(this._providerHealthListener);
+        }
     }
 
     _syncGeometry() {
@@ -219,6 +728,25 @@ class KatabDialog {
         if (this.dialogLayout && this.dialogLayout.can_focus) {
             this.dialogLayout.grab_key_focus();
         }
+    }
+
+    _renderProviderStatus(state) {
+        if (!this._providerStatusBox || !this._providerStatusLabel || !this._providerStatusDot) {
+            return;
+        }
+
+        this._providerStatusBox.visible = true;
+        this._providerStatusLabel.set_text(`${state.label} ${getProviderStatusText(state.status)}`);
+        syncProviderStatusClasses(this._providerStatusBox, state.status);
+        syncProviderStatusClasses(this._providerStatusLabel, state.status);
+        syncProviderStatusClasses(this._providerStatusDot, state.status);
+    }
+
+    _disconnectProviderStatus() {
+        if (this._providerHealthListener && this._extension.providerHealthMonitor) {
+            this._extension.providerHealthMonitor.unsubscribe(this._providerHealthListener);
+        }
+        this._providerHealthListener = null;
     }
 
     _updateToolButtons() {
@@ -288,6 +816,26 @@ class KatabDialog {
             y_expand: true,
         });
         headerBox.add_child(headerSpacer);
+
+        this._providerStatusBox = new St.BoxLayout({
+            style_class: 'katab-provider-status-box',
+            y_align: Clutter.ActorAlign.CENTER,
+            visible: false,
+        });
+        this._providerStatusDot = new St.Widget({
+            style_class: 'katab-provider-status-indicator',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._providerStatusBox.add_child(this._providerStatusDot);
+
+        this._providerStatusLabel = new St.Label({
+            text: '',
+            style_class: 'katab-provider-status-label',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._providerStatusBox.add_child(this._providerStatusLabel);
+        headerBox.add_child(this._providerStatusBox);
 
         let historyBtn = new St.Button({
             child: new St.Icon({
@@ -473,6 +1021,9 @@ class KatabDialog {
         this.isOpen = true;
 
         this._fetchMaxContext();
+        if (this._extension.providerHealthMonitor) {
+            this._extension.providerHealthMonitor.refresh({ immediate: true });
+        }
 
         // A slight timeout is often needed in GNOME Shell to reliably grab focus
         // after opening a window/overlay.
@@ -501,6 +1052,7 @@ class KatabDialog {
 
     destroy() {
         this._cancelStream();
+        this._disconnectProviderStatus();
 
         if (this._monitorChangedId) {
             Main.layoutManager.disconnect(this._monitorChangedId);
@@ -1668,9 +2220,11 @@ class KatabDialog {
             try {
                 let inputStream = session.send_finish(res);
                 if (message.status_code === 404 && provider === 'ollama') {
+                    this._extension.providerHealthMonitor?.markRequestSuccess(provider, `${getProviderLabel(provider)} responded.`);
                     this._promptOllamaPull(inputStream, model, uiElements);
                     return;
                 } else if (message.status_code !== 200) {
+                    this._extension.providerHealthMonitor?.refresh({ immediate: true });
                     const responseBody = this._readErrorResponseBody(inputStream, currentCancellable);
                     const summaryText = this._extractErrorSummary(responseBody);
                     const summary = summaryText
@@ -1693,10 +2247,13 @@ class KatabDialog {
                     close_base_stream: true
                 });
 
+                this._extension.providerHealthMonitor?.markRequestSuccess(provider, `${getProviderLabel(provider)} responded.`);
+
                 this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, currentCancellable, [], null);
 
             } catch (e) {
                 if (currentCancellable.is_cancelled()) return;
+                this._extension.providerHealthMonitor?.markRequestFailure(provider, e.message || `${getProviderLabel(provider)} is unavailable.`);
                 const diagnostics = this._buildRequestDiagnostics({
                     provider,
                     endpoint,
@@ -2061,10 +2618,32 @@ const Indicator = GObject.registerClass(
             this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
 
             let panelGicon = Gio.icon_new_for_string(`${extension.path}/icons/katab-panel-icon.svg`);
-            this.add_child(new St.Icon({
+            let iconStack = new St.BoxLayout({
+                style_class: 'katab-panel-indicator-box',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._panelIcon = new St.Icon({
                 gicon: panelGicon,
                 style_class: 'system-status-icon',
-            }));
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            iconStack.add_child(this._panelIcon);
+
+            this._panelStatusDot = new St.Widget({
+                style_class: 'katab-panel-status-dot',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            iconStack.add_child(this._panelStatusDot);
+            this.add_child(iconStack);
+
+            this._providerHealthListener = null;
+            if (this._extension.providerHealthMonitor) {
+                this._providerHealthListener = (state, states) => {
+                    this._renderProviderStatus(state);
+                    this._renderProviderMenuStatuses(states);
+                };
+                this._extension.providerHealthMonitor.subscribe(this._providerHealthListener);
+            }
 
             // Actions Section
             this._newChatMenuItem = new PopupMenu.PopupMenuItem('New Chat');
@@ -2092,19 +2671,21 @@ const Indicator = GObject.registerClass(
             this._providerMenu = new PopupMenu.PopupSubMenuMenuItem('Model Provider');
             this.menu.addMenuItem(this._providerMenu);
             this._providerItems = {};
-            const providers = {
-                'ollama': 'Ollama',
-                'unsloth': 'Unsloth Studio',
-                'openai': 'OpenAI',
-                'anthropic': 'Anthropic'
-            };
+            this._providerStatusDots = {};
+            const providers = PROVIDER_LABELS;
 
             for (let [key, name] of Object.entries(providers)) {
                 let item = new PopupMenu.PopupMenuItem(name);
+                let statusDot = new St.Widget({
+                    style_class: 'katab-provider-status-indicator katab-provider-menu-status-dot',
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                item.add_child(statusDot);
                 item.connect('activate', () => {
                     this._settings.set_string('provider', key);
                 });
                 this._providerItems[key] = item;
+                this._providerStatusDots[key] = statusDot;
                 this._providerMenu.menu.addMenuItem(item);
             }
 
@@ -2120,8 +2701,28 @@ const Indicator = GObject.registerClass(
             this.menu.connect('open-state-changed', (menu, open) => {
                 if (open) {
                     this._updateHistoryMenu();
+                    this._extension.providerHealthMonitor?.refreshAll({ immediate: true });
                 }
             });
+        }
+
+        _renderProviderStatus(state) {
+            if (!this._panelStatusDot) {
+                return;
+            }
+
+            syncProviderStatusClasses(this._panelStatusDot, state.status);
+        }
+
+        _renderProviderMenuStatuses(states = {}) {
+            for (let [provider, dot] of Object.entries(this._providerStatusDots || {})) {
+                let state = states[provider] || this._extension.providerHealthMonitor?.getState(provider);
+                if (!state || !dot) {
+                    continue;
+                }
+
+                syncProviderStatusClasses(dot, state.status);
+            }
         }
 
         _syncProvider() {
@@ -2129,6 +2730,14 @@ const Indicator = GObject.registerClass(
             for (let [key, item] of Object.entries(this._providerItems)) {
                 item.setOrnament(current === key ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE);
             }
+        }
+
+        destroy() {
+            if (this._providerHealthListener && this._extension.providerHealthMonitor) {
+                this._extension.providerHealthMonitor.unsubscribe(this._providerHealthListener);
+            }
+            this._providerHealthListener = null;
+            super.destroy();
         }
 
         _updateHistoryMenu() {
@@ -2199,6 +2808,8 @@ const Indicator = GObject.registerClass(
 
 export default class KatabExtension extends Extension {
     enable() {
+        this._providerHealthMonitor = new ProviderHealthMonitor(this);
+        this._providerHealthMonitor.refresh({ immediate: true });
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
         this._dialog = null;
@@ -2209,8 +2820,18 @@ export default class KatabExtension extends Extension {
             this._dialog.destroy();
             this._dialog = null;
         }
-        this._indicator.destroy();
-        this._indicator = null;
+        if (this._indicator) {
+            this._indicator.destroy();
+            this._indicator = null;
+        }
+        if (this._providerHealthMonitor) {
+            this._providerHealthMonitor.destroy();
+            this._providerHealthMonitor = null;
+        }
+    }
+
+    get providerHealthMonitor() {
+        return this._providerHealthMonitor;
     }
 
     showPreferences() {
