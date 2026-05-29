@@ -23,6 +23,12 @@
     color: #f9e2af;
 }
 
+.katab-message-token-label {
+    margin-left: 8px;
+    font-size: 8.5pt;
+    color: rgba(205, 214, 244, 0.68);
+}
+
 .katab-token-progress {
     height: 4px;
     width: 60px;

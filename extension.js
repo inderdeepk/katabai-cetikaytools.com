@@ -619,6 +619,128 @@ class KatabDialog {
         }
     }
 
+    _sanitizeHistoryMessage(message) {
+        let sanitized = {
+            role: message.role,
+        };
+
+        if (message.content !== undefined) {
+            sanitized.content = message.content;
+        }
+
+        if (message.tool_calls !== undefined) {
+            sanitized.tool_calls = message.tool_calls;
+        }
+
+        if (message.name !== undefined) {
+            sanitized.name = message.name;
+        }
+
+        if (message.images !== undefined) {
+            sanitized.images = message.images;
+        }
+
+        return sanitized;
+    }
+
+    _getApiMessageHistory() {
+        return this._messageHistory.map(message => this._sanitizeHistoryMessage(message));
+    }
+
+    _numberOrNull(value) {
+        return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    }
+
+    _extractOllamaMetrics(payload) {
+        let metrics = {
+            total_duration: this._numberOrNull(payload.total_duration),
+            load_duration: this._numberOrNull(payload.load_duration),
+            prompt_eval_count: this._numberOrNull(payload.prompt_eval_count),
+            prompt_eval_duration: this._numberOrNull(payload.prompt_eval_duration),
+            eval_count: this._numberOrNull(payload.eval_count),
+            eval_duration: this._numberOrNull(payload.eval_duration),
+        };
+
+        return Object.values(metrics).some(value => value !== null) ? metrics : null;
+    }
+
+    _formatMetricNumber(value, fractionDigits = 1) {
+        return Number(value)
+            .toFixed(fractionDigits)
+            .replace(/\.0$/, '')
+            .replace(/(\.\d*[1-9])0+$/, '$1');
+    }
+
+    _formatDurationNs(durationNs) {
+        if (durationNs === null || durationNs === undefined || durationNs <= 0) {
+            return '';
+        }
+
+        let milliseconds = durationNs / 1_000_000;
+        if (milliseconds >= 1000) {
+            let seconds = milliseconds / 1000;
+            return `${this._formatMetricNumber(seconds, seconds >= 10 ? 0 : 1)} s`;
+        }
+
+        if (milliseconds >= 10) {
+            return `${Math.round(milliseconds)} ms`;
+        }
+
+        if (milliseconds >= 1) {
+            return `${this._formatMetricNumber(milliseconds, 1)} ms`;
+        }
+
+        let microseconds = durationNs / 1_000;
+        return `${this._formatMetricNumber(microseconds, microseconds >= 10 ? 0 : 1)} us`;
+    }
+
+    _formatTokensPerSecond(evalCount, evalDuration) {
+        if (evalCount === null || evalDuration === null || evalCount <= 0 || evalDuration <= 0) {
+            return '';
+        }
+
+        let tokensPerSecond = (evalCount / evalDuration) * 1_000_000_000;
+        return `${this._formatMetricNumber(tokensPerSecond, tokensPerSecond >= 100 ? 0 : 1)} tok/s`;
+    }
+
+    _formatAssistantMetrics(messageMeta) {
+        if (!messageMeta || messageMeta.provider !== 'ollama' || !messageMeta.metrics) {
+            return '';
+        }
+
+        let metrics = messageMeta.metrics;
+        let parts = [];
+
+        let promptDuration = this._formatDurationNs(metrics.prompt_eval_duration);
+        if (promptDuration) {
+            parts.push(`Prompt ${promptDuration}`);
+        }
+
+        let tokensPerSecond = this._formatTokensPerSecond(metrics.eval_count, metrics.eval_duration);
+        if (tokensPerSecond) {
+            parts.push(tokensPerSecond);
+        }
+
+        if (metrics.load_duration !== null || metrics.prompt_eval_duration !== null) {
+            let ttftDuration = this._formatDurationNs((metrics.load_duration ?? 0) + (metrics.prompt_eval_duration ?? 0));
+            if (ttftDuration) {
+                parts.push(`TTFT ${ttftDuration}`);
+            }
+        }
+
+        return parts.join(' • ');
+    }
+
+    _applyAssistantMetrics(label, messageMeta) {
+        if (!label) {
+            return;
+        }
+
+        let summary = this._formatAssistantMetrics(messageMeta);
+        label.set_text(summary);
+        label.visible = Boolean(summary);
+    }
+
     _saveCurrentConversation() {
         let newId = HistoryManager.saveConversation(this._messageHistory, this._currentConversationId);
         if (newId) {
@@ -642,7 +764,7 @@ class KatabDialog {
             if (msg.role === 'user') {
                 this._addChatMessage('You', msg.content, 'user');
             } else if (msg.role === 'assistant') {
-                this._addChatMessage('Katab AI', msg.content, 'assistant');
+                this._addChatMessage('Katab AI', msg.content, 'assistant', msg);
             }
         }
         this._showChatView();
@@ -1191,7 +1313,7 @@ class KatabDialog {
         this._scrollToBottom();
     }
 
-    _addChatMessage(sender, text, type) {
+    _addChatMessage(sender, text, type, messageMeta = null) {
         let isUser = type === 'user';
 
         let rowBox = new St.BoxLayout({
@@ -1276,12 +1398,16 @@ class KatabDialog {
         });
         copyBtnRow.add_child(copyBtn);
 
-        let tokenCountLabel = new St.Label({
+        let metricsLabel = new St.Label({
             text: '',
             style_class: 'katab-message-token-label',
             visible: false
         });
-        copyBtnRow.add_child(tokenCountLabel);
+        copyBtnRow.add_child(metricsLabel);
+
+        if (!isUser) {
+            this._applyAssistantMetrics(metricsLabel, messageMeta);
+        }
 
         // Push copy btn to right if user, otherwise keep it left and tokens right
         if (isUser) {
@@ -1350,7 +1476,7 @@ class KatabDialog {
 
         this._scrollToBottom();
 
-        return { contentLabel, thinkLabel, thinkWrapper, linkBox, diagnosticBox, diagnosticLabel };
+        return { contentLabel, thinkLabel, thinkWrapper, linkBox, diagnosticBox, diagnosticLabel, metricsLabel };
     }
 
     _scrollToBottom() {
@@ -1415,6 +1541,7 @@ class KatabDialog {
         }
 
         let payload = {};
+        const apiMessages = this._getApiMessageHistory();
 
         // Prepare Dialects
         if (provider === 'unsloth' || provider === 'openai') {
@@ -1424,7 +1551,7 @@ class KatabDialog {
             headers['Content-Type'] = 'application/json';
             payload = {
                 model: model,
-                messages: this._messageHistory,
+                messages: apiMessages,
                 stream: true
             };
             if (this._forcedTool) {
@@ -1445,7 +1572,7 @@ class KatabDialog {
             headers['Content-Type'] = 'application/json';
 
             // Format Anthropic messages (remove system prompts from history or map them)
-            let anthropicMessages = this._messageHistory.filter(m => m.role !== 'system');
+            let anthropicMessages = apiMessages.filter(m => m.role !== 'system');
 
             payload = {
                 model: model,
@@ -1501,7 +1628,7 @@ class KatabDialog {
 
             payload = {
                 model: model,
-                messages: this._messageHistory,
+                messages: apiMessages,
                 stream: true,
                 keep_alive: keepAlive || "5m",
                 think: true,
@@ -1566,7 +1693,7 @@ class KatabDialog {
                     close_base_stream: true
                 });
 
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, currentCancellable, []);
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, currentCancellable, [], null);
 
             } catch (e) {
                 if (currentCancellable.is_cancelled()) return;
@@ -1582,7 +1709,7 @@ class KatabDialog {
         });
     }
 
-    _readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls) {
+    _readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls, assistantMeta) {
         if (cancellable && cancellable.is_cancelled()) return;
 
         let { thinkLabel, thinkWrapper } = uiElements;
@@ -1599,7 +1726,12 @@ class KatabDialog {
                         this._handleToolCalls(accumulatedToolCalls, uiElements);
                     } else {
                         this._applyAssistantRender(uiElements, finalContent, { final: true });
-                        this._messageHistory.push({ role: 'assistant', content: finalContent });
+                        let assistantMessage = { role: 'assistant', content: finalContent };
+                        if (assistantMeta && assistantMeta.provider && assistantMeta.metrics) {
+                            assistantMessage.provider = assistantMeta.provider;
+                            assistantMessage.metrics = assistantMeta.metrics;
+                        }
+                        this._messageHistory.push(assistantMessage);
                         this._saveCurrentConversation();
                     }
                     return;
@@ -1607,6 +1739,7 @@ class KatabDialog {
 
                 let lineStr = new TextDecoder('utf-8').decode(lineBytes).trim();
                 let deltaText = "";
+                let nextAssistantMeta = assistantMeta;
 
                 if (provider === 'ollama' && lineStr.startsWith('{')) {
                     let parsed = JSON.parse(lineStr);
@@ -1626,9 +1759,20 @@ class KatabDialog {
                             }
                         }
                     }
-                    if (parsed.done === true && parsed.prompt_eval_count !== undefined && parsed.eval_count !== undefined) {
-                        this._currentUsage += parsed.prompt_eval_count + parsed.eval_count;
-                        this._renderTokenCounter();
+                    if (parsed.done === true) {
+                        let metrics = this._extractOllamaMetrics(parsed);
+                        if (metrics) {
+                            nextAssistantMeta = {
+                                provider: 'ollama',
+                                metrics,
+                            };
+                            this._applyAssistantMetrics(uiElements.metricsLabel, nextAssistantMeta);
+                        }
+
+                        if (metrics && metrics.prompt_eval_count !== null && metrics.eval_count !== null) {
+                            this._currentUsage += metrics.prompt_eval_count + metrics.eval_count;
+                            this._renderTokenCounter();
+                        }
                     }
                 } else if (lineStr.startsWith('data: ')) {
                     let jsonStr = lineStr.substring(6).trim();
@@ -1696,12 +1840,12 @@ class KatabDialog {
                 }
 
                 // Read next line
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls);
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls, nextAssistantMeta);
 
             } catch (e) {
                 if (cancellable && cancellable.is_cancelled()) return;
                 // Ignore parse errors from partial or non-json lines and continue
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls);
+                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls, assistantMeta);
             }
         });
     }
