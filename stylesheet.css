@@ -126,12 +126,49 @@
 }
 
 .katab-provider-status-box {
-    spacing: 6px;
-    padding: 4px 10px;
+    spacing: 8px;
+    padding: 5px 10px 5px 8px;
     margin-right: 4px;
     border-radius: 999px;
     border: 1px solid rgba(137, 180, 250, 0.16);
     background-color: rgba(137, 180, 250, 0.08);
+}
+
+.katab-provider-badge-icon {
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.katab-provider-status-icon {
+    icon-size: 18px;
+    padding: 4px;
+}
+
+.katab-provider-menu-icon {
+    icon-size: 15px;
+    padding: 3px;
+    margin-left: 10px;
+}
+
+.katab-provider-badge-icon.katab-provider-icon-ollama {
+    background-color: rgba(34, 197, 94, 0.12);
+    border-color: rgba(134, 239, 172, 0.18);
+}
+
+.katab-provider-badge-icon.katab-provider-icon-unsloth {
+    background-color: rgba(45, 212, 191, 0.14);
+    border-color: rgba(153, 246, 228, 0.18);
+}
+
+.katab-provider-badge-icon.katab-provider-icon-openai {
+    background-color: rgba(16, 185, 129, 0.14);
+    border-color: rgba(110, 231, 183, 0.2);
+}
+
+.katab-provider-badge-icon.katab-provider-icon-anthropic {
+    background-color: rgba(217, 119, 87, 0.14);
+    border-color: rgba(251, 191, 160, 0.18);
 }
 
 .katab-provider-status-box.katab-provider-status-online {
@@ -151,6 +188,7 @@
 
 .katab-provider-status-label {
     font-size: 8.8pt;
+    font-weight: 600;
     color: #bac2de;
 }
 
@@ -169,12 +207,13 @@
 .katab-provider-status-indicator {
     width: 8px;
     height: 8px;
+    margin-left: 2px;
     border-radius: 99px;
     background-color: #89b4fa;
 }
 
 .katab-provider-menu-status-dot {
-    margin-left: 12px;
+    margin-left: 8px;
 }
 
 .katab-close-btn,

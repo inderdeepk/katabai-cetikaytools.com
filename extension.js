@@ -40,12 +40,19 @@ const PROVIDER_TOOLS = {
     'anthropic': []
 };
 
-const PROVIDER_LABELS = {
-    'ollama': 'Ollama',
-    'unsloth': 'Unsloth Studio',
-    'openai': 'OpenAI',
-    'anthropic': 'Anthropic'
+const PROVIDER_META = {
+    'ollama': { label: 'Ollama', iconFile: 'ollama.svg' },
+    'unsloth': { label: 'Unsloth Studio', iconFile: 'unsloth.png' },
+    'openai': { label: 'OpenAI', iconFile: 'openai.svg' },
+    'anthropic': { label: 'Anthropic', iconFile: 'claude.svg' },
 };
+
+const PROVIDER_LABELS = Object.fromEntries(
+    Object.entries(PROVIDER_META).map(([provider, meta]) => [provider, meta.label])
+);
+
+const PROVIDER_ICON_STYLE_CLASSES = Object.keys(PROVIDER_META)
+    .map(provider => `katab-provider-icon-${provider}`);
 
 const PROVIDER_STATUS = {
     CHECKING: 'checking',
@@ -61,7 +68,56 @@ const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
 
 function getProviderLabel(provider) {
-    return PROVIDER_LABELS[provider] || provider;
+    return PROVIDER_META[provider]?.label || provider;
+}
+
+function getProviderIconPath(extensionPath, provider) {
+    let iconFile = PROVIDER_META[provider]?.iconFile;
+    if (!iconFile) {
+        return null;
+    }
+
+    return `${extensionPath}/icons/${iconFile}`;
+}
+
+function syncProviderIconClasses(actor, provider) {
+    if (!actor) {
+        return;
+    }
+
+    for (let className of PROVIDER_ICON_STYLE_CLASSES) {
+        actor.remove_style_class_name(className);
+    }
+
+    if (provider && PROVIDER_META[provider]) {
+        actor.add_style_class_name(`katab-provider-icon-${provider}`);
+    }
+}
+
+function setProviderIcon(actor, provider, extensionPath, fallbackIconName = 'applications-science-symbolic') {
+    if (!actor) {
+        return;
+    }
+
+    syncProviderIconClasses(actor, provider);
+
+    let iconPath = getProviderIconPath(extensionPath, provider);
+    if (iconPath) {
+        actor.gicon = Gio.icon_new_for_string(iconPath);
+        return;
+    }
+
+    actor.gicon = null;
+    actor.icon_name = fallbackIconName;
+}
+
+function createProviderIcon(provider, extensionPath, styleClass, fallbackIconName = 'applications-science-symbolic') {
+    let icon = new St.Icon({
+        style_class: styleClass,
+        y_align: Clutter.ActorAlign.CENTER,
+    });
+    setProviderIcon(icon, provider, extensionPath, fallbackIconName);
+    return icon;
 }
 
 function getProviderStatusText(status) {
@@ -622,6 +678,7 @@ class KatabDialog {
             this._currentProvider = this._settings.get_string('provider');
             this._addSystemMessage(`Switched engine to ${getProviderLabel(this._currentProvider)}.`);
             if (this._toolsBox) this._updateToolButtons();
+            setProviderIcon(this._providerStatusIcon, this._currentProvider, this._extension.path);
             if (this._extension.providerHealthMonitor) {
                 this._extension.providerHealthMonitor.refresh({ immediate: true });
             }
@@ -736,6 +793,7 @@ class KatabDialog {
         }
 
         this._providerStatusBox.visible = true;
+        setProviderIcon(this._providerStatusIcon, state.provider, this._extension.path);
         this._providerStatusLabel.set_text(`${state.label} ${getProviderStatusText(state.status)}`);
         syncProviderStatusClasses(this._providerStatusBox, state.status);
         syncProviderStatusClasses(this._providerStatusLabel, state.status);
@@ -822,12 +880,13 @@ class KatabDialog {
             y_align: Clutter.ActorAlign.CENTER,
             visible: false,
         });
-        this._providerStatusDot = new St.Widget({
-            style_class: 'katab-provider-status-indicator',
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.CENTER,
-        });
-        this._providerStatusBox.add_child(this._providerStatusDot);
+
+        this._providerStatusIcon = createProviderIcon(
+            this._currentProvider,
+            this._extension.path,
+            'katab-provider-badge-icon katab-provider-status-icon'
+        );
+        this._providerStatusBox.add_child(this._providerStatusIcon);
 
         this._providerStatusLabel = new St.Label({
             text: '',
@@ -835,6 +894,13 @@ class KatabDialog {
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._providerStatusBox.add_child(this._providerStatusLabel);
+
+        this._providerStatusDot = new St.Widget({
+            style_class: 'katab-provider-status-indicator',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._providerStatusBox.add_child(this._providerStatusDot);
         headerBox.add_child(this._providerStatusBox);
 
         let historyBtn = new St.Button({
@@ -2671,20 +2737,28 @@ const Indicator = GObject.registerClass(
             this._providerMenu = new PopupMenu.PopupSubMenuMenuItem('Model Provider');
             this.menu.addMenuItem(this._providerMenu);
             this._providerItems = {};
+            this._providerIcons = {};
             this._providerStatusDots = {};
             const providers = PROVIDER_LABELS;
 
             for (let [key, name] of Object.entries(providers)) {
                 let item = new PopupMenu.PopupMenuItem(name);
+                let providerIcon = createProviderIcon(
+                    key,
+                    this._extension.path,
+                    'popup-menu-icon katab-provider-badge-icon katab-provider-menu-icon'
+                );
                 let statusDot = new St.Widget({
                     style_class: 'katab-provider-status-indicator katab-provider-menu-status-dot',
                     y_align: Clutter.ActorAlign.CENTER,
                 });
+                item.add_child(providerIcon);
                 item.add_child(statusDot);
                 item.connect('activate', () => {
                     this._settings.set_string('provider', key);
                 });
                 this._providerItems[key] = item;
+                this._providerIcons[key] = providerIcon;
                 this._providerStatusDots[key] = statusDot;
                 this._providerMenu.menu.addMenuItem(item);
             }

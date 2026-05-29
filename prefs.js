@@ -8,10 +8,25 @@ export default class KatabPreferences extends ExtensionPreferences {
         window.search_enabled = true;
 
         const settings = this.getSettings('org.gnome.shell.extensions.katabai');
+        const extensionPath = this.path;
+        const iconDirectory = `${extensionPath}/icons`;
+
+        const display = window.get_display();
+        if (display) {
+            const iconTheme = Gtk.IconTheme.get_for_display(display);
+            try {
+                const searchPaths = iconTheme.get_search_path();
+                if (!searchPaths.includes(iconDirectory)) {
+                    iconTheme.add_search_path(iconDirectory);
+                }
+            } catch (_e) {
+                iconTheme.add_search_path(iconDirectory);
+            }
+        }
 
         const page = new Adw.PreferencesPage({
             title: 'General',
-            icon_name: 'dialog-information-symbolic',
+            icon_name: 'katab-logo',
         });
         window.add(page);
 
@@ -114,6 +129,33 @@ export default class KatabPreferences extends ExtensionPreferences {
             { label: 'Custom', value: 'custom' },
         ];
 
+        const providerDetails = {
+            ollama: {
+                label: 'Ollama',
+                pageTitle: 'Ollama',
+                iconFile: 'ollama.svg',
+                description: 'Run local models with a fast desktop-native workflow and deep tuning controls.',
+            },
+            unsloth: {
+                label: 'Unsloth Studio',
+                pageTitle: 'Unsloth',
+                iconFile: 'unsloth.png',
+                description: 'Connect to optimized local Unsloth Studio endpoints for heavier or longer-context jobs.',
+            },
+            openai: {
+                label: 'OpenAI',
+                pageTitle: 'OpenAI',
+                iconFile: 'openai.svg',
+                description: 'Use hosted OpenAI models when you want broad capability and reliable cloud access.',
+            },
+            anthropic: {
+                label: 'Anthropic Claude',
+                pageTitle: 'Claude',
+                iconFile: 'claude.svg',
+                description: 'Use Claude models through Anthropic for careful reasoning, writing, and long-context work.',
+            },
+        };
+
         // General Provider Selection
         const generalGroup = new Adw.PreferencesGroup({
             title: 'AI Provider Settings',
@@ -199,6 +241,97 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             addPreferenceRow(group, row);
             return row;
+        };
+
+        const createProviderImage = (provider, pixelSize = 26) => {
+            const iconFile = providerDetails[provider]?.iconFile;
+            if (!iconFile) {
+                return new Gtk.Image({
+                    icon_name: 'applications-science-symbolic',
+                    pixel_size: pixelSize,
+                    valign: Gtk.Align.CENTER,
+                });
+            }
+
+            return new Gtk.Image({
+                gicon: Gio.icon_new_for_string(`${extensionPath}/icons/${iconFile}`),
+                pixel_size: pixelSize,
+                valign: Gtk.Align.CENTER,
+            });
+        };
+
+        const getProviderThemeIconName = provider => {
+            const iconFile = providerDetails[provider]?.iconFile;
+            if (!iconFile) {
+                return 'applications-science-symbolic';
+            }
+
+            return iconFile.replace(/\.[^.]+$/, '');
+        };
+
+        const createProviderActiveBadge = () => {
+            const badge = new Gtk.Box({
+                orientation: Gtk.Orientation.HORIZONTAL,
+                spacing: 6,
+                valign: Gtk.Align.CENTER,
+            });
+
+            const checkIcon = new Gtk.Image({
+                icon_name: 'object-select-symbolic',
+                valign: Gtk.Align.CENTER,
+            });
+            const badgeLabel = new Gtk.Label({
+                label: 'Active',
+                valign: Gtk.Align.CENTER,
+            });
+            badgeLabel.add_css_class('dim-label');
+
+            badge.append(checkIcon);
+            badge.append(badgeLabel);
+            return badge;
+        };
+
+        const createProviderCardRow = (provider, group, subtitle = null) => {
+            const detail = providerDetails[provider];
+            const row = new Adw.ActionRow({
+                title: detail.label,
+                subtitle: subtitle || detail.description,
+                activatable: true,
+            });
+
+            row.add_prefix(createProviderImage(provider));
+
+            const activeBadge = createProviderActiveBadge();
+            row.add_suffix(activeBadge);
+
+            const syncRowState = () => {
+                activeBadge.visible = settings.get_string('provider') === provider;
+            };
+
+            syncRowState();
+            settings.connect('changed::provider', syncRowState);
+
+            row.connect('activated', () => {
+                settings.set_string('provider', provider);
+            });
+
+            addPreferenceRow(group, row);
+            return row;
+        };
+
+        const createProviderPage = (provider, subtitle = null) => {
+            const detail = providerDetails[provider];
+            const providerPage = new Adw.PreferencesPage({
+                title: detail.pageTitle || detail.label,
+                icon_name: getProviderThemeIconName(provider),
+            });
+            window.add(providerPage);
+
+            const brandGroup = new Adw.PreferencesGroup();
+            createProviderCardRow(provider, brandGroup, subtitle);
+            providerPage.add(brandGroup);
+
+            return providerPage;
         };
 
         const bindChoiceRow = (row, key, choices, getter, setter, formatUnknown = value => `Custom (${value})`) => {
@@ -307,27 +440,16 @@ export default class KatabPreferences extends ExtensionPreferences {
             return syncRowWithSetting(key, row, 'active', settings.get_boolean.bind(settings), settings.set_boolean.bind(settings), 'notify::active');
         };
 
-        const providerRow = createChoiceRow('Model Provider', 'Choose which AI provider Katabai uses', generalGroup);
-        bindChoiceRow(
-            providerRow,
-            'provider',
-            [
-                { label: 'Ollama', value: 'ollama' },
-                { label: 'Unsloth Studio (Local)', value: 'unsloth' },
-                { label: 'OpenAI', value: 'openai' },
-                { label: 'Anthropic', value: 'anthropic' },
-            ],
-            settings.get_string.bind(settings),
-            settings.set_string.bind(settings),
-            value => `Custom (${value})`
-        );
+        createProviderCardRow('ollama', generalGroup);
+        createProviderCardRow('unsloth', generalGroup);
+        createProviderCardRow('openai', generalGroup);
+        createProviderCardRow('anthropic', generalGroup);
 
         // --- Ollama Page ---
-        const ollamaPage = new Adw.PreferencesPage({
-            title: 'Ollama',
-            icon_name: 'network-server-symbolic',
-        });
-        window.add(ollamaPage);
+        const ollamaPage = createProviderPage(
+            'ollama',
+            'Local inference with fine-grained hardware, memory, and sampling controls.'
+        );
 
         const presetGroup = new Adw.PreferencesGroup({
             title: 'Workload Preset',
@@ -572,31 +694,28 @@ export default class KatabPreferences extends ExtensionPreferences {
         ollamaPage.add(generationGroup);
 
         // --- Unsloth Settings ---
-        const unslothGroup = new Adw.PreferencesGroup({
-            title: 'Unsloth Studio Settings',
-        });
+        const unslothPage = createProviderPage('unsloth');
+        const unslothGroup = new Adw.PreferencesGroup({ title: 'Connection & Model' });
         createStringRow('Base URL', null, 'unsloth-url', unslothGroup);
         createStringRow('API Key', null, 'unsloth-api-key', unslothGroup, true);
         createStringRow('Model', null, 'unsloth-model', unslothGroup);
         createIntRow('Context Window Size', null, 'unsloth-num-ctx', unslothGroup, 1024, 1048576, 1024);
-        page.add(unslothGroup);
+        unslothPage.add(unslothGroup);
 
         // --- OpenAI Settings ---
-        const openaiGroup = new Adw.PreferencesGroup({
-            title: 'OpenAI Settings',
-        });
+        const openaiPage = createProviderPage('openai');
+        const openaiGroup = new Adw.PreferencesGroup({ title: 'Connection & Model' });
         createStringRow('Base URL', null, 'openai-url', openaiGroup);
         createStringRow('API Key', null, 'openai-api-key', openaiGroup, true);
         createStringRow('Model', null, 'openai-model', openaiGroup);
-        page.add(openaiGroup);
+        openaiPage.add(openaiGroup);
 
         // --- Anthropic Settings ---
-        const anthropicGroup = new Adw.PreferencesGroup({
-            title: 'Anthropic Settings',
-        });
+        const anthropicPage = createProviderPage('anthropic');
+        const anthropicGroup = new Adw.PreferencesGroup({ title: 'Connection & Model' });
         createStringRow('Base URL', null, 'anthropic-url', anthropicGroup);
         createStringRow('API Key', null, 'anthropic-api-key', anthropicGroup, true);
         createStringRow('Model', null, 'anthropic-model', anthropicGroup);
-        page.add(anthropicGroup);
+        anthropicPage.add(anthropicGroup);
     }
 }
