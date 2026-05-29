@@ -256,6 +256,27 @@
     margin-top: 10px;
 }
 
+.katab-error-box {
+    spacing: 6px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background-color: rgba(243, 139, 168, 0.12);
+    border: 1px solid rgba(243, 139, 168, 0.3);
+}
+
+.katab-error-title {
+    font-size: 8.5pt;
+    font-weight: bold;
+    color: #f38ba8;
+}
+
+.katab-error-details-label {
+    font-size: 8.5pt;
+    color: #f2cdcd;
+    font-family: monospace;
+}
+
 .katab-chat-link-button {
     background-color: rgba(53, 132, 228, 0.12);
     color: #89b4fa;

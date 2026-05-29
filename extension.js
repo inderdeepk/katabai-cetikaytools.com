@@ -35,9 +35,7 @@ const PROVIDER_TOOLS = {
         { label: 'Python', command: '/python', icon: 'applications-development-symbolic', toolName: 'python' },
         { label: 'Terminal', command: '/terminal', icon: 'utilities-terminal-symbolic', toolName: 'terminal' }
     ],
-    'ollama': [
-        { label: 'Calculator', command: '/calc', icon: 'accessories-calculator-symbolic', toolName: 'dummy_calculator' }
-    ],
+    'ollama': [],
     'openai': [],
     'anthropic': []
 };
@@ -122,7 +120,7 @@ class KatabDialog {
 
         this._settings.connect('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
-            this._addSystemMessage(`Switched engine to ${this._currentProvider === 'ollama' ? 'Ollama (Local)' : this._currentProvider === 'unsloth' ? 'Unsloth Studio' : this._currentProvider}.`);
+            this._addSystemMessage(`Switched engine to ${this._currentProvider === 'ollama' ? 'Ollama' : this._currentProvider === 'unsloth' ? 'Unsloth Studio' : this._currentProvider}.`);
             if (this._toolsBox) this._updateToolButtons();
 
             // Re-fetch context size when switching providers
@@ -325,8 +323,8 @@ class KatabDialog {
         headerBox.add_child(settingsBtn);
 
         settingsBtn.connect('clicked', () => {
-            this._extension.openPreferences();
             this.close();
+            this._extension.showPreferences();
         });
 
         let closeBtn = new St.Button({
@@ -491,6 +489,7 @@ class KatabDialog {
     close() {
         if (!this.isOpen) return;
 
+        this._releasePromptFocus();
         this._cancelStream();
         this._saveCurrentConversation();
         this.isOpen = false;
@@ -1051,6 +1050,123 @@ class KatabDialog {
         let rendered = this._buildAssistantMarkup(sourceText, options);
         this._setLabelMarkup(uiElements.contentLabel, rendered.markup, sourceText);
         this._updateLinkActions(uiElements.linkBox, rendered.links);
+
+        if (uiElements.diagnosticBox && uiElements.diagnosticLabel) {
+            const details = options.errorDetails ? String(options.errorDetails).trim() : '';
+            uiElements.diagnosticLabel.set_text(details);
+            uiElements.diagnosticBox.visible = details.length > 0;
+        }
+    }
+
+    _summarizeRequestPayload(payload) {
+        let summary = { ...payload };
+
+        if (Array.isArray(summary.messages)) {
+            summary.messages = `[${summary.messages.length} messages omitted]`;
+        }
+
+        if (Array.isArray(summary.tools)) {
+            summary.tools = `[${summary.tools.length} tools omitted]`;
+        }
+
+        return JSON.stringify(summary, null, 2);
+    }
+
+    _readErrorResponseBody(inputStream, cancellable = null) {
+        if (!inputStream) {
+            return '';
+        }
+
+        const decoder = new TextDecoder('utf-8');
+        const chunks = [];
+        let total = 0;
+
+        try {
+            while (total < 32768) {
+                let bytes = inputStream.read_bytes(4096, cancellable);
+                if (!bytes) {
+                    break;
+                }
+
+                let data = bytes.get_data();
+                if (!data || data.length === 0) {
+                    break;
+                }
+
+                chunks.push(decoder.decode(data));
+                total += data.length;
+
+                if (data.length < 4096) {
+                    break;
+                }
+            }
+        } catch (e) {
+            return `Unable to read response body: ${e.message}`;
+        } finally {
+            try {
+                inputStream.close(null);
+            } catch (_e) {
+            }
+        }
+
+        return chunks.join('').trim();
+    }
+
+    _extractErrorSummary(responseBody) {
+        if (!responseBody) {
+            return '';
+        }
+
+        try {
+            let parsed = JSON.parse(responseBody);
+            if (typeof parsed.error === 'string' && parsed.error.trim()) {
+                return parsed.error.trim();
+            }
+        } catch (_e) {
+        }
+
+        let firstLine = responseBody.split('\n').map(line => line.trim()).find(Boolean);
+        return firstLine || '';
+    }
+
+    _buildRequestDiagnostics({ provider, endpoint, model, payload, statusCode = null, responseBody = '', errorMessage = '' }) {
+        let lines = [
+            `Provider: ${provider}`,
+            `Endpoint: ${endpoint}`,
+            `Model: ${model}`,
+        ];
+
+        if (statusCode !== null) {
+            lines.push(`HTTP Status: ${statusCode}`);
+        }
+
+        if (errorMessage) {
+            lines.push(`Client Error: ${errorMessage}`);
+        }
+
+        lines.push('');
+        lines.push('Request Summary:');
+        lines.push(this._summarizeRequestPayload(payload));
+
+        if (responseBody) {
+            lines.push('');
+            lines.push('Response Body:');
+            lines.push(responseBody);
+        }
+
+        return lines.join('\n').trim();
+    }
+
+    _renderRequestError(uiElements, summary, diagnostics) {
+        this._applyAssistantRender(uiElements, summary, {
+            plain: true,
+            errorDetails: diagnostics,
+        });
+
+        let historyContent = diagnostics ? `${summary}\n\n${diagnostics}` : summary;
+        this._messageHistory.push({ role: 'assistant', content: historyContent });
+        this._saveCurrentConversation();
+        this._scrollToBottom();
     }
 
     _addWelcomeMessage() {
@@ -1175,6 +1291,8 @@ class KatabDialog {
         bubbleBox.add_child(copyBtnRow);
 
         let linkBox = null;
+        let diagnosticBox = null;
+        let diagnosticLabel = null;
         if (!isUser) {
             linkBox = new St.BoxLayout({
                 vertical: true,
@@ -1183,6 +1301,34 @@ class KatabDialog {
                 visible: false,
             });
             bubbleBox.add_child(linkBox);
+
+            diagnosticBox = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-error-box',
+                x_expand: true,
+                visible: false,
+            });
+
+            let diagnosticTitle = new St.Label({
+                text: 'Diagnostic Details',
+                style_class: 'katab-error-title',
+                x_expand: true,
+            });
+            diagnosticBox.add_child(diagnosticTitle);
+
+            diagnosticLabel = new St.Label({
+                text: '',
+                style_class: 'katab-error-details-label',
+                x_expand: true,
+            });
+            diagnosticLabel.clutter_text.line_wrap = true;
+            diagnosticLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            diagnosticLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            diagnosticLabel.clutter_text.single_line_mode = false;
+            diagnosticLabel.clutter_text.can_focus = false;
+            diagnosticBox.add_child(diagnosticLabel);
+
+            bubbleBox.add_child(diagnosticBox);
         }
 
         let spacer = new St.Widget({ x_expand: true });
@@ -1204,7 +1350,7 @@ class KatabDialog {
 
         this._scrollToBottom();
 
-        return { contentLabel, thinkLabel, thinkWrapper, linkBox };
+        return { contentLabel, thinkLabel, thinkWrapper, linkBox, diagnosticBox, diagnosticLabel };
     }
 
     _scrollToBottom() {
@@ -1240,7 +1386,14 @@ class KatabDialog {
         try {
             this._streamResponse(uiElements);
         } catch (e) {
-            this._applyAssistantRender(uiElements, `Error constructing request: ${e.message}`, { plain: true });
+            const diagnostics = this._buildRequestDiagnostics({
+                provider: this._currentProvider,
+                endpoint: 'Not constructed',
+                model: 'Unknown',
+                payload: { reason: 'Request construction failed' },
+                errorMessage: e.message,
+            });
+            this._renderRequestError(uiElements, `Error constructing request: ${e.message}`, diagnostics);
         }
     }
 
@@ -1306,9 +1459,45 @@ class KatabDialog {
             }
             headers['Content-Type'] = 'application/json';
 
-            let numCtx = this._settings.get_int('ollama-num-ctx');
+            const getOpt = (prop, type) => {
+                try {
+                    return this._settings[`get_${type}`](`ollama-${prop}`);
+                } catch (e) { return null; }
+            };
+
+            let options = {
+                temperature: getOpt('temperature', 'double'),
+                num_ctx: getOpt('num-ctx', 'int'),
+                num_predict: getOpt('num-predict', 'int'),
+                num_keep: getOpt('num-keep', 'int'),
+                use_mmap: getOpt('use-mmap', 'boolean'),
+                use_mlock: getOpt('use-mlock', 'boolean'),
+                num_gpu: getOpt('num-gpu', 'int'),
+                num_thread: getOpt('num-thread', 'int'),
+                top_k: getOpt('top-k', 'int'),
+                top_p: getOpt('top-p', 'double'),
+                min_p: getOpt('min-p', 'double'),
+                tfs_z: getOpt('tfs-z', 'double'),
+                typical_p: getOpt('typical-p', 'double'),
+                mirostat: getOpt('mirostat', 'int'),
+                mirostat_tau: getOpt('mirostat-tau', 'double'),
+                mirostat_eta: getOpt('mirostat-eta', 'double'),
+                repeat_last_n: getOpt('repeat-last-n', 'int'),
+                repeat_penalty: getOpt('repeat-penalty', 'double'),
+                presence_penalty: getOpt('presence-penalty', 'double'),
+                frequency_penalty: getOpt('frequency-penalty', 'double')
+            };
+
+            // Remove nulls just in case, though GSettings should provide defaults
+            Object.keys(options).forEach(key => {
+                if (options[key] === null || options[key] === undefined) {
+                    delete options[key];
+                }
+            });
+
             let keepAlive = this._settings.get_string('ollama-keep-alive');
-            let temp = this._settings.get_double('ollama-temperature');
+            let responseFormat = this._settings.get_string('ollama-format');
+            let rawMode = this._settings.get_boolean('ollama-raw');
 
             payload = {
                 model: model,
@@ -1316,33 +1505,15 @@ class KatabDialog {
                 stream: true,
                 keep_alive: keepAlive || "5m",
                 think: true,
-                options: {
-                    temperature: temp,
-                    num_ctx: numCtx
-                },
-                tools: [
-                    {
-                        type: "function",
-                        function: {
-                            name: "dummy_calculator",
-                            description: "Calculates mathematical expressions. Use this tool any time the user asks a math question.",
-                            parameters: {
-                                type: "object",
-                                properties: {
-                                    expression: {
-                                        type: "string",
-                                        description: "The mathematical expression to evaluate"
-                                    }
-                                },
-                                required: ["expression"]
-                            }
-                        }
-                    }
-                ]
+                options: options,
             };
-            if (this._forcedTool) {
-                // Ollama tool choice (some versions/models may ignore it)
-                payload.tool_choice = { type: "function", function: { name: this._forcedTool } };
+
+            if (responseFormat) {
+                payload.format = responseFormat;
+            }
+
+            if (rawMode) {
+                payload.raw = true;
             }
         }
 
@@ -1373,7 +1544,20 @@ class KatabDialog {
                     this._promptOllamaPull(inputStream, model, uiElements);
                     return;
                 } else if (message.status_code !== 200) {
-                    this._applyAssistantRender(uiElements, `Error: HTTP ${message.status_code}`, { plain: true });
+                    const responseBody = this._readErrorResponseBody(inputStream, currentCancellable);
+                    const summaryText = this._extractErrorSummary(responseBody);
+                    const summary = summaryText
+                        ? `Request failed: HTTP ${message.status_code} - ${summaryText}`
+                        : `Request failed: HTTP ${message.status_code}`;
+                    const diagnostics = this._buildRequestDiagnostics({
+                        provider,
+                        endpoint,
+                        model,
+                        payload,
+                        statusCode: message.status_code,
+                        responseBody,
+                    });
+                    this._renderRequestError(uiElements, summary, diagnostics);
                     return;
                 }
 
@@ -1386,7 +1570,14 @@ class KatabDialog {
 
             } catch (e) {
                 if (currentCancellable.is_cancelled()) return;
-                this._applyAssistantRender(uiElements, `Request Failed: ${e.message}`, { plain: true });
+                const diagnostics = this._buildRequestDiagnostics({
+                    provider,
+                    endpoint,
+                    model,
+                    payload,
+                    errorMessage: e.message,
+                });
+                this._renderRequestError(uiElements, `Request Failed: ${e.message}`, diagnostics);
             }
         });
     }
@@ -1516,6 +1707,15 @@ class KatabDialog {
     }
 
     _handleToolCalls(toolCalls, uiElements) {
+        if (this._settings.get_string('provider') === 'ollama') {
+            this._applyAssistantRender(
+                uiElements,
+                'Ollama tool calls were requested, but Katab does not advertise any local Ollama tools. Please retry without tool use or switch to a provider with server-side tools.',
+                { plain: true }
+            );
+            return;
+        }
+
         this._applyAssistantRender(uiElements, 'Executing requested tools...', { plain: true });
 
         // Push the assistant's tool call message
@@ -1528,13 +1728,7 @@ class KatabDialog {
         for (let tc of toolCalls) {
             let result = "";
             try {
-                if (tc.function.name === "dummy_calculator") {
-                    let args = JSON.parse(tc.function.arguments);
-                    // Safe mock eval for demonstration
-                    result = `Calculated result: Evaluated ${args.expression} successfully (mocked).`;
-                } else {
-                    result = `Tool ${tc.function.name} not found.`;
-                }
+                result = `Tool ${tc.function.name} is not implemented locally in Katab.`;
             } catch (e) {
                 result = `Error executing tool: ${e.message}`;
             }
@@ -1743,7 +1937,8 @@ const Indicator = GObject.registerClass(
             let settingsIcon = new St.Icon({ icon_name: 'emblem-system-symbolic', style_class: 'popup-menu-icon' });
             this._settingsMenuItem.insert_child_at_index(settingsIcon, 0);
             this._settingsMenuItem.connect('activate', () => {
-                this._extension.openPreferences();
+                this.menu.close();
+                this._extension.showPreferences();
             });
             this.menu.addMenuItem(this._settingsMenuItem);
 
@@ -1754,7 +1949,7 @@ const Indicator = GObject.registerClass(
             this.menu.addMenuItem(this._providerMenu);
             this._providerItems = {};
             const providers = {
-                'ollama': 'Ollama (Local)',
+                'ollama': 'Ollama',
                 'unsloth': 'Unsloth Studio',
                 'openai': 'OpenAI',
                 'anthropic': 'Anthropic'
@@ -1872,6 +2067,17 @@ export default class KatabExtension extends Extension {
         }
         this._indicator.destroy();
         this._indicator = null;
+    }
+
+    showPreferences() {
+        if (this._dialog && this._dialog.isOpen) {
+            this._dialog.close();
+        }
+
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this.openPreferences();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     toggleDialog() {

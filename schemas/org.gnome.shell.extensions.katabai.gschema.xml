@@ -18,20 +18,115 @@
       <summary>Ollama Model</summary>
       <description>The model to use with Ollama.</description>
     </key>
+    <key name="ollama-preset" type="s">
+      <default>'balanced'</default>
+      <summary>Ollama Workload Preset</summary>
+      <description>Preset profile that adjusts Ollama sampling for common workloads.</description>
+    </key>
     <key name="ollama-num-ctx" type="i">
       <default>4096</default>
       <summary>Context Window Size</summary>
       <description>The context window size for the Ollama model (e.g., 4096, 8192).</description>
+    </key>
+    <key name="ollama-num-predict" type="i">
+      <default>-1</default>
+      <summary>Max Generation Tokens (num_predict)</summary>
+    </key>
+    <key name="ollama-num-keep" type="i">
+      <default>0</default>
+      <summary>Retained System Tokens (num_keep)</summary>
     </key>
     <key name="ollama-keep-alive" type="s">
       <default>'5m'</default>
       <summary>Keep Alive Duration</summary>
       <description>How long to retain the model in VRAM (e.g., '5m', '0' to unload immediately, '-1' for indefinite).</description>
     </key>
+    <key name="ollama-format" type="s">
+      <default>''</default>
+      <summary>Structured Response Format</summary>
+      <description>Optional top-level Ollama format override. Use 'json' to request valid JSON output.</description>
+    </key>
+    <key name="ollama-raw" type="b">
+      <default>false</default>
+      <summary>Raw Prompt Mode</summary>
+      <description>Disables model chat templating when enabled.</description>
+    </key>
+    
+    <!-- Ollama Memory & Hardware -->
+    <key name="ollama-use-mmap" type="b">
+      <default>true</default>
+      <summary>Use Memory Mapping (mmap)</summary>
+    </key>
+    <key name="ollama-use-mlock" type="b">
+      <default>false</default>
+      <summary>Lock in Physical RAM (mlock)</summary>
+    </key>
+    <key name="ollama-num-gpu" type="i">
+      <default>-1</default>
+      <summary>GPU Layers to Offload</summary>
+    </key>
+    <key name="ollama-num-thread" type="i">
+      <default>4</default>
+      <summary>CPU Thread Allocation</summary>
+    </key>
+
+    <!-- Ollama Statistical Sampling -->
     <key name="ollama-temperature" type="d">
       <default>0.7</default>
       <summary>Temperature</summary>
       <description>The temperature for model generation (e.g., 0.7 for balance, 0.0 for deterministic).</description>
+    </key>
+    <key name="ollama-top-k" type="i">
+      <default>40</default>
+      <summary>Top-K</summary>
+    </key>
+    <key name="ollama-top-p" type="d">
+      <default>0.9</default>
+      <summary>Top-P (Nucleus Sampling)</summary>
+    </key>
+    <key name="ollama-min-p" type="d">
+      <default>0.05</default>
+      <summary>Min-P</summary>
+    </key>
+    <key name="ollama-tfs-z" type="d">
+      <default>1.0</default>
+      <summary>Tail Free Sampling</summary>
+    </key>
+    <key name="ollama-typical-p" type="d">
+      <default>1.0</default>
+      <summary>Typical-P</summary>
+    </key>
+
+    <!-- Ollama Dynamic Entropy (Mirostat) -->
+    <key name="ollama-mirostat" type="i">
+      <default>0</default>
+      <summary>Mirostat Version</summary>
+    </key>
+    <key name="ollama-mirostat-tau" type="d">
+      <default>5.0</default>
+      <summary>Mirostat Target Entropy (tau)</summary>
+    </key>
+    <key name="ollama-mirostat-eta" type="d">
+      <default>0.1</default>
+      <summary>Mirostat Learning Rate (eta)</summary>
+    </key>
+
+    <!-- Ollama Degeneration and Loop Mitigation -->
+    <key name="ollama-repeat-last-n" type="i">
+      <default>64</default>
+      <summary>Lookback Window size</summary>
+    </key>
+    <key name="ollama-repeat-penalty" type="d">
+      <default>1.1</default>
+      <summary>Repeat Penalty (Multiplicative)</summary>
+    </key>
+    <key name="ollama-presence-penalty" type="d">
+      <default>0.0</default>
+      <summary>Presence Penalty (Subtractive Boolean)</summary>
+    </key>
+    <key name="ollama-frequency-penalty" type="d">
+      <default>0.0</default>
+      <summary>Frequency Penalty (Subtractive Scaling)</summary>
     </key>
 
     <!-- Unsloth Settings -->
