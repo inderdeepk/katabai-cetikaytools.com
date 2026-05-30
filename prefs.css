@@ -1,0 +1,136 @@
+@define-color katab_surface #171010;
+@define-color katab_panel #362222;
+@define-color katab_card #423F3E;
+@define-color katab_border #2B2B2B;
+@define-color katab_text #F2E8E5;
+
+window.katab-prefs-window,
+window.katab-prefs-window>contents {
+    background-image: linear-gradient(to bottom, rgba(54, 34, 34, 0.96), rgba(43, 43, 43, 0.98));
+    background-color: @katab_border;
+    color: @katab_text;
+}
+
+window.katab-prefs-window headerbar {
+    background-image: none;
+    background-color: rgba(23, 16, 16, 0.96);
+    color: @katab_text;
+    border-bottom: 1px solid rgba(242, 232, 229, 0.08);
+    box-shadow: none;
+}
+
+window.katab-prefs-window preferencespage,
+window.katab-prefs-window preferencesgroup,
+window.katab-prefs-window .navigation-sidebar,
+.katab-prefs-page,
+.katab-prefs-group {
+    background-color: transparent;
+    color: @katab_text;
+}
+
+.katab-prefs-window label,
+.katab-prefs-page label,
+.katab-prefs-group label,
+.katab-prefs-row label {
+    color: @katab_text;
+}
+
+.katab-prefs-window .dim-label,
+.katab-prefs-row .subtitle,
+.katab-prefs-row .caption {
+    color: rgba(242, 232, 229, 0.7);
+}
+
+.katab-prefs-row {
+    background-color: rgba(66, 63, 62, 0.34);
+    border: 1px solid rgba(242, 232, 229, 0.08);
+    border-radius: 8px;
+    color: @katab_text;
+    box-shadow: none;
+}
+
+.katab-prefs-row:hover {
+    background-color: rgba(66, 63, 62, 0.46);
+}
+
+.katab-prefs-provider-row,
+.katab-prefs-expander {
+    background-color: rgba(54, 34, 34, 0.58);
+}
+
+.katab-prefs-provider-image {
+    padding: 8px;
+    border-radius: 8px;
+    background-color: rgba(23, 16, 16, 0.84);
+    border: 1px solid rgba(242, 232, 229, 0.08);
+}
+
+.katab-prefs-provider-badge {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background-color: rgba(23, 16, 16, 0.88);
+    border: 1px solid rgba(242, 232, 229, 0.1);
+}
+
+.katab-prefs-provider-badge-icon,
+.katab-prefs-provider-badge-label {
+    color: @katab_text;
+}
+
+window.katab-prefs-window entry,
+window.katab-prefs-window searchentry,
+.katab-prefs-entry,
+.katab-prefs-spin-row spinbutton,
+.katab-prefs-button {
+    background-image: none;
+    background-color: rgba(23, 16, 16, 0.92);
+    color: @katab_text;
+    border: 1px solid rgba(242, 232, 229, 0.12);
+    border-radius: 6px;
+    box-shadow: none;
+}
+
+.katab-prefs-spin-row spinbutton entry,
+.katab-prefs-spin-row spinbutton button {
+    background-image: none;
+    background-color: transparent;
+    color: @katab_text;
+    border: none;
+    box-shadow: none;
+}
+
+window.katab-prefs-window entry:focus,
+window.katab-prefs-window searchentry:focus,
+.katab-prefs-entry:focus,
+.katab-prefs-spin-row spinbutton:focus,
+.katab-prefs-button:focus {
+    border-color: rgba(242, 232, 229, 0.24);
+    box-shadow: 0 0 0 2px rgba(242, 232, 229, 0.08);
+}
+
+.katab-prefs-button:hover,
+window.katab-prefs-window button:hover {
+    background-color: rgba(66, 63, 62, 0.8);
+}
+
+.katab-prefs-shortcut-button,
+.katab-prefs-clear-button {
+    min-height: 34px;
+}
+
+window.katab-prefs-window switch {
+    background-color: rgba(43, 43, 43, 0.92);
+    border: 1px solid rgba(242, 232, 229, 0.12);
+}
+
+window.katab-prefs-window switch:checked {
+    background-color: rgba(66, 63, 62, 0.95);
+}
+
+window.katab-prefs-window switch slider {
+    background-color: @katab_text;
+}
+
+window.katab-prefs-window separator {
+    background-color: rgba(242, 232, 229, 0.08);
+}

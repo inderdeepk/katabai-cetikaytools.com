@@ -7,6 +7,7 @@ import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         window.search_enabled = true;
+        window.add_css_class('katab-prefs-window');
 
         const settings = this.getSettings('org.gnome.shell.extensions.katabai');
         const extensionPath = this.path;
@@ -23,9 +24,51 @@ export default class KatabPreferences extends ExtensionPreferences {
             } catch (_e) {
                 iconTheme.add_search_path(iconDirectory);
             }
+
+            if (!this._prefsCssLoaded) {
+                const cssProvider = new Gtk.CssProvider();
+                cssProvider.load_from_path(`${extensionPath}/prefs.css`);
+                Gtk.StyleContext.add_provider_for_display(
+                    display,
+                    cssProvider,
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                );
+                this._prefsCssLoaded = true;
+            }
         }
 
-        const page = new Adw.PreferencesPage({
+        const addCssClasses = (widget, ...cssClasses) => {
+            for (const cssClass of cssClasses) {
+                if (cssClass) {
+                    widget.add_css_class(cssClass);
+                }
+            }
+
+            return widget;
+        };
+
+        const createPreferencesPage = params => addCssClasses(
+            new Adw.PreferencesPage(params),
+            'katab-prefs-page'
+        );
+
+        const createPreferencesGroup = params => addCssClasses(
+            new Adw.PreferencesGroup(params),
+            'katab-prefs-group'
+        );
+
+        const stylePreferenceRow = (row, ...cssClasses) => addCssClasses(
+            row,
+            'katab-prefs-row',
+            ...cssClasses
+        );
+
+        const createExpanderRow = params => stylePreferenceRow(
+            new Adw.ExpanderRow(params),
+            'katab-prefs-expander'
+        );
+
+        const page = createPreferencesPage({
             title: 'General',
             icon_name: 'katab-logo',
         });
@@ -158,12 +201,12 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         // General Provider Selection
-        const generalGroup = new Adw.PreferencesGroup({
+        const generalGroup = createPreferencesGroup({
             title: 'AI Provider Settings',
         });
         page.add(generalGroup);
 
-        const accessibilityGroup = new Adw.PreferencesGroup({
+        const accessibilityGroup = createPreferencesGroup({
             title: 'Accessibility',
         });
         page.add(accessibilityGroup);
@@ -332,10 +375,10 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const createChoiceRow = (title, subtitle, group) => {
-            const row = new Adw.ComboRow({
+            const row = stylePreferenceRow(new Adw.ComboRow({
                 title,
                 ...(subtitle && { subtitle }),
-            });
+            }), 'katab-prefs-choice-row');
 
             addPreferenceRow(group, row);
             return row;
@@ -344,18 +387,18 @@ export default class KatabPreferences extends ExtensionPreferences {
         const createProviderImage = (provider, pixelSize = 26) => {
             const iconFile = providerDetails[provider]?.iconFile;
             if (!iconFile) {
-                return new Gtk.Image({
+                return addCssClasses(new Gtk.Image({
                     icon_name: 'applications-science-symbolic',
                     pixel_size: pixelSize,
                     valign: Gtk.Align.CENTER,
-                });
+                }), 'katab-prefs-provider-image');
             }
 
-            return new Gtk.Image({
+            return addCssClasses(new Gtk.Image({
                 gicon: Gio.icon_new_for_string(`${extensionPath}/icons/${iconFile}`),
                 pixel_size: pixelSize,
                 valign: Gtk.Align.CENTER,
-            });
+            }), 'katab-prefs-provider-image');
         };
 
         const getProviderThemeIconName = provider => {
@@ -368,20 +411,20 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const createProviderActiveBadge = () => {
-            const badge = new Gtk.Box({
+            const badge = addCssClasses(new Gtk.Box({
                 orientation: Gtk.Orientation.HORIZONTAL,
                 spacing: 6,
                 valign: Gtk.Align.CENTER,
-            });
+            }), 'katab-prefs-provider-badge');
 
-            const checkIcon = new Gtk.Image({
+            const checkIcon = addCssClasses(new Gtk.Image({
                 icon_name: 'object-select-symbolic',
                 valign: Gtk.Align.CENTER,
-            });
-            const badgeLabel = new Gtk.Label({
+            }), 'katab-prefs-provider-badge-icon');
+            const badgeLabel = addCssClasses(new Gtk.Label({
                 label: 'Active',
                 valign: Gtk.Align.CENTER,
-            });
+            }), 'katab-prefs-provider-badge-label');
             badgeLabel.add_css_class('dim-label');
 
             badge.append(checkIcon);
@@ -391,11 +434,11 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const createProviderCardRow = (provider, group, subtitle = null) => {
             const detail = providerDetails[provider];
-            const row = new Adw.ActionRow({
+            const row = stylePreferenceRow(new Adw.ActionRow({
                 title: detail.label,
                 subtitle: subtitle || detail.description,
                 activatable: true,
-            });
+            }), 'katab-prefs-provider-row');
 
             row.add_prefix(createProviderImage(provider));
 
@@ -419,13 +462,13 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const createProviderPage = (provider, subtitle = null) => {
             const detail = providerDetails[provider];
-            const providerPage = new Adw.PreferencesPage({
+            const providerPage = createPreferencesPage({
                 title: detail.pageTitle || detail.label,
                 icon_name: getProviderThemeIconName(provider),
             });
             window.add(providerPage);
 
-            const brandGroup = new Adw.PreferencesGroup();
+            const brandGroup = createPreferencesGroup();
             createProviderCardRow(provider, brandGroup, subtitle);
             providerPage.add(brandGroup);
 
@@ -472,18 +515,18 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         // Helper to create string input rows binding to GSettings
         const createStringRow = (title, subtitle, key, group, isPassword = false) => {
-            const row = new Adw.ActionRow({
+            const row = stylePreferenceRow(new Adw.ActionRow({
                 title,
                 ...(subtitle && { subtitle }),
-            });
+            }), 'katab-prefs-input-row');
 
-            const entry = new Gtk.Entry({
+            const entry = addCssClasses(new Gtk.Entry({
                 hexpand: true,
                 valign: Gtk.Align.CENTER,
                 visibility: !isPassword,
                 input_purpose: isPassword ? Gtk.InputPurpose.PASSWORD : Gtk.InputPurpose.FREE_FORM,
                 width_chars: 24,
-            });
+            }), 'katab-prefs-entry');
 
             row.add_suffix(entry);
             row.activatable_widget = entry;
@@ -494,7 +537,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const createIntRow = (title, subtitle, key, group, min, max, step) => {
-            const row = new Adw.SpinRow({
+            const row = stylePreferenceRow(new Adw.SpinRow({
                 title,
                 ...(subtitle && { subtitle }),
                 adjustment: new Gtk.Adjustment({
@@ -504,14 +547,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                     page_increment: Math.max(step, step * 4),
                 }),
                 numeric: true,
-            });
+            }), 'katab-prefs-spin-row');
 
             addPreferenceRow(group, row);
             return syncRowWithSetting(key, row, 'value', settings.get_int.bind(settings), settings.set_int.bind(settings), 'notify::value', value => Math.round(value));
         };
 
         const createDoubleRow = (title, subtitle, key, group, min, max, step, digits = 2) => {
-            const row = new Adw.SpinRow({
+            const row = stylePreferenceRow(new Adw.SpinRow({
                 title,
                 ...(subtitle && { subtitle }),
                 adjustment: new Gtk.Adjustment({
@@ -522,38 +565,38 @@ export default class KatabPreferences extends ExtensionPreferences {
                 }),
                 numeric: true,
                 digits,
-            });
+            }), 'katab-prefs-spin-row');
 
             addPreferenceRow(group, row);
             return syncRowWithSetting(key, row, 'value', settings.get_double.bind(settings), settings.set_double.bind(settings), 'notify::value');
         };
 
         const createBooleanRow = (title, subtitle, key, group) => {
-            const row = new Adw.SwitchRow({
+            const row = stylePreferenceRow(new Adw.SwitchRow({
                 title,
                 ...(subtitle && { subtitle }),
-            });
+            }), 'katab-prefs-switch-row');
 
             addPreferenceRow(group, row);
             return syncRowWithSetting(key, row, 'active', settings.get_boolean.bind(settings), settings.set_boolean.bind(settings), 'notify::active');
         };
 
         const createShortcutRow = (title, subtitle, key, group) => {
-            const row = new Adw.ActionRow({
+            const row = stylePreferenceRow(new Adw.ActionRow({
                 title,
                 ...(subtitle && { subtitle }),
-            });
+            }), 'katab-prefs-shortcut-row');
 
-            const buttonBox = new Gtk.Box({
+            const buttonBox = addCssClasses(new Gtk.Box({
                 orientation: Gtk.Orientation.HORIZONTAL,
                 spacing: 6,
                 valign: Gtk.Align.CENTER,
-            });
+            }), 'katab-prefs-button-box');
 
-            const shortcutButton = new Gtk.Button({
+            const shortcutButton = addCssClasses(new Gtk.Button({
                 label: formatShortcutValue(settings.get_strv(key)),
                 valign: Gtk.Align.CENTER,
-            });
+            }), 'katab-prefs-button', 'katab-prefs-shortcut-button');
             shortcutButton.connect('clicked', () => {
                 shortcutCaptureState.active = true;
                 shortcutCaptureState.button = shortcutButton;
@@ -561,11 +604,11 @@ export default class KatabPreferences extends ExtensionPreferences {
             });
             buttonBox.append(shortcutButton);
 
-            const clearButton = new Gtk.Button({
+            const clearButton = addCssClasses(new Gtk.Button({
                 icon_name: 'edit-clear-symbolic',
                 valign: Gtk.Align.CENTER,
                 tooltip_text: 'Clear shortcut',
-            });
+            }), 'katab-prefs-button', 'katab-prefs-clear-button');
             clearButton.connect('clicked', () => {
                 settings.set_strv(key, []);
                 stopShortcutCapture();
@@ -605,7 +648,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Local inference with fine-grained hardware, memory, and sampling controls.'
         );
 
-        const presetGroup = new Adw.PreferencesGroup({
+        const presetGroup = createPreferencesGroup({
             title: 'Workload Preset',
             description: 'Start from recommended Ollama settings for the kind of output you want Katab to produce.',
         });
@@ -692,7 +735,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         syncPresetRow();
 
         // Connection & Model
-        const connectionGroup = new Adw.PreferencesGroup({ title: 'Connection & Request Shape' });
+        const connectionGroup = createPreferencesGroup({ title: 'Connection & Request Shape' });
         createStringRow('Base URL', 'The HTTP address where Ollama is hosted.', 'ollama-url', connectionGroup);
         createStringRow('Model', 'The exact Ollama model tag to load for this provider.', 'ollama-model', connectionGroup);
 
@@ -721,7 +764,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         );
         createStringRow('Keep Alive', 'How long to keep the model loaded between requests, such as 5m, 0, or -1.', 'ollama-keep-alive', connectionGroup);
 
-        const contextGroup = new Adw.PreferencesGroup({ title: 'Context Limits' });
+        const contextGroup = createPreferencesGroup({ title: 'Context Limits' });
         const ctxRow = createChoiceRow(
             'Context Window Size',
             'Choose a standard context size. If a custom value is already saved, it stays visible instead of snapping back to 4096.',
@@ -768,7 +811,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         ollamaPage.add(contextGroup);
 
         // Hardware & Memory
-        const hardwareExpander = new Adw.ExpanderRow({
+        const hardwareExpander = createExpanderRow({
             title: 'Advanced Hardware Settings',
             subtitle: 'Control how aggressively Ollama uses RAM, CPU, and GPU resources.',
         });
@@ -776,19 +819,19 @@ export default class KatabPreferences extends ExtensionPreferences {
         createBooleanRow('Use MLOCK', 'Lock model pages in RAM to avoid swap latency. Leave this off unless you are certain your system has headroom.', 'ollama-use-mlock', hardwareExpander);
         createIntRow('GPU Layers', 'Number of transformer layers to offload to the GPU. Use -1 for all layers or 0 for CPU-only runs.', 'ollama-num-gpu', hardwareExpander, -1, 500, 1);
         createIntRow('CPU Threads', 'Worker threads for inference. Staying near your physical core count usually gives the best latency.', 'ollama-num-thread', hardwareExpander, 1, 128, 1);
-        const hardwareGroup = new Adw.PreferencesGroup();
+        const hardwareGroup = createPreferencesGroup();
         hardwareGroup.add(hardwareExpander);
         ollamaPage.add(hardwareGroup);
 
         // Generation Options
-        const generationGroup = new Adw.PreferencesGroup({ title: 'Model Behavior & Sampling' });
+        const generationGroup = createPreferencesGroup({ title: 'Model Behavior & Sampling' });
 
         const tempRow = createDoubleRow('Temperature', 'Controls randomness. Lower values stay focused and predictable; higher values explore more unusual tokens.', 'ollama-temperature', generationGroup, 0.0, 2.0, 0.05, 2);
         const topKRow = createIntRow('Top-K', 'Keep only the K most likely next tokens before sampling. Lower values are stricter.', 'ollama-top-k', generationGroup, 0, 150, 1);
         const topPRow = createDoubleRow('Top-P', 'Nucleus sampling. Keeps the smallest token set whose combined probability reaches this value.', 'ollama-top-p', generationGroup, 0.0, 1.0, 0.05, 2);
         const minPRow = createDoubleRow('Min-P', 'Alternative to Top-P. Filters out tokens that fall too far below the most likely option.', 'ollama-min-p', generationGroup, 0.0, 1.0, 0.01, 2);
 
-        const mirostatExpander = new Adw.ExpanderRow({
+        const mirostatExpander = createExpanderRow({
             title: 'Dynamic Entropy (Mirostat)',
             subtitle: 'Let Ollama adjust sampling on the fly to keep responses near a target creativity level.',
         });
@@ -827,7 +870,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         syncMirostatState();
         generationGroup.add(mirostatExpander);
 
-        const advancedSamplingExpander = new Adw.ExpanderRow({
+        const advancedSamplingExpander = createExpanderRow({
             title: 'Advanced Statistical Sampling',
             subtitle: 'Extra distribution-shaping controls for power users.',
         });
@@ -835,7 +878,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         createDoubleRow('Typical-P', 'Biases generation toward tokens with typical information content so output stays natural instead of too flat or too erratic.', 'ollama-typical-p', advancedSamplingExpander, 0.0, 1.0, 0.05, 2);
         generationGroup.add(advancedSamplingExpander);
 
-        const loopMitigationExpander = new Adw.ExpanderRow({
+        const loopMitigationExpander = createExpanderRow({
             title: 'Degeneration and Loop Mitigation',
             subtitle: 'Penalize repetition when the model starts circling the same words or phrases.',
         });
@@ -849,7 +892,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         // --- Unsloth Settings ---
         const unslothPage = createProviderPage('unsloth');
-        const unslothGroup = new Adw.PreferencesGroup({ title: 'Connection & Model' });
+        const unslothGroup = createPreferencesGroup({ title: 'Connection & Model' });
         createStringRow('Base URL', null, 'unsloth-url', unslothGroup);
         createStringRow('API Key', null, 'unsloth-api-key', unslothGroup, true);
         createStringRow('Model', null, 'unsloth-model', unslothGroup);
@@ -858,7 +901,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         // --- OpenAI Settings ---
         const openaiPage = createProviderPage('openai');
-        const openaiGroup = new Adw.PreferencesGroup({ title: 'Connection & Model' });
+        const openaiGroup = createPreferencesGroup({ title: 'Connection & Model' });
         createStringRow('Base URL', null, 'openai-url', openaiGroup);
         createStringRow('API Key', null, 'openai-api-key', openaiGroup, true);
         createStringRow('Model', null, 'openai-model', openaiGroup);
@@ -866,7 +909,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         // --- Anthropic Settings ---
         const anthropicPage = createProviderPage('anthropic');
-        const anthropicGroup = new Adw.PreferencesGroup({ title: 'Connection & Model' });
+        const anthropicGroup = createPreferencesGroup({ title: 'Connection & Model' });
         createStringRow('Base URL', null, 'anthropic-url', anthropicGroup);
         createStringRow('API Key', null, 'anthropic-api-key', anthropicGroup, true);
         createStringRow('Model', null, 'anthropic-model', anthropicGroup);

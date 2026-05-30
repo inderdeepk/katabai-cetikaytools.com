@@ -705,6 +705,15 @@ class KatabDialog {
         this._currentUsage = 0;
         this._draftUsage = 0;
         this._tokenUpdateTimeout = 0;
+        this._hasConversationStarted = false;
+        this._welcomePanel = null;
+        this._welcomeStage = null;
+        this._messageList = null;
+        this._welcomeAura = null;
+        this._welcomePageActors = [];
+        this._welcomeDustActors = [];
+        this._welcomeAnimationLoopId = 0;
+        this._welcomeAnimationSourceIds = [];
 
         this.actor = new St.Widget({
             style_class: 'katab-shell-overlay',
@@ -1128,6 +1137,16 @@ class KatabDialog {
         });
         this._chatScroll.add_child(this._chatContainer);
 
+        this._welcomePanel = this._buildWelcomePanel();
+        this._chatContainer.add_child(this._welcomePanel);
+
+        this._messageList = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-chat-message-list',
+            x_expand: true,
+        });
+        this._chatContainer.add_child(this._messageList);
+
         // History view (hidden by default)
         this._historyView = new St.ScrollView({
             style_class: 'katab-history-view',
@@ -1182,7 +1201,7 @@ class KatabDialog {
         footerBox.add_child(this._tokenBox);
 
         this._entry = new St.Entry({
-            hint_text: 'Ask Katab (Punjabi book of knowledge)...',
+            hint_text: 'Ask anything...',
             style_class: 'katab-prompt-entry',
             can_focus: true,
             x_expand: true,
@@ -1245,6 +1264,304 @@ class KatabDialog {
         this._updateToolButtons();
     }
 
+    _buildWelcomePanel() {
+        let panel = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-welcome-panel',
+            x_expand: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._welcomeStage = new St.Widget({
+            style_class: 'katab-welcome-stage',
+            layout_manager: new Clutter.BinLayout(),
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._welcomeStage.set_size(280, 200);
+        panel.add_child(this._welcomeStage);
+
+        let scene = new St.Widget({
+            style_class: 'katab-welcome-scene',
+            layout_manager: new Clutter.FixedLayout(),
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        scene.set_size(280, 200);
+        this._welcomeStage.add_child(scene);
+
+        this._welcomeAura = new St.Widget({
+            style_class: 'katab-welcome-aura',
+            opacity: 120,
+        });
+        this._welcomeAura.set_size(184, 86);
+        this._welcomeAura.set_position(48, 92);
+        scene.add_child(this._welcomeAura);
+
+        let shadow = new St.Widget({
+            style_class: 'katab-welcome-book-shadow',
+        });
+        shadow.set_size(172, 18);
+        shadow.set_position(54, 146);
+        scene.add_child(shadow);
+
+        let book = new St.Widget({
+            style_class: 'katab-welcome-book',
+            layout_manager: new Clutter.FixedLayout(),
+        });
+        book.set_size(172, 110);
+        book.set_position(54, 52);
+        scene.add_child(book);
+
+        let leftCover = new St.Widget({
+            style_class: 'katab-welcome-cover katab-welcome-cover-left',
+        });
+        leftCover.set_size(79, 96);
+        leftCover.set_position(8, 8);
+        book.add_child(leftCover);
+
+        let rightCover = new St.Widget({
+            style_class: 'katab-welcome-cover katab-welcome-cover-right',
+        });
+        rightCover.set_size(79, 96);
+        rightCover.set_position(86, 8);
+        book.add_child(rightCover);
+
+        let leftPaper = new St.Widget({
+            style_class: 'katab-welcome-paper katab-welcome-paper-left',
+        });
+        leftPaper.set_size(64, 82);
+        leftPaper.set_position(16, 15);
+        book.add_child(leftPaper);
+
+        let rightPaper = new St.Widget({
+            style_class: 'katab-welcome-paper katab-welcome-paper-right',
+        });
+        rightPaper.set_size(62, 80);
+        rightPaper.set_position(96, 16);
+        book.add_child(rightPaper);
+
+        let spine = new St.Widget({
+            style_class: 'katab-welcome-spine',
+        });
+        spine.set_size(8, 96);
+        spine.set_position(82, 8);
+        book.add_child(spine);
+
+        let backPage = new St.Widget({
+            style_class: 'katab-welcome-flip-page katab-welcome-flip-page-secondary',
+            opacity: 170,
+        });
+        backPage.set_size(68, 84);
+        backPage.set_position(90, 13);
+        backPage.set_pivot_point(0.04, 0.5);
+        book.add_child(backPage);
+
+        let frontPage = new St.Widget({
+            style_class: 'katab-welcome-flip-page katab-welcome-flip-page-primary',
+            opacity: 235,
+        });
+        frontPage.set_size(72, 88);
+        frontPage.set_position(88, 11);
+        frontPage.set_pivot_point(0.04, 0.5);
+        book.add_child(frontPage);
+
+        this._welcomePageActors = [backPage, frontPage];
+
+        let dustLayer = new St.Widget({
+            style_class: 'katab-welcome-dust-layer',
+            layout_manager: new Clutter.FixedLayout(),
+        });
+        dustLayer.set_size(280, 200);
+        scene.add_child(dustLayer);
+
+        const dustSpecs = [
+            { x: 94, y: 122, size: 8, driftX: -18, driftY: -74, delay: 40, duration: 1120, peakOpacity: 180, scale: 1.22 },
+            { x: 112, y: 128, size: 5, driftX: -8, driftY: -92, delay: 180, duration: 1260, peakOpacity: 150, scale: 1.28 },
+            { x: 126, y: 124, size: 7, driftX: 6, driftY: -86, delay: 320, duration: 1180, peakOpacity: 168, scale: 1.24 },
+            { x: 138, y: 130, size: 5, driftX: 14, driftY: -96, delay: 460, duration: 1320, peakOpacity: 142, scale: 1.3 },
+            { x: 152, y: 126, size: 6, driftX: 22, driftY: -76, delay: 620, duration: 1080, peakOpacity: 154, scale: 1.18 },
+            { x: 118, y: 138, size: 4, driftX: -24, driftY: -66, delay: 780, duration: 980, peakOpacity: 132, scale: 1.16 },
+            { x: 142, y: 140, size: 4, driftX: 20, driftY: -70, delay: 930, duration: 1020, peakOpacity: 128, scale: 1.18 },
+            { x: 130, y: 118, size: 9, driftX: 0, driftY: -98, delay: 1080, duration: 1380, peakOpacity: 176, scale: 1.34 },
+        ];
+
+        this._welcomeDustActors = dustSpecs.map(spec => {
+            let dust = new St.Widget({
+                style_class: 'katab-welcome-dust',
+                opacity: 0,
+            });
+            dust.set_size(spec.size, spec.size);
+            dust.set_position(spec.x, spec.y);
+            dustLayer.add_child(dust);
+            return { actor: dust, ...spec };
+        });
+
+        let caption = new St.Label({
+            text: 'Open a page. Ask anything.',
+            style_class: 'katab-welcome-caption',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        caption.clutter_text.line_wrap = true;
+        caption.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        caption.clutter_text.single_line_mode = false;
+        caption.clutter_text.can_focus = false;
+        panel.add_child(caption);
+
+        return panel;
+    }
+
+    _setWelcomeVisible(visible) {
+        if (!this._welcomePanel) {
+            return;
+        }
+
+        this._welcomePanel.visible = visible;
+
+        if (visible && this.isOpen && this._chatScroll?.visible) {
+            this._startWelcomeAnimation();
+        } else {
+            this._stopWelcomeAnimation();
+        }
+    }
+
+    _scheduleWelcomeCallback(delayMs, callback) {
+        let sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+            this._welcomeAnimationSourceIds = this._welcomeAnimationSourceIds.filter(id => id !== sourceId);
+
+            if (this._welcomePanel?.visible && this.isOpen && this._chatScroll?.visible) {
+                callback();
+            }
+
+            return GLib.SOURCE_REMOVE;
+        });
+
+        this._welcomeAnimationSourceIds.push(sourceId);
+    }
+
+    _resetWelcomeAnimation() {
+        if (this._welcomeAura) {
+            this._welcomeAura.remove_all_transitions();
+            this._welcomeAura.opacity = 120;
+            this._welcomeAura.scale_x = 0.9;
+            this._welcomeAura.scale_y = 0.9;
+        }
+
+        for (let [index, actor] of this._welcomePageActors.entries()) {
+            actor.remove_all_transitions();
+            actor.rotation_angle_y = 0;
+            actor.translation_x = 0;
+            actor.translation_y = 0;
+            actor.scale_x = 1;
+            actor.scale_y = 1;
+            actor.opacity = index === 0 ? 170 : 235;
+        }
+
+        for (let dust of this._welcomeDustActors) {
+            dust.actor.remove_all_transitions();
+            dust.actor.translation_x = 0;
+            dust.actor.translation_y = 0;
+            dust.actor.scale_x = 0.72;
+            dust.actor.scale_y = 0.72;
+            dust.actor.opacity = 0;
+        }
+    }
+
+    _runWelcomeAnimationCycle() {
+        if (!this._welcomePanel?.visible || !this.isOpen || !this._chatScroll?.visible) {
+            return;
+        }
+
+        this._resetWelcomeAnimation();
+
+        if (this._welcomeAura) {
+            this._welcomeAura.ease({
+                duration: 920,
+                opacity: 210,
+                scale_x: 1.08,
+                scale_y: 1.08,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+
+            this._scheduleWelcomeCallback(980, () => {
+                if (!this._welcomeAura) {
+                    return;
+                }
+
+                this._welcomeAura.ease({
+                    duration: 1220,
+                    opacity: 120,
+                    scale_x: 0.9,
+                    scale_y: 0.9,
+                    mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+                });
+            });
+        }
+
+        const pageAnimations = [
+            { actor: this._welcomePageActors[0], delay: 180, duration: 840, translationX: -10, rotation: -156, opacity: 68, scaleY: 1.03 },
+            { actor: this._welcomePageActors[1], delay: 560, duration: 980, translationX: -14, rotation: -176, opacity: 0, scaleY: 1.05 },
+        ];
+
+        for (let animation of pageAnimations) {
+            this._scheduleWelcomeCallback(animation.delay, () => {
+                animation.actor.ease({
+                    duration: animation.duration,
+                    translation_x: animation.translationX,
+                    rotation_angle_y: animation.rotation,
+                    opacity: animation.opacity,
+                    scale_y: animation.scaleY,
+                    mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
+                });
+            });
+        }
+
+        for (let dust of this._welcomeDustActors) {
+            this._scheduleWelcomeCallback(dust.delay, () => {
+                dust.actor.opacity = dust.peakOpacity;
+                dust.actor.ease({
+                    duration: dust.duration,
+                    translation_x: dust.driftX,
+                    translation_y: dust.driftY,
+                    opacity: 0,
+                    scale_x: dust.scale,
+                    scale_y: dust.scale,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                });
+            });
+        }
+    }
+
+    _startWelcomeAnimation() {
+        if (!this._welcomePanel?.visible || !this.isOpen || !this._chatScroll?.visible) {
+            return;
+        }
+
+        if (this._welcomeAnimationLoopId) {
+            return;
+        }
+
+        this._runWelcomeAnimationCycle();
+        this._welcomeAnimationLoopId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2600, () => {
+            this._runWelcomeAnimationCycle();
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopWelcomeAnimation() {
+        if (this._welcomeAnimationLoopId) {
+            GLib.source_remove(this._welcomeAnimationLoopId);
+            this._welcomeAnimationLoopId = 0;
+        }
+
+        for (let sourceId of this._welcomeAnimationSourceIds) {
+            GLib.source_remove(sourceId);
+        }
+        this._welcomeAnimationSourceIds = [];
+
+        this._resetWelcomeAnimation();
+    }
+
     open() {
         if (this.isOpen) return true;
 
@@ -1255,6 +1572,10 @@ class KatabDialog {
         this.actor.show();
 
         this.isOpen = true;
+
+        if (this._welcomePanel?.visible && this._chatScroll?.visible) {
+            this._startWelcomeAnimation();
+        }
 
         this._fetchMaxContext();
         if (this._extension.providerHealthMonitor) {
@@ -1285,6 +1606,7 @@ class KatabDialog {
         if (saveConversation) {
             this._saveCurrentConversation();
         }
+        this._stopWelcomeAnimation();
         this.isOpen = false;
         this.actor.hide();
         if (this.actor.get_parent()) {
@@ -1296,6 +1618,7 @@ class KatabDialog {
     destroy() {
         this.close({ cancelStream: true, saveConversation: true });
         this._disconnectProviderStatus();
+        this._stopWelcomeAnimation();
 
         if (this._monitorChangedId) {
             Main.layoutManager.disconnect(this._monitorChangedId);
@@ -1555,7 +1878,9 @@ class KatabDialog {
         this._cancelStream();
         this._currentConversationId = entry.id;
         this._messageHistory = [...entry.messages];
-        this._chatContainer.destroy_all_children();
+        this._hasConversationStarted = entry.messages.length > 0;
+        this._setWelcomeVisible(!this._hasConversationStarted);
+        this._messageList.destroy_all_children();
         for (let msg of entry.messages) {
             if (msg.role === 'user') {
                 this._addChatMessage('You', msg.content, 'user');
@@ -1573,6 +1898,9 @@ class KatabDialog {
         this._historyView.visible = false;
         this._chatScroll.visible = true;
         this._footerBox.visible = true;
+        if (this._welcomePanel?.visible) {
+            this._startWelcomeAnimation();
+        }
 
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
             if (this.isOpen && this._entry) {
@@ -1583,6 +1911,7 @@ class KatabDialog {
     }
 
     _showHistoryView() {
+        this._stopWelcomeAnimation();
         this._chatScroll.visible = false;
         this._footerBox.visible = false;
         this._historyView.visible = true;
@@ -1689,7 +2018,7 @@ class KatabDialog {
         this._currentUsage = 0;
         this._draftUsage = 0;
         this._renderTokenCounter();
-        this._chatContainer.destroy_all_children();
+        this._messageList.destroy_all_children();
         this._showChatView();
         this._addWelcomeMessage();
         this._notifyCurrentChatChanged();
@@ -2084,11 +2413,8 @@ class KatabDialog {
     }
 
     _addWelcomeMessage() {
-        this._addChatMessage(
-            'Katab Assistant',
-            'Hello! I am Katab, your Punjabi book of knowledge and AI assistant.\n\nI can help you explore ideas, explain concepts, and access local or remote AI models directly from your GNOME desktop.',
-            'assistant'
-        );
+        this._hasConversationStarted = false;
+        this._setWelcomeVisible(true);
     }
 
     _addSystemMessage(text) {
@@ -2101,7 +2427,7 @@ class KatabDialog {
             style_class: 'katab-system-message-text',
         });
         msgBox.add_child(label);
-        this._chatContainer.add_child(msgBox);
+        (this._messageList || this._chatContainer).add_child(msgBox);
         this._scrollToBottom();
     }
 
@@ -2174,11 +2500,14 @@ class KatabDialog {
 
         let copyBtnRow = new St.BoxLayout({
             vertical: false,
+            style_class: 'katab-message-footer-row',
             x_expand: true,
             x_align: isUser ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER,
         });
         let copyBtn = new St.Button({
             style_class: 'katab-copy-btn',
+            y_align: Clutter.ActorAlign.CENTER,
             child: new St.Icon({
                 gicon: Gio.ThemedIcon.new('edit-copy-symbolic'),
                 icon_size: 14,
@@ -2193,7 +2522,8 @@ class KatabDialog {
         let metricsLabel = new St.Label({
             text: '',
             style_class: 'katab-message-token-label',
-            visible: false
+            visible: false,
+            y_align: Clutter.ActorAlign.CENTER,
         });
         copyBtnRow.add_child(metricsLabel);
 
@@ -2258,7 +2588,7 @@ class KatabDialog {
             rowBox.add_child(spacer);
         }
 
-        this._chatContainer.add_child(rowBox);
+        (this._messageList || this._chatContainer).add_child(rowBox);
 
         if (isUser) {
             contentLabel.set_text(text);
@@ -2299,6 +2629,8 @@ class KatabDialog {
         }
 
         this._entry.set_text('');
+        this._hasConversationStarted = true;
+        this._setWelcomeVisible(false);
         this._addChatMessage('You', promptText, 'user');
 
         this._messageHistory.push({ role: 'user', content: promptText });
