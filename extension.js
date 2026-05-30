@@ -1848,7 +1848,7 @@ class KatabDialog {
         return parts.join(' • ');
     }
 
-    _applyAssistantMetrics(label, messageMeta) {
+    _applyAssistantMetrics(label, messageMeta, footerRow = null) {
         if (!label) {
             return;
         }
@@ -1856,6 +1856,10 @@ class KatabDialog {
         let summary = this._formatAssistantMetrics(messageMeta);
         label.set_text(summary);
         label.visible = Boolean(summary);
+
+        if (footerRow) {
+            footerRow.visible = Boolean(footerRow._katabHasReplyCopy) || label.visible;
+        }
     }
 
     _saveCurrentConversation() {
@@ -2169,21 +2173,23 @@ class KatabDialog {
             .join('\n');
     }
 
-    _formatCodeBlock(language, codeText) {
-        let safeLanguage = this._escapeMarkup(String(language ?? '').trim());
-        let safeCode = this._escapeMarkup(String(codeText ?? '').replace(/\t/g, '    ').replace(/\n$/, ''));
-        let header = safeLanguage
-            ? `<span weight="bold" foreground="#89b4fa">${safeLanguage}</span>\n`
-            : '';
-
-        return `<span font_family="monospace" foreground="#f9e2af" background="#11111b">${header}${safeCode}</span>`;
+    _buildCodeBlockSegment(language, codeText) {
+        return {
+            type: 'code',
+            language: String(language ?? '').trim(),
+            code: String(codeText ?? '').replace(/\t/g, '    ').replace(/\n$/, ''),
+        };
     }
 
-    _buildAssistantMarkup(rawText, { final = false, plain = false } = {}) {
+    _buildAssistantRenderModel(rawText, { final = false, plain = false } = {}) {
         let sourceText = String(rawText ?? '');
         if (plain) {
             return {
-                markup: this._renderPlainMarkup(sourceText),
+                segments: [{
+                    type: 'text',
+                    markup: this._renderPlainMarkup(sourceText),
+                    fallbackText: sourceText,
+                }],
                 links: [],
             };
         }
@@ -2197,7 +2203,7 @@ class KatabDialog {
             parseableText = parseableText.slice(0, lastFenceIndex);
         }
 
-        let markupParts = [];
+        let segments = [];
         let links = [];
         let codeBlockRegex = /```([^\n`]*)\n([\s\S]*?)```/g;
         let lastIndex = 0;
@@ -2207,21 +2213,37 @@ class KatabDialog {
             if (match.index > lastIndex) {
                 let extracted = this._extractLinks(parseableText.slice(lastIndex, match.index));
                 links.push(...extracted.links);
-                markupParts.push(this._formatMarkdownTextSegment(extracted.text));
+                if (extracted.text !== '') {
+                    segments.push({
+                        type: 'text',
+                        markup: this._formatMarkdownTextSegment(extracted.text),
+                        fallbackText: extracted.text,
+                    });
+                }
             }
 
-            markupParts.push(this._formatCodeBlock(match[1], match[2]));
+            segments.push(this._buildCodeBlockSegment(match[1], match[2]));
             lastIndex = codeBlockRegex.lastIndex;
         }
 
         if (lastIndex < parseableText.length) {
             let extracted = this._extractLinks(parseableText.slice(lastIndex));
             links.push(...extracted.links);
-            markupParts.push(this._formatMarkdownTextSegment(extracted.text));
+            if (extracted.text !== '') {
+                segments.push({
+                    type: 'text',
+                    markup: this._formatMarkdownTextSegment(extracted.text),
+                    fallbackText: extracted.text,
+                });
+            }
         }
 
         if (trailingPlainText) {
-            markupParts.push(this._renderPlainMarkup(trailingPlainText));
+            segments.push({
+                type: 'text',
+                markup: this._renderPlainMarkup(trailingPlainText),
+                fallbackText: trailingPlainText,
+            });
         }
 
         let uniqueLinks = [];
@@ -2236,9 +2258,108 @@ class KatabDialog {
         }
 
         return {
-            markup: markupParts.join(''),
+            segments,
             links: uniqueLinks,
         };
+    }
+
+    _createAssistantTextLabel(markup, fallbackText) {
+        let label = new St.Label({
+            text: '',
+            style_class: 'katab-chat-content-label',
+            x_expand: true,
+        });
+        label.clutter_text.line_wrap = true;
+        label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        label.clutter_text.single_line_mode = false;
+        label.clutter_text.can_focus = false;
+        this._setLabelMarkup(label, markup, fallbackText);
+        return label;
+    }
+
+    _createCodeBlockWidget(language, codeText) {
+        let codeWindow = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-code-window',
+            x_expand: true,
+        });
+
+        let headerRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-code-window-header',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        let languageLabel = new St.Label({
+            text: language || 'Code',
+            style_class: 'katab-code-window-language',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        headerRow.add_child(languageLabel);
+        headerRow.add_child(new St.Widget({ x_expand: true }));
+
+        let copyBtn = new St.Button({
+            label: 'Copy',
+            style_class: 'katab-code-copy-btn',
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        copyBtn.connect('clicked', () => {
+            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, codeText);
+        });
+        headerRow.add_child(copyBtn);
+        codeWindow.add_child(headerRow);
+
+        let bodyBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-code-window-body',
+            x_expand: true,
+        });
+
+        let codeLabel = new St.Label({
+            text: codeText,
+            style_class: 'katab-code-window-label',
+            x_expand: true,
+        });
+        codeLabel.clutter_text.line_wrap = true;
+        codeLabel.clutter_text.line_wrap_mode = Pango.WrapMode.CHAR;
+        codeLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        codeLabel.clutter_text.single_line_mode = false;
+        codeLabel.clutter_text.can_focus = false;
+        bodyBox.add_child(codeLabel);
+        codeWindow.add_child(bodyBox);
+
+        return codeWindow;
+    }
+
+    _renderAssistantSegments(contentBox, segments) {
+        if (!contentBox) {
+            return;
+        }
+
+        contentBox.destroy_all_children();
+
+        let hasChildren = false;
+        for (let segment of segments) {
+            if (segment.type === 'code') {
+                contentBox.add_child(this._createCodeBlockWidget(segment.language, segment.code));
+                hasChildren = true;
+                continue;
+            }
+
+            if (!segment.markup && !segment.fallbackText) {
+                continue;
+            }
+
+            contentBox.add_child(this._createAssistantTextLabel(segment.markup, segment.fallbackText));
+            hasChildren = true;
+        }
+
+        if (!hasChildren) {
+            contentBox.add_child(this._createAssistantTextLabel('', ''));
+        }
     }
 
     _getLinkButtonLabel(link) {
@@ -2284,13 +2405,16 @@ class KatabDialog {
     }
 
     _applyAssistantRender(uiElements, rawText, options = {}) {
-        if (!uiElements || !uiElements.contentLabel) {
+        if (!uiElements || !uiElements.contentBox) {
             return;
         }
 
         let sourceText = String(rawText ?? '');
-        let rendered = this._buildAssistantMarkup(sourceText, options);
-        this._setLabelMarkup(uiElements.contentLabel, rendered.markup, sourceText);
+        if (uiElements.footerRow) {
+            uiElements.footerRow._katabCopyText = sourceText;
+        }
+        let rendered = this._buildAssistantRenderModel(sourceText, options);
+        this._renderAssistantSegments(uiElements.contentBox, rendered.segments);
         this._updateLinkActions(uiElements.linkBox, rendered.links);
 
         if (uiElements.diagnosticBox && uiElements.diagnosticLabel) {
@@ -2485,6 +2609,13 @@ class KatabDialog {
         thinkWrapper.add_child(thinkLabel);
         bubbleBox.add_child(thinkWrapper);
 
+        let contentBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-chat-content-box',
+            x_expand: true,
+        });
+        bubbleBox.add_child(contentBox);
+
         let contentLabel = new St.Label({
             text: '',
             style_class: 'katab-chat-content-label',
@@ -2495,8 +2626,9 @@ class KatabDialog {
         contentLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         contentLabel.clutter_text.single_line_mode = false;
         contentLabel.clutter_text.can_focus = false;
-
-        bubbleBox.add_child(contentLabel);
+        if (isUser) {
+            contentBox.add_child(contentLabel);
+        }
 
         let copyBtnRow = new St.BoxLayout({
             vertical: false,
@@ -2504,20 +2636,35 @@ class KatabDialog {
             x_expand: true,
             x_align: isUser ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
             y_align: Clutter.ActorAlign.CENTER,
+            visible: isUser,
         });
-        let copyBtn = new St.Button({
-            style_class: 'katab-copy-btn',
-            y_align: Clutter.ActorAlign.CENTER,
-            child: new St.Icon({
-                gicon: Gio.ThemedIcon.new('edit-copy-symbolic'),
-                icon_size: 14,
-            }),
-        });
-        copyBtn.connect('clicked', () => {
-            let txt = contentLabel.get_text();
-            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, txt);
-        });
-        copyBtnRow.add_child(copyBtn);
+        copyBtnRow._katabHasReplyCopy = false;
+        copyBtnRow._katabCopyText = String(text ?? '');
+        if (isUser) {
+            let copyBtn = new St.Button({
+                label: 'Copy message',
+                style_class: 'katab-copy-btn katab-copy-btn-text',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            copyBtn.connect('clicked', () => {
+                let txt = contentLabel.get_text();
+                St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, txt);
+            });
+            copyBtnRow.add_child(copyBtn);
+        } else {
+            let replyCopyBtn = new St.Button({
+                label: 'Copy message',
+                style_class: 'katab-copy-btn katab-copy-btn-text',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            replyCopyBtn.connect('clicked', () => {
+                let txt = copyBtnRow._katabCopyText ?? '';
+                St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, txt);
+            });
+            copyBtnRow._katabHasReplyCopy = true;
+            copyBtnRow.visible = true;
+            copyBtnRow.add_child(replyCopyBtn);
+        }
 
         let metricsLabel = new St.Label({
             text: '',
@@ -2528,7 +2675,7 @@ class KatabDialog {
         copyBtnRow.add_child(metricsLabel);
 
         if (!isUser) {
-            this._applyAssistantMetrics(metricsLabel, messageMeta);
+            this._applyAssistantMetrics(metricsLabel, messageMeta, copyBtnRow);
         }
 
         // Push copy btn to right if user, otherwise keep it left and tokens right
@@ -2593,12 +2740,12 @@ class KatabDialog {
         if (isUser) {
             contentLabel.set_text(text);
         } else {
-            this._applyAssistantRender({ contentLabel, linkBox }, text, { final: true });
+            this._applyAssistantRender({ contentBox, linkBox, diagnosticBox, diagnosticLabel, footerRow: copyBtnRow }, text, { final: true });
         }
 
         this._scrollToBottom();
 
-        return { contentLabel, thinkLabel, thinkWrapper, linkBox, diagnosticBox, diagnosticLabel, metricsLabel };
+        return { contentBox, contentLabel, thinkLabel, thinkWrapper, linkBox, diagnosticBox, diagnosticLabel, metricsLabel, footerRow: copyBtnRow };
     }
 
     _scrollToBottom() {
@@ -2896,7 +3043,7 @@ class KatabDialog {
                                 provider: 'ollama',
                                 metrics,
                             };
-                            this._applyAssistantMetrics(uiElements.metricsLabel, nextAssistantMeta);
+                            this._applyAssistantMetrics(uiElements.metricsLabel, nextAssistantMeta, uiElements.footerRow);
                         }
 
                         if (metrics && metrics.prompt_eval_count !== null && metrics.eval_count !== null) {
@@ -3025,7 +3172,7 @@ class KatabDialog {
         // Need to close stream since we got a 404
         try { inputStream.close(null); } catch (e) { }
 
-        let { contentLabel } = uiElements;
+        let { contentBox } = uiElements;
         this._applyAssistantRender(uiElements, `Model '${model}' not found locally.\n\nDo you want to download it now?`, { plain: true });
 
         // Let's create an interactive prompt inline
@@ -3059,12 +3206,11 @@ class KatabDialog {
         box.add_child(confirmBtn);
         box.add_child(cancelBtn);
 
-        // Find the container parent of contentLabel and push the box there
-        contentLabel.get_parent().add_child(box);
+        contentBox.get_parent().add_child(box);
     }
 
     _pullOllamaModel(model, uiElements) {
-        let { contentLabel } = uiElements;
+        let { contentBox } = uiElements;
         this._applyAssistantRender(uiElements, `Downloading model '${model}'... (0%)`, { plain: true });
 
         let provider = this._settings.get_string('provider');
@@ -3101,7 +3247,7 @@ class KatabDialog {
             this._stopActiveResponse();
             cancelBtn.destroy();
         });
-        contentLabel.get_parent().add_child(cancelBtn);
+        contentBox.get_parent().add_child(cancelBtn);
 
         this._soupSession.send_async(message, GLib.PRIORITY_DEFAULT, currentCancellable, (session, res) => {
             if (currentCancellable.is_cancelled()) {
@@ -3136,7 +3282,6 @@ class KatabDialog {
     _readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn) {
         if (cancellable && cancellable.is_cancelled()) return;
 
-        let { contentLabel } = uiElements;
         dataInputStream.read_line_async(GLib.PRIORITY_DEFAULT, cancellable, (stream, res) => {
             if (cancellable && cancellable.is_cancelled()) {
                 if (cancelBtn) cancelBtn.destroy();

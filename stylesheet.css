@@ -520,6 +520,57 @@
     font-size: 10.5pt;
 }
 
+.katab-chat-content-box {
+    spacing: 8px;
+}
+
+.katab-code-window {
+    border-radius: 10px;
+    border: 1px solid rgba(242, 232, 229, 0.12);
+    background-gradient-direction: vertical;
+    background-gradient-start: rgba(25, 17, 17, 0.98);
+    background-gradient-end: rgba(11, 10, 18, 0.98);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+}
+
+.katab-code-window-header {
+    padding: 8px 10px 6px;
+    spacing: 8px;
+    border-bottom: 1px solid rgba(242, 232, 229, 0.08);
+}
+
+.katab-code-window-language {
+    font-size: 8pt;
+    font-weight: 700;
+    color: #f6e6bc;
+}
+
+.katab-code-copy-btn {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background-color: rgba(66, 63, 62, 0.72);
+    border: 1px solid rgba(242, 232, 229, 0.12);
+    color: #fff7f4;
+    font-size: 8pt;
+}
+
+.katab-code-copy-btn:hover,
+.katab-code-copy-btn:focus {
+    background-color: rgba(54, 34, 34, 0.94);
+    border-color: rgba(249, 226, 175, 0.28);
+    color: #f9e2af;
+}
+
+.katab-code-window-body {
+    padding: 8px 12px 12px;
+}
+
+.katab-code-window-label {
+    font-family: monospace;
+    font-size: 9.4pt;
+    color: #f7efec;
+}
+
 .katab-message-footer-row {
     margin-top: 10px;
     spacing: 8px;
@@ -538,6 +589,12 @@
     background-color: rgba(54, 34, 34, 0.72);
     border-color: rgba(242, 232, 229, 0.18);
     color: #fff7f4;
+}
+
+.katab-copy-btn-text {
+    padding: 4px 10px;
+    font-size: 8.3pt;
+    font-weight: 600;
 }
 
 .katab-chat-link-list {
