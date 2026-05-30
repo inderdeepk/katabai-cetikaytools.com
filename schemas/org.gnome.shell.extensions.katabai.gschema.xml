@@ -6,6 +6,11 @@
       <summary>AI Model Provider</summary>
       <description>The AI provider to use. Valid values are 'ollama', 'unsloth', 'openai', or 'anthropic'.</description>
     </key>
+    <key name="toggle-current-chat" type="as">
+      <default>["&lt;Control&gt;&lt;Super&gt;c"]</default>
+      <summary>Toggle Current Chat</summary>
+      <description>Keyboard shortcut to open or hide the current Katab chat while keeping active responses running in the background.</description>
+    </key>
     
     <!-- Ollama Settings -->
     <key name="ollama-url" type="s">

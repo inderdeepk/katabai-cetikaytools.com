@@ -216,6 +216,60 @@
     margin-left: 8px;
 }
 
+.katab-current-chat-text-col {
+    spacing: 2px;
+    margin-left: 2px;
+}
+
+.katab-current-chat-label {
+    font-size: 9.8pt;
+    font-weight: 600;
+    color: #e6e9ef;
+}
+
+.katab-current-chat-preview {
+    font-size: 8.3pt;
+    color: rgba(205, 214, 244, 0.64);
+}
+
+.katab-current-chat-status {
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 8.3pt;
+    font-weight: 700;
+}
+
+.katab-current-chat-status-replying {
+    background-color: rgba(53, 132, 228, 0.14);
+    color: #89b4fa;
+}
+
+.katab-current-chat-status-open {
+    background-color: rgba(249, 226, 175, 0.14);
+    color: #f6e6bc;
+}
+
+.katab-current-chat-status-ready {
+    background-color: rgba(166, 227, 161, 0.12);
+    color: #c4f1c0;
+}
+
+.katab-current-chat-icon {
+    icon-size: 15px;
+}
+
+.katab-current-chat-icon-replying {
+    color: #89b4fa;
+}
+
+.katab-current-chat-icon-open {
+    color: #f9e2af;
+}
+
+.katab-current-chat-icon-ready {
+    color: #a6e3a1;
+}
+
 .katab-close-btn,
 .katab-settings-btn,
 .katab-new-chat-btn,
@@ -484,6 +538,14 @@
 
 .katab-send-btn:hover {
     background-color: #1c71d8;
+}
+
+.katab-send-btn-stop {
+    background-color: rgba(243, 139, 168, 0.2);
+}
+
+.katab-send-btn-stop:hover {
+    background-color: rgba(243, 139, 168, 0.3);
 }
 
 .katab-send-icon {

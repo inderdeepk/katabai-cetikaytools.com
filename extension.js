@@ -22,6 +22,8 @@ import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import Soup from 'gi://Soup?version=3.0';
 
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -694,6 +696,10 @@ class KatabDialog {
         this._soupSession = new Soup.Session();
         this._soupSession.timeout = 30; // 30 seconds
         this._cancellable = null;
+        this._isStreaming = false;
+        this._activeResponseState = null;
+        this._sendBtn = null;
+        this._sendIcon = null;
 
         this._maxContextSize = 0;
         this._currentUsage = 0;
@@ -750,6 +756,161 @@ class KatabDialog {
         if (this._extension.providerHealthMonitor) {
             this._providerHealthListener = state => this._renderProviderStatus(state);
             this._extension.providerHealthMonitor.subscribe(this._providerHealthListener);
+        }
+    }
+
+    hasCurrentChat() {
+        return this._messageHistory.length > 0
+            || Boolean(this._currentConversationId)
+            || Boolean(this._activeResponseState);
+    }
+
+    getCurrentChatState() {
+        let userMessage = this._messageHistory.find(message =>
+            message.role === 'user'
+            && typeof message.content === 'string'
+            && message.content.trim()
+        );
+
+        let available = this.hasCurrentChat();
+        let status = 'empty';
+        if (this._isStreaming) {
+            status = 'replying';
+        } else if (available && this.isOpen) {
+            status = 'open';
+        } else if (available) {
+            status = 'ready';
+        }
+
+        return {
+            available,
+            conversationId: this._currentConversationId,
+            isOpen: this.isOpen,
+            isStreaming: this._isStreaming,
+            status,
+            title: userMessage
+                ? this._truncateText(userMessage.content.replace(/\s+/g, ' ').trim(), 44)
+                : 'Current Chat',
+        };
+    }
+
+    focusPrompt() {
+        if (this._entry) {
+            this._entry.grab_key_focus();
+        }
+    }
+
+    _notifyCurrentChatChanged() {
+        this._extension.notifyCurrentChatChanged();
+    }
+
+    _setStreamingState(isStreaming) {
+        if (this._isStreaming === isStreaming) {
+            return;
+        }
+
+        this._isStreaming = isStreaming;
+        this._updateSendButton();
+        this._notifyCurrentChatChanged();
+    }
+
+    _clearActiveResponseState() {
+        this._activeResponseState = null;
+        this._setStreamingState(false);
+    }
+
+    _buildAssistantHistoryMessage(content, assistantMeta = null) {
+        let assistantMessage = { role: 'assistant', content };
+        if (assistantMeta && assistantMeta.provider && assistantMeta.metrics) {
+            assistantMessage.provider = assistantMeta.provider;
+            assistantMessage.metrics = assistantMeta.metrics;
+        }
+
+        return assistantMessage;
+    }
+
+    _beginActiveResponse(uiElements, provider) {
+        this._activeResponseState = {
+            accumulatedText: '',
+            accumulatedThink: '',
+            accumulatedToolCalls: [],
+            assistantMeta: null,
+            isThinking: false,
+            mode: 'response',
+            modelName: null,
+            provider,
+            uiElements,
+        };
+        this._setStreamingState(true);
+        return this._activeResponseState;
+    }
+
+    _updateSendButton() {
+        if (!this._sendBtn || !this._sendIcon) {
+            return;
+        }
+
+        if (this._isStreaming) {
+            this._sendBtn.add_style_class_name('katab-send-btn-stop');
+            this._sendIcon.icon_name = 'process-stop-symbolic';
+        } else {
+            this._sendBtn.remove_style_class_name('katab-send-btn-stop');
+            this._sendIcon.icon_name = 'mail-send-symbolic';
+        }
+    }
+
+    _stopActiveResponse() {
+        if (!this._cancellable) {
+            return;
+        }
+
+        let responseState = this._activeResponseState;
+        this._cancelStream({ clearState: false });
+
+        if (!responseState) {
+            this._clearActiveResponseState();
+            return;
+        }
+
+        let { accumulatedText, accumulatedThink, accumulatedToolCalls, assistantMeta, mode, modelName, uiElements } = responseState;
+        let finalContent = accumulatedText;
+        let stopNotice = mode === 'pull' && modelName
+            ? `Stopped while downloading model '${modelName}'.`
+            : 'Response stopped.';
+
+        if (!finalContent) {
+            if (mode === 'pull' && modelName) {
+                finalContent = stopNotice;
+            } else if (accumulatedThink) {
+                finalContent = 'Response stopped while the model was thinking.';
+            } else if (accumulatedToolCalls.length > 0) {
+                finalContent = 'Response stopped before tool execution completed.';
+            } else {
+                finalContent = stopNotice;
+            }
+        }
+
+        this._applyAssistantRender(uiElements, finalContent, {
+            final: true,
+            plain: mode === 'pull',
+        });
+        this._messageHistory.push(this._buildAssistantHistoryMessage(finalContent, assistantMeta));
+        this._saveCurrentConversation();
+        this._clearActiveResponseState();
+
+        if (accumulatedText) {
+            this._addSystemMessage(stopNotice);
+        }
+    }
+
+    _cancelStream({ clearState = true } = {}) {
+        if (this._cancellable) {
+            this._cancellable.cancel();
+            this._cancellable = null;
+        }
+
+        if (clearState) {
+            this._clearActiveResponseState();
         }
     }
 
@@ -1068,8 +1229,17 @@ class KatabDialog {
             style_class: 'katab-send-btn',
             can_focus: true,
         });
-        sendBtn.connect('clicked', () => this._sendMessage());
+        sendBtn.connect('clicked', () => {
+            if (this._isStreaming) {
+                this._stopActiveResponse();
+            } else {
+                this._sendMessage();
+            }
+        });
+        this._sendBtn = sendBtn;
+        this._sendIcon = sendBtn.child;
         footerBox.add_child(sendBtn);
+        this._updateSendButton();
 
         this._addWelcomeMessage();
         this._updateToolButtons();
@@ -1100,24 +1270,31 @@ class KatabDialog {
             return GLib.SOURCE_REMOVE;
         });
 
+        this._notifyCurrentChatChanged();
+
         return true;
     }
 
-    close() {
+    close({ cancelStream = false, saveConversation = true } = {}) {
         if (!this.isOpen) return;
 
         this._releasePromptFocus();
-        this._cancelStream();
-        this._saveCurrentConversation();
+        if (cancelStream) {
+            this._cancelStream();
+        }
+        if (saveConversation) {
+            this._saveCurrentConversation();
+        }
         this.isOpen = false;
         this.actor.hide();
         if (this.actor.get_parent()) {
             Main.layoutManager.removeChrome(this.actor);
         }
+        this._notifyCurrentChatChanged();
     }
 
     destroy() {
-        this._cancelStream();
+        this.close({ cancelStream: true, saveConversation: true });
         this._disconnectProviderStatus();
 
         if (this._monitorChangedId) {
@@ -1125,7 +1302,6 @@ class KatabDialog {
             this._monitorChangedId = 0;
         }
 
-        this.close();
         if (this.actor) {
             this.actor.destroy();
         }
@@ -1364,6 +1540,7 @@ class KatabDialog {
         if (newId) {
             this._currentConversationId = newId;
         }
+        this._notifyCurrentChatChanged();
     }
 
     _deleteConversation(id) {
@@ -1371,6 +1548,7 @@ class KatabDialog {
         if (this._currentConversationId === id) {
             this._currentConversationId = null;
         }
+        this._notifyCurrentChatChanged();
     }
 
     _loadConversation(entry) {
@@ -1386,6 +1564,7 @@ class KatabDialog {
             }
         }
         this._showChatView();
+        this._notifyCurrentChatChanged();
     }
 
     // ── View switching ───────────────────────────────────────────────────
@@ -1502,13 +1681,6 @@ class KatabDialog {
 
     // ── Chat management ──────────────────────────────────────────────────
 
-    _cancelStream() {
-        if (this._cancellable) {
-            this._cancellable.cancel();
-            this._cancellable = null;
-        }
-    }
-
     _newChat() {
         this._cancelStream();
         this._saveCurrentConversation();
@@ -1520,6 +1692,7 @@ class KatabDialog {
         this._chatContainer.destroy_all_children();
         this._showChatView();
         this._addWelcomeMessage();
+        this._notifyCurrentChatChanged();
     }
 
     _escapeMarkup(text) {
@@ -1906,6 +2079,7 @@ class KatabDialog {
         let historyContent = diagnostics ? `${summary}\n\n${diagnostics}` : summary;
         this._messageHistory.push({ role: 'assistant', content: historyContent });
         this._saveCurrentConversation();
+        this._clearActiveResponseState();
         this._scrollToBottom();
     }
 
@@ -2106,6 +2280,11 @@ class KatabDialog {
     }
 
     _sendMessage() {
+        if (this._isStreaming) {
+            this._stopActiveResponse();
+            return;
+        }
+
         let promptText = this._entry.get_text().trim();
         if (promptText === '')
             return;
@@ -2271,13 +2450,9 @@ class KatabDialog {
         let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
         message.set_request_body_from_bytes('application/json', bodyBytes);
 
-        let { thinkLabel, thinkWrapper } = uiElements;
-        let accumulatedText = "";
-        let accumulatedThink = "";
-        let isThinking = false;
-
         this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
         this._cancelStream();
+        let responseState = this._beginActiveResponse(uiElements, provider);
         this._cancellable = new Gio.Cancellable();
         let currentCancellable = this._cancellable;
 
@@ -2315,7 +2490,7 @@ class KatabDialog {
 
                 this._extension.providerHealthMonitor?.markRequestSuccess(provider, `${getProviderLabel(provider)} responded.`);
 
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, currentCancellable, [], null);
+                this._readSSE(dataInputStream, responseState, provider, currentCancellable);
 
             } catch (e) {
                 if (currentCancellable.is_cancelled()) return;
@@ -2332,9 +2507,10 @@ class KatabDialog {
         });
     }
 
-    _readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls, assistantMeta) {
+    _readSSE(dataInputStream, responseState, provider, cancellable) {
         if (cancellable && cancellable.is_cancelled()) return;
 
+        let { uiElements } = responseState;
         let { thinkLabel, thinkWrapper } = uiElements;
         dataInputStream.read_line_async(GLib.PRIORITY_DEFAULT, cancellable, (stream, res) => {
             if (cancellable && cancellable.is_cancelled()) return;
@@ -2342,27 +2518,26 @@ class KatabDialog {
                 let [lineBytes, length] = stream.read_line_finish(res);
                 if (lineBytes === null) {
                     // Stream ended
-                    let finalContent = accumulatedText;
-                    if (accumulatedThink && !finalContent && (!accumulatedToolCalls || accumulatedToolCalls.length === 0)) finalContent = "Finished thinking, but no response provided.";
+                    let finalContent = responseState.accumulatedText;
+                    if (responseState.accumulatedThink && !finalContent && responseState.accumulatedToolCalls.length === 0) {
+                        finalContent = 'Finished thinking, but no response provided.';
+                    }
 
-                    if (accumulatedToolCalls && accumulatedToolCalls.length > 0) {
-                        this._handleToolCalls(accumulatedToolCalls, uiElements);
+                    if (responseState.accumulatedToolCalls.length > 0) {
+                        this._clearActiveResponseState();
+                        this._handleToolCalls(responseState.accumulatedToolCalls, uiElements);
                     } else {
                         this._applyAssistantRender(uiElements, finalContent, { final: true });
-                        let assistantMessage = { role: 'assistant', content: finalContent };
-                        if (assistantMeta && assistantMeta.provider && assistantMeta.metrics) {
-                            assistantMessage.provider = assistantMeta.provider;
-                            assistantMessage.metrics = assistantMeta.metrics;
-                        }
-                        this._messageHistory.push(assistantMessage);
+                        this._messageHistory.push(this._buildAssistantHistoryMessage(finalContent, responseState.assistantMeta));
                         this._saveCurrentConversation();
+                        this._clearActiveResponseState();
                     }
                     return;
                 }
 
                 let lineStr = new TextDecoder('utf-8').decode(lineBytes).trim();
-                let deltaText = "";
-                let nextAssistantMeta = assistantMeta;
+                let deltaText = '';
+                let nextAssistantMeta = responseState.assistantMeta;
 
                 if (provider === 'ollama' && lineStr.startsWith('{')) {
                     let parsed = JSON.parse(lineStr);
@@ -2371,14 +2546,14 @@ class KatabDialog {
                             deltaText = parsed.message.content;
                         }
                         if (parsed.message.reasoning) {
-                            isThinking = true;
+                            responseState.isThinking = true;
                             thinkWrapper.visible = true;
-                            accumulatedThink += parsed.message.reasoning;
-                            thinkLabel.set_text(accumulatedThink);
+                            responseState.accumulatedThink += parsed.message.reasoning;
+                            thinkLabel.set_text(responseState.accumulatedThink);
                         }
                         if (parsed.message.tool_calls) {
                             for (let tc of parsed.message.tool_calls) {
-                                accumulatedToolCalls.push(tc);
+                                responseState.accumulatedToolCalls.push(tc);
                             }
                         }
                     }
@@ -2431,44 +2606,46 @@ class KatabDialog {
                     }
                 }
 
+                responseState.assistantMeta = nextAssistantMeta;
+
                 if (deltaText) {
                     // Split the text based on tags
                     let i = 0;
                     while (i < deltaText.length) {
-                        if (!isThinking && (deltaText.substring(i).startsWith('igid') || deltaText.substring(i).startsWith('<think>'))) {
-                            isThinking = true;
+                        if (!responseState.isThinking && (deltaText.substring(i).startsWith('igid') || deltaText.substring(i).startsWith('<think>'))) {
+                            responseState.isThinking = true;
                             thinkWrapper.visible = true;
                             i += deltaText.substring(i).startsWith('<think>') ? 7 : 4; // skip tag
-                        } else if (isThinking && (deltaText.substring(i).startsWith('igr') || deltaText.substring(i).startsWith('</think>'))) {
-                            isThinking = false;
+                        } else if (responseState.isThinking && (deltaText.substring(i).startsWith('igr') || deltaText.substring(i).startsWith('</think>'))) {
+                            responseState.isThinking = false;
                             i += deltaText.substring(i).startsWith('</think>') ? 8 : 3; // skip tag
                         } else {
-                            if (isThinking) {
-                                accumulatedThink += deltaText[i];
+                            if (responseState.isThinking) {
+                                responseState.accumulatedThink += deltaText[i];
                             } else {
-                                accumulatedText += deltaText[i];
+                                responseState.accumulatedText += deltaText[i];
                             }
                             i++;
                         }
                     }
 
-                    if (accumulatedThink) {
-                        thinkLabel.set_text(accumulatedThink);
+                    if (responseState.accumulatedThink) {
+                        thinkLabel.set_text(responseState.accumulatedThink);
                     }
-                    if (accumulatedText) {
-                        this._applyAssistantRender(uiElements, accumulatedText, { final: false });
+                    if (responseState.accumulatedText) {
+                        this._applyAssistantRender(uiElements, responseState.accumulatedText, { final: false });
                     }
 
                     this._scrollToBottom();
                 }
 
                 // Read next line
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls, nextAssistantMeta);
+                this._readSSE(dataInputStream, responseState, provider, cancellable);
 
             } catch (e) {
                 if (cancellable && cancellable.is_cancelled()) return;
                 // Ignore parse errors from partial or non-json lines and continue
-                this._readSSE(dataInputStream, uiElements, accumulatedText, accumulatedThink, isThinking, provider, cancellable, accumulatedToolCalls, assistantMeta);
+                this._readSSE(dataInputStream, responseState, provider, cancellable);
             }
         });
     }
@@ -2542,6 +2719,9 @@ class KatabDialog {
         cancelBtn.connect('clicked', () => {
             box.destroy();
             this._applyAssistantRender(uiElements, 'Download cancelled.', { plain: true });
+            this._messageHistory.push(this._buildAssistantHistoryMessage('Download cancelled.'));
+            this._saveCurrentConversation();
+            this._clearActiveResponseState();
         });
 
         box.add_child(confirmBtn);
@@ -2570,7 +2750,13 @@ class KatabDialog {
         let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
         message.set_request_body_from_bytes('application/json', bodyBytes);
 
-        this._cancelStream(); // cancel any active stream
+        if (this._activeResponseState) {
+            this._activeResponseState.mode = 'pull';
+            this._activeResponseState.modelName = model;
+            this._activeResponseState.uiElements = uiElements;
+        }
+
+        this._cancelStream({ clearState: false }); // cancel any active stream but keep the live response state
         this._cancellable = new Gio.Cancellable();
         let currentCancellable = this._cancellable;
 
@@ -2580,8 +2766,7 @@ class KatabDialog {
             x_expand: false
         });
         cancelBtn.connect('clicked', () => {
-            currentCancellable.cancel();
-            this._applyAssistantRender(uiElements, 'Download cancelled.', { plain: true });
+            this._stopActiveResponse();
             cancelBtn.destroy();
         });
         contentLabel.get_parent().add_child(cancelBtn);
@@ -2596,6 +2781,7 @@ class KatabDialog {
                 if (message.status_code !== 200) {
                     cancelBtn.destroy();
                     this._applyAssistantRender(uiElements, `Pull Error: HTTP ${message.status_code}`, { plain: true });
+                    this._clearActiveResponseState();
                     return;
                 }
 
@@ -2610,6 +2796,7 @@ class KatabDialog {
                 if (cancelBtn) cancelBtn.destroy();
                 if (currentCancellable.is_cancelled()) return;
                 this._applyAssistantRender(uiElements, `Pull Failed: ${e.message}`, { plain: true });
+                this._clearActiveResponseState();
             }
         });
     }
@@ -2711,16 +2898,68 @@ const Indicator = GObject.registerClass(
                 this._extension.providerHealthMonitor.subscribe(this._providerHealthListener);
             }
 
+            this._currentChatListener = state => this._renderCurrentChatMenuItem(state);
+            this._extension.subscribeCurrentChat(this._currentChatListener);
+            this._currentChatBookIcon = Gio.icon_new_for_string(`${extension.path}/icons/katab-panel-icon.svg`);
+
             // Actions Section
             this._newChatMenuItem = new PopupMenu.PopupMenuItem('New Chat');
             let newChatIcon = new St.Icon({ icon_name: 'document-new-symbolic', style_class: 'popup-menu-icon' });
             this._newChatMenuItem.insert_child_at_index(newChatIcon, 0);
             this._newChatMenuItem.connect('activate', () => {
-                if (!this._extension._dialog) this._extension.toggleDialog();
-                if (!this._extension._dialog.isOpen) this._extension._dialog.open();
-                this._extension._dialog._newChat();
+                let dialog = this._extension.showCurrentChat();
+                dialog._newChat();
             });
             this.menu.addMenuItem(this._newChatMenuItem);
+
+            this._currentChatMenuItem = new PopupMenu.PopupBaseMenuItem({
+                reactive: true,
+                can_focus: true,
+            });
+            this._currentChatMenuItem.visible = false;
+            this._currentChatIcon = new St.Icon({
+                gicon: this._currentChatBookIcon,
+                style_class: 'popup-menu-icon katab-current-chat-icon katab-current-chat-icon-ready',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._currentChatMenuItem.add_child(this._currentChatIcon);
+
+            let currentChatTextCol = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                style_class: 'katab-current-chat-text-col',
+            });
+            this._currentChatLabel = new St.Label({
+                text: 'Current Chat',
+                style_class: 'katab-current-chat-label',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            currentChatTextCol.add_child(this._currentChatLabel);
+
+            this._currentChatPreviewLabel = new St.Label({
+                text: 'Resume your active conversation',
+                style_class: 'katab-current-chat-preview',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._currentChatPreviewLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            this._currentChatPreviewLabel.clutter_text.single_line_mode = true;
+            currentChatTextCol.add_child(this._currentChatPreviewLabel);
+            this._currentChatMenuItem.add_child(currentChatTextCol);
+
+            this._currentChatStatusLabel = new St.Label({
+                text: 'Ready',
+                style_class: 'katab-current-chat-status katab-current-chat-status-ready',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._currentChatMenuItem.add_child(this._currentChatStatusLabel);
+            this._currentChatMenuItem.connect('activate', () => {
+                this.menu.close();
+                this._extension.showCurrentChat();
+            });
+            this.menu.addMenuItem(this._currentChatMenuItem);
+            this._renderCurrentChatMenuItem(this._extension.getCurrentChatState());
 
             this._settingsMenuItem = new PopupMenu.PopupMenuItem('Settings');
             let settingsIcon = new St.Icon({ icon_name: 'emblem-system-symbolic', style_class: 'popup-menu-icon' });
@@ -2799,6 +3038,51 @@ const Indicator = GObject.registerClass(
             }
         }
 
+        _renderCurrentChatMenuItem(state) {
+            if (!this._currentChatMenuItem || !this._currentChatStatusLabel || !this._currentChatPreviewLabel || !this._currentChatIcon) {
+                return;
+            }
+
+            this._currentChatMenuItem.visible = state.available;
+            if (!state.available) {
+                return;
+            }
+
+            this._currentChatPreviewLabel.set_text(state.title || 'Resume your active conversation');
+
+            let status = state.isStreaming ? 'replying' : (state.isOpen ? 'open' : 'ready');
+            let statusLabel = state.isStreaming ? 'Replying' : (state.isOpen ? 'Open' : 'Ready');
+            this._currentChatStatusLabel.set_text(statusLabel);
+
+            const statusClasses = [
+                'katab-current-chat-status-replying',
+                'katab-current-chat-status-open',
+                'katab-current-chat-status-ready',
+            ];
+            const iconClasses = [
+                'katab-current-chat-icon-replying',
+                'katab-current-chat-icon-open',
+                'katab-current-chat-icon-ready',
+            ];
+            for (let className of statusClasses) {
+                this._currentChatStatusLabel.remove_style_class_name(className);
+            }
+            for (let className of iconClasses) {
+                this._currentChatIcon.remove_style_class_name(className);
+            }
+
+            this._currentChatStatusLabel.add_style_class_name(`katab-current-chat-status-${status}`);
+            this._currentChatIcon.add_style_class_name(`katab-current-chat-icon-${status}`);
+
+            if (status === 'replying') {
+                this._currentChatIcon.gicon = null;
+                this._currentChatIcon.icon_name = 'view-refresh-symbolic';
+            } else {
+                this._currentChatIcon.icon_name = null;
+                this._currentChatIcon.gicon = this._currentChatBookIcon;
+            }
+        }
+
         _syncProvider() {
             let current = this._settings.get_string('provider');
             for (let [key, item] of Object.entries(this._providerItems)) {
@@ -2811,6 +3095,10 @@ const Indicator = GObject.registerClass(
                 this._extension.providerHealthMonitor.unsubscribe(this._providerHealthListener);
             }
             this._providerHealthListener = null;
+            if (this._currentChatListener) {
+                this._extension.unsubscribeCurrentChat(this._currentChatListener);
+            }
+            this._currentChatListener = null;
             super.destroy();
         }
 
@@ -2848,9 +3136,8 @@ const Indicator = GObject.registerClass(
                 });
                 loadBtn.connect('clicked', () => {
                     this.menu.close();
-                    if (!this._extension._dialog) this._extension.toggleDialog();
-                    if (!this._extension._dialog.isOpen) this._extension._dialog.open();
-                    this._extension._dialog._loadConversation(entry);
+                    let dialog = this._extension.showCurrentChat();
+                    dialog._loadConversation(entry);
                 });
                 item.add_child(loadBtn);
 
@@ -2870,9 +3157,8 @@ const Indicator = GObject.registerClass(
 
                 item.connect('activate', () => {
                     this.menu.close();
-                    if (!this._extension._dialog) this._extension.toggleDialog();
-                    if (!this._extension._dialog.isOpen) this._extension._dialog.open();
-                    this._extension._dialog._loadConversation(entry);
+                    let dialog = this._extension.showCurrentChat();
+                    dialog._loadConversation(entry);
                 });
 
                 this._historySection.addMenuItem(item);
@@ -2882,14 +3168,25 @@ const Indicator = GObject.registerClass(
 
 export default class KatabExtension extends Extension {
     enable() {
+        this._currentChatListeners = new Set();
+        this._settings = this.getSettings('org.gnome.shell.extensions.katabai');
+        this._keybindingChangedId = this._settings.connect('changed::toggle-current-chat', () => this._registerKeybindings());
+        this._keybindingRegisteredViaExtension = false;
+        this._hasRegisteredKeybinding = false;
         this._providerHealthMonitor = new ProviderHealthMonitor(this);
         this._providerHealthMonitor.refresh({ immediate: true });
         this._indicator = new Indicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
         this._dialog = null;
+        this._registerKeybindings();
     }
 
     disable() {
+        this._removeKeybindings();
+        if (this._keybindingChangedId && this._settings) {
+            this._settings.disconnect(this._keybindingChangedId);
+            this._keybindingChangedId = 0;
+        }
         if (this._dialog) {
             this._dialog.destroy();
             this._dialog = null;
@@ -2902,6 +3199,10 @@ export default class KatabExtension extends Extension {
             this._providerHealthMonitor.destroy();
             this._providerHealthMonitor = null;
         }
+        this._currentChatListeners?.clear();
+        this._keybindingRegisteredViaExtension = false;
+        this._hasRegisteredKeybinding = false;
+        this._settings = null;
     }
 
     get providerHealthMonitor() {
@@ -2919,15 +3220,123 @@ export default class KatabExtension extends Extension {
         });
     }
 
-    toggleDialog() {
+    ensureDialog() {
         if (!this._dialog) {
             this._dialog = new KatabDialog(this);
+            this.notifyCurrentChatChanged();
         }
 
-        if (this._dialog.isOpen) {
-            this._dialog.close();
+        return this._dialog;
+    }
+
+    getCurrentChatState() {
+        if (!this._dialog) {
+            return {
+                available: false,
+                conversationId: null,
+                isOpen: false,
+                isStreaming: false,
+                status: 'empty',
+                title: 'Current Chat',
+            };
+        }
+
+        return this._dialog.getCurrentChatState();
+    }
+
+    subscribeCurrentChat(listener) {
+        this._currentChatListeners.add(listener);
+        listener(this.getCurrentChatState());
+    }
+
+    unsubscribeCurrentChat(listener) {
+        this._currentChatListeners.delete(listener);
+    }
+
+    notifyCurrentChatChanged() {
+        let state = this.getCurrentChatState();
+        for (let listener of this._currentChatListeners) {
+            try {
+                listener(state);
+            } catch (e) {
+                logError(e, 'Katab: current chat listener failed');
+            }
+        }
+    }
+
+    showCurrentChat() {
+        let dialog = this.ensureDialog();
+        dialog.open();
+        dialog.focusPrompt();
+        return dialog;
+    }
+
+    _registerKeybindings() {
+        if (!this._settings) {
+            return;
+        }
+
+        this._removeKeybindings();
+
+        let actionMode = Shell.ActionMode.ALL;
+        if (actionMode === undefined) {
+            actionMode = Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW | Shell.ActionMode.POPUP;
+        }
+
+        try {
+            if (typeof this.addKeybinding === 'function') {
+                this.addKeybinding(
+                    'toggle-current-chat',
+                    this._settings,
+                    Meta.KeyBindingFlags.NONE,
+                    actionMode,
+                    () => this.toggleDialog()
+                );
+                this._keybindingRegisteredViaExtension = true;
+                this._hasRegisteredKeybinding = true;
+                return;
+            }
+
+            Main.wm.addKeybinding(
+                'toggle-current-chat',
+                this._settings,
+                Meta.KeyBindingFlags.NONE,
+                actionMode,
+                () => this.toggleDialog()
+            );
+            this._keybindingRegisteredViaExtension = false;
+            this._hasRegisteredKeybinding = true;
+        } catch (e) {
+            this._hasRegisteredKeybinding = false;
+            logError(e, 'Katab: failed to register current chat keybinding');
+        }
+    }
+
+    _removeKeybindings() {
+        if (!this._hasRegisteredKeybinding) {
+            return;
+        }
+
+        try {
+            if (this._keybindingRegisteredViaExtension && typeof this.removeKeybinding === 'function') {
+                this.removeKeybinding('toggle-current-chat');
+            } else {
+                Main.wm.removeKeybinding('toggle-current-chat');
+            }
+        } catch (_e) {
+        }
+
+        this._keybindingRegisteredViaExtension = false;
+        this._hasRegisteredKeybinding = false;
+    }
+
+    toggleDialog() {
+        let dialog = this.ensureDialog();
+
+        if (dialog.isOpen) {
+            dialog.close();
         } else {
-            this._dialog.open();
+            this.showCurrentChat();
         }
     }
 }

@@ -1,4 +1,5 @@
 import Adw from 'gi://Adw';
+import Gdk from 'gi://Gdk';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
@@ -162,6 +163,11 @@ export default class KatabPreferences extends ExtensionPreferences {
         });
         page.add(generalGroup);
 
+        const accessibilityGroup = new Adw.PreferencesGroup({
+            title: 'Accessibility',
+        });
+        page.add(accessibilityGroup);
+
         const addPreferenceRow = (group, row) => {
             if (typeof group.add_row === 'function') {
                 group.add_row(row);
@@ -208,6 +214,98 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             return row;
         };
+
+        const formatShortcutValue = shortcuts => {
+            const labels = (shortcuts || []).map(shortcut => {
+                const [, keyval, modifierMask] = Gtk.accelerator_parse(shortcut);
+                return Gtk.accelerator_get_label(keyval, modifierMask);
+            }).filter(Boolean);
+
+            return labels.join(' / ') || 'Disabled';
+        };
+
+        const isShortcutKeyvalForbidden = keyval => {
+            const forbiddenKeyvals = [
+                Gdk.KEY_Home,
+                Gdk.KEY_Left,
+                Gdk.KEY_Up,
+                Gdk.KEY_Right,
+                Gdk.KEY_Down,
+                Gdk.KEY_Page_Up,
+                Gdk.KEY_Page_Down,
+                Gdk.KEY_End,
+                Gdk.KEY_Tab,
+                Gdk.KEY_KP_Enter,
+                Gdk.KEY_Return,
+                Gdk.KEY_Mode_switch,
+            ];
+
+            return forbiddenKeyvals.includes(keyval);
+        };
+
+        const isShortcutBindingValid = ({ mask, keycode, keyval }) => {
+            if ((mask === 0 || mask === Gdk.ModifierType.SHIFT_MASK) && keycode !== 0) {
+                if (
+                    (keyval >= Gdk.KEY_a && keyval <= Gdk.KEY_z) ||
+                    (keyval >= Gdk.KEY_A && keyval <= Gdk.KEY_Z) ||
+                    (keyval >= Gdk.KEY_0 && keyval <= Gdk.KEY_9) ||
+                    (keyval === Gdk.KEY_space && mask === 0) ||
+                    isShortcutKeyvalForbidden(keyval)
+                ) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        const shortcutCaptureState = {
+            active: false,
+            button: null,
+        };
+
+        const stopShortcutCapture = () => {
+            if (!shortcutCaptureState.active) {
+                return;
+            }
+
+            shortcutCaptureState.active = false;
+            if (shortcutCaptureState.button) {
+                shortcutCaptureState.button.set_label(formatShortcutValue(settings.get_strv('toggle-current-chat')));
+            }
+        };
+
+        const shortcutKeyController = new Gtk.EventControllerKey();
+        window.add_controller(shortcutKeyController);
+        shortcutKeyController.connect('key-pressed', (_controller, keyval, keycode, state) => {
+            if (!shortcutCaptureState.active) {
+                return Gdk.EVENT_PROPAGATE;
+            }
+
+            let mask = state & Gtk.accelerator_get_default_mod_mask();
+            mask &= ~Gdk.ModifierType.LOCK_MASK;
+
+            if (mask === 0) {
+                switch (keyval) {
+                    case Gdk.KEY_BackSpace:
+                        settings.set_strv('toggle-current-chat', []);
+                        stopShortcutCapture();
+                        return Gdk.EVENT_STOP;
+                    case Gdk.KEY_Escape:
+                        stopShortcutCapture();
+                        return Gdk.EVENT_STOP;
+                }
+            }
+
+            if (!isShortcutBindingValid({ mask, keycode, keyval }) || !Gtk.accelerator_valid(keyval, mask)) {
+                return Gdk.EVENT_STOP;
+            }
+
+            const shortcut = Gtk.accelerator_name_with_keycode(null, keyval, keycode, mask);
+            settings.set_strv('toggle-current-chat', [shortcut]);
+            stopShortcutCapture();
+            return Gdk.EVENT_STOP;
+        });
 
         const getOllamaValue = suffix => {
             const type = ollamaSettingTypes[suffix];
@@ -440,10 +538,66 @@ export default class KatabPreferences extends ExtensionPreferences {
             return syncRowWithSetting(key, row, 'active', settings.get_boolean.bind(settings), settings.set_boolean.bind(settings), 'notify::active');
         };
 
+        const createShortcutRow = (title, subtitle, key, group) => {
+            const row = new Adw.ActionRow({
+                title,
+                ...(subtitle && { subtitle }),
+            });
+
+            const buttonBox = new Gtk.Box({
+                orientation: Gtk.Orientation.HORIZONTAL,
+                spacing: 6,
+                valign: Gtk.Align.CENTER,
+            });
+
+            const shortcutButton = new Gtk.Button({
+                label: formatShortcutValue(settings.get_strv(key)),
+                valign: Gtk.Align.CENTER,
+            });
+            shortcutButton.connect('clicked', () => {
+                shortcutCaptureState.active = true;
+                shortcutCaptureState.button = shortcutButton;
+                shortcutButton.set_label('Press shortcut...');
+            });
+            buttonBox.append(shortcutButton);
+
+            const clearButton = new Gtk.Button({
+                icon_name: 'edit-clear-symbolic',
+                valign: Gtk.Align.CENTER,
+                tooltip_text: 'Clear shortcut',
+            });
+            clearButton.connect('clicked', () => {
+                settings.set_strv(key, []);
+                stopShortcutCapture();
+            });
+            buttonBox.append(clearButton);
+
+            const syncShortcutRow = () => {
+                if (!shortcutCaptureState.active || shortcutCaptureState.button !== shortcutButton) {
+                    shortcutButton.set_label(formatShortcutValue(settings.get_strv(key)));
+                }
+                clearButton.set_sensitive(settings.get_strv(key).length > 0);
+            };
+
+            syncShortcutRow();
+            settings.connect(`changed::${key}`, syncShortcutRow);
+
+            row.add_suffix(buttonBox);
+            row.activatable_widget = shortcutButton;
+            addPreferenceRow(group, row);
+            return row;
+        };
+
         createProviderCardRow('ollama', generalGroup);
         createProviderCardRow('unsloth', generalGroup);
         createProviderCardRow('openai', generalGroup);
         createProviderCardRow('anthropic', generalGroup);
+        createShortcutRow(
+            'Current Chat Shortcut',
+            'Open or hide the current chat while keeping active responses running in the background. GNOME Shell requires one non-modifier key, so modifier-only shortcuts like Ctrl+Shift+Super are not valid.',
+            'toggle-current-chat',
+            accessibilityGroup
+        );
 
         // --- Ollama Page ---
         const ollamaPage = createProviderPage(
