@@ -72,6 +72,34 @@ window.katab-prefs-window .navigation-sidebar,
     border: 1px solid rgba(242, 232, 229, 0.1);
 }
 
+.katab-prefs-status-badge {
+    min-width: 72px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background-color: rgba(23, 16, 16, 0.88);
+    border: 1px solid rgba(242, 232, 229, 0.12);
+    font-weight: 700;
+    font-size: 0.9em;
+}
+
+.katab-prefs-status-builtin {
+    background-color: rgba(137, 180, 250, 0.14);
+    border-color: rgba(137, 180, 250, 0.28);
+    color: #c8ddff;
+}
+
+.katab-prefs-status-detected {
+    background-color: rgba(166, 227, 161, 0.14);
+    border-color: rgba(166, 227, 161, 0.28);
+    color: #d2f3cf;
+}
+
+.katab-prefs-status-install {
+    background-color: rgba(249, 226, 175, 0.14);
+    border-color: rgba(249, 226, 175, 0.28);
+    color: #f9ebc1;
+}
+
 .katab-prefs-provider-badge-icon,
 .katab-prefs-provider-badge-label {
     color: @katab_text;

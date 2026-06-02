@@ -1,5 +1,6 @@
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
+import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
@@ -430,6 +431,62 @@ export default class KatabPreferences extends ExtensionPreferences {
             badge.append(checkIcon);
             badge.append(badgeLabel);
             return badge;
+        };
+
+        const toolStatusClasses = [
+            'katab-prefs-status-builtin',
+            'katab-prefs-status-detected',
+            'katab-prefs-status-install',
+        ];
+
+        const createStatusBadge = (label = 'Checking') => addCssClasses(new Gtk.Label({
+            label,
+            valign: Gtk.Align.CENTER,
+            xalign: 0.5,
+        }), 'katab-prefs-status-badge');
+
+        const setStatusBadge = (badge, label, statusClass) => {
+            badge.label = label;
+            for (const className of toolStatusClasses) {
+                badge.remove_css_class(className);
+            }
+
+            if (statusClass) {
+                badge.add_css_class(statusClass);
+            }
+        };
+
+        const createInfoRow = (title, subtitle, group, suffix = null) => {
+            const row = stylePreferenceRow(new Adw.ActionRow({
+                title,
+                ...(subtitle && { subtitle }),
+                activatable: false,
+            }), 'katab-prefs-info-row');
+
+            if (suffix) {
+                row.add_suffix(suffix);
+            }
+
+            addPreferenceRow(group, row);
+            return row;
+        };
+
+        const createButtonRow = (title, subtitle, buttonLabel, callback, group) => {
+            const button = addCssClasses(new Gtk.Button({
+                label: buttonLabel,
+                valign: Gtk.Align.CENTER,
+            }), 'katab-prefs-button');
+            button.connect('clicked', callback);
+
+            const row = createInfoRow(title, subtitle, group, button);
+            row.activatable_widget = button;
+            return row;
+        };
+
+        const createStatusRow = (title, subtitle, group) => {
+            const badge = createStatusBadge();
+            const row = createInfoRow(title, subtitle, group, badge);
+            return { row, badge };
         };
 
         const createProviderCardRow = (provider, group, subtitle = null) => {
@@ -914,5 +971,110 @@ export default class KatabPreferences extends ExtensionPreferences {
         createStringRow('API Key', null, 'anthropic-api-key', anthropicGroup, true);
         createStringRow('Model', null, 'anthropic-model', anthropicGroup);
         anthropicPage.add(anthropicGroup);
+
+        // --- Tools Settings ---
+        const toolsPage = createPreferencesPage({
+            title: 'Tools',
+            icon_name: 'applications-utilities-symbolic',
+        });
+        window.add(toolsPage);
+
+        const documentToolGroup = createPreferencesGroup({
+            title: 'Document Tool',
+            description: 'Optional local document parsing for chat. Basic chat keeps working unchanged when this stays off.',
+        });
+        toolsPage.add(documentToolGroup);
+
+        createBooleanRow(
+            'Enable Document Tool',
+            'Show the chat document button and enable the /doc command for local files.',
+            'document-tool-enabled',
+            documentToolGroup
+        );
+
+        const documentUsageRow = createInfoRow(
+            'How it works',
+            '',
+            documentToolGroup
+        );
+
+        const syncDocumentUsageRow = () => {
+            documentUsageRow.subtitle = settings.get_boolean('document-tool-enabled')
+                ? 'Use the document button in chat or type /doc with a quoted path. Katab will parse supported files locally before sending them to your provider.'
+                : 'Turn this on only if you want local document parsing. Normal chat does not depend on any of these tools.';
+        };
+        settings.connect('changed::document-tool-enabled', syncDocumentUsageRow);
+        syncDocumentUsageRow();
+
+        const capabilityGroup = createPreferencesGroup({
+            title: 'Detected Capabilities',
+            description: 'Katab checks the local system at runtime. Install the listed packages only if you want that file type.',
+        });
+        toolsPage.add(capabilityGroup);
+
+        const textStatusRow = createStatusRow(
+            'Text and Markdown',
+            'Plain text and Markdown are handled directly through native Gio file reads.',
+            capabilityGroup
+        );
+        const pdfStatusRow = createStatusRow(
+            'PDF Documents',
+            'Install poppler-utils to expose pdftotext for fast PDF text extraction.',
+            capabilityGroup
+        );
+        const docxStatusRow = createStatusRow(
+            'Word Documents (.docx)',
+            'Install pandoc to convert DOCX files into plain text before sending them to the model.',
+            capabilityGroup
+        );
+
+        const refreshDocumentToolStatus = () => {
+            setStatusBadge(textStatusRow.badge, 'Built in', 'katab-prefs-status-builtin');
+
+            const pdfPath = GLib.find_program_in_path('pdftotext');
+            if (pdfPath) {
+                pdfStatusRow.row.subtitle = `Detected pdftotext at ${pdfPath}. PDF parsing is ready.`;
+                setStatusBadge(pdfStatusRow.badge, 'Detected', 'katab-prefs-status-detected');
+            } else {
+                pdfStatusRow.row.subtitle = 'Install poppler-utils to expose pdftotext for fast PDF text extraction.';
+                setStatusBadge(pdfStatusRow.badge, 'Install', 'katab-prefs-status-install');
+            }
+
+            const pandocPath = GLib.find_program_in_path('pandoc');
+            if (pandocPath) {
+                docxStatusRow.row.subtitle = `Detected pandoc at ${pandocPath}. DOCX parsing is ready.`;
+                setStatusBadge(docxStatusRow.badge, 'Detected', 'katab-prefs-status-detected');
+            } else {
+                docxStatusRow.row.subtitle = 'Install pandoc to convert DOCX files into plain text before sending them to the model.';
+                setStatusBadge(docxStatusRow.badge, 'Install', 'katab-prefs-status-install');
+            }
+        };
+
+        createButtonRow(
+            'Refresh Detection',
+            'Re-scan the local system after installing or removing parser packages.',
+            'Refresh',
+            refreshDocumentToolStatus,
+            capabilityGroup
+        );
+
+        const installGroup = createPreferencesGroup({
+            title: 'Install Hints',
+            description: 'Package names vary a little by distribution, but these are the common ones Katab expects.',
+        });
+        toolsPage.add(installGroup);
+
+        createInfoRow(
+            'PDF package',
+            'Install poppler-utils so Katab can call pdftotext for PDFs.',
+            installGroup
+        );
+        createInfoRow(
+            'DOCX package',
+            'Install pandoc so Katab can convert .docx files into plain text.',
+            installGroup
+        );
+
+        refreshDocumentToolStatus();
     }
 }

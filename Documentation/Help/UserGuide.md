@@ -67,10 +67,74 @@ Once configured:
 
 ---
 
-## 5. Troubleshooting & Tips
+## 5. Optional Document Tool
+
+Katab includes an optional document tool for attaching local files to chat. It is disabled by default, so regular chat works exactly the same if you never turn it on.
+
+### Enabling the Document Tool
+1. Open the **Settings (gear)** icon for Katab.
+2. Go to the **Tools** page.
+3. Turn on **Enable Document Tool**.
+4. Check the capability badges:
+	* **Built in**: No extra package is needed.
+	* **Detected**: Katab found the required local parser.
+	* **Install**: The parser is missing and you need to install it first.
+
+### Supported Formats
+* **`.txt` / `.md`**: Built in, no extra packages required.
+* **`.pdf`**: Requires `pdftotext` from `poppler-utils` or your distro's `poppler` package.
+* **`.docx`**: Requires `pandoc`.
+
+### Installing Missing Tools
+Common installation commands:
+
+```bash
+# Debian / Ubuntu
+sudo apt install poppler-utils pandoc
+
+# Fedora
+sudo dnf install poppler-utils pandoc
+
+# Arch
+sudo pacman -S poppler pandoc
+```
+
+You can verify the tools with:
+
+```bash
+which pdftotext
+which pandoc
+```
+
+### Attaching a Document
+You have two ways to attach a file:
+
+1. Click the document button in the chat footer and choose a local file.
+2. Use the `/doc` command directly.
+
+Examples:
+
+```text
+/doc
+/doc "/absolute/path/to/file.pdf"
+/doc "/absolute/path/to/file.docx" summarize the main points
+```
+
+If you type `/doc` without a quoted path, Katab opens the file picker. If the picker is unavailable, use `/doc` with a quoted absolute path instead.
+
+### Important Behavior Notes
+* Katab parses supported documents locally before sending the extracted text to your selected provider.
+* Saved conversations keep the document metadata, not the full extracted text. If you reopen an older conversation and want the full document context again, reattach the file.
+* Only local native files are supported right now.
+
+---
+
+## 6. Troubleshooting & Tips
 
 * **Extension Not Showing**: Ensure you ran `glib-compile-schemas schemas/` during installation and restarted the GNOME shell (Log out/in on Wayland, or `Alt+F2`, type `r`, and hit Enter on X11).
 * **Connection Refused (Local)**: If using Unsloth or Ollama, make sure the respective server is running in the background.
 * **Invalid API Key**: If using OpenAI or Anthropic and responses fail, double-check your API keys in the settings panel. (Katab does not look for `.env` files for security reasons, it strictly uses the settings window).
+* **Document Tool Shows Install**: Open the **Tools** page, install the missing package (`poppler-utils`/`poppler` for PDF or `pandoc` for DOCX), then use **Refresh Detection**.
+* **Document Picker Does Not Open**: Use `/doc "/absolute/path/to/file"` as a manual fallback.
 
 Enjoy utilizing Katab to enhance your GNOME desktop workflow!

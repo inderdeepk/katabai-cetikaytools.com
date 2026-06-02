@@ -30,6 +30,17 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {
+    buildDocumentPromptBlock,
+    buildMissingDocumentPromptBlock,
+    DOCUMENT_TOOL_COMMAND,
+    DOCUMENT_TOOL_ICON,
+    DOCUMENT_TOOL_NAME,
+    DocumentToolError,
+    DocumentToolRuntime,
+    parseDocumentCommand,
+    resolveDocumentPath,
+} from './documentTools.js';
 
 const PROVIDER_TOOLS = {
     'unsloth': [
@@ -41,6 +52,10 @@ const PROVIDER_TOOLS = {
     'openai': [],
     'anthropic': []
 };
+
+const LOCAL_TOOLS = [
+    { label: 'Document', command: DOCUMENT_TOOL_COMMAND, icon: DOCUMENT_TOOL_ICON, toolName: DOCUMENT_TOOL_NAME }
+];
 
 const PROVIDER_META = {
     'ollama': { label: 'Ollama', iconFile: 'ollama.svg' },
@@ -675,6 +690,11 @@ class KatabDialog {
         this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
         this._currentProvider = this._settings.get_string('provider');
         this._currentConversationId = null;
+        this._documentToolRuntime = new DocumentToolRuntime();
+        this._sessionDocuments = new Map();
+        this._pendingDocument = null;
+        this._attachmentBox = null;
+        this._attachmentLabel = null;
 
         this._settings.connect('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
@@ -688,6 +708,17 @@ class KatabDialog {
             // Re-fetch context size when switching providers
             this._maxContextSize = 0;
             this._fetchMaxContext();
+        });
+        this._settings.connect('changed::document-tool-enabled', () => {
+            if (!this._isDocumentToolEnabled()) {
+                this._pendingDocument = null;
+                this._sessionDocuments.clear();
+                this._updatePendingDocumentUI();
+            }
+
+            if (this._toolsBox) {
+                this._updateToolButtons();
+            }
         });
 
         this._monitorChangedId = 0;
@@ -838,15 +869,15 @@ class KatabDialog {
         return assistantMessage;
     }
 
-    _beginActiveResponse(uiElements, provider) {
+    _beginActiveResponse(uiElements, provider, mode = 'response', modelName = null) {
         this._activeResponseState = {
             accumulatedText: '',
             accumulatedThink: '',
             accumulatedToolCalls: [],
             assistantMeta: null,
             isThinking: false,
-            mode: 'response',
-            modelName: null,
+            mode,
+            modelName,
             provider,
             uiElements,
         };
@@ -885,7 +916,9 @@ class KatabDialog {
         let finalContent = accumulatedText;
         let stopNotice = mode === 'pull' && modelName
             ? `Stopped while downloading model '${modelName}'.`
-            : 'Response stopped.';
+            : mode === 'document' && modelName
+                ? `Stopped while preparing '${modelName}'.`
+                : 'Response stopped.';
 
         if (!finalContent) {
             if (mode === 'pull' && modelName) {
@@ -977,12 +1010,243 @@ class KatabDialog {
         this._providerHealthListener = null;
     }
 
+    _isDocumentToolEnabled() {
+        return this._settings.get_boolean('document-tool-enabled');
+    }
+
+    _getProviderTools() {
+        return PROVIDER_TOOLS[this._currentProvider] || [];
+    }
+
+    _getLocalTools() {
+        return LOCAL_TOOLS;
+    }
+
+    _getAvailableTools() {
+        return [...this._getLocalTools(), ...this._getProviderTools()];
+    }
+
+    _rememberSessionDocument(document) {
+        if (!document?.path) {
+            return;
+        }
+
+        this._sessionDocuments.set(document.path, document);
+    }
+
+    _serializeDocumentMeta(document) {
+        return {
+            displayName: document.displayName,
+            extension: document.extension,
+            originalCharCount: document.originalCharCount,
+            parserName: document.parserName,
+            path: document.path,
+            truncated: Boolean(document.truncated),
+        };
+    }
+
+    _buildDocumentMeta(path) {
+        const resolvedPath = resolveDocumentPath(path);
+        if (!resolvedPath) {
+            return null;
+        }
+
+        return {
+            displayName: GLib.path_get_basename(resolvedPath),
+            path: resolvedPath,
+        };
+    }
+
+    _setPendingDocument(documentMeta) {
+        this._pendingDocument = documentMeta;
+        this._updatePendingDocumentUI();
+    }
+
+    _updatePendingDocumentUI() {
+        if (!this._attachmentBox || !this._attachmentLabel) {
+            return;
+        }
+
+        if (!this._pendingDocument || !this._isDocumentToolEnabled()) {
+            this._attachmentBox.hide();
+            this._attachmentLabel.set_text('');
+            return;
+        }
+
+        let label = `Document ready: ${this._pendingDocument.displayName}`;
+        if (this._pendingDocument.path) {
+            label = `${label} • ${this._pendingDocument.path}`;
+        }
+
+        this._attachmentLabel.set_text(label);
+        this._attachmentBox.show();
+    }
+
+    _formatUserMessageDisplay(message) {
+        const content = String(message?.content ?? '').trim();
+        const documents = Array.isArray(message?.documents) ? message.documents : [];
+        if (!documents.length) {
+            return content;
+        }
+
+        const prefix = documents.length === 1
+            ? `Attached document: ${documents[0].displayName}`
+            : `Attached documents: ${documents.map(document => document.displayName).join(', ')}`;
+
+        return content ? `${content}\n\n${prefix}` : prefix;
+    }
+
+    _buildApiMessageContent(message) {
+        let content = String(message?.content ?? '');
+        const documents = Array.isArray(message?.documents) ? message.documents : [];
+        if (!documents.length) {
+            return content;
+        }
+
+        const documentBlocks = documents.map(documentMeta => {
+            const sessionDocument = documentMeta?.path ? this._sessionDocuments.get(documentMeta.path) : null;
+            if (sessionDocument) {
+                return buildDocumentPromptBlock(sessionDocument);
+            }
+
+            return buildMissingDocumentPromptBlock(documentMeta);
+        }).filter(Boolean);
+
+        if (!documentBlocks.length) {
+            return content;
+        }
+
+        if (!content) {
+            return documentBlocks.join('\n\n');
+        }
+
+        return `${content}\n\n${documentBlocks.join('\n\n')}`;
+    }
+
+    async _openDocumentPicker() {
+        const connection = Gio.DBus.session;
+        const handleToken = `katab${GLib.uuid_string_random().replace(/-/g, '')}`;
+        const options = {
+            handle_token: new GLib.Variant('s', handleToken),
+            modal: new GLib.Variant('b', true),
+            multiple: new GLib.Variant('b', false),
+        };
+
+        return await new Promise((resolve, reject) => {
+            connection.call(
+                'org.freedesktop.portal.Desktop',
+                '/org/freedesktop/portal/desktop',
+                'org.freedesktop.portal.FileChooser',
+                'OpenFile',
+                new GLib.Variant('(ssa{sv})', ['', 'Attach a document for Katab', options]),
+                new GLib.VariantType('(o)'),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (source, result) => {
+                    try {
+                        const [requestPath] = source.call_finish(result).deepUnpack();
+                        let subscriptionId = 0;
+                        subscriptionId = source.signal_subscribe(
+                            'org.freedesktop.portal.Desktop',
+                            'org.freedesktop.portal.Request',
+                            'Response',
+                            requestPath,
+                            null,
+                            Gio.DBusSignalFlags.NONE,
+                            (_connection, _senderName, _objectPath, _interfaceName, _signalName, parameters) => {
+                                source.signal_unsubscribe(subscriptionId);
+                                const [responseCode, responseData] = parameters.deepUnpack();
+                                if (responseCode !== 0) {
+                                    resolve(null);
+                                    return;
+                                }
+
+                                const uris = Array.isArray(responseData.uris)
+                                    ? responseData.uris
+                                    : responseData.uris?.deepUnpack?.() || [];
+                                if (!uris.length) {
+                                    resolve(null);
+                                    return;
+                                }
+
+                                const file = Gio.File.new_for_uri(uris[0]);
+                                const path = file.get_path();
+                                if (!path) {
+                                    reject(new DocumentToolError('Katab can only attach local files from the picker right now. Choose a local file or use /doc with an absolute path.', {
+                                        code: 'non-local-picked-file',
+                                    }));
+                                    return;
+                                }
+
+                                resolve(path);
+                            }
+                        );
+                    } catch (error) {
+                        reject(new DocumentToolError('The document picker is unavailable. Use /doc "absolute/path/to/file" instead.', {
+                            code: 'picker-unavailable',
+                        }));
+                    }
+                }
+            );
+        });
+    }
+
+    async _pickDocumentPath() {
+        const shouldRestoreDialog = this.isOpen;
+
+        if (shouldRestoreDialog) {
+            this.close({ cancelStream: false, saveConversation: true });
+        }
+
+        try {
+            return await this._openDocumentPicker();
+        } finally {
+            if (shouldRestoreDialog) {
+                this.open();
+                this._updatePendingDocumentUI();
+            }
+        }
+    }
+
+    async _pickDocumentForAttachment() {
+        if (!this._isDocumentToolEnabled()) {
+            this._addSystemMessage('Enable the Document Tool in Settings before attaching a file.');
+            return;
+        }
+
+        try {
+            const pickedPath = await this._pickDocumentPath();
+            if (!pickedPath) {
+                return;
+            }
+
+            const documentMeta = this._buildDocumentMeta(pickedPath);
+            if (!documentMeta) {
+                throw new DocumentToolError('Katab could not resolve that file path. Use a local file and try again.', {
+                    code: 'invalid-picked-path',
+                });
+            }
+
+            this._setPendingDocument(documentMeta);
+            if (this.isOpen) {
+                this.focusPrompt();
+            }
+        } catch (error) {
+            const message = error instanceof DocumentToolError
+                ? error.message
+                : `Could not attach a document: ${error.message}`;
+            this._addSystemMessage(message);
+        }
+    }
+
     _updateToolButtons() {
         if (!this._toolsBox) return;
         this._toolsBox.destroy_all_children();
 
-        const tools = PROVIDER_TOOLS[this._currentProvider] || [];
+        const tools = this._getAvailableTools();
         for (const tool of tools) {
+            const documentToolDisabled = tool.toolName === DOCUMENT_TOOL_NAME && !this._isDocumentToolEnabled();
             let btn = new St.Button({
                 child: new St.Icon({
                     icon_name: tool.icon,
@@ -994,7 +1258,22 @@ class KatabDialog {
                 y_expand: false,
                 y_align: Clutter.ActorAlign.CENTER,
             });
-            btn.connect('clicked', () => {
+
+            if (documentToolDisabled) {
+                btn.add_style_class_name('katab-tool-btn-disabled');
+            }
+
+            btn.connect('clicked', async () => {
+                if (tool.toolName === DOCUMENT_TOOL_NAME) {
+                    if (!this._isDocumentToolEnabled()) {
+                        this._addSystemMessage('Document tool is available, but it is currently off. Enable it in Settings > Tools to use the chat button or /doc command.');
+                        return;
+                    }
+
+                    await this._pickDocumentForAttachment();
+                    return;
+                }
+
                 let currentText = this._entry.get_text().trim();
                 // Add the slash command, appending to existing text if any, or just starting it
                 if (currentText && !currentText.includes(tool.command)) {
@@ -1164,6 +1443,37 @@ class KatabDialog {
         });
         this._historyView.add_child(this._historyContainer);
 
+        this._attachmentBox = new St.BoxLayout({
+            style_class: 'katab-attachment-box',
+            vertical: false,
+            visible: false,
+        });
+        this.contentLayout.add_child(this._attachmentBox);
+
+        let attachmentIcon = new St.Icon({
+            icon_name: 'text-x-generic-symbolic',
+            style_class: 'katab-attachment-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._attachmentBox.add_child(attachmentIcon);
+
+        this._attachmentLabel = new St.Label({
+            text: '',
+            style_class: 'katab-attachment-label',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._attachmentBox.add_child(this._attachmentLabel);
+
+        let clearAttachmentBtn = new St.Button({
+            label: 'Remove',
+            style_class: 'katab-attachment-remove-btn',
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        clearAttachmentBtn.connect('clicked', () => this._setPendingDocument(null));
+        this._attachmentBox.add_child(clearAttachmentBtn);
+
         this._footerBox = new St.BoxLayout({
             style_class: 'katab-footer-box',
             vertical: false,
@@ -1262,6 +1572,7 @@ class KatabDialog {
 
         this._addWelcomeMessage();
         this._updateToolButtons();
+        this._updatePendingDocumentUI();
     }
 
     _buildWelcomePanel() {
@@ -1570,6 +1881,7 @@ class KatabDialog {
         }
         this._syncGeometry();
         this.actor.show();
+        this._updatePendingDocumentUI();
 
         this.isOpen = true;
 
@@ -1742,7 +2054,7 @@ class KatabDialog {
         };
 
         if (message.content !== undefined) {
-            sanitized.content = message.content;
+            sanitized.content = this._buildApiMessageContent(message);
         }
 
         if (message.tool_calls !== undefined) {
@@ -1882,12 +2194,14 @@ class KatabDialog {
         this._cancelStream();
         this._currentConversationId = entry.id;
         this._messageHistory = [...entry.messages];
+        this._sessionDocuments.clear();
+        this._setPendingDocument(null);
         this._hasConversationStarted = entry.messages.length > 0;
         this._setWelcomeVisible(!this._hasConversationStarted);
         this._messageList.destroy_all_children();
         for (let msg of entry.messages) {
             if (msg.role === 'user') {
-                this._addChatMessage('You', msg.content, 'user');
+                this._addChatMessage('You', this._formatUserMessageDisplay(msg), 'user');
             } else if (msg.role === 'assistant') {
                 this._addChatMessage('Katab AI', msg.content, 'assistant', msg);
             }
@@ -2019,6 +2333,8 @@ class KatabDialog {
         this._saveCurrentConversation();
         this._currentConversationId = null;
         this._messageHistory = [];
+        this._sessionDocuments.clear();
+        this._setPendingDocument(null);
         this._currentUsage = 0;
         this._draftUsage = 0;
         this._renderTokenCounter();
@@ -2054,6 +2370,10 @@ class KatabDialog {
         }
 
         return `${text.slice(0, maxLength - 3)}...`;
+    }
+
+    _isRequestCancelled(error) {
+        return Boolean(error?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED));
     }
 
     _normalizeUrl(url) {
@@ -2116,12 +2436,13 @@ class KatabDialog {
         escapedText = escapedText.replace(/`([^`\n]+)`/g, (_match, code) => {
             let token = `@@KATAB_CODE_${codeTokens.length}@@`;
             codeTokens.push(
-                `<span font_family="monospace" foreground="#f9e2af" background="#11111b">${code}</span>`
+                `<span font_family="monospace" weight="600">${code}</span>`
             );
             return token;
         });
 
         escapedText = escapedText.replace(/\*\*([^\n]+?)\*\*/g, '<b>$1</b>');
+        escapedText = escapedText.replace(/__([^\n]+?)__/g, '<b>$1</b>');
         escapedText = escapedText.replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
         escapedText = escapedText.replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
 
@@ -2137,12 +2458,15 @@ class KatabDialog {
             return '';
         }
 
-        let headingMatch = line.match(/^\s{0,3}(#{1,3})\s+(.*)$/);
+        let headingMatch = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
         if (headingMatch) {
             let headingSizes = {
                 1: 'x-large',
                 2: 'large',
                 3: 'medium',
+                4: 'medium',
+                5: 'small',
+                6: 'small',
             };
 
             return `<span size="${headingSizes[headingMatch[1].length]}" weight="bold">${this._formatInlineMarkdown(headingMatch[2].trim())}</span>`;
@@ -2150,7 +2474,7 @@ class KatabDialog {
 
         let quoteMatch = line.match(/^\s{0,3}>\s?(.*)$/);
         if (quoteMatch) {
-            return `<span foreground="#a6adc8" style="italic">| ${this._formatInlineMarkdown(quoteMatch[1])}</span>`;
+            return `<span style="italic">| ${this._formatInlineMarkdown(quoteMatch[1])}</span>`;
         }
 
         let bulletMatch = line.match(/^\s{0,3}[-*]\s+(.*)$/);
@@ -2171,6 +2495,129 @@ class KatabDialog {
             .split('\n')
             .map(line => this._formatMarkdownLine(line))
             .join('\n');
+    }
+
+    _splitMarkdownTableRow(line) {
+        let normalized = String(line ?? '').trim();
+        if (!normalized.includes('|')) {
+            return [];
+        }
+
+        if (normalized.startsWith('|')) {
+            normalized = normalized.slice(1);
+        }
+
+        if (normalized.endsWith('|')) {
+            normalized = normalized.slice(0, -1);
+        }
+
+        return normalized.split('|').map(cell => cell.trim());
+    }
+
+    _looksLikeMarkdownTableRow(line) {
+        let cells = this._splitMarkdownTableRow(line);
+        return cells.length > 1;
+    }
+
+    _isMarkdownTableSeparator(line) {
+        let cells = this._splitMarkdownTableRow(line);
+        return cells.length > 1 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
+    }
+
+    _parseMarkdownTable(lines, startIndex) {
+        if (startIndex + 1 >= lines.length) {
+            return null;
+        }
+
+        let headerLine = lines[startIndex];
+        let separatorLine = lines[startIndex + 1];
+        if (!this._looksLikeMarkdownTableRow(headerLine) || !this._isMarkdownTableSeparator(separatorLine)) {
+            return null;
+        }
+
+        let headers = this._splitMarkdownTableRow(headerLine);
+        let separatorCells = this._splitMarkdownTableRow(separatorLine);
+        if (headers.length < 2 || separatorCells.length !== headers.length) {
+            return null;
+        }
+
+        let rows = [];
+        let rawLines = [headerLine, separatorLine];
+        let index = startIndex + 2;
+
+        while (index < lines.length && this._looksLikeMarkdownTableRow(lines[index])) {
+            let cells = this._splitMarkdownTableRow(lines[index]);
+            if (cells.length !== headers.length) {
+                break;
+            }
+
+            rows.push(cells);
+            rawLines.push(lines[index]);
+            index++;
+        }
+
+        return {
+            headers,
+            rows,
+            nextIndex: index,
+            rawText: rawLines.join('\n'),
+        };
+    }
+
+    _isMarkdownDividerLine(line) {
+        return /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(String(line ?? ''));
+    }
+
+    _appendMarkdownSegmentsFromText(segments, text) {
+        let lines = String(text ?? '').split('\n');
+        let bufferedLines = [];
+
+        let flushBufferedLines = () => {
+            if (bufferedLines.length === 0) {
+                return;
+            }
+
+            let blockText = bufferedLines.join('\n');
+            bufferedLines = [];
+
+            if (blockText === '') {
+                return;
+            }
+
+            segments.push({
+                type: 'text',
+                markup: this._formatMarkdownTextSegment(blockText),
+                fallbackText: blockText,
+            });
+        };
+
+        let index = 0;
+        while (index < lines.length) {
+            let table = this._parseMarkdownTable(lines, index);
+            if (table) {
+                flushBufferedLines();
+                segments.push({
+                    type: 'table',
+                    headers: table.headers,
+                    rows: table.rows,
+                    fallbackText: table.rawText,
+                });
+                index = table.nextIndex;
+                continue;
+            }
+
+            if (this._isMarkdownDividerLine(lines[index])) {
+                flushBufferedLines();
+                segments.push({ type: 'rule' });
+                index++;
+                continue;
+            }
+
+            bufferedLines.push(lines[index]);
+            index++;
+        }
+
+        flushBufferedLines();
     }
 
     _buildCodeBlockSegment(language, codeText) {
@@ -2214,11 +2661,7 @@ class KatabDialog {
                 let extracted = this._extractLinks(parseableText.slice(lastIndex, match.index));
                 links.push(...extracted.links);
                 if (extracted.text !== '') {
-                    segments.push({
-                        type: 'text',
-                        markup: this._formatMarkdownTextSegment(extracted.text),
-                        fallbackText: extracted.text,
-                    });
+                    this._appendMarkdownSegmentsFromText(segments, extracted.text);
                 }
             }
 
@@ -2230,11 +2673,7 @@ class KatabDialog {
             let extracted = this._extractLinks(parseableText.slice(lastIndex));
             links.push(...extracted.links);
             if (extracted.text !== '') {
-                segments.push({
-                    type: 'text',
-                    markup: this._formatMarkdownTextSegment(extracted.text),
-                    fallbackText: extracted.text,
-                });
+                this._appendMarkdownSegmentsFromText(segments, extracted.text);
             }
         }
 
@@ -2276,6 +2715,86 @@ class KatabDialog {
         label.clutter_text.can_focus = false;
         this._setLabelMarkup(label, markup, fallbackText);
         return label;
+    }
+
+    _createMarkdownRuleWidget() {
+        return new St.Widget({
+            style_class: 'katab-markdown-rule',
+            x_expand: true,
+            height: 1,
+        });
+    }
+
+    _createMarkdownTableCell(text, { header = false } = {}) {
+        let cellBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-markdown-table-cell',
+            x_expand: true,
+            x_align: Clutter.ActorAlign.FILL,
+        });
+        if (header) {
+            cellBox.add_style_class_name('katab-markdown-table-cell-header');
+        }
+
+        let label = new St.Label({
+            text: '',
+            style_class: 'katab-markdown-table-cell-label',
+            x_expand: true,
+            x_align: Clutter.ActorAlign.FILL,
+        });
+        if (header) {
+            label.add_style_class_name('katab-markdown-table-cell-label-header');
+        }
+
+        label.clutter_text.line_wrap = true;
+        label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        label.clutter_text.single_line_mode = false;
+        label.clutter_text.can_focus = false;
+
+        let markup = this._formatInlineMarkdown(text);
+        if (header) {
+            markup = `<b>${markup}</b>`;
+        }
+
+        this._setLabelMarkup(label, markup, text);
+        cellBox.add_child(label);
+        return cellBox;
+    }
+
+    _createMarkdownTableWidget(segment) {
+        let tableBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-markdown-table',
+            x_expand: true,
+        });
+
+        let allRows = [segment.headers, ...(segment.rows || [])];
+        for (let rowIndex = 0; rowIndex < allRows.length; rowIndex++) {
+            let row = allRows[rowIndex];
+            let rowBox = new St.Widget({
+                layout_manager: new Clutter.BoxLayout({
+                    orientation: Clutter.Orientation.HORIZONTAL,
+                    homogeneous: true,
+                    spacing: 0,
+                }),
+                style_class: 'katab-markdown-table-row',
+                x_expand: true,
+                x_align: Clutter.ActorAlign.FILL,
+            });
+
+            if (rowIndex === 0) {
+                rowBox.add_style_class_name('katab-markdown-table-row-header');
+            }
+
+            for (let cellText of row) {
+                rowBox.add_child(this._createMarkdownTableCell(cellText, { header: rowIndex === 0 }));
+            }
+
+            tableBox.add_child(rowBox);
+        }
+
+        return tableBox;
     }
 
     _createCodeBlockWidget(language, codeText) {
@@ -2345,6 +2864,18 @@ class KatabDialog {
         for (let segment of segments) {
             if (segment.type === 'code') {
                 contentBox.add_child(this._createCodeBlockWidget(segment.language, segment.code));
+                hasChildren = true;
+                continue;
+            }
+
+            if (segment.type === 'table') {
+                contentBox.add_child(this._createMarkdownTableWidget(segment));
+                hasChildren = true;
+                continue;
+            }
+
+            if (segment.type === 'rule') {
+                contentBox.add_child(this._createMarkdownRuleWidget());
                 hasChildren = true;
                 continue;
             }
@@ -2532,6 +3063,16 @@ class KatabDialog {
         let historyContent = diagnostics ? `${summary}\n\n${diagnostics}` : summary;
         this._messageHistory.push({ role: 'assistant', content: historyContent });
         this._saveCurrentConversation();
+        this._cancellable = null;
+        this._clearActiveResponseState();
+        this._scrollToBottom();
+    }
+
+    _renderLocalAssistantError(uiElements, summary) {
+        this._applyAssistantRender(uiElements, summary, { plain: true });
+        this._messageHistory.push({ role: 'assistant', content: summary });
+        this._saveCurrentConversation();
+        this._cancellable = null;
         this._clearActiveResponseState();
         this._scrollToBottom();
     }
@@ -2756,18 +3297,70 @@ class KatabDialog {
         });
     }
 
-    _sendMessage() {
+    async _sendMessage() {
         if (this._isStreaming) {
             this._stopActiveResponse();
             return;
         }
 
-        let promptText = this._entry.get_text().trim();
-        if (promptText === '')
+        let rawPromptText = this._entry.get_text().trim();
+        if (rawPromptText === '' && !this._pendingDocument)
             return;
 
+        let documentCommand = null;
+        try {
+            documentCommand = parseDocumentCommand(rawPromptText);
+        } catch (error) {
+            this._addSystemMessage(error.message);
+            return;
+        }
+
+        if (documentCommand && !this._isDocumentToolEnabled()) {
+            this._addSystemMessage('Enable the Document Tool in Settings before using /doc.');
+            return;
+        }
+
+        let promptText = documentCommand ? documentCommand.promptText : rawPromptText;
+        let shouldClearPendingAfterSend = Boolean(this._pendingDocument);
+        let documentMeta = this._pendingDocument ? { ...this._pendingDocument } : null;
+
+        if (documentCommand) {
+            if (documentCommand.needsPicker) {
+                try {
+                    const pickedPath = await this._pickDocumentPath();
+                    if (!pickedPath) {
+                        return;
+                    }
+
+                    documentMeta = this._buildDocumentMeta(pickedPath);
+                    if (!documentMeta) {
+                        throw new DocumentToolError('Katab could not resolve that file path. Use a local file and try again.', {
+                            code: 'invalid-picked-path',
+                        });
+                    }
+                } catch (error) {
+                    this._addSystemMessage(error.message || `Could not open the document picker: ${error}`);
+                    return;
+                }
+            } else if (documentCommand.filePath) {
+                const normalizedPath = resolveDocumentPath(documentCommand.filePath) || documentCommand.filePath.trim();
+                documentMeta = {
+                    displayName: GLib.path_get_basename(normalizedPath),
+                    path: normalizedPath,
+                };
+            }
+        }
+
+        if (!promptText && documentMeta) {
+            promptText = 'Please analyze the attached document.';
+        }
+
+        if (!promptText && !documentMeta) {
+            return;
+        }
+
         this._forcedTool = null;
-        const tools = PROVIDER_TOOLS[this._currentProvider] || [];
+        const tools = this._getProviderTools();
         for (const t of tools) {
             if (promptText.startsWith(t.command + ' ') || promptText === t.command) {
                 this._forcedTool = t.toolName;
@@ -2775,19 +3368,58 @@ class KatabDialog {
             }
         }
 
+        const userMessage = {
+            role: 'user',
+            content: promptText,
+        };
+        if (documentMeta) {
+            userMessage.documents = [documentMeta];
+        }
+
         this._entry.set_text('');
+        this._draftUsage = 0;
+        this._renderTokenCounter();
         this._hasConversationStarted = true;
         this._setWelcomeVisible(false);
-        this._addChatMessage('You', promptText, 'user');
+        this._addChatMessage('You', this._formatUserMessageDisplay(userMessage), 'user');
 
-        this._messageHistory.push({ role: 'user', content: promptText });
+        this._messageHistory.push(userMessage);
         this._saveCurrentConversation();
 
         let uiElements = this._addChatMessage('Katab AI', '...', 'assistant');
+        const requestCancellable = new Gio.Cancellable();
+        this._cancellable = requestCancellable;
+        this._beginActiveResponse(
+            uiElements,
+            this._currentProvider,
+            documentMeta ? 'document' : 'response',
+            documentMeta?.displayName || null
+        );
 
         try {
-            this._streamResponse(uiElements);
+            if (documentMeta) {
+                this._applyAssistantRender(uiElements, `Reading ${documentMeta.displayName}...`, { plain: true });
+                const parsedDocument = await this._documentToolRuntime.parseDocument(documentMeta.path, requestCancellable);
+                this._rememberSessionDocument(parsedDocument);
+                userMessage.documents = [this._serializeDocumentMeta(parsedDocument)];
+                this._messageHistory[this._messageHistory.length - 1] = userMessage;
+                this._saveCurrentConversation();
+                if (shouldClearPendingAfterSend) {
+                    this._setPendingDocument(null);
+                }
+            }
+
+            this._streamResponse(uiElements, { cancellable: requestCancellable });
         } catch (e) {
+            if (this._isRequestCancelled(e)) {
+                return;
+            }
+
+            if (e instanceof DocumentToolError) {
+                this._renderLocalAssistantError(uiElements, e.message);
+                return;
+            }
+
             const diagnostics = this._buildRequestDiagnostics({
                 provider: this._currentProvider,
                 endpoint: 'Not constructed',
@@ -2799,7 +3431,7 @@ class KatabDialog {
         }
     }
 
-    _streamResponse(uiElements) {
+    _streamResponse(uiElements, { cancellable = null } = {}) {
         const provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
         let apiKey = '';
@@ -2930,9 +3562,14 @@ class KatabDialog {
         message.set_request_body_from_bytes('application/json', bodyBytes);
 
         this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
-        this._cancelStream();
+        if (!cancellable) {
+            this._cancelStream({ clearState: false });
+            this._cancellable = new Gio.Cancellable();
+        } else {
+            this._cancellable = cancellable;
+        }
+
         let responseState = this._beginActiveResponse(uiElements, provider);
-        this._cancellable = new Gio.Cancellable();
         let currentCancellable = this._cancellable;
 
         this._soupSession.send_async(message, GLib.PRIORITY_DEFAULT, currentCancellable, (session, res) => {

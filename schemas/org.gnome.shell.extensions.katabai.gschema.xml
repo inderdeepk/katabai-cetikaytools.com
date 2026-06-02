@@ -11,6 +11,11 @@
       <summary>Toggle Current Chat</summary>
       <description>Keyboard shortcut to open or hide the current Katab chat while keeping active responses running in the background.</description>
     </key>
+    <key name="document-tool-enabled" type="b">
+      <default>false</default>
+      <summary>Enable Document Tool</summary>
+      <description>Enable optional local document parsing for supported text, PDF, and DOCX files.</description>
+    </key>
     
     <!-- Ollama Settings -->
     <key name="ollama-url" type="s">

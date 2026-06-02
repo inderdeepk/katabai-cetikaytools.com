@@ -15,3 +15,8 @@ We take the security of Katab seriously. If you discover a security vulnerabilit
 ### API Key Best Practices
 - Never commit `sk-...` formatted keys to source code or documentation.
 - Rely on GNOME's GSettings via `prefs.js` for inputting secrets into the extension.
+
+### Document Tool Safety Notes
+- The optional document tool only reads local native files and does not shell out through a command interpreter.
+- PDF and DOCX parsing use direct `Gio.Subprocess` argv calls to local tools such as `pdftotext` and `pandoc`.
+- Saved conversations keep document metadata only. Reattach the file if you need the full extracted text in a later session.
