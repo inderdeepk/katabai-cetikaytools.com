@@ -36,6 +36,24 @@ export default class KatabPreferences extends ExtensionPreferences {
                 );
                 this._prefsCssLoaded = true;
             }
+
+            const applyPrefsTheme = () => {
+                try {
+                    const styleManager = Adw.StyleManager.get_default();
+                    const isDark = styleManager.get_dark();
+                    window.remove_css_class('katab-prefs-theme-dark');
+                    window.remove_css_class('katab-prefs-theme-light');
+                    window.add_css_class(isDark ? 'katab-prefs-theme-dark' : 'katab-prefs-theme-light');
+                } catch (_e) {
+                    window.add_css_class('katab-prefs-theme-dark');
+                }
+            };
+            applyPrefsTheme();
+            try {
+                const styleManager = Adw.StyleManager.get_default();
+                const themeHandlerId = styleManager.connect('notify::dark', applyPrefsTheme);
+                window.connect('destroy', () => styleManager.disconnect(themeHandlerId));
+            } catch (_e) { /* StyleManager unavailable */ }
         }
 
         const addCssClasses = (widget, ...cssClasses) => {

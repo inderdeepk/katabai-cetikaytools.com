@@ -721,6 +721,12 @@ class KatabDialog {
             }
         });
 
+        this._interfaceSettings = null;
+        this._themeChangedId = 0;
+        try {
+            this._interfaceSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
+        } catch (_e) { /* schema not available */ }
+
         this._monitorChangedId = 0;
         this.isOpen = false;
         this._messageHistory = [];
@@ -772,6 +778,11 @@ class KatabDialog {
             y_expand: true,
         });
         this.dialogLayout.add_child(this.contentLayout);
+
+        this._applyDialogTheme();
+        if (this._interfaceSettings) {
+            this._themeChangedId = this._interfaceSettings.connect('changed::color-scheme', () => this._applyDialogTheme());
+        }
 
         this.actor.connect('button-press-event', (_actor, event) => {
             if (event.get_source() === this.actor) {
@@ -1287,6 +1298,23 @@ class KatabDialog {
             });
             this._toolsBox.add_child(btn);
         }
+    }
+
+    _resolveIsDark() {
+        try {
+            if (this._interfaceSettings) {
+                const scheme = this._interfaceSettings.get_string('color-scheme');
+                return scheme !== 'prefer-light';
+            }
+        } catch (_e) { /* fall through */ }
+        return true;
+    }
+
+    _applyDialogTheme() {
+        const isDark = this._resolveIsDark();
+        this.actor.remove_style_class_name('katab-theme-dark');
+        this.actor.remove_style_class_name('katab-theme-light');
+        this.actor.add_style_class_name(isDark ? 'katab-theme-dark' : 'katab-theme-light');
     }
 
     _buildUI() {
@@ -1931,6 +1959,11 @@ class KatabDialog {
         this.close({ cancelStream: true, saveConversation: true });
         this._disconnectProviderStatus();
         this._stopWelcomeAnimation();
+
+        if (this._themeChangedId && this._interfaceSettings) {
+            this._interfaceSettings.disconnect(this._themeChangedId);
+            this._themeChangedId = 0;
+        }
 
         if (this._monitorChangedId) {
             Main.layoutManager.disconnect(this._monitorChangedId);
@@ -3984,6 +4017,12 @@ const Indicator = GObject.registerClass(
             this._extension = extension;
             this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
 
+            this._indicatorInterfaceSettings = null;
+            this._indicatorThemeChangedId = 0;
+            try {
+                this._indicatorInterfaceSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
+            } catch (_e) { /* schema not available */ }
+
             let panelGicon = Gio.icon_new_for_string(`${extension.path}/icons/katab-panel-icon.svg`);
             let iconStack = new St.BoxLayout({
                 style_class: 'katab-panel-indicator-box',
@@ -4002,6 +4041,11 @@ const Indicator = GObject.registerClass(
             });
             iconStack.add_child(this._panelStatusDot);
             this.add_child(iconStack);
+
+            this._applyIndicatorTheme();
+            if (this._indicatorInterfaceSettings) {
+                this._indicatorThemeChangedId = this._indicatorInterfaceSettings.connect('changed::color-scheme', () => this._applyIndicatorTheme());
+            }
 
             this._providerHealthListener = null;
             if (this._extension.providerHealthMonitor) {
@@ -4204,7 +4248,30 @@ const Indicator = GObject.registerClass(
             }
         }
 
+        _applyIndicatorTheme() {
+            let isDark = true;
+            try {
+                if (this._indicatorInterfaceSettings) {
+                    const scheme = this._indicatorInterfaceSettings.get_string('color-scheme');
+                    isDark = scheme !== 'prefer-light';
+                }
+            } catch (_e) { /* fall through */ }
+            this.remove_style_class_name('katab-theme-dark');
+            this.remove_style_class_name('katab-theme-light');
+            this.add_style_class_name(isDark ? 'katab-theme-dark' : 'katab-theme-light');
+
+            if (this.menu?.actor) {
+                this.menu.actor.remove_style_class_name('katab-theme-dark');
+                this.menu.actor.remove_style_class_name('katab-theme-light');
+                this.menu.actor.add_style_class_name(isDark ? 'katab-theme-dark' : 'katab-theme-light');
+            }
+        }
+
         destroy() {
+            if (this._indicatorThemeChangedId && this._indicatorInterfaceSettings) {
+                this._indicatorInterfaceSettings.disconnect(this._indicatorThemeChangedId);
+                this._indicatorThemeChangedId = 0;
+            }
             if (this._providerHealthListener && this._extension.providerHealthMonitor) {
                 this._extension.providerHealthMonitor.unsubscribe(this._providerHealthListener);
             }

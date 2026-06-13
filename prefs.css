@@ -1,21 +1,30 @@
-@define-color katab_surface #171010;
-@define-color katab_panel #362222;
-@define-color katab_card #423F3E;
-@define-color katab_border #2B2B2B;
-@define-color katab_text #F2E8E5;
+/* Katab AI — Prefs: Adwaita Glass Design */
+
+/* ════════════════════════════════════════════
+   COLOUR TOKENS  (dark, Adwaita-neutral)
+   ════════════════════════════════════════════ */
+@define-color katab_surface #1a1a1a;
+@define-color katab_panel #242424;
+@define-color katab_card #383838;
+@define-color katab_border #2d2d2d;
+@define-color katab_text #ffffff;
+
+/* ════════════════════════════════════════════
+   WINDOW & GLOBAL
+   ════════════════════════════════════════════ */
 
 window.katab-prefs-window,
 window.katab-prefs-window>contents {
-    background-image: linear-gradient(to bottom, rgba(54, 34, 34, 0.96), rgba(43, 43, 43, 0.98));
-    background-color: @katab_border;
+    background-image: linear-gradient(to bottom, rgba(36, 36, 36, 0.96), rgba(26, 26, 26, 0.98));
+    background-color: @katab_panel;
     color: @katab_text;
 }
 
 window.katab-prefs-window headerbar {
     background-image: none;
-    background-color: rgba(23, 16, 16, 0.96);
+    background-color: rgba(26, 26, 26, 0.96);
     color: @katab_text;
-    border-bottom: 1px solid rgba(242, 232, 229, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow: none;
 }
 
@@ -38,46 +47,54 @@ window.katab-prefs-window .navigation-sidebar,
 .katab-prefs-window .dim-label,
 .katab-prefs-row .subtitle,
 .katab-prefs-row .caption {
-    color: rgba(242, 232, 229, 0.7);
+    color: rgba(255, 255, 255, 0.62);
 }
 
+/* ════════════════════════════════════════════
+   PREFERENCE ROWS
+   ════════════════════════════════════════════ */
+
 .katab-prefs-row {
-    background-color: rgba(66, 63, 62, 0.34);
-    border: 1px solid rgba(242, 232, 229, 0.08);
+    background-color: rgba(56, 56, 56, 0.40);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     color: @katab_text;
     box-shadow: none;
 }
 
 .katab-prefs-row:hover {
-    background-color: rgba(66, 63, 62, 0.46);
+    background-color: rgba(56, 56, 56, 0.56);
 }
 
 .katab-prefs-provider-row,
 .katab-prefs-expander {
-    background-color: rgba(54, 34, 34, 0.58);
+    background-color: rgba(36, 36, 36, 0.65);
 }
+
+/* ════════════════════════════════════════════
+   PROVIDER CARDS & BADGES
+   ════════════════════════════════════════════ */
 
 .katab-prefs-provider-image {
     padding: 8px;
     border-radius: 8px;
-    background-color: rgba(23, 16, 16, 0.84);
-    border: 1px solid rgba(242, 232, 229, 0.08);
+    background-color: rgba(26, 26, 26, 0.84);
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .katab-prefs-provider-badge {
     padding: 4px 10px;
     border-radius: 6px;
-    background-color: rgba(23, 16, 16, 0.88);
-    border: 1px solid rgba(242, 232, 229, 0.1);
+    background-color: rgba(26, 26, 26, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.10);
 }
 
 .katab-prefs-status-badge {
     min-width: 72px;
     padding: 5px 10px;
     border-radius: 999px;
-    background-color: rgba(23, 16, 16, 0.88);
-    border: 1px solid rgba(242, 232, 229, 0.12);
+    background-color: rgba(26, 26, 26, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     font-weight: 700;
     font-size: 0.9em;
 }
@@ -105,15 +122,19 @@ window.katab-prefs-window .navigation-sidebar,
     color: @katab_text;
 }
 
+/* ════════════════════════════════════════════
+   FORM CONTROLS
+   ════════════════════════════════════════════ */
+
 window.katab-prefs-window entry,
 window.katab-prefs-window searchentry,
 .katab-prefs-entry,
 .katab-prefs-spin-row spinbutton,
 .katab-prefs-button {
     background-image: none;
-    background-color: rgba(23, 16, 16, 0.92);
+    background-color: rgba(26, 26, 26, 0.92);
     color: @katab_text;
-    border: 1px solid rgba(242, 232, 229, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 6px;
     box-shadow: none;
 }
@@ -132,13 +153,13 @@ window.katab-prefs-window searchentry:focus,
 .katab-prefs-entry:focus,
 .katab-prefs-spin-row spinbutton:focus,
 .katab-prefs-button:focus {
-    border-color: rgba(242, 232, 229, 0.24);
-    box-shadow: 0 0 0 2px rgba(242, 232, 229, 0.08);
+    border-color: rgba(255, 255, 255, 0.28);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
 }
 
 .katab-prefs-button:hover,
 window.katab-prefs-window button:hover {
-    background-color: rgba(66, 63, 62, 0.8);
+    background-color: rgba(56, 56, 56, 0.80);
 }
 
 .katab-prefs-shortcut-button,
@@ -148,11 +169,11 @@ window.katab-prefs-window button:hover {
 
 window.katab-prefs-window switch {
     background-color: rgba(43, 43, 43, 0.92);
-    border: 1px solid rgba(242, 232, 229, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 window.katab-prefs-window switch:checked {
-    background-color: rgba(66, 63, 62, 0.95);
+    background-color: rgba(56, 56, 56, 0.95);
 }
 
 window.katab-prefs-window switch slider {
@@ -160,5 +181,120 @@ window.katab-prefs-window switch slider {
 }
 
 window.katab-prefs-window separator {
-    background-color: rgba(242, 232, 229, 0.08);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ════════════════════════════════════════════
+   LIGHT THEME OVERRIDES
+   Applied when .katab-prefs-theme-light is on the window
+   ════════════════════════════════════════════ */
+
+window.katab-prefs-window.katab-prefs-theme-light,
+window.katab-prefs-window.katab-prefs-theme-light>contents {
+    background-image: linear-gradient(to bottom, rgba(250, 250, 250, 0.97), rgba(240, 240, 240, 0.99));
+    background-color: #f5f5f5;
+    color: rgba(0, 0, 0, 0.82);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light headerbar {
+    background-color: rgba(240, 240, 240, 0.97);
+    color: rgba(0, 0, 0, 0.82);
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light preferencespage,
+window.katab-prefs-window.katab-prefs-theme-light preferencesgroup,
+window.katab-prefs-window.katab-prefs-theme-light .navigation-sidebar,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-page,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-group {
+    color: rgba(0, 0, 0, 0.82);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light label,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-page label,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-group label,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row label {
+    color: rgba(0, 0, 0, 0.82);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .dim-label,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row .subtitle,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row .caption {
+    color: rgba(0, 0, 0, 0.52);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row {
+    background-color: rgba(255, 255, 255, 0.75);
+    border-color: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.82);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row:hover {
+    background-color: rgba(255, 255, 255, 0.92);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-row,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander {
+    background-color: rgba(255, 255, 255, 0.85);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-image {
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge {
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-status-badge {
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge-icon,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge-label {
+    color: rgba(0, 0, 0, 0.75);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light entry,
+window.katab-prefs-window.katab-prefs-theme-light searchentry,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-entry,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-spin-row spinbutton,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button {
+    background-color: rgba(255, 255, 255, 0.92);
+    color: rgba(0, 0, 0, 0.82);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light entry:focus,
+window.katab-prefs-window.katab-prefs-theme-light searchentry:focus,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-entry:focus,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-spin-row spinbutton:focus,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button:focus {
+    border-color: rgba(0, 0, 0, 0.28);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button:hover,
+window.katab-prefs-window.katab-prefs-theme-light button:hover {
+    background-color: rgba(0, 0, 0, 0.07);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light switch {
+    background-color: rgba(0, 0, 0, 0.08);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light switch:checked {
+    background-color: rgba(53, 132, 228, 0.82);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light switch slider {
+    background-color: #ffffff;
+}
+
+window.katab-prefs-window.katab-prefs-theme-light separator {
+    background-color: rgba(0, 0, 0, 0.08);
 }
