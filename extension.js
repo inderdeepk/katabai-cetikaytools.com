@@ -1304,7 +1304,7 @@ class KatabDialog {
         try {
             if (this._interfaceSettings) {
                 const scheme = this._interfaceSettings.get_string('color-scheme');
-                return scheme !== 'prefer-light';
+                return scheme === 'prefer-dark';
             }
         } catch (_e) { /* fall through */ }
         return true;
@@ -4253,7 +4253,7 @@ const Indicator = GObject.registerClass(
             try {
                 if (this._indicatorInterfaceSettings) {
                     const scheme = this._indicatorInterfaceSettings.get_string('color-scheme');
-                    isDark = scheme !== 'prefer-light';
+                    isDark = scheme === 'prefer-dark';
                 }
             } catch (_e) { /* fall through */ }
             this.remove_style_class_name('katab-theme-dark');
