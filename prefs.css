@@ -15,7 +15,7 @@
 
 window.katab-prefs-window,
 window.katab-prefs-window>contents {
-    background-image: linear-gradient(to bottom, rgba(36, 36, 36, 0.96), rgba(26, 26, 26, 0.98));
+    background-image: linear-gradient(160deg, rgba(28, 32, 48, 0.98) 0%, rgba(18, 18, 26, 0.99) 60%, rgba(14, 18, 32, 1.0) 100%);
     background-color: @katab_panel;
     color: @katab_text;
 }
@@ -83,10 +83,10 @@ window.katab-prefs-window .navigation-sidebar,
 }
 
 .katab-prefs-provider-badge {
-    padding: 4px 10px;
-    border-radius: 6px;
-    background-color: rgba(26, 26, 26, 0.88);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    padding: 3px 12px;
+    border-radius: 999px;
+    background-color: rgba(53, 132, 228, 0.20);
+    border: 1px solid rgba(53, 132, 228, 0.45);
 }
 
 .katab-prefs-status-badge {
@@ -100,26 +100,26 @@ window.katab-prefs-window .navigation-sidebar,
 }
 
 .katab-prefs-status-builtin {
-    background-color: rgba(137, 180, 250, 0.14);
-    border-color: rgba(137, 180, 250, 0.28);
-    color: #c8ddff;
+    background-color: rgba(137, 180, 250, 0.18);
+    border-color: rgba(137, 180, 250, 0.40);
+    color: #bdd6ff;
 }
 
 .katab-prefs-status-detected {
-    background-color: rgba(166, 227, 161, 0.14);
-    border-color: rgba(166, 227, 161, 0.28);
-    color: #d2f3cf;
+    background-color: rgba(166, 227, 161, 0.18);
+    border-color: rgba(166, 227, 161, 0.40);
+    color: #c3f0be;
 }
 
 .katab-prefs-status-install {
-    background-color: rgba(249, 226, 175, 0.14);
-    border-color: rgba(249, 226, 175, 0.28);
-    color: #f9ebc1;
+    background-color: rgba(249, 226, 175, 0.18);
+    border-color: rgba(249, 226, 175, 0.40);
+    color: #f9e5a8;
 }
 
 .katab-prefs-provider-badge-icon,
 .katab-prefs-provider-badge-label {
-    color: @katab_text;
+    color: #89b4fa;
 }
 
 /* ════════════════════════════════════════════
@@ -173,7 +173,8 @@ window.katab-prefs-window switch {
 }
 
 window.katab-prefs-window switch:checked {
-    background-color: rgba(56, 56, 56, 0.95);
+    background-color: rgba(53, 132, 228, 0.90);
+    border-color: rgba(53, 132, 228, 0.70);
 }
 
 window.katab-prefs-window switch slider {
@@ -244,8 +245,8 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-image {
 }
 
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge {
-    background-color: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.10);
+    background-color: rgba(53, 132, 228, 0.14);
+    border-color: rgba(53, 132, 228, 0.35);
 }
 
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-status-badge {
@@ -255,7 +256,7 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-status-badge {
 
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge-icon,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge-label {
-    color: rgba(0, 0, 0, 0.75);
+    color: #2a6db5;
 }
 
 window.katab-prefs-window.katab-prefs-theme-light entry,

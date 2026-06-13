@@ -4355,7 +4355,7 @@ const Indicator = GObject.registerClass(
             }
 
             this._syncProvider();
-            this._settings.connect('changed::provider', () => this._syncProvider());
+            this._providerChangedId = this._settings.connect('changed::provider', () => this._syncProvider());
 
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -4465,6 +4465,10 @@ const Indicator = GObject.registerClass(
             if (this._indicatorThemeChangedId && this._indicatorInterfaceSettings) {
                 this._indicatorInterfaceSettings.disconnect(this._indicatorThemeChangedId);
                 this._indicatorThemeChangedId = 0;
+            }
+            if (this._providerChangedId && this._settings) {
+                this._settings.disconnect(this._providerChangedId);
+                this._providerChangedId = 0;
             }
             if (this._providerHealthListener && this._extension.providerHealthMonitor) {
                 this._extension.providerHealthMonitor.unsubscribe(this._providerHealthListener);

@@ -9,6 +9,8 @@ export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         window.search_enabled = true;
         window.add_css_class('katab-prefs-window');
+        window.default_width = 740;
+        window.default_height = 660;
 
         const settings = this.getSettings('org.gnome.shell.extensions.katabai');
         const extensionPath = this.path;
@@ -221,12 +223,14 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         // General Provider Selection
         const generalGroup = createPreferencesGroup({
-            title: 'AI Provider Settings',
+            title: 'Active Provider',
+            description: 'Choose which AI backend powers your conversations. Click a provider to switch; your settings for each are kept separately.',
         });
         page.add(generalGroup);
 
         const accessibilityGroup = createPreferencesGroup({
-            title: 'Accessibility',
+            title: 'Keyboard Shortcut',
+            description: 'Set a global shortcut to open or hide the chat from anywhere on the desktop.',
         });
         page.add(accessibilityGroup);
 
@@ -711,8 +715,8 @@ export default class KatabPreferences extends ExtensionPreferences {
         createProviderCardRow('openai', generalGroup);
         createProviderCardRow('anthropic', generalGroup);
         createShortcutRow(
-            'Current Chat Shortcut',
-            'Open or hide the current chat while keeping active responses running in the background. GNOME Shell requires one non-modifier key, so modifier-only shortcuts like Ctrl+Shift+Super are not valid.',
+            'Toggle Chat',
+            'Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it.',
             'toggle-current-chat',
             accessibilityGroup
         );
@@ -968,26 +972,26 @@ export default class KatabPreferences extends ExtensionPreferences {
         // --- Unsloth Settings ---
         const unslothPage = createProviderPage('unsloth');
         const unslothGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', null, 'unsloth-url', unslothGroup);
-        createStringRow('API Key', null, 'unsloth-api-key', unslothGroup, true);
-        createStringRow('Model', null, 'unsloth-model', unslothGroup);
-        createIntRow('Context Window Size', null, 'unsloth-num-ctx', unslothGroup, 1024, 1048576, 1024);
+        createStringRow('Base URL', 'e.g. http://localhost:8888/v1 — the Unsloth Studio API root.', 'unsloth-url', unslothGroup);
+        createStringRow('API Key', 'Leave blank for local instances running without authentication.', 'unsloth-api-key', unslothGroup, true);
+        createStringRow('Model', 'The model identifier served by your Unsloth Studio instance.', 'unsloth-model', unslothGroup);
+        createIntRow('Context Window Size', 'Maximum tokens per request. Match this to your loaded model capacity.', 'unsloth-num-ctx', unslothGroup, 1024, 1048576, 1024);
         unslothPage.add(unslothGroup);
 
         // --- OpenAI Settings ---
         const openaiPage = createProviderPage('openai');
         const openaiGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', null, 'openai-url', openaiGroup);
-        createStringRow('API Key', null, 'openai-api-key', openaiGroup, true);
-        createStringRow('Model', null, 'openai-model', openaiGroup);
+        createStringRow('Base URL', 'e.g. https://api.openai.com/v1 — change only when using a proxy or compatible endpoint.', 'openai-url', openaiGroup);
+        createStringRow('API Key', 'Your OpenAI secret key starting with sk-. Never share or commit this value.', 'openai-api-key', openaiGroup, true);
+        createStringRow('Model', 'The model ID from your OpenAI account, such as gpt-4o or gpt-4o-mini.', 'openai-model', openaiGroup);
         openaiPage.add(openaiGroup);
 
         // --- Anthropic Settings ---
         const anthropicPage = createProviderPage('anthropic');
         const anthropicGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', null, 'anthropic-url', anthropicGroup);
-        createStringRow('API Key', null, 'anthropic-api-key', anthropicGroup, true);
-        createStringRow('Model', null, 'anthropic-model', anthropicGroup);
+        createStringRow('Base URL', 'e.g. https://api.anthropic.com — change only when using a proxy.', 'anthropic-url', anthropicGroup);
+        createStringRow('API Key', 'Your Anthropic key starting with sk-ant-. Never share or commit this value.', 'anthropic-api-key', anthropicGroup, true);
+        createStringRow('Model', 'The Claude model ID from your account, such as claude-opus-4-5.', 'anthropic-model', anthropicGroup);
         anthropicPage.add(anthropicGroup);
 
         // --- Tools Settings ---
@@ -1026,7 +1030,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const capabilityGroup = createPreferencesGroup({
             title: 'Detected Capabilities',
-            description: 'Katab checks the local system at runtime. Install the listed packages only if you want that file type.',
+            description: 'Katab scans the local system at runtime. PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
         });
         toolsPage.add(capabilityGroup);
 
@@ -1074,23 +1078,6 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Refresh',
             refreshDocumentToolStatus,
             capabilityGroup
-        );
-
-        const installGroup = createPreferencesGroup({
-            title: 'Install Hints',
-            description: 'Package names vary a little by distribution, but these are the common ones Katab expects.',
-        });
-        toolsPage.add(installGroup);
-
-        createInfoRow(
-            'PDF package',
-            'Install poppler-utils so Katab can call pdftotext for PDFs.',
-            installGroup
-        );
-        createInfoRow(
-            'DOCX package',
-            'Install pandoc so Katab can convert .docx files into plain text.',
-            installGroup
         );
 
         refreshDocumentToolStatus();
