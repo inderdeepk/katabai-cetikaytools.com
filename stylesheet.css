@@ -802,17 +802,48 @@
     spacing: 6px;
 }
 
+.katab-prompt-scroll {
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    min-height: 44px;
+    max-height: 220px;
+}
+
+.katab-prompt-editor {
+    padding: 0 12px;
+    min-height: 44px;
+}
+
+.katab-prompt-hint {
+    color: rgba(255, 255, 255, 0.38);
+}
+
+.katab-prompt-scroll StScrollBar {
+    min-width: 6px;
+    min-height: 6px;
+    padding: 6px 4px 6px 0;
+}
+
+.katab-prompt-scroll StScrollBar StBin#trough {
+    background-color: transparent;
+}
+
+.katab-prompt-scroll StScrollBar StButton#vhandle {
+    background-color: rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+}
+
+.katab-prompt-scroll StScrollBar StButton#vhandle:hover {
+    background-color: rgba(255, 255, 255, 0.24);
+}
+
 .katab-prompt-entry {
     background-color: transparent;
     border: none;
     color: #ffffff;
     font-size: 10pt;
-    padding: 8px 0;
-}
-
-.katab-prompt-entry:focus {
-    border: none;
-    box-shadow: none;
+    padding: 0;
 }
 
 .katab-send-btn {
@@ -1130,6 +1161,23 @@
 .katab-theme-light .katab-footer-box {
     background-color: rgba(255, 255, 255, 0.92);
     border-color: rgba(0, 0, 0, 0.10);
+}
+
+.katab-theme-light .katab-prompt-scroll {
+    background-color: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+.katab-theme-light .katab-prompt-hint {
+    color: rgba(0, 0, 0, 0.34);
+}
+
+.katab-theme-light .katab-prompt-scroll StScrollBar StButton#vhandle {
+    background-color: rgba(0, 0, 0, 0.16);
+}
+
+.katab-theme-light .katab-prompt-scroll StScrollBar StButton#vhandle:hover {
+    background-color: rgba(0, 0, 0, 0.24);
 }
 
 .katab-theme-light .katab-prompt-entry {

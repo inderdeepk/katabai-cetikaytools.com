@@ -83,6 +83,10 @@ const PROVIDER_STATUS_STYLE_CLASSES = Object.values(PROVIDER_STATUS)
 
 const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
+const PROMPT_INPUT_MIN_HEIGHT = 44;
+const PROMPT_INPUT_MAX_HEIGHT = 220;
+const PROMPT_INPUT_VERTICAL_PADDING = 20;
+const PROMPT_INPUT_SCROLL_STEP = 36;
 
 function getProviderLabel(provider) {
     return PROVIDER_META[provider]?.label || provider;
@@ -742,6 +746,7 @@ class KatabDialog {
         this._currentUsage = 0;
         this._draftUsage = 0;
         this._tokenUpdateTimeout = 0;
+        this._promptScrollFollowIdleId = 0;
         this._hasConversationStarted = false;
         this._welcomePanel = null;
         this._welcomeStage = null;
@@ -986,13 +991,111 @@ class KatabDialog {
         return Clutter.EVENT_PROPAGATE;
     }
 
+    _queuePromptScrollToBottom() {
+        if (!this._promptScroll) {
+            return;
+        }
+
+        if (this._promptScrollFollowIdleId) {
+            GLib.source_remove(this._promptScrollFollowIdleId);
+        }
+
+        this._promptScrollFollowIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._promptScrollFollowIdleId = 0;
+
+            if (!this._promptScroll) {
+                return GLib.SOURCE_REMOVE;
+            }
+
+            let adjustment = this._promptScroll.vadjustment;
+            if (!adjustment) {
+                return GLib.SOURCE_REMOVE;
+            }
+
+            adjustment.set_value(Math.max(adjustment.lower, adjustment.upper - adjustment.page_size));
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _syncPromptHintVisibility() {
+        if (!this._entryHint || !this._entry) {
+            return;
+        }
+
+        this._entryHint.visible = !(this._entry.get_text?.() ?? this._entry.text ?? '');
+    }
+
+    _syncPromptScrollHeight() {
+        if (!this._promptScroll || !this._promptEditor) {
+            return;
+        }
+
+        let forWidth = this._promptScroll.width > 0 ? this._promptScroll.width : -1;
+        let contentHeight = PROMPT_INPUT_MIN_HEIGHT;
+
+        try {
+            let labelWidth = forWidth > 0
+                ? Math.max(1, forWidth - PROMPT_INPUT_VERTICAL_PADDING)
+                : -1;
+            let [, preferredHeight] = this._entry.get_preferred_height(labelWidth);
+            if (preferredHeight > 0) {
+                contentHeight = Math.max(PROMPT_INPUT_MIN_HEIGHT, preferredHeight + PROMPT_INPUT_VERTICAL_PADDING);
+            }
+        } catch (_e) {
+            contentHeight = PROMPT_INPUT_MIN_HEIGHT;
+        }
+
+        this._promptEditor.set_height(contentHeight);
+        this._promptScroll.set_height(Math.max(PROMPT_INPUT_MIN_HEIGHT, Math.min(PROMPT_INPUT_MAX_HEIGHT, contentHeight)));
+    }
+
+    _scrollPromptBy(delta) {
+        if (!this._promptScroll) {
+            return Clutter.EVENT_PROPAGATE;
+        }
+
+        let adjustment = this._promptScroll.vadjustment;
+        if (!adjustment) {
+            return Clutter.EVENT_PROPAGATE;
+        }
+
+        let maxValue = Math.max(adjustment.lower, adjustment.upper - adjustment.page_size);
+        if (maxValue <= adjustment.lower) {
+            return Clutter.EVENT_PROPAGATE;
+        }
+
+        adjustment.set_value(Math.max(adjustment.lower, Math.min(maxValue, adjustment.value + delta)));
+        return Clutter.EVENT_STOP;
+    }
+
+    _handlePromptScrollEvent(_actor, event) {
+        let direction = event.get_scroll_direction();
+
+        if (direction === Clutter.ScrollDirection.UP) {
+            return this._scrollPromptBy(-PROMPT_INPUT_SCROLL_STEP);
+        }
+
+        if (direction === Clutter.ScrollDirection.DOWN) {
+            return this._scrollPromptBy(PROMPT_INPUT_SCROLL_STEP);
+        }
+
+        if (direction === Clutter.ScrollDirection.SMOOTH) {
+            let [, deltaY] = event.get_scroll_delta();
+            if (deltaY !== 0) {
+                return this._scrollPromptBy(deltaY * PROMPT_INPUT_SCROLL_STEP);
+            }
+        }
+
+        return Clutter.EVENT_PROPAGATE;
+    }
+
     _releasePromptFocus() {
-        if (!this._entry || !this._entry.clutter_text) {
+        if (!this._entry) {
             return;
         }
 
         let keyFocus = global.stage.get_key_focus();
-        if (keyFocus !== this._entry && keyFocus !== this._entry.clutter_text) {
+        if (keyFocus !== this._entry) {
             return;
         }
 
@@ -1292,9 +1395,9 @@ class KatabDialog {
                 } else {
                     this._entry.set_text(tool.command + ' ');
                 }
-                this._entry.grab_key_focus();
+                this.focusPrompt();
                 // move cursor to end
-                this._entry.clutter_text.set_cursor_position(-1);
+                this._entry.set_cursor_position(-1);
             });
             this._toolsBox.add_child(btn);
         }
@@ -1315,6 +1418,24 @@ class KatabDialog {
         this.actor.remove_style_class_name('katab-theme-dark');
         this.actor.remove_style_class_name('katab-theme-light');
         this.actor.add_style_class_name(isDark ? 'katab-theme-dark' : 'katab-theme-light');
+        this._applyPromptTextColor();
+    }
+
+    _applyPromptTextColor() {
+        if (!this._entry) {
+            return;
+        }
+
+        const isDark = this._resolveIsDark();
+        const [r, g, b, a] = isDark
+            ? [255, 255, 255, 255]
+            : [20, 20, 20, 210];
+
+        this._entry.color = new Clutter.Color({ red: r, green: g, blue: b, alpha: a });
+        this._entry.cursor_color = new Clutter.Color({ red: r, green: g, blue: b, alpha: 230 });
+        this._entry.selected_text_color = new Clutter.Color({ red: r, green: g, blue: b, alpha: 255 });
+        this._entry.selection_color = new Clutter.Color({ red: r, green: g, blue: b, alpha: 80 });
+        this._entry.font_name = 'Sans 10';
     }
 
     _buildUI() {
@@ -1538,13 +1659,68 @@ class KatabDialog {
 
         footerBox.add_child(this._tokenBox);
 
-        this._entry = new St.Entry({
-            hint_text: 'Ask anything...',
-            style_class: 'katab-prompt-entry',
-            can_focus: true,
+        this._promptScroll = new St.ScrollView({
+            style_class: 'katab-prompt-scroll',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
+            height: PROMPT_INPUT_MIN_HEIGHT,
             x_expand: true,
+            y_expand: false,
         });
-        footerBox.add_child(this._entry);
+        footerBox.add_child(this._promptScroll);
+
+        this._promptScrollContent = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_expand: false,
+        });
+        this._promptScroll.add_child(this._promptScrollContent);
+
+        this._promptEditor = new St.Widget({
+            style_class: 'katab-prompt-editor',
+            layout_manager: new Clutter.BinLayout(),
+            x_expand: true,
+            y_expand: false,
+        });
+        this._promptEditor.connect('button-press-event', () => {
+            this.focusPrompt();
+            // Move cursor to end when clicking in the padding area outside the
+            // text actor (Clutter.Text stops propagation on its own clicks, so
+            // this only fires for the surrounding whitespace).
+            if (this._entry) {
+                this._entry.set_cursor_position(this._entry.text.length);
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._promptEditor.connect('scroll-event', this._handlePromptScrollEvent.bind(this));
+        this._promptScrollContent.add_child(this._promptEditor);
+
+        this._entryHint = new St.Label({
+            text: 'Ask anything...',
+            style_class: 'katab-prompt-hint',
+            x_expand: true,
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._promptEditor.add_child(this._entryHint);
+
+        this._entry = new Clutter.Text({
+            editable: true,
+            selectable: true,
+            reactive: true,
+            line_wrap: true,
+            line_wrap_mode: Pango.WrapMode.WORD_CHAR,
+            single_line_mode: false,
+            x_expand: true,
+            y_expand: false,
+            x_align: Clutter.ActorAlign.FILL,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._entry.connect('scroll-event', this._handlePromptScrollEvent.bind(this));
+        this._promptEditor.add_child(this._entry);
+        this._applyPromptTextColor();
+        this._syncPromptHintVisibility();
 
         this._toolsBox = new St.BoxLayout({
             style_class: 'katab-tools-box',
@@ -1552,7 +1728,7 @@ class KatabDialog {
         });
         footerBox.add_child(this._toolsBox);
 
-        this._entry.clutter_text.connect('text-changed', () => {
+        this._entry.connect('text-changed', () => {
             if (this._tokenUpdateTimeout) {
                 GLib.source_remove(this._tokenUpdateTimeout);
             }
@@ -1561,9 +1737,13 @@ class KatabDialog {
                 this._tokenUpdateTimeout = 0;
                 return GLib.SOURCE_REMOVE;
             });
+
+            this._syncPromptHintVisibility();
+            this._syncPromptScrollHeight();
+            this._queuePromptScrollToBottom();
         });
 
-        this._entry.clutter_text.connect('key-press-event', (_actor, event) => {
+        this._entry.connect('key-press-event', (_actor, event) => {
             let symbol = event.get_key_symbol();
             if (symbol === Clutter.KEY_Escape) {
                 this.close();
@@ -1571,6 +1751,10 @@ class KatabDialog {
             }
 
             if (symbol === Clutter.KEY_Return || symbol === Clutter.KEY_KP_Enter) {
+                let modifiers = event.get_state();
+                if (modifiers & Clutter.ModifierType.SHIFT_MASK)
+                    return Clutter.EVENT_PROPAGATE;
+
                 this._sendMessage();
                 return Clutter.EVENT_STOP;
             }
@@ -1922,11 +2106,16 @@ class KatabDialog {
             this._extension.providerHealthMonitor.refresh({ immediate: true });
         }
 
+        this._syncPromptScrollHeight();
+        this._queuePromptScrollToBottom();
+
         // A slight timeout is often needed in GNOME Shell to reliably grab focus
         // after opening a window/overlay.
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
             if (this.isOpen && this._entry) {
-                this._entry.grab_key_focus();
+                this._syncPromptScrollHeight();
+                this._queuePromptScrollToBottom();
+                this.focusPrompt();
             }
             return GLib.SOURCE_REMOVE;
         });
@@ -1959,6 +2148,11 @@ class KatabDialog {
         this.close({ cancelStream: true, saveConversation: true });
         this._disconnectProviderStatus();
         this._stopWelcomeAnimation();
+
+        if (this._promptScrollFollowIdleId) {
+            GLib.source_remove(this._promptScrollFollowIdleId);
+            this._promptScrollFollowIdleId = 0;
+        }
 
         if (this._themeChangedId && this._interfaceSettings) {
             this._interfaceSettings.disconnect(this._themeChangedId);
@@ -2255,7 +2449,7 @@ class KatabDialog {
 
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
             if (this.isOpen && this._entry) {
-                this._entry.grab_key_focus();
+                this.focusPrompt();
             }
             return GLib.SOURCE_REMOVE;
         });

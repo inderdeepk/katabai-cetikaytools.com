@@ -63,7 +63,7 @@ Depending on which provider you choose, you'll need to set the corresponding key
 Once configured:
 1. Click the Katab icon in the status bar to toggle the dialogue window.
 2. If you change your provider in the settings, the chat will display a system message confirming the engine swap (e.g., "Switched engine to Ollama (Local).").
-3. Type your message and hit Enter. Katab handles the background communication and streams the response directly to your desktop.
+3. Type your message and hit Enter to send. Press Shift+Enter to insert a new line in the prompt box.
 
 ---
 
