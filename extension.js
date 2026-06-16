@@ -1745,18 +1745,82 @@ class KatabDialog {
 
         this._entry.connect('key-press-event', (_actor, event) => {
             let symbol = event.get_key_symbol();
+            let modifiers = event.get_state();
+
             if (symbol === Clutter.KEY_Escape) {
                 this.close();
                 return Clutter.EVENT_STOP;
             }
 
             if (symbol === Clutter.KEY_Return || symbol === Clutter.KEY_KP_Enter) {
-                let modifiers = event.get_state();
                 if (modifiers & Clutter.ModifierType.SHIFT_MASK)
                     return Clutter.EVENT_PROPAGATE;
 
                 this._sendMessage();
                 return Clutter.EVENT_STOP;
+            }
+
+            // Explicitly handle clipboard operations using St.Clipboard so they
+            // work correctly in GNOME Shell overlays on both X11 and Wayland.
+            // Clutter.Text's built-in Ctrl+C/V/X bindings use a different
+            // clipboard back-end and can silently fail inside shell overlays.
+            if (modifiers & Clutter.ModifierType.CONTROL_MASK) {
+                // Ctrl+V — paste
+                if (symbol === Clutter.KEY_v || symbol === Clutter.KEY_V) {
+                    St.Clipboard.get_default().get_text(
+                        St.ClipboardType.CLIPBOARD,
+                        (_cb, text) => {
+                            if (!text || !this._entry) return;
+                            this._entry.delete_selection();
+                            let pos = this._entry.get_cursor_position();
+                            this._entry.insert_text(text, pos);
+                        }
+                    );
+                    return Clutter.EVENT_STOP;
+                }
+
+                // Ctrl+C — copy selection
+                if (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C) {
+                    let fullText = this._entry.get_text() ?? '';
+                    let cursor = this._entry.get_cursor_position();
+                    let bound = this._entry.selection_bound;
+                    if (cursor !== bound) {
+                        let s = Math.min(cursor < 0 ? fullText.length : cursor,
+                            bound < 0 ? fullText.length : bound);
+                        let e = Math.max(cursor < 0 ? fullText.length : cursor,
+                            bound < 0 ? fullText.length : bound);
+                        let sel = fullText.slice(s, e);
+                        if (sel)
+                            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, sel);
+                    }
+                    return Clutter.EVENT_STOP;
+                }
+
+                // Ctrl+X — cut selection
+                if (symbol === Clutter.KEY_x || symbol === Clutter.KEY_X) {
+                    let fullText = this._entry.get_text() ?? '';
+                    let cursor = this._entry.get_cursor_position();
+                    let bound = this._entry.selection_bound;
+                    if (cursor !== bound) {
+                        let s = Math.min(cursor < 0 ? fullText.length : cursor,
+                            bound < 0 ? fullText.length : bound);
+                        let e = Math.max(cursor < 0 ? fullText.length : cursor,
+                            bound < 0 ? fullText.length : bound);
+                        let sel = fullText.slice(s, e);
+                        if (sel) {
+                            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, sel);
+                            this._entry.delete_selection();
+                        }
+                    }
+                    return Clutter.EVENT_STOP;
+                }
+
+                // Ctrl+A — select all
+                if (symbol === Clutter.KEY_a || symbol === Clutter.KEY_A) {
+                    let len = (this._entry.get_text() ?? '').length;
+                    this._entry.set_selection(0, len);
+                    return Clutter.EVENT_STOP;
+                }
             }
 
             return Clutter.EVENT_PROPAGATE;
