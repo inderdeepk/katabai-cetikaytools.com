@@ -45,6 +45,7 @@ Depending on which provider you choose, you'll need to set the corresponding key
 1. Ensure the Ollama daemon is running on your system (`systemctl status ollama` or run `ollama serve`).
 2. Setup the Ollama connection via Katab settings if non-default ports are used.
 3. **Important**: You must have pulled a model via your terminal first (e.g., `ollama run llama3`).
+4. To attach PNG or JPG images, pull and select a vision-capable Ollama model first (for example, `ollama pull llama3.2-vision` or `ollama pull llava`).
 
 ### ☁️ OpenAI
 1. **Base URL**: Typically `https://api.openai.com/v1`.
@@ -82,6 +83,7 @@ Katab includes an optional document tool for attaching local files to chat. It i
 
 ### Supported Formats
 * **`.txt` / `.md`**: Built in, no extra packages required.
+* **`.png` / `.jpg` / `.jpeg`**: Built in, but only sent when Ollama is the active provider and the selected model supports vision.
 * **`.pdf`**: Requires `pdftotext` from `poppler-utils` or your distro's `poppler` package.
 * **`.docx`**: Requires `pandoc`.
 
@@ -106,10 +108,10 @@ which pdftotext
 which pandoc
 ```
 
-### Attaching a Document
+### Attaching a File
 You have two ways to attach a file:
 
-1. Click the document button in the chat footer and choose a local file.
+1. Click the attachment button in the chat footer and choose a local file.
 2. Use the `/doc` command directly.
 
 Examples:
@@ -118,13 +120,15 @@ Examples:
 /doc
 /doc "/absolute/path/to/file.pdf"
 /doc "/absolute/path/to/file.docx" summarize the main points
+/doc "/absolute/path/to/screenshot.png" describe what is in this image
 ```
 
 If you type `/doc` without a quoted path, Katab opens the file picker. If the picker is unavailable, use `/doc` with a quoted absolute path instead.
 
 ### Important Behavior Notes
 * Katab parses supported documents locally before sending the extracted text to your selected provider.
-* Saved conversations keep the document metadata, not the full extracted text. If you reopen an older conversation and want the full document context again, reattach the file.
+* Image attachments are base64-encoded locally and sent only when Ollama is active and the selected Ollama model looks vision-capable.
+* Saved conversations keep attachment metadata, not the full extracted text or image bytes. If you reopen an older conversation and want the full attachment context again, reattach the file.
 * Only local native files are supported right now.
 
 ---
@@ -133,8 +137,9 @@ If you type `/doc` without a quoted path, Katab opens the file picker. If the pi
 
 * **Extension Not Showing**: Ensure you ran `glib-compile-schemas schemas/` during installation and restarted the GNOME shell (Log out/in on Wayland, or `Alt+F2`, type `r`, and hit Enter on X11).
 * **Connection Refused (Local)**: If using Unsloth or Ollama, make sure the respective server is running in the background.
+* **Image Attachments Fail in Ollama**: Make sure the active Ollama model is vision-capable, such as `llama3.2-vision` or `llava`.
 * **Invalid API Key**: If using OpenAI or Anthropic and responses fail, double-check your API keys in the settings panel. (Katab does not look for `.env` files for security reasons, it strictly uses the settings window).
 * **Document Tool Shows Install**: Open the **Tools** page, install the missing package (`poppler-utils`/`poppler` for PDF or `pandoc` for DOCX), then use **Refresh Detection**.
-* **Document Picker Does Not Open**: Use `/doc "/absolute/path/to/file"` as a manual fallback.
+* **File Picker Does Not Open**: Use `/doc "/absolute/path/to/file"` as a manual fallback.
 
 Enjoy utilizing Katab to enhance your GNOME desktop workflow!

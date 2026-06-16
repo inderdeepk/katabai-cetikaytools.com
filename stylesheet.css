@@ -791,6 +791,73 @@
 }
 
 /* ════════════════════════════════════════════
+   MESSAGE-LEVEL ATTACHMENT CHIPS
+   ════════════════════════════════════════════ */
+
+.katab-msg-file-row {
+    spacing: 5px;
+    margin-top: 8px;
+}
+
+.katab-msg-file-chip {
+    spacing: 5px;
+    padding: 3px 9px 3px 7px;
+    border-radius: 999px;
+    background-color: rgba(166, 227, 161, 0.10);
+    border: 1px solid rgba(166, 227, 161, 0.22);
+}
+
+.katab-msg-file-chip.image {
+    background-color: rgba(137, 180, 250, 0.12);
+    border-color: rgba(137, 180, 250, 0.28);
+}
+
+.katab-msg-file-chip.missing {
+    background-color: rgba(249, 226, 175, 0.10);
+    border-color: rgba(249, 226, 175, 0.28);
+}
+
+.katab-msg-file-chip-icon {
+    icon-size: 11px;
+    color: #a6e3a1;
+}
+
+.katab-msg-file-chip-icon.image {
+    color: #89b4fa;
+}
+
+.katab-msg-file-chip-icon.missing {
+    color: #f9e2af;
+}
+
+.katab-msg-file-chip-label {
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.katab-msg-file-chip-label.missing {
+    color: rgba(249, 226, 175, 0.72);
+}
+
+.katab-reattach-warning {
+    margin-top: 5px;
+    font-size: 8.8pt;
+    font-weight: bold;
+    color: #f9e2af;
+}
+
+.katab-system-message-box.warning {
+    background-color: rgba(249, 226, 175, 0.08);
+    border-color: rgba(249, 226, 175, 0.25);
+}
+
+.katab-system-message-text.warning {
+    color: #f9e2af;
+    font-style: normal;
+    font-weight: bold;
+}
+
+/* ════════════════════════════════════════════
    FOOTER / INPUT CONTAINER
    ════════════════════════════════════════════ */
 
@@ -1156,6 +1223,54 @@
 
 .katab-theme-light .katab-attachment-remove-btn:hover {
     background-color: rgba(0, 0, 0, 0.12);
+}
+
+.katab-theme-light .katab-msg-file-chip {
+    background-color: rgba(60, 140, 60, 0.08);
+    border-color: rgba(60, 140, 60, 0.20);
+}
+
+.katab-theme-light .katab-msg-file-chip.image {
+    background-color: rgba(30, 100, 200, 0.08);
+    border-color: rgba(30, 100, 200, 0.20);
+}
+
+.katab-theme-light .katab-msg-file-chip.missing {
+    background-color: rgba(150, 100, 0, 0.08);
+    border-color: rgba(150, 100, 0, 0.22);
+}
+
+.katab-theme-light .katab-msg-file-chip-icon {
+    color: #2d8a40;
+}
+
+.katab-theme-light .katab-msg-file-chip-icon.image {
+    color: #1a68c8;
+}
+
+.katab-theme-light .katab-msg-file-chip-icon.missing {
+    color: #a07000;
+}
+
+.katab-theme-light .katab-msg-file-chip-label {
+    color: rgba(0, 0, 0, 0.62);
+}
+
+.katab-theme-light .katab-msg-file-chip-label.missing {
+    color: rgba(150, 100, 0, 0.82);
+}
+
+.katab-theme-light .katab-reattach-warning {
+    color: #a07000;
+}
+
+.katab-theme-light .katab-system-message-box.warning {
+    background-color: rgba(150, 100, 0, 0.06);
+    border-color: rgba(150, 100, 0, 0.22);
+}
+
+.katab-theme-light .katab-system-message-text.warning {
+    color: #a07000;
 }
 
 .katab-theme-light .katab-footer-box {

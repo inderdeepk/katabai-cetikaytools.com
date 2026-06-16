@@ -1003,13 +1003,13 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const documentToolGroup = createPreferencesGroup({
             title: 'Document Tool',
-            description: 'Optional local document parsing for chat. Basic chat keeps working unchanged when this stays off.',
+            description: 'Optional local file support for chat. Documents are parsed locally, and images can be sent to Ollama vision models.',
         });
         toolsPage.add(documentToolGroup);
 
         createBooleanRow(
             'Enable Document Tool',
-            'Show the chat document button and enable the /doc command for local files.',
+            'Show the chat attachment button and enable the /doc command for local files.',
             'document-tool-enabled',
             documentToolGroup
         );
@@ -1022,21 +1022,26 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const syncDocumentUsageRow = () => {
             documentUsageRow.subtitle = settings.get_boolean('document-tool-enabled')
-                ? 'Use the document button in chat or type /doc with a quoted path. Katab will parse supported files locally before sending them to your provider.'
-                : 'Turn this on only if you want local document parsing. Normal chat does not depend on any of these tools.';
+                ? 'Use the attachment button in chat or type /doc with a quoted path. Katab extracts text from supported documents locally, and sends PNG/JPG images only to Ollama vision models.'
+                : 'Turn this on only if you want local file parsing. Normal chat does not depend on any of these tools.';
         };
         settings.connect('changed::document-tool-enabled', syncDocumentUsageRow);
         syncDocumentUsageRow();
 
         const capabilityGroup = createPreferencesGroup({
             title: 'Detected Capabilities',
-            description: 'Katab scans the local system at runtime. PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
+            description: 'Katab scans the local system at runtime. PNG and JPG support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
         });
         toolsPage.add(capabilityGroup);
 
         const textStatusRow = createStatusRow(
             'Text and Markdown',
             'Plain text and Markdown are handled directly through native Gio file reads.',
+            capabilityGroup
+        );
+        const imageStatusRow = createStatusRow(
+            'Images (PNG/JPG)',
+            'PNG and JPG attachments are base64-encoded locally and sent only to Ollama vision-capable models.',
             capabilityGroup
         );
         const pdfStatusRow = createStatusRow(
@@ -1052,6 +1057,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const refreshDocumentToolStatus = () => {
             setStatusBadge(textStatusRow.badge, 'Built in', 'katab-prefs-status-builtin');
+            setStatusBadge(imageStatusRow.badge, 'Built in', 'katab-prefs-status-builtin');
 
             const pdfPath = GLib.find_program_in_path('pdftotext');
             if (pdfPath) {

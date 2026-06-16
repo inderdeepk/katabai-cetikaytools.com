@@ -33,11 +33,13 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {
     buildDocumentPromptBlock,
     buildMissingDocumentPromptBlock,
+    buildMissingImagePromptBlock,
     DOCUMENT_TOOL_COMMAND,
     DOCUMENT_TOOL_ICON,
     DOCUMENT_TOOL_NAME,
     DocumentToolError,
     DocumentToolRuntime,
+    getAttachmentInfoForPath,
     parseDocumentCommand,
     resolveDocumentPath,
 } from './documentTools.js';
@@ -87,6 +89,17 @@ const PROMPT_INPUT_MIN_HEIGHT = 44;
 const PROMPT_INPUT_MAX_HEIGHT = 220;
 const PROMPT_INPUT_VERTICAL_PADDING = 20;
 const PROMPT_INPUT_SCROLL_STEP = 36;
+const OLLAMA_VISION_MODEL_HINTS = [
+    'vision',
+    'llava',
+    'bakllava',
+    'moondream',
+    'minicpm-v',
+    'qwen-vl',
+    'qwen2-vl',
+    'qwen2.5-vl',
+    'internvl',
+];
 
 function getProviderLabel(provider) {
     return PROVIDER_META[provider]?.label || provider;
@@ -130,6 +143,49 @@ function setProviderIcon(actor, provider, extensionPath, fallbackIconName = 'app
 
     actor.gicon = null;
     actor.icon_name = fallbackIconName;
+}
+
+function looksLikeImageAttachment(attachmentMeta) {
+    if (!attachmentMeta) {
+        return false;
+    }
+
+    if (attachmentMeta.kind === 'image') {
+        return true;
+    }
+
+    if (typeof attachmentMeta.mimeType === 'string' && attachmentMeta.mimeType.startsWith('image/')) {
+        return true;
+    }
+
+    const info = getAttachmentInfoForPath(attachmentMeta.path || attachmentMeta.displayName || '');
+    return info.kind === 'image';
+}
+
+function looksLikeVisionModel(modelName) {
+    const normalized = String(modelName || '').trim().toLowerCase();
+    if (!normalized) {
+        return false;
+    }
+
+    return OLLAMA_VISION_MODEL_HINTS.some(hint => normalized.includes(hint));
+}
+
+function normalizeCapabilityTokens(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map(entry => String(entry || '').trim().toLowerCase())
+            .filter(Boolean);
+    }
+
+    if (typeof value === 'string') {
+        return value
+            .split(/[\s,]+/)
+            .map(entry => entry.trim().toLowerCase())
+            .filter(Boolean);
+    }
+
+    return [];
 }
 
 function createProviderIcon(provider, extensionPath, styleClass, fallbackIconName = 'applications-science-symbolic') {
@@ -661,8 +717,9 @@ class HistoryManager {
         let userMsgs = messageHistory.filter(m => m.role === 'user');
         if (userMsgs.length === 0) return null;
 
-        let title = userMsgs[0].content.slice(0, 60);
-        if (userMsgs[0].content.length > 60) title += '…';
+        let rawTitle = userMsgs[0].content.replace(/\s*\n\s*/g, ' ').trim();
+        let title = rawTitle.slice(0, 60);
+        if (rawTitle.length > 60) title += '…';
 
         let id = existingId || `conv_${Date.now()}`;
         let entry = {
@@ -696,6 +753,7 @@ class KatabDialog {
         this._currentConversationId = null;
         this._documentToolRuntime = new DocumentToolRuntime();
         this._sessionDocuments = new Map();
+        this._ollamaVisionCapabilityCache = new Map();
         this._pendingDocument = null;
         this._attachmentBox = null;
         this._attachmentLabel = null;
@@ -1149,13 +1207,115 @@ class KatabDialog {
     }
 
     _serializeDocumentMeta(document) {
-        return {
+        const documentMeta = {
             displayName: document.displayName,
             extension: document.extension,
-            originalCharCount: document.originalCharCount,
+            kind: document.kind || 'document',
+            mimeType: document.mimeType || null,
             parserName: document.parserName,
             path: document.path,
-            truncated: Boolean(document.truncated),
+        };
+
+        if (document.kind !== 'image') {
+            documentMeta.originalCharCount = document.originalCharCount;
+            documentMeta.truncated = Boolean(document.truncated);
+        }
+
+        return documentMeta;
+    }
+
+    _getMessageAttachments(message) {
+        return Array.isArray(message?.documents) ? message.documents : [];
+    }
+
+    _buildMissingAttachmentDisplayNotice(message) {
+        const attachments = this._getMessageAttachments(message);
+        if (!attachments.length) {
+            return '';
+        }
+
+        const missingAttachments = attachments.filter(attachmentMeta => {
+            if (!attachmentMeta?.path) {
+                return false;
+            }
+
+            return !this._sessionDocuments.has(attachmentMeta.path);
+        });
+
+        if (!missingAttachments.length) {
+            return '';
+        }
+
+        if (missingAttachments.length === 1) {
+            const attachmentKind = this._getAttachmentKind(missingAttachments[0]);
+            return attachmentKind === 'image'
+                ? 'Reattach this image to include it in a new request.'
+                : 'Reattach this file to include it in a new request.';
+        }
+
+        return 'Reattach these files to include them in a new request.';
+    }
+
+    _getAttachmentKind(attachmentMeta) {
+        if (!attachmentMeta) {
+            return null;
+        }
+
+        if (attachmentMeta.kind) {
+            return attachmentMeta.kind;
+        }
+
+        return looksLikeImageAttachment(attachmentMeta) ? 'image' : 'document';
+    }
+
+    _messageHasImageAttachments(message) {
+        return this._getMessageAttachments(message).some(attachmentMeta => this._getAttachmentKind(attachmentMeta) === 'image');
+    }
+
+    _buildApiAttachmentPayload(message, { provider = this._currentProvider } = {}) {
+        let content = String(message?.content ?? '');
+        const attachments = this._getMessageAttachments(message);
+        if (!attachments.length) {
+            return { content, images: [] };
+        }
+
+        const attachmentBlocks = [];
+        const images = [];
+
+        for (const attachmentMeta of attachments) {
+            const sessionAttachment = attachmentMeta?.path ? this._sessionDocuments.get(attachmentMeta.path) : null;
+            const attachmentKind = sessionAttachment?.kind || this._getAttachmentKind(attachmentMeta);
+
+            if (attachmentKind === 'image') {
+                if (provider === 'ollama' && sessionAttachment?.base64Data) {
+                    images.push(sessionAttachment.base64Data);
+                } else {
+                    attachmentBlocks.push(buildMissingImagePromptBlock(attachmentMeta));
+                }
+                continue;
+            }
+
+            if (sessionAttachment) {
+                attachmentBlocks.push(buildDocumentPromptBlock(sessionAttachment));
+            } else {
+                attachmentBlocks.push(buildMissingDocumentPromptBlock(attachmentMeta));
+            }
+        }
+
+        if (!attachmentBlocks.length) {
+            return { content, images };
+        }
+
+        if (!content) {
+            return {
+                content: attachmentBlocks.join('\n\n'),
+                images,
+            };
+        }
+
+        return {
+            content: `${content}\n\n${attachmentBlocks.join('\n\n')}`,
+            images,
         };
     }
 
@@ -1165,8 +1325,13 @@ class KatabDialog {
             return null;
         }
 
+        const attachmentInfo = getAttachmentInfoForPath(resolvedPath);
+
         return {
             displayName: GLib.path_get_basename(resolvedPath),
+            extension: attachmentInfo.extension,
+            kind: attachmentInfo.kind || 'document',
+            mimeType: attachmentInfo.mimeType,
             path: resolvedPath,
         };
     }
@@ -1187,7 +1352,7 @@ class KatabDialog {
             return;
         }
 
-        let label = `Document ready: ${this._pendingDocument.displayName}`;
+        let label = `Attachment ready: ${this._pendingDocument.displayName}`;
         if (this._pendingDocument.path) {
             label = `${label} • ${this._pendingDocument.path}`;
         }
@@ -1196,45 +1361,114 @@ class KatabDialog {
         this._attachmentBox.show();
     }
 
-    _formatUserMessageDisplay(message) {
+    _formatUserMessageDisplay(message, { showMissingAttachmentNotice = false } = {}) {
         const content = String(message?.content ?? '').trim();
-        const documents = Array.isArray(message?.documents) ? message.documents : [];
-        if (!documents.length) {
+        const attachments = this._getMessageAttachments(message);
+        if (!attachments.length) {
             return content;
         }
 
-        const prefix = documents.length === 1
-            ? `Attached document: ${documents[0].displayName}`
-            : `Attached documents: ${documents.map(document => document.displayName).join(', ')}`;
+        const prefix = attachments.length === 1
+            ? `Attached file: ${attachments[0].displayName}`
+            : `Attached files: ${attachments.map(document => document.displayName).join(', ')}`;
+        const parts = [];
 
-        return content ? `${content}\n\n${prefix}` : prefix;
+        if (content) {
+            parts.push(content);
+        }
+
+        parts.push(prefix);
+
+        if (showMissingAttachmentNotice) {
+            const notice = this._buildMissingAttachmentDisplayNotice(message);
+            if (notice) {
+                parts.push(notice);
+            }
+        }
+
+        return parts.join('\n\n');
     }
 
-    _buildApiMessageContent(message) {
-        let content = String(message?.content ?? '');
-        const documents = Array.isArray(message?.documents) ? message.documents : [];
-        if (!documents.length) {
-            return content;
+    _extractOllamaVisionCapability(payload) {
+        const capabilityFields = [
+            payload?.capabilities,
+            payload?.details?.capabilities,
+            payload?.model_info?.capabilities,
+        ];
+
+        const tokens = capabilityFields.flatMap(field => normalizeCapabilityTokens(field));
+        if (tokens.length > 0) {
+            return tokens.includes('vision') || tokens.includes('image') || tokens.includes('multimodal');
         }
 
-        const documentBlocks = documents.map(documentMeta => {
-            const sessionDocument = documentMeta?.path ? this._sessionDocuments.get(documentMeta.path) : null;
-            if (sessionDocument) {
-                return buildDocumentPromptBlock(sessionDocument);
+        const payloadText = JSON.stringify(payload || {}).toLowerCase();
+        if (!payloadText) {
+            return null;
+        }
+
+        if (payloadText.includes('"vision"')
+            || payloadText.includes('projector')
+            || payloadText.includes('.vision.')
+            || payloadText.includes('_vision_')
+            || payloadText.includes('vision.block_count')) {
+            return true;
+        }
+
+        return null;
+    }
+
+    async _ollamaModelSupportsVision(model, { cancellable = null } = {}) {
+        if (looksLikeVisionModel(model)) {
+            return true;
+        }
+
+        let baseUrl = this._settings.get_string('ollama-url') || 'http://127.0.0.1:11434';
+        const cacheKey = `${trimTrailingSlash(baseUrl)}::${String(model || '').trim()}`;
+        if (this._ollamaVisionCapabilityCache.has(cacheKey)) {
+            return this._ollamaVisionCapabilityCache.get(cacheKey);
+        }
+
+        let endpoint = baseUrl;
+        if (!endpoint.endsWith('/')) {
+            endpoint += '/';
+        }
+        if (!endpoint.endsWith('api/show')) {
+            endpoint += 'api/show';
+        }
+
+        try {
+            const bodyBytes = new GLib.Bytes(JSON.stringify({ model }));
+            const message = Soup.Message.new('POST', endpoint);
+            message.set_request_body_from_bytes('application/json', bodyBytes);
+
+            const bytes = await new Promise((resolve, reject) => {
+                this._soupSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, cancellable, (session, res) => {
+                    try {
+                        resolve(session.send_and_read_finish(res));
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            });
+
+            if (message.status_code !== 200) {
+                this._ollamaVisionCapabilityCache.set(cacheKey, null);
+                return null;
             }
 
-            return buildMissingDocumentPromptBlock(documentMeta);
-        }).filter(Boolean);
-
-        if (!documentBlocks.length) {
-            return content;
+            const responseText = new TextDecoder('utf-8').decode(bytes.get_data());
+            const payload = JSON.parse(responseText);
+            const supportsVision = this._extractOllamaVisionCapability(payload);
+            this._ollamaVisionCapabilityCache.set(cacheKey, supportsVision);
+            return supportsVision;
+        } catch (_error) {
+            this._ollamaVisionCapabilityCache.set(cacheKey, null);
+            return null;
         }
+    }
 
-        if (!content) {
-            return documentBlocks.join('\n\n');
-        }
-
-        return `${content}\n\n${documentBlocks.join('\n\n')}`;
+    _buildApiMessageContent(message, { provider = this._currentProvider } = {}) {
+        return this._buildApiAttachmentPayload(message, { provider }).content;
     }
 
     async _openDocumentPicker() {
@@ -1252,7 +1486,7 @@ class KatabDialog {
                 '/org/freedesktop/portal/desktop',
                 'org.freedesktop.portal.FileChooser',
                 'OpenFile',
-                new GLib.Variant('(ssa{sv})', ['', 'Attach a document for Katab', options]),
+                new GLib.Variant('(ssa{sv})', ['', 'Attach a file for Katab', options]),
                 new GLib.VariantType('(o)'),
                 Gio.DBusCallFlags.NONE,
                 -1,
@@ -1297,7 +1531,7 @@ class KatabDialog {
                             }
                         );
                     } catch (error) {
-                        reject(new DocumentToolError('The document picker is unavailable. Use /doc "absolute/path/to/file" instead.', {
+                        reject(new DocumentToolError('The file picker is unavailable. Use /doc "absolute/path/to/file" instead.', {
                             code: 'picker-unavailable',
                         }));
                     }
@@ -1349,7 +1583,7 @@ class KatabDialog {
         } catch (error) {
             const message = error instanceof DocumentToolError
                 ? error.message
-                : `Could not attach a document: ${error.message}`;
+                : `Could not attach a file: ${error.message}`;
             this._addSystemMessage(message);
         }
     }
@@ -2339,13 +2573,16 @@ class KatabDialog {
         }
     }
 
-    _sanitizeHistoryMessage(message) {
+    _sanitizeHistoryMessage(message, { provider = this._currentProvider } = {}) {
         let sanitized = {
             role: message.role,
         };
 
-        if (message.content !== undefined) {
-            sanitized.content = this._buildApiMessageContent(message);
+        const attachments = this._getMessageAttachments(message);
+        const attachmentPayload = this._buildApiAttachmentPayload(message, { provider });
+
+        if (message.content !== undefined || attachments.length) {
+            sanitized.content = attachmentPayload.content;
         }
 
         if (message.tool_calls !== undefined) {
@@ -2356,15 +2593,19 @@ class KatabDialog {
             sanitized.name = message.name;
         }
 
-        if (message.images !== undefined) {
-            sanitized.images = message.images;
+        if (provider === 'ollama') {
+            const existingImages = Array.isArray(message.images) ? message.images.filter(Boolean) : [];
+            const images = [...existingImages, ...attachmentPayload.images].filter(Boolean);
+            if (images.length) {
+                sanitized.images = images;
+            }
         }
 
         return sanitized;
     }
 
-    _getApiMessageHistory() {
-        return this._messageHistory.map(message => this._sanitizeHistoryMessage(message));
+    _getApiMessageHistory(provider = this._currentProvider) {
+        return this._messageHistory.map(message => this._sanitizeHistoryMessage(message, { provider }));
     }
 
     _numberOrNull(value) {
@@ -2490,12 +2731,19 @@ class KatabDialog {
         this._hasConversationStarted = entry.messages.length > 0;
         this._setWelcomeVisible(!this._hasConversationStarted);
         this._messageList.destroy_all_children();
+        let hasDetachedAttachments = false;
         for (let msg of entry.messages) {
             if (msg.role === 'user') {
-                this._addChatMessage('You', this._formatUserMessageDisplay(msg), 'user');
+                if (this._getMessageAttachments(msg).length > 0) {
+                    hasDetachedAttachments = true;
+                }
+                this._addChatMessage('You', String(msg.content ?? '').trim(), 'user', { ...msg, _showMissingAttachmentNotice: true });
             } else if (msg.role === 'assistant') {
                 this._addChatMessage('Katab AI', msg.content, 'assistant', msg);
             }
+        }
+        if (hasDetachedAttachments) {
+            this._addSystemMessage('This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request.', { variant: 'warning' });
         }
         this._showChatView();
         this._notifyCurrentChatChanged();
@@ -3373,15 +3621,24 @@ class KatabDialog {
         this._setWelcomeVisible(true);
     }
 
-    _addSystemMessage(text) {
+    _addSystemMessage(text, { variant = null } = {}) {
+        const boxClass = variant === 'warning'
+            ? 'katab-system-message-box warning'
+            : 'katab-system-message-box';
+        const textClass = variant === 'warning'
+            ? 'katab-system-message-text warning'
+            : 'katab-system-message-text';
         let msgBox = new St.BoxLayout({
-            style_class: 'katab-system-message-box',
+            style_class: boxClass,
             x_align: Clutter.ActorAlign.CENTER,
         });
         let label = new St.Label({
             text: text,
-            style_class: 'katab-system-message-text',
+            style_class: textClass,
         });
+        label.clutter_text.line_wrap = true;
+        label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        label.clutter_text.single_line_mode = false;
         msgBox.add_child(label);
         (this._messageList || this._chatContainer).add_child(msgBox);
         this._scrollToBottom();
@@ -3571,6 +3828,61 @@ class KatabDialog {
 
         if (isUser) {
             contentLabel.set_text(text);
+            const msgAttachments = this._getMessageAttachments(messageMeta);
+            if (msgAttachments.length > 0) {
+                const showMissingNotice = Boolean(messageMeta?._showMissingAttachmentNotice);
+                const fileRow = new St.BoxLayout({
+                    vertical: true,
+                    style_class: 'katab-msg-file-row',
+                });
+                for (const attachment of msgAttachments) {
+                    const isMissing = showMissingNotice && attachment?.path
+                        ? !this._sessionDocuments.has(attachment.path)
+                        : false;
+                    const attachmentKind = this._getAttachmentKind(attachment);
+                    const isImage = attachmentKind === 'image';
+                    let chipClass = 'katab-msg-file-chip';
+                    if (isImage) chipClass += ' image';
+                    if (isMissing) chipClass += ' missing';
+                    const chip = new St.BoxLayout({
+                        style_class: chipClass,
+                        y_align: Clutter.ActorAlign.CENTER,
+                    });
+                    let iconClass = 'katab-msg-file-chip-icon';
+                    if (isImage) iconClass += ' image';
+                    if (isMissing) iconClass += ' missing';
+                    const chipIcon = new St.Icon({
+                        icon_name: isImage ? 'image-x-generic-symbolic' : 'text-x-generic-symbolic',
+                        style_class: iconClass,
+                    });
+                    chip.add_child(chipIcon);
+                    let labelClass = 'katab-msg-file-chip-label';
+                    if (isMissing) labelClass += ' missing';
+                    const chipLabel = new St.Label({
+                        text: attachment.displayName || '',
+                        style_class: labelClass,
+                        y_align: Clutter.ActorAlign.CENTER,
+                    });
+                    chipLabel.clutter_text.ellipsize = Pango.EllipsizeMode.MIDDLE;
+                    chipLabel.clutter_text.single_line_mode = true;
+                    chip.add_child(chipLabel);
+                    fileRow.add_child(chip);
+                    if (isMissing) {
+                        const warnLabel = new St.Label({
+                            text: isImage
+                                ? 'Reattach this image to include it in a new request.'
+                                : 'Reattach this file to include it in a new request.',
+                            style_class: 'katab-reattach-warning',
+                            x_expand: true,
+                        });
+                        warnLabel.clutter_text.line_wrap = true;
+                        warnLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+                        warnLabel.clutter_text.single_line_mode = false;
+                        fileRow.add_child(warnLabel);
+                    }
+                }
+                contentBox.add_child(fileRow);
+            }
         } else {
             this._applyAssistantRender({ contentBox, linkBox, diagnosticBox, diagnosticLabel, footerRow: copyBtnRow }, text, { final: true });
         }
@@ -3635,15 +3947,26 @@ class KatabDialog {
                 }
             } else if (documentCommand.filePath) {
                 const normalizedPath = resolveDocumentPath(documentCommand.filePath) || documentCommand.filePath.trim();
-                documentMeta = {
-                    displayName: GLib.path_get_basename(normalizedPath),
-                    path: normalizedPath,
-                };
+                documentMeta = this._buildDocumentMeta(normalizedPath);
+                if (!documentMeta) {
+                    throw new DocumentToolError('Use an absolute path, a ~/path, or the picker when attaching a file.', {
+                        code: 'invalid-path',
+                    });
+                }
             }
         }
 
+        const isImageAttachment = looksLikeImageAttachment(documentMeta);
+
+        if (isImageAttachment && this._currentProvider !== 'ollama') {
+            this._addSystemMessage('Image attachments currently work only with the Ollama provider. Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava.');
+            return;
+        }
+
         if (!promptText && documentMeta) {
-            promptText = 'Please analyze the attached document.';
+            promptText = isImageAttachment
+                ? 'Please analyze the attached image.'
+                : 'Please analyze the attached document.';
         }
 
         if (!promptText && !documentMeta) {
@@ -3672,7 +3995,7 @@ class KatabDialog {
         this._renderTokenCounter();
         this._hasConversationStarted = true;
         this._setWelcomeVisible(false);
-        this._addChatMessage('You', this._formatUserMessageDisplay(userMessage), 'user');
+        this._addChatMessage('You', String(userMessage.content ?? '').trim(), 'user', userMessage);
 
         this._messageHistory.push(userMessage);
         this._saveCurrentConversation();
@@ -3689,7 +4012,10 @@ class KatabDialog {
 
         try {
             if (documentMeta) {
-                this._applyAssistantRender(uiElements, `Reading ${documentMeta.displayName}...`, { plain: true });
+                const attachmentStatus = isImageAttachment
+                    ? `Encoding ${documentMeta.displayName}...`
+                    : `Reading ${documentMeta.displayName}...`;
+                this._applyAssistantRender(uiElements, attachmentStatus, { plain: true });
                 const parsedDocument = await this._documentToolRuntime.parseDocument(documentMeta.path, requestCancellable);
                 this._rememberSessionDocument(parsedDocument);
                 userMessage.documents = [this._serializeDocumentMeta(parsedDocument)];
@@ -3722,7 +4048,7 @@ class KatabDialog {
         }
     }
 
-    _streamResponse(uiElements, { cancellable = null } = {}) {
+    async _streamResponse(uiElements, { cancellable = null } = {}) {
         const provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
         let apiKey = '';
@@ -3740,7 +4066,8 @@ class KatabDialog {
         }
 
         let payload = {};
-        const apiMessages = this._getApiMessageHistory();
+        const apiMessages = this._getApiMessageHistory(provider);
+        const requestHasImages = apiMessages.some(apiMessage => Array.isArray(apiMessage.images) && apiMessage.images.length > 0);
 
         // Prepare Dialects
         if (provider === 'unsloth' || provider === 'openai') {
@@ -3784,6 +4111,17 @@ class KatabDialog {
                 endpoint += 'api/chat';
             }
             headers['Content-Type'] = 'application/json';
+
+            if (requestHasImages) {
+                const supportsVision = await this._ollamaModelSupportsVision(model, { cancellable });
+                if (supportsVision === false) {
+                    this._renderLocalAssistantError(
+                        uiElements,
+                        `The Ollama model '${model || 'unknown'}' does not appear to support image inputs. Switch to a vision-capable model such as llama3.2-vision or llava before sending image attachments.`
+                    );
+                    return;
+                }
+            }
 
             const getOpt = (prop, type) => {
                 try {
@@ -4562,12 +4900,15 @@ const Indicator = GObject.registerClass(
                 let entry = arr[i];
                 let item = new PopupMenu.PopupBaseMenuItem();
 
+                let safeTitle = entry.title.replace(/\s*\n\s*/g, ' ').trim();
                 let titleLabel = new St.Label({
-                    text: entry.title,
+                    text: safeTitle,
                     x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER
+                    y_align: Clutter.ActorAlign.CENTER,
+                    style: 'max-width: 220px;'
                 });
                 titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                titleLabel.clutter_text.single_line_mode = true;
                 item.add_child(titleLabel);
 
                 let loadBtn = new St.Button({

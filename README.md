@@ -10,8 +10,9 @@ The vision for Katab is to provide a seamless, integrated AI assistant directly 
 
 ### Prerequisites
 - GNOME Shell version 46.
-- Optional document parsing:
-   - Plain text and Markdown work without extra packages.
+- Optional local file support:
+   - Plain text, Markdown, PNG, JPG, and JPEG work without extra packages.
+   - Image attachments are sent only through Ollama and require a vision-capable model such as `llama3.2-vision` or `llava`.
    - PDFs require `pdftotext` from `poppler-utils` or the distro-equivalent `poppler` package.
    - DOCX files require `pandoc`.
 
@@ -77,15 +78,18 @@ which pdftotext
 which pandoc
 ```
 
-Once enabled, you can either click the document button in chat or use `/doc` directly:
+Once enabled, you can either click the attachment button in chat or use `/doc` directly:
 
 ```text
 /doc
 /doc "/absolute/path/to/file.pdf"
 /doc "/absolute/path/to/file.docx" summarize the key points
+/doc "/absolute/path/to/screenshot.png" describe what is in this image
 ```
 
-Typing `/doc` with no quoted path opens the file picker. Supported formats are `.txt`, `.md`, `.pdf`, and `.docx`.
+Typing `/doc` with no quoted path opens the file picker. Supported formats are `.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`, and `.jpeg`.
+
+Documents are still parsed into text locally before they are sent to any provider. Image attachments are different: Katab base64-encodes them locally and only sends them when the active provider is Ollama and the selected Ollama model looks vision-capable. Pull a model such as `llama3.2-vision` or `llava` before sending images.
 
 ## Chat Formatting
 

@@ -7,6 +7,12 @@ export const DOCUMENT_TOOL_ICON = 'text-x-generic-symbolic';
 export const DOCUMENT_TOOL_MAX_CHARS = 24000;
 
 const TEXT_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
+const IMAGE_MIME_TYPES = new Map([
+    ['png', 'image/png'],
+    ['jpg', 'image/jpeg'],
+    ['jpeg', 'image/jpeg'],
+]);
+const IMAGE_EXTENSIONS = new Set(IMAGE_MIME_TYPES.keys());
 const PDF_EXTENSION = 'pdf';
 const DOCX_EXTENSION = 'docx';
 
@@ -18,13 +24,23 @@ const TOOL_STATUS = {
 
 const CAPABILITY_META = {
     text: {
+        kind: 'document',
         label: 'Text and Markdown',
         status: TOOL_STATUS.BUILTIN,
         parserName: 'Gio.File',
         installLabel: null,
         extensions: Array.from(TEXT_EXTENSIONS),
     },
+    image: {
+        kind: 'image',
+        label: 'Images (PNG/JPG)',
+        status: TOOL_STATUS.BUILTIN,
+        parserName: 'Gio.File',
+        installLabel: null,
+        extensions: Array.from(IMAGE_EXTENSIONS),
+    },
     pdf: {
+        kind: 'document',
         label: 'PDF Documents',
         command: 'pdftotext',
         parserName: 'pdftotext',
@@ -32,6 +48,7 @@ const CAPABILITY_META = {
         extensions: [PDF_EXTENSION],
     },
     docx: {
+        kind: 'document',
         label: 'Word Documents (.docx)',
         command: 'pandoc',
         parserName: 'pandoc',
@@ -59,6 +76,12 @@ export function getDocumentToolCapabilities() {
             available: true,
             commandPath: null,
             ...CAPABILITY_META.text,
+        },
+        image: {
+            key: 'image',
+            available: true,
+            commandPath: null,
+            ...CAPABILITY_META.image,
         },
         pdf: {
             key: 'pdf',
@@ -191,6 +214,15 @@ export function buildMissingDocumentPromptBlock(documentMeta) {
     return `Previously attached document: ${label}. Reattach it to include its text in the current request.`;
 }
 
+export function buildMissingImagePromptBlock(documentMeta) {
+    const label = documentMeta?.displayName || documentMeta?.path || 'image';
+    return `Previously attached image: ${label}. Reattach it in the current session to include it in the current request.`;
+}
+
+export function getAttachmentInfoForPath(path) {
+    return getAttachmentInfoForExtension(getFileExtension(path));
+}
+
 function getFileExtension(path) {
     const filename = GLib.path_get_basename(path);
     const lastDot = filename.lastIndexOf('.');
@@ -202,19 +234,44 @@ function getFileExtension(path) {
 }
 
 function getCapabilityForExtension(extension) {
+    const capabilities = getDocumentToolCapabilities();
+
     if (TEXT_EXTENSIONS.has(extension)) {
-        return getDocumentToolCapabilities().text;
+        return capabilities.text;
+    }
+
+    if (IMAGE_EXTENSIONS.has(extension)) {
+        return capabilities.image;
     }
 
     if (extension === PDF_EXTENSION) {
-        return getDocumentToolCapabilities().pdf;
+        return capabilities.pdf;
     }
 
     if (extension === DOCX_EXTENSION) {
-        return getDocumentToolCapabilities().docx;
+        return capabilities.docx;
     }
 
     return null;
+}
+
+function getAttachmentInfoForExtension(extension) {
+    const capability = getCapabilityForExtension(extension);
+    if (!capability) {
+        return {
+            capability: null,
+            extension,
+            kind: null,
+            mimeType: null,
+        };
+    }
+
+    return {
+        capability,
+        extension,
+        kind: capability.kind,
+        mimeType: IMAGE_MIME_TYPES.get(extension) || null,
+    };
 }
 
 function normalizeDocumentText(text) {
@@ -260,23 +317,28 @@ function queryFileInfoAsync(file, cancellable = null) {
     });
 }
 
-function loadContentsAsync(file, cancellable = null) {
+function loadBinaryContentsAsync(file, cancellable = null) {
     return new Promise((resolve, reject) => {
         file.load_contents_async(cancellable, (source, result) => {
             try {
                 const [ok, contents] = source.load_contents_finish(result);
                 if (!ok) {
-                    throw new DocumentToolError('Katab could not read this text file.', {
+                    throw new DocumentToolError('Katab could not read this file.', {
                         code: 'read-failed',
                     });
                 }
 
-                resolve(new TextDecoder('utf-8').decode(contents));
+                resolve(contents);
             } catch (error) {
                 reject(error);
             }
         });
     });
+}
+
+async function loadContentsAsync(file, cancellable = null) {
+    const contents = await loadBinaryContentsAsync(file, cancellable);
+    return new TextDecoder('utf-8').decode(contents);
 }
 
 function runCommandAsync(argv, cancellable = null, installLabel = null) {
@@ -326,14 +388,14 @@ export class DocumentToolRuntime {
     async parseDocument(rawPath, cancellable = null) {
         const resolvedPath = resolveDocumentPath(rawPath);
         if (!resolvedPath) {
-            throw new DocumentToolError('Use an absolute path, a ~/path, or the picker when attaching a document.', {
+            throw new DocumentToolError('Use an absolute path, a ~/path, or the picker when attaching a file.', {
                 code: 'invalid-path',
             });
         }
 
         const file = Gio.File.new_for_path(resolvedPath);
         if (!file.is_native()) {
-            throw new DocumentToolError('Katab only supports local native files for document parsing right now.', {
+            throw new DocumentToolError('Katab only supports local native files for attachments right now.', {
                 code: 'non-native-file',
             });
         }
@@ -346,10 +408,10 @@ export class DocumentToolRuntime {
         }
 
         const displayName = info.get_display_name() || GLib.path_get_basename(resolvedPath);
-        const extension = getFileExtension(resolvedPath);
-        const capability = getCapabilityForExtension(extension);
+        const attachmentInfo = getAttachmentInfoForPath(resolvedPath);
+        const { capability, extension, kind, mimeType } = attachmentInfo;
         if (!capability) {
-            throw new DocumentToolError('Unsupported document format. Use .txt, .md, .pdf, or .docx.', {
+            throw new DocumentToolError('Unsupported file format. Use .txt, .md, .pdf, .docx, .png, .jpg, or .jpeg.', {
                 code: 'unsupported-format',
             });
         }
@@ -365,6 +427,33 @@ export class DocumentToolRuntime {
         const cached = this._cache.get(cacheKey);
         if (cached) {
             return cached;
+        }
+
+        if (kind === 'image') {
+            const contents = await loadBinaryContentsAsync(file, cancellable);
+            if (!contents || contents.length === 0) {
+                throw new DocumentToolError(`Katab could not read any image data from ${displayName}.`, {
+                    code: 'empty-image',
+                });
+            }
+
+            const result = {
+                id: `doc_${GLib.uuid_string_random()}`,
+                kind,
+                displayName,
+                extension,
+                mimeType,
+                path: resolvedPath,
+                parserName: capability.parserName,
+                installLabel: capability.installLabel,
+                commandPath: capability.commandPath,
+                base64Data: GLib.base64_encode(contents),
+                byteSize: info.get_size(),
+                cachedAt: Math.floor(Date.now() / 1000),
+            };
+
+            this._cache.set(cacheKey, result);
+            return result;
         }
 
         let extractedText = '';
@@ -400,6 +489,7 @@ export class DocumentToolRuntime {
         const truncated = truncateDocumentText(normalizedText, this._maxChars);
         const result = {
             id: `doc_${GLib.uuid_string_random()}`,
+            kind,
             displayName,
             extension,
             path: resolvedPath,
