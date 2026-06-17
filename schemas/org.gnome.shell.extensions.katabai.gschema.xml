@@ -4,7 +4,7 @@
     <key name="provider" type="s">
       <default>'unsloth'</default>
       <summary>AI Model Provider</summary>
-      <description>The AI provider to use. Valid values are 'ollama', 'unsloth', 'openai', or 'anthropic'.</description>
+      <description>The AI provider to use. Valid values are 'ollama', 'unsloth', 'openai', 'anthropic', or 'deepseek'.</description>
     </key>
     <key name="toggle-current-chat" type="as">
       <default>["&lt;Control&gt;&lt;Super&gt;c"]</default>
@@ -200,6 +200,43 @@
       <default>'claude-3-5-sonnet-20241022'</default>
       <summary>Anthropic Model</summary>
       <description>The model to use with Anthropic.</description>
+    </key>
+
+    <!-- DeepSeek Settings -->
+    <key name="deepseek-url" type="s">
+      <default>'https://api.deepseek.com'</default>
+      <summary>DeepSeek Base URL</summary>
+      <description>The base URL for the DeepSeek API.</description>
+    </key>
+    <key name="deepseek-api-key" type="s">
+      <default>''</default>
+      <summary>DeepSeek API Key</summary>
+      <description>The API key for DeepSeek. The API operates on a pre-funded model — ensure your account holds a positive balance.</description>
+    </key>
+    <key name="deepseek-model" type="s">
+      <default>'deepseek-v4-flash'</default>
+      <summary>DeepSeek Model</summary>
+      <description>The DeepSeek model to use. Use deepseek-v4-flash for general tasks or deepseek-v4-pro for complex reasoning.</description>
+    </key>
+    <key name="deepseek-system-prompt" type="s">
+      <default>'Reply in the same language as the most recent user message unless the user explicitly asks you to switch languages. Do not default to Chinese unless the user asks for Chinese.'</default>
+      <summary>DeepSeek System Prompt</summary>
+      <description>The system prompt Katab prepends to DeepSeek requests. The default keeps replies in the language of the latest user message.</description>
+    </key>
+    <key name="deepseek-thinking-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Thinking Mode</summary>
+      <description>When enabled, DeepSeek performs extended chain-of-thought reasoning before responding. Increases response time but improves quality on complex tasks.</description>
+    </key>
+    <key name="deepseek-reasoning-effort" type="s">
+      <default>'high'</default>
+      <summary>Reasoning Effort</summary>
+      <description>Computational budget for thinking mode. 'high' is the balanced default; 'max' allocates maximum depth. Only applies when thinking is enabled.</description>
+    </key>
+    <key name="deepseek-json-mode" type="b">
+      <default>false</default>
+      <summary>Enable JSON Output Mode</summary>
+      <description>Forces the model to return a valid JSON object. Katab automatically injects a JSON reminder into the system prompt if needed.</description>
     </key>
   </schema>
 </schemalist>

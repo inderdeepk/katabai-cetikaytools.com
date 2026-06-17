@@ -129,6 +129,9 @@ window.katab-prefs-window .navigation-sidebar,
 window.katab-prefs-window entry,
 window.katab-prefs-window searchentry,
 .katab-prefs-entry,
+.katab-prefs-textarea,
+.katab-prefs-textarea textview,
+.katab-prefs-textarea text,
 .katab-prefs-spin-row spinbutton,
 .katab-prefs-button {
     background-image: none;
@@ -148,9 +151,18 @@ window.katab-prefs-window searchentry,
     box-shadow: none;
 }
 
+.katab-prefs-textarea textview,
+.katab-prefs-textarea text {
+    border: none;
+    box-shadow: none;
+}
+
 window.katab-prefs-window entry:focus,
 window.katab-prefs-window searchentry:focus,
 .katab-prefs-entry:focus,
+.katab-prefs-textarea:focus-within,
+.katab-prefs-textarea textview:focus,
+.katab-prefs-textarea text:focus,
 .katab-prefs-spin-row spinbutton:focus,
 .katab-prefs-button:focus {
     border-color: rgba(255, 255, 255, 0.28);
@@ -262,6 +274,9 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge-la
 window.katab-prefs-window.katab-prefs-theme-light entry,
 window.katab-prefs-window.katab-prefs-theme-light searchentry,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-entry,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea textview,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea text,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-spin-row spinbutton,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button {
     background-color: rgba(255, 255, 255, 0.92);
@@ -272,6 +287,9 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button {
 window.katab-prefs-window.katab-prefs-theme-light entry:focus,
 window.katab-prefs-window.katab-prefs-theme-light searchentry:focus,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-entry:focus,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea:focus-within,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea textview:focus,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea text:focus,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-spin-row spinbutton:focus,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button:focus {
     border-color: rgba(0, 0, 0, 0.28);
@@ -301,13 +319,15 @@ window.katab-prefs-window.katab-prefs-theme-light separator {
 }
 
 /* ── Preset rows in prefs window ────────────────────────────────────────── */
-window.katab-prefs-window .katab-prefs-preset-row-active > box > label.title {
+window.katab-prefs-window .katab-prefs-preset-row-active>box>label.title {
     font-weight: bold;
 }
+
 window.katab-prefs-window.katab-prefs-theme-dark .katab-prefs-preset-row-active {
     background-color: rgba(100, 160, 255, 0.08);
     border-left: 3px solid rgba(100, 160, 255, 0.60);
 }
+
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-preset-row-active {
     background-color: rgba(50, 100, 200, 0.06);
     border-left: 3px solid rgba(50, 100, 200, 0.50);

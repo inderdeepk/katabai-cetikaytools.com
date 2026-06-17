@@ -231,6 +231,12 @@ export default class KatabPreferences extends ExtensionPreferences {
                 iconFile: 'claude.svg',
                 description: 'Use Claude models through Anthropic for careful reasoning, writing, and long-context work.',
             },
+            deepseek: {
+                label: 'DeepSeek',
+                pageTitle: 'DeepSeek',
+                iconFile: 'deepseek.svg',
+                description: 'Access DeepSeek V4 models with a 1M token context window and advanced reasoning. Requires a funded prepaid account.',
+            },
         };
 
         // General Provider Selection
@@ -627,6 +633,106 @@ export default class KatabPreferences extends ExtensionPreferences {
             return row;
         };
 
+        const getTextBufferContents = buffer => {
+            const [startIter, endIter] = buffer.get_bounds();
+            return buffer.get_text(startIter, endIter, false);
+        };
+
+        const createMultilineStringRow = (title, subtitle, key, group, minHeight = 140) => {
+            const row = stylePreferenceRow(
+                new Adw.PreferencesRow(),
+                'katab-prefs-input-row',
+                'katab-prefs-multiline-row'
+            );
+
+            const box = addCssClasses(new Gtk.Box({
+                orientation: Gtk.Orientation.VERTICAL,
+                spacing: 10,
+                margin_top: 12,
+                margin_bottom: 12,
+                margin_start: 12,
+                margin_end: 12,
+                hexpand: true,
+            }), 'katab-prefs-multiline-box');
+
+            const titleLabel = new Gtk.Label({
+                label: title,
+                xalign: 0,
+                wrap: true,
+                halign: Gtk.Align.START,
+                hexpand: true,
+            });
+            box.append(titleLabel);
+
+            if (subtitle) {
+                const subtitleLabel = addCssClasses(new Gtk.Label({
+                    label: subtitle,
+                    xalign: 0,
+                    wrap: true,
+                    halign: Gtk.Align.START,
+                    hexpand: true,
+                }), 'dim-label', 'caption');
+                box.append(subtitleLabel);
+            }
+
+            const scroller = addCssClasses(new Gtk.ScrolledWindow({
+                hexpand: true,
+                min_content_height: minHeight,
+                propagate_natural_height: true,
+                hscrollbar_policy: Gtk.PolicyType.NEVER,
+                vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
+            }), 'katab-prefs-textarea');
+
+            const textView = addCssClasses(new Gtk.TextView({
+                wrap_mode: Gtk.WrapMode.WORD_CHAR,
+                accepts_tab: true,
+                monospace: false,
+                top_margin: 10,
+                bottom_margin: 10,
+                left_margin: 10,
+                right_margin: 10,
+                hexpand: true,
+                vexpand: true,
+            }), 'katab-prefs-textview');
+            scroller.set_child(textView);
+            box.append(scroller);
+
+            row.set_child(box);
+            addPreferenceRow(group, row);
+
+            const buffer = textView.get_buffer();
+            let syncing = false;
+
+            const syncFromSettings = () => {
+                const nextValue = settings.get_string(key);
+                const currentValue = getTextBufferContents(buffer);
+                if (currentValue === nextValue) {
+                    return;
+                }
+
+                syncing = true;
+                buffer.set_text(nextValue, -1);
+                syncing = false;
+            };
+
+            syncFromSettings();
+            settings.connect(`changed::${key}`, syncFromSettings);
+            buffer.connect('changed', () => {
+                if (syncing) {
+                    return;
+                }
+
+                const nextValue = getTextBufferContents(buffer);
+                if (settings.get_string(key) === nextValue) {
+                    return;
+                }
+
+                settings.set_string(key, nextValue);
+            });
+
+            return row;
+        };
+
         const createIntRow = (title, subtitle, key, group, min, max, step) => {
             const row = stylePreferenceRow(new Adw.SpinRow({
                 title,
@@ -726,6 +832,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         createProviderCardRow('unsloth', generalGroup);
         createProviderCardRow('openai', generalGroup);
         createProviderCardRow('anthropic', generalGroup);
+        createProviderCardRow('deepseek', generalGroup);
         createShortcutRow(
             'Toggle Chat',
             'Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it.',
@@ -1267,6 +1374,97 @@ export default class KatabPreferences extends ExtensionPreferences {
         createStringRow('API Key', 'Your Anthropic key starting with sk-ant-. Never share or commit this value.', 'anthropic-api-key', anthropicGroup, true);
         createStringRow('Model', 'The Claude model ID from your account, such as claude-opus-4-5.', 'anthropic-model', anthropicGroup);
         anthropicPage.add(anthropicGroup);
+
+        // --- DeepSeek Settings ---
+        const deepseekPage = createProviderPage('deepseek');
+
+        const deepseekConnectionGroup = createPreferencesGroup({ title: 'Connection & Model' });
+        createStringRow('Base URL', 'The DeepSeek API endpoint. Change only when routing through a compatible proxy.', 'deepseek-url', deepseekConnectionGroup);
+        createStringRow(
+            'API Key',
+            'Enter your DeepSeek API key. Ensure your account holds a positive prepaid balance — the API operates exclusively on a pre-funded model.',
+            'deepseek-api-key',
+            deepseekConnectionGroup,
+            true
+        );
+        createStringRow(
+            'Model',
+            'Use deepseek-v4-flash for general tasks and rapid coding, or deepseek-v4-pro for complex reasoning and multi-step workflows.',
+            'deepseek-model',
+            deepseekConnectionGroup
+        );
+        deepseekPage.add(deepseekConnectionGroup);
+
+        const deepseekPromptGroup = createPreferencesGroup({
+            title: 'System Prompt',
+            description: 'Katab prepends this system prompt to DeepSeek requests. By default it keeps replies in the language of your latest message and avoids unsolicited switches to Chinese.',
+        });
+        createMultilineStringRow(
+            'System Prompt',
+            'Reply in the same language as the most recent user message unless the user explicitly asks you to switch languages. Do not default to Chinese unless the user asks for Chinese.',
+            'deepseek-system-prompt',
+            deepseekPromptGroup,
+            160
+        );
+        deepseekPage.add(deepseekPromptGroup);
+
+        const deepseekReasoningGroup = createPreferencesGroup({
+            title: 'Reasoning',
+            description: 'DeepSeek can perform extended chain-of-thought reasoning before responding. Thinking content is shown in a collapsible panel in chat.',
+        });
+
+        const deepseekThinkingRow = createBooleanRow(
+            'Thinking Mode',
+            'Enable extended reasoning. Increases response time but significantly improves quality on complex tasks.',
+            'deepseek-thinking-enabled',
+            deepseekReasoningGroup
+        );
+
+        const effortValues = ['high', 'max'];
+        const effortLabels = ['High (balanced speed and depth)', 'Max (maximum reasoning depth)'];
+        const effortRow = createChoiceRow(
+            'Reasoning Effort',
+            'Computational budget for the thinking phase. ‘High’ is the recommended default; ‘Max’ allocates the deepest analysis.',
+            deepseekReasoningGroup
+        );
+        setStringList(effortRow, effortLabels);
+        effortRow._choiceValues = effortValues;
+
+        // Sync effort row ↔ GSettings
+        const syncEffortRow = () => {
+            const currentEffort = settings.get_string('deepseek-reasoning-effort') || 'high';
+            const idx = effortValues.indexOf(currentEffort);
+            effortRow.selected = idx >= 0 ? idx : 0;
+        };
+        syncEffortRow();
+        settings.connect('changed::deepseek-reasoning-effort', syncEffortRow);
+        effortRow.connect('notify::selected', () => {
+            const effort = effortRow._choiceValues?.[effortRow.selected] || 'high';
+            if (settings.get_string('deepseek-reasoning-effort') !== effort) {
+                settings.set_string('deepseek-reasoning-effort', effort);
+            }
+        });
+
+        // Show effort row only when thinking is enabled
+        const syncEffortRowVisibility = () => {
+            effortRow.sensitive = settings.get_boolean('deepseek-thinking-enabled');
+        };
+        syncEffortRowVisibility();
+        settings.connect('changed::deepseek-thinking-enabled', syncEffortRowVisibility);
+
+        deepseekPage.add(deepseekReasoningGroup);
+
+        const deepseekOutputGroup = createPreferencesGroup({
+            title: 'Output',
+            description: 'Control structured output mode. When JSON mode is on, Katab automatically injects a JSON reminder into the system prompt if needed to satisfy the DeepSeek API requirement.',
+        });
+        createBooleanRow(
+            'JSON Output Mode',
+            'Force the model to return a valid JSON object. Useful for structured data extraction tasks.',
+            'deepseek-json-mode',
+            deepseekOutputGroup
+        );
+        deepseekPage.add(deepseekOutputGroup);
 
         // --- Tools Settings ---
         const toolsPage = createPreferencesPage({

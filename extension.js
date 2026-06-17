@@ -62,7 +62,8 @@ const PROVIDER_TOOLS = {
     ],
     'ollama': [],
     'openai': [],
-    'anthropic': []
+    'anthropic': [],
+    'deepseek': []
 };
 
 const LOCAL_TOOLS = [
@@ -74,6 +75,7 @@ const PROVIDER_META = {
     'unsloth': { label: 'Unsloth Studio', iconFile: 'unsloth.png' },
     'openai': { label: 'OpenAI', iconFile: 'openai.svg' },
     'anthropic': { label: 'Anthropic', iconFile: 'claude.svg' },
+    'deepseek': { label: 'DeepSeek', iconFile: 'deepseek.svg' },
 };
 
 const PROVIDER_LABELS = Object.fromEntries(
@@ -95,6 +97,16 @@ const PROVIDER_STATUS_STYLE_CLASSES = Object.values(PROVIDER_STATUS)
 
 const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
+const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 30;
+const DEEPSEEK_STREAM_TIMEOUT_SECONDS = 1800;
+const DEEPSEEK_MAX_RETRY_ATTEMPTS = 3;
+const DEEPSEEK_BACKOFF_BASE_MS = 1000;
+const DEEPSEEK_BACKOFF_CAP_MS = 15000;
+const DEEPSEEK_MAX_CONTEXT_TOKENS = 1000000;
+const DEEPSEEK_MAX_OUTPUT_TOKENS = 384000;
+const DEEPSEEK_INPUT_TOKEN_BUDGET = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_MAX_OUTPUT_TOKENS;
+const DEEPSEEK_CONTEXT_PREFIX_MESSAGES = 2;
+const DEFAULT_DEEPSEEK_SYSTEM_PROMPT = 'Reply in the same language as the most recent user message unless the user explicitly asks you to switch languages. Do not default to Chinese unless the user asks for Chinese.';
 const PROMPT_INPUT_MIN_HEIGHT = 44;
 const PROMPT_INPUT_MAX_HEIGHT = 220;
 const PROMPT_INPUT_VERTICAL_PADDING = 20;
@@ -314,6 +326,9 @@ function extractErrorSummary(responseBody) {
 
     try {
         let parsed = JSON.parse(responseBody);
+        if (parsed?.error && typeof parsed.error.message === 'string' && parsed.error.message.trim()) {
+            return parsed.error.message.trim();
+        }
         if (typeof parsed.error === 'string' && parsed.error.trim()) {
             return parsed.error.trim();
         }
@@ -433,7 +448,7 @@ class ProviderHealthMonitor {
             });
         }
 
-        if ((config.provider === 'openai' || config.provider === 'anthropic') && !config.apiKey) {
+        if ((config.provider === 'openai' || config.provider === 'anthropic' || config.provider === 'deepseek') && !config.apiKey) {
             return this._buildState({
                 provider: config.provider,
                 status: PROVIDER_STATUS.NEEDS_SETUP,
@@ -479,6 +494,17 @@ class ProviderHealthMonitor {
             };
         }
 
+        if (config.provider === 'deepseek') {
+            return {
+                method: 'GET',
+                url: joinUrl(config.baseUrl, '/user/balance'),
+                headers: {
+                    'Authorization': `Bearer ${config.apiKey}`,
+                },
+                body: null,
+            };
+        }
+
         return {
             method: 'GET',
             url: joinUrl(config.baseUrl, '/v1/models'),
@@ -516,6 +542,10 @@ class ProviderHealthMonitor {
             });
         });
 
+        if (config.provider === 'deepseek' && message.status_code === 402) {
+            throw new Error('Insufficient balance — top up your DeepSeek account at platform.deepseek.com.');
+        }
+
         if (message.status_code < 200 || message.status_code >= 300) {
             let responseBody = decodeBytes(bytes);
             let summary = extractErrorSummary(responseBody);
@@ -523,6 +553,21 @@ class ProviderHealthMonitor {
                 throw new Error(`HTTP ${message.status_code}: ${summary}`);
             }
             throw new Error(`HTTP ${message.status_code}`);
+        }
+
+        // For DeepSeek: check the is_available boolean from the balance endpoint.
+        // A false value means funds are exhausted even though the HTTP status was 200.
+        if (config.provider === 'deepseek') {
+            try {
+                let responseBody = decodeBytes(bytes);
+                let parsed = JSON.parse(responseBody);
+                if (parsed.is_available === false) {
+                    throw new Error('Insufficient balance — your DeepSeek prepaid balance is depleted. Top up at platform.deepseek.com.');
+                }
+            } catch (e) {
+                // Re-throw only balance-specific errors; ignore JSON parse failures.
+                if (e.message.includes('balance')) throw e;
+            }
         }
     }
 
@@ -817,8 +862,9 @@ class KatabDialog {
         this.isOpen = false;
         this._messageHistory = [];
         this._soupSession = new Soup.Session();
-        this._soupSession.timeout = 30; // 30 seconds
+        this._soupSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
         this._cancellable = null;
+        this._retrySourceId = 0;
         this._isStreaming = false;
         this._activeResponseState = null;
         this._sendBtn = null;
@@ -953,8 +999,87 @@ class KatabDialog {
     }
 
     _clearActiveResponseState() {
+        this._clearPendingRetry();
         this._activeResponseState = null;
         this._setStreamingState(false);
+    }
+
+    _clearPendingRetry() {
+        if (!this._retrySourceId) {
+            return;
+        }
+
+        GLib.source_remove(this._retrySourceId);
+        this._retrySourceId = 0;
+    }
+
+    _isBlockingProviderState(state) {
+        if (!state) {
+            return false;
+        }
+
+        if (state.status === PROVIDER_STATUS.NEEDS_SETUP) {
+            return true;
+        }
+
+        if (state.status !== PROVIDER_STATUS.DOWN) {
+            return false;
+        }
+
+        return /(insufficient balance|prepaid balance|top up|\b401\b|authentication|api key)/i.test(state.detail || '');
+    }
+
+    _formatRetryDelayMs(delayMs) {
+        if (delayMs >= 1000) {
+            return `${this._formatMetricNumber(delayMs / 1000, 1)}s`;
+        }
+
+        return `${Math.max(1, Math.round(delayMs))}ms`;
+    }
+
+    _isDeepSeekRetryableStatus(statusCode) {
+        return statusCode === 429 || statusCode === 500 || statusCode === 503;
+    }
+
+    _computeDeepSeekRetryDelayMs(retryAttempt) {
+        let baseDelayMs = Math.min(DEEPSEEK_BACKOFF_BASE_MS * (2 ** retryAttempt), DEEPSEEK_BACKOFF_CAP_MS);
+        let jitterWindowMs = Math.min(Math.max(Math.round(baseDelayMs * 0.3), 250), 2000);
+        return Math.min(baseDelayMs + Math.floor(Math.random() * jitterWindowMs), DEEPSEEK_BACKOFF_CAP_MS + 2000);
+    }
+
+    _scheduleDeepSeekRetry(uiElements, { statusCode, retryAttempt = 0, summaryText = '' } = {}) {
+        if (retryAttempt >= DEEPSEEK_MAX_RETRY_ATTEMPTS) {
+            return false;
+        }
+
+        let nextAttempt = retryAttempt + 1;
+        let delayMs = this._computeDeepSeekRetryDelayMs(retryAttempt);
+        let delayLabel = this._formatRetryDelayMs(delayMs);
+        let reason = statusCode === 429
+            ? 'DeepSeek is busy and asked Katab to back off.'
+            : 'DeepSeek is temporarily unavailable.';
+        let detailText = summaryText ? `\n\n${summaryText}` : '';
+
+        this._applyAssistantRender(
+            uiElements,
+            `${reason} Retrying in ${delayLabel} (attempt ${nextAttempt} of ${DEEPSEEK_MAX_RETRY_ATTEMPTS}).${detailText}`,
+            { plain: true }
+        );
+        this._scrollToBottom();
+
+        this._clearPendingRetry();
+        this._retrySourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+            this._retrySourceId = 0;
+
+            if (!this._activeResponseState) {
+                return GLib.SOURCE_REMOVE;
+            }
+
+            this._streamResponse(uiElements, { retryAttempt: nextAttempt });
+            return GLib.SOURCE_REMOVE;
+        });
+
+        return true;
     }
 
     _buildAssistantHistoryMessage(content, assistantMeta = null) {
@@ -974,6 +1099,7 @@ class KatabDialog {
             accumulatedToolCalls: [],
             assistantMeta: null,
             isThinking: false,
+            usesSeparateThinkingStream: false,
             mode,
             modelName,
             provider,
@@ -1044,6 +1170,8 @@ class KatabDialog {
     }
 
     _cancelStream({ clearState = true } = {}) {
+        this._clearPendingRetry();
+
         if (this._cancellable) {
             this._cancellable.cancel();
             this._cancellable = null;
@@ -2858,6 +2986,8 @@ class KatabDialog {
             return;
         }
 
+        this._soupSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+
         if (this._currentProvider === 'unsloth' || this._currentProvider === 'ollama') {
             try {
                 let url;
@@ -2902,7 +3032,11 @@ class KatabDialog {
                 this._draftUsage = Math.ceil(text.length / 4);
             }
             this._renderTokenCounter();
+            return;
         }
+
+        this._draftUsage = Math.ceil(text.length / 4);
+        this._renderTokenCounter();
     }
 
     async _fetchMaxContext() {
@@ -2912,8 +3046,10 @@ class KatabDialog {
         } else if (this._currentProvider === 'ollama') {
             let val = this._settings.get_int('ollama-num-ctx');
             this._maxContextSize = val > 0 ? val : -1;
+        } else if (this._currentProvider === 'deepseek') {
+            this._maxContextSize = DEEPSEEK_MAX_CONTEXT_TOKENS;
         } else {
-            // openai / anthropic — context size not configurable here
+            // OpenAI / Anthropic — context size not configurable here
             this._maxContextSize = -1;
         }
         this._renderTokenCounter();
@@ -2970,6 +3106,12 @@ class KatabDialog {
             sanitized.tool_calls = message.tool_calls;
         }
 
+        // For DeepSeek: echo reasoning_content only on tool-call turns.
+        // The API auto-discards it on normal assistant turns and rejects it if sent back unnecessarily.
+        if (provider === 'deepseek' && message.reasoning_content && message.tool_calls !== undefined) {
+            sanitized.reasoning_content = message.reasoning_content;
+        }
+
         if (message.name !== undefined) {
             sanitized.name = message.name;
         }
@@ -2986,7 +3128,195 @@ class KatabDialog {
     }
 
     _getApiMessageHistory(provider = this._currentProvider) {
-        return this._messageHistory.map(message => this._sanitizeHistoryMessage(message, { provider }));
+        let messages = this._messageHistory.map(message => this._sanitizeHistoryMessage(message, { provider }));
+        if (provider === 'deepseek') {
+            return this._truncateDeepSeekMessages(messages);
+        }
+
+        return messages;
+    }
+
+    _estimateTextTokens(text) {
+        if (!text) {
+            return 0;
+        }
+
+        return Math.ceil(String(text).length / 4);
+    }
+
+    _estimateDeepSeekMessageTokens(message) {
+        if (!message) {
+            return 0;
+        }
+
+        let total = 6;
+        total += this._estimateTextTokens(message.role);
+        total += this._estimateTextTokens(message.content);
+        total += this._estimateTextTokens(message.name);
+
+        if (message.reasoning_content) {
+            total += this._estimateTextTokens(message.reasoning_content);
+        }
+
+        if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+            total += this._estimateTextTokens(JSON.stringify(message.tool_calls));
+        }
+
+        return total;
+    }
+
+    _buildDeepSeekUserId() {
+        let username = '';
+        try {
+            username = GLib.get_user_name() || '';
+        } catch (_e) {
+        }
+
+        let normalized = String(username)
+            .trim()
+            .replace(/[^a-zA-Z0-9\-_]+/g, '-')
+            .replace(/^-+|-+$/g, '');
+
+        if (!normalized) {
+            normalized = 'user';
+        }
+
+        return `katab-${normalized}`.slice(0, 512);
+    }
+
+    _getDeepSeekContextPrefixLength(messages) {
+        let prefixLength = 0;
+
+        while (prefixLength < messages.length && messages[prefixLength]?.role === 'system') {
+            prefixLength++;
+        }
+
+        let preservedMessages = 0;
+        while (prefixLength < messages.length && preservedMessages < DEEPSEEK_CONTEXT_PREFIX_MESSAGES) {
+            let message = messages[prefixLength];
+            if (!message || message.role === 'tool') {
+                break;
+            }
+
+            prefixLength++;
+            preservedMessages++;
+
+            if (message.role === 'user') {
+                break;
+            }
+        }
+
+        return prefixLength;
+    }
+
+    _getDeepSeekRetentionSpan(annotated, index, prefixLength) {
+        let start = index;
+        let end = index;
+
+        if (annotated[index]?.message?.role === 'tool') {
+            while (start > prefixLength && annotated[start - 1]?.message?.role === 'tool') {
+                start--;
+            }
+
+            if (start > prefixLength
+                && annotated[start - 1]?.message?.role === 'assistant'
+                && annotated[start - 1]?.message?.tool_calls !== undefined) {
+                start--;
+            }
+        } else if (annotated[index]?.message?.role === 'assistant'
+            && annotated[index]?.message?.tool_calls !== undefined) {
+            while (end + 1 < annotated.length && annotated[end + 1]?.message?.role === 'tool') {
+                end++;
+            }
+        }
+
+        let tokens = 0;
+        for (let i = start; i <= end; i++) {
+            tokens += annotated[i].tokens;
+        }
+
+        return { start, end, tokens };
+    }
+
+    _truncateDeepSeekMessages(messages, { tokenBudget = DEEPSEEK_INPUT_TOKEN_BUDGET } = {}) {
+        if (!Array.isArray(messages) || messages.length <= 2) {
+            return messages;
+        }
+
+        let annotated = messages.map((message, index) => ({
+            index,
+            message,
+            tokens: this._estimateDeepSeekMessageTokens(message),
+        }));
+
+        let totalTokens = annotated.reduce((sum, item) => sum + item.tokens, 0);
+        if (totalTokens <= tokenBudget) {
+            return messages;
+        }
+
+        let prefixLength = this._getDeepSeekContextPrefixLength(messages);
+        let selectedIndexes = new Set();
+        let selectedTokens = 0;
+
+        for (let i = 0; i < prefixLength; i++) {
+            selectedIndexes.add(i);
+            selectedTokens += annotated[i].tokens;
+        }
+
+        let lastSpan = this._getDeepSeekRetentionSpan(annotated, messages.length - 1, prefixLength);
+        for (let i = lastSpan.start; i <= lastSpan.end; i++) {
+            if (selectedIndexes.has(i)) {
+                continue;
+            }
+
+            selectedIndexes.add(i);
+            selectedTokens += annotated[i].tokens;
+        }
+
+        if (selectedTokens >= tokenBudget) {
+            return annotated
+                .filter(item => selectedIndexes.has(item.index))
+                .map(item => item.message);
+        }
+
+        for (let i = messages.length - 1; i >= prefixLength;) {
+            if (selectedIndexes.has(i)) {
+                i--;
+                continue;
+            }
+
+            let span = this._getDeepSeekRetentionSpan(annotated, i, prefixLength);
+            let missingIndexes = [];
+            let missingTokens = 0;
+
+            for (let j = span.start; j <= span.end; j++) {
+                if (selectedIndexes.has(j)) {
+                    continue;
+                }
+
+                missingIndexes.push(j);
+                missingTokens += annotated[j].tokens;
+            }
+
+            if (selectedTokens + missingTokens > tokenBudget) {
+                i = span.start - 1;
+                continue;
+            }
+
+            for (let retainedIndex of missingIndexes) {
+                selectedIndexes.add(retainedIndex);
+            }
+            selectedTokens += missingTokens;
+            i = span.start - 1;
+        }
+
+        if (selectedIndexes.size === messages.length) {
+            return messages;
+        }
+
+        return annotated
+            .filter(item => selectedIndexes.has(item.index))
+            .map(item => item.message);
     }
 
     _numberOrNull(value) {
@@ -3001,6 +3331,23 @@ class KatabDialog {
             prompt_eval_duration: this._numberOrNull(payload.prompt_eval_duration),
             eval_count: this._numberOrNull(payload.eval_count),
             eval_duration: this._numberOrNull(payload.eval_duration),
+        };
+
+        return Object.values(metrics).some(value => value !== null) ? metrics : null;
+    }
+
+    _extractDeepSeekMetrics(usageChunk) {
+        if (!usageChunk) {
+            return null;
+        }
+
+        let metrics = {
+            prompt_tokens: this._numberOrNull(usageChunk.prompt_tokens),
+            completion_tokens: this._numberOrNull(usageChunk.completion_tokens),
+            total_tokens: this._numberOrNull(usageChunk.total_tokens),
+            reasoning_tokens: this._numberOrNull(usageChunk.completion_tokens_details?.reasoning_tokens ?? null),
+            cached_tokens_hit: this._numberOrNull(usageChunk.prompt_cache_hit_tokens ?? null),
+            cached_tokens_miss: this._numberOrNull(usageChunk.prompt_cache_miss_tokens ?? null),
         };
 
         return Object.values(metrics).some(value => value !== null) ? metrics : null;
@@ -3046,7 +3393,46 @@ class KatabDialog {
     }
 
     _formatAssistantMetrics(messageMeta) {
-        if (!messageMeta || messageMeta.provider !== 'ollama' || !messageMeta.metrics) {
+        if (!messageMeta || !messageMeta.metrics) {
+            return '';
+        }
+
+        if (messageMeta.provider === 'deepseek') {
+            let metrics = messageMeta.metrics;
+            let parts = [];
+
+            let promptStr = metrics.prompt_tokens !== null
+                ? `${metrics.prompt_tokens} prompt`
+                : null;
+            let cacheBits = [];
+            if (metrics.cached_tokens_hit !== null) {
+                cacheBits.push(`${metrics.cached_tokens_hit} cached`);
+            }
+            if (metrics.cached_tokens_miss !== null) {
+                cacheBits.push(`${metrics.cached_tokens_miss} uncached`);
+            }
+            let cacheStr = cacheBits.length > 0
+                ? ` (${cacheBits.join(' / ')})`
+                : '';
+            if (promptStr) {
+                parts.push(promptStr + cacheStr);
+            }
+
+            let completionStr = metrics.completion_tokens !== null
+                ? `${metrics.completion_tokens} completion`
+                : null;
+            if (completionStr) {
+                parts.push(completionStr);
+            }
+
+            if (metrics.reasoning_tokens) {
+                parts.push(`${metrics.reasoning_tokens} reasoning`);
+            }
+
+            return parts.join(' • ');
+        }
+
+        if (messageMeta.provider !== 'ollama') {
             return '';
         }
 
@@ -3939,8 +4325,14 @@ class KatabDialog {
 
         try {
             let parsed = JSON.parse(responseBody);
+            if (parsed?.error && typeof parsed.error.message === 'string' && parsed.error.message.trim()) {
+                return parsed.error.message.trim();
+            }
             if (typeof parsed.error === 'string' && parsed.error.trim()) {
                 return parsed.error.trim();
+            }
+            if (typeof parsed.message === 'string' && parsed.message.trim()) {
+                return parsed.message.trim();
             }
         } catch (_e) {
         }
@@ -4357,6 +4749,12 @@ class KatabDialog {
             return;
         }
 
+        const providerState = this._extension.providerHealthMonitor?.getState(this._currentProvider);
+        if (this._isBlockingProviderState(providerState)) {
+            this._addSystemMessage(`${providerState.label}: ${providerState.detail}`, { variant: 'warning' });
+            return;
+        }
+
         this._forcedTool = null;
         const tools = this._getProviderTools();
         for (const t of tools) {
@@ -4432,7 +4830,7 @@ class KatabDialog {
         }
     }
 
-    async _streamResponse(uiElements, { cancellable = null } = {}) {
+    async _streamResponse(uiElements, { cancellable = null, retryAttempt = 0 } = {}) {
         const provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
         let apiKey = '';
@@ -4490,6 +4888,80 @@ class KatabDialog {
                 stream: true,
                 max_tokens: 4096
             };
+        } else if (provider === 'deepseek') {
+            if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions')) {
+                if (!endpoint.endsWith('/')) endpoint += '/';
+                endpoint += 'chat/completions';
+            }
+            headers['Content-Type'] = 'application/json';
+
+            const thinkingEnabled = this._settings.get_boolean('deepseek-thinking-enabled');
+            const reasoningEffort = this._settings.get_string('deepseek-reasoning-effort') || 'high';
+            const jsonMode = this._settings.get_boolean('deepseek-json-mode');
+            let deepseekSystemPrompt = DEFAULT_DEEPSEEK_SYSTEM_PROMPT;
+            try {
+                deepseekSystemPrompt = this._settings.get_string('deepseek-system-prompt').trim() || '';
+            } catch (_e) {
+                deepseekSystemPrompt = DEFAULT_DEEPSEEK_SYSTEM_PROMPT;
+            }
+
+            // Build messages — DeepSeek natively supports system role; for tool-call turns
+            // we must echo reasoning_content back on the assistant message that preceded the tool call.
+            let deepseekMessages = apiMessages;
+            let existingSystemMsg = deepseekMessages.find(message => message.role === 'system');
+
+            if (deepseekSystemPrompt) {
+                if (existingSystemMsg) {
+                    if (!existingSystemMsg.content?.includes(deepseekSystemPrompt)) {
+                        deepseekMessages = deepseekMessages.map(message =>
+                            message === existingSystemMsg
+                                ? {
+                                    ...message,
+                                    content: `${message.content || ''}\n\n${deepseekSystemPrompt}`.trim(),
+                                }
+                                : message
+                        );
+                    }
+                } else {
+                    deepseekMessages = [
+                        { role: 'system', content: deepseekSystemPrompt },
+                        ...deepseekMessages,
+                    ];
+                }
+            }
+
+            payload = {
+                model: model,
+                messages: deepseekMessages,
+                stream: true,
+                stream_options: { include_usage: true },
+                thinking: { type: thinkingEnabled ? 'enabled' : 'disabled' },
+                user_id: this._buildDeepSeekUserId(),
+            };
+
+            if (thinkingEnabled) {
+                payload.reasoning_effort = reasoningEffort;
+            }
+
+            // JSON mode: inject prompt guard if the word 'json' is absent from the system message.
+            if (jsonMode) {
+                payload.response_format = { type: 'json_object' };
+                let systemMsg = payload.messages.find(m => m.role === 'system');
+                if (systemMsg && !/json/i.test(systemMsg.content || '')) {
+                    // Clone to avoid mutating _messageHistory
+                    payload.messages = payload.messages.map(m =>
+                        m === systemMsg
+                            ? { ...m, content: (m.content || '') + '\n\nEnsure the output is formatted as a valid JSON object.' }
+                            : m
+                    );
+                } else if (!systemMsg) {
+                    // No system message — prepend a minimal one satisfying the requirement
+                    payload.messages = [
+                        { role: 'system', content: 'Ensure the output is formatted as a valid JSON object.' },
+                        ...payload.messages
+                    ];
+                }
+            }
         } else if (provider === 'ollama') {
             if (!endpoint.endsWith('api/chat')) {
                 endpoint += 'api/chat';
@@ -4574,6 +5046,10 @@ class KatabDialog {
         let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
         message.set_request_body_from_bytes('application/json', bodyBytes);
 
+        this._soupSession.timeout = provider === 'deepseek'
+            ? DEEPSEEK_STREAM_TIMEOUT_SECONDS
+            : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+
         this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
         if (!cancellable) {
             this._cancelStream({ clearState: false });
@@ -4597,9 +5073,37 @@ class KatabDialog {
                     this._extension.providerHealthMonitor?.refresh({ immediate: true });
                     const responseBody = this._readErrorResponseBody(inputStream, currentCancellable);
                     const summaryText = this._extractErrorSummary(responseBody);
-                    const summary = summaryText
-                        ? `Request failed: HTTP ${message.status_code} - ${summaryText}`
-                        : `Request failed: HTTP ${message.status_code}`;
+
+                    if (provider === 'deepseek'
+                        && this._isDeepSeekRetryableStatus(message.status_code)
+                        && this._scheduleDeepSeekRetry(uiElements, {
+                            statusCode: message.status_code,
+                            retryAttempt,
+                            summaryText,
+                        })) {
+                        return;
+                    }
+
+                    // DeepSeek-specific status code overrides for actionable user messaging
+                    let summary;
+                    if (provider === 'deepseek') {
+                        if (message.status_code === 402) {
+                            summary = 'DeepSeek Insufficient Balance — your prepaid account balance is depleted. Top up at platform.deepseek.com.';
+                        } else if (message.status_code === 422) {
+                            summary = `DeepSeek Invalid Parameters — the request was rejected (HTTP 422). This may be caused by unsupported JSON schema fields in tool definitions.${summaryText ? ` Details: ${summaryText}` : ''}`;
+                        } else if (this._isDeepSeekRetryableStatus(message.status_code)) {
+                            summary = `DeepSeek temporary failure — HTTP ${message.status_code}.${summaryText ? ` Details: ${summaryText}` : ''} Automatic retries were exhausted.`;
+                        } else {
+                            summary = summaryText
+                                ? `DeepSeek request failed: HTTP ${message.status_code} - ${summaryText}`
+                                : `DeepSeek request failed: HTTP ${message.status_code}`;
+                        }
+                    } else {
+                        summary = summaryText
+                            ? `Request failed: HTTP ${message.status_code} - ${summaryText}`
+                            : `Request failed: HTTP ${message.status_code}`;
+                    }
+
                     const diagnostics = this._buildRequestDiagnostics({
                         provider,
                         endpoint,
@@ -4649,12 +5153,14 @@ class KatabDialog {
                     // Stream ended
                     let finalContent = responseState.accumulatedText;
                     if (responseState.accumulatedThink && !finalContent && responseState.accumulatedToolCalls.length === 0) {
-                        finalContent = 'Finished thinking, but no response provided.';
+                        finalContent = provider === 'deepseek'
+                            ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
+                            : 'Finished thinking, but no response provided.';
                     }
 
                     if (responseState.accumulatedToolCalls.length > 0) {
                         this._clearActiveResponseState();
-                        this._handleToolCalls(responseState.accumulatedToolCalls, uiElements);
+                        this._handleToolCalls(responseState.accumulatedToolCalls, uiElements, responseState.accumulatedThink, provider);
                     } else {
                         this._applyAssistantRender(uiElements, finalContent, { final: true });
                         this._messageHistory.push(this._buildAssistantHistoryMessage(finalContent, responseState.assistantMeta));
@@ -4665,6 +5171,13 @@ class KatabDialog {
                 }
 
                 let lineStr = new TextDecoder('utf-8').decode(lineBytes).trim();
+
+                // Silently discard SSE comment frames (e.g. DeepSeek's ': keep-alive' pings)
+                if (lineStr.startsWith(': ')) {
+                    this._readSSE(dataInputStream, responseState, provider, cancellable);
+                    return;
+                }
+
                 let deltaText = '';
                 let nextAssistantMeta = responseState.assistantMeta;
 
@@ -4675,7 +5188,7 @@ class KatabDialog {
                             deltaText = parsed.message.content;
                         }
                         if (parsed.message.reasoning) {
-                            responseState.isThinking = true;
+                            responseState.usesSeparateThinkingStream = true;
                             thinkWrapper.visible = true;
                             responseState.accumulatedThink += parsed.message.reasoning;
                             thinkLabel.set_text(responseState.accumulatedThink);
@@ -4712,6 +5225,38 @@ class KatabDialog {
                             if (parsed.type === 'message_stop') {
                                 // For Anthropic usage requires usage endpoint or parsing message start/stop
                             }
+                        } else if (provider === 'deepseek') {
+                            if (parsed.choices && parsed.choices.length > 0) {
+                                let delta = parsed.choices[0].delta;
+                                if (delta) {
+                                    // reasoning_content arrives before content during thinking
+                                    if (delta.reasoning_content) {
+                                        responseState.usesSeparateThinkingStream = true;
+                                        thinkWrapper.visible = true;
+                                        responseState.accumulatedThink += delta.reasoning_content;
+                                        thinkLabel.set_text(responseState.accumulatedThink);
+                                    }
+                                    if (delta.content) {
+                                        deltaText = delta.content;
+                                    }
+                                    // Tool calls from DeepSeek (future use)
+                                    if (delta.tool_calls) {
+                                        for (let tc of delta.tool_calls) {
+                                            responseState.accumulatedToolCalls.push(tc);
+                                        }
+                                    }
+                                }
+                            }
+                            // Final usage chunk (stream_options: {include_usage: true})
+                            if (parsed.usage) {
+                                let metrics = this._extractDeepSeekMetrics(parsed.usage);
+                                if (metrics) {
+                                    nextAssistantMeta = { provider: 'deepseek', metrics };
+                                    this._applyAssistantMetrics(uiElements.metricsLabel, nextAssistantMeta, uiElements.footerRow);
+                                    this._currentUsage += (metrics.prompt_tokens || 0) + (metrics.completion_tokens || 0);
+                                    this._renderTokenCounter();
+                                }
+                            }
                         } else {
                             // OpenAI / Unsloth
                             if (parsed.type === 'tool_result') {
@@ -4725,7 +5270,7 @@ class KatabDialog {
                                 }
                             }
                         }
-                        if (parsed.usage) {
+                        if (provider !== 'deepseek' && parsed.usage) {
                             let u = parsed.usage;
                             if (u.prompt_tokens !== undefined && u.completion_tokens !== undefined) {
                                 this._currentUsage += u.prompt_tokens + u.completion_tokens;
@@ -4738,23 +5283,27 @@ class KatabDialog {
                 responseState.assistantMeta = nextAssistantMeta;
 
                 if (deltaText) {
-                    // Split the text based on tags
-                    let i = 0;
-                    while (i < deltaText.length) {
-                        if (!responseState.isThinking && (deltaText.substring(i).startsWith('igid') || deltaText.substring(i).startsWith('<think>'))) {
-                            responseState.isThinking = true;
-                            thinkWrapper.visible = true;
-                            i += deltaText.substring(i).startsWith('<think>') ? 7 : 4; // skip tag
-                        } else if (responseState.isThinking && (deltaText.substring(i).startsWith('igr') || deltaText.substring(i).startsWith('</think>'))) {
-                            responseState.isThinking = false;
-                            i += deltaText.substring(i).startsWith('</think>') ? 8 : 3; // skip tag
-                        } else {
-                            if (responseState.isThinking) {
-                                responseState.accumulatedThink += deltaText[i];
+                    if (responseState.usesSeparateThinkingStream && (provider === 'deepseek' || provider === 'ollama')) {
+                        responseState.accumulatedText += deltaText;
+                    } else {
+                        // Split the text based on tags
+                        let i = 0;
+                        while (i < deltaText.length) {
+                            if (!responseState.isThinking && (deltaText.substring(i).startsWith('igid') || deltaText.substring(i).startsWith('<think>'))) {
+                                responseState.isThinking = true;
+                                thinkWrapper.visible = true;
+                                i += deltaText.substring(i).startsWith('<think>') ? 7 : 4; // skip tag
+                            } else if (responseState.isThinking && (deltaText.substring(i).startsWith('igr') || deltaText.substring(i).startsWith('</think>'))) {
+                                responseState.isThinking = false;
+                                i += deltaText.substring(i).startsWith('</think>') ? 8 : 3; // skip tag
                             } else {
-                                responseState.accumulatedText += deltaText[i];
+                                if (responseState.isThinking) {
+                                    responseState.accumulatedThink += deltaText[i];
+                                } else {
+                                    responseState.accumulatedText += deltaText[i];
+                                }
+                                i++;
                             }
-                            i++;
                         }
                     }
 
@@ -4779,8 +5328,9 @@ class KatabDialog {
         });
     }
 
-    _handleToolCalls(toolCalls, uiElements) {
-        if (this._settings.get_string('provider') === 'ollama') {
+    _handleToolCalls(toolCalls, uiElements, reasoningContent = '', provider = null) {
+        const activeProvider = provider || this._settings.get_string('provider');
+        if (activeProvider === 'ollama') {
             this._applyAssistantRender(
                 uiElements,
                 'Ollama tool calls were requested, but Katab does not advertise any local Ollama tools. Please retry without tool use or switch to a provider with server-side tools.',
@@ -4791,12 +5341,17 @@ class KatabDialog {
 
         this._applyAssistantRender(uiElements, 'Executing requested tools...', { plain: true });
 
-        // Push the assistant's tool call message
-        this._messageHistory.push({
+        // For DeepSeek: reasoning_content MUST be echoed back on the assistant tool-call
+        // message, otherwise the API returns HTTP 400 (missing reasoning content).
+        let assistantToolMsg = {
             role: 'assistant',
             content: '',
             tool_calls: toolCalls
-        });
+        };
+        if (activeProvider === 'deepseek' && reasoningContent) {
+            assistantToolMsg.reasoning_content = reasoningContent;
+        }
+        this._messageHistory.push(assistantToolMsg);
 
         for (let tc of toolCalls) {
             let result = "";
