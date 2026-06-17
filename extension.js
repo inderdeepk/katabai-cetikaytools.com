@@ -43,6 +43,16 @@ import {
     parseDocumentCommand,
     resolveDocumentPath,
 } from './documentTools.js';
+import {
+    loadPresets,
+    addPreset,
+    deletePreset,
+    capturePresetFromSettings,
+    applyPresetToSettings,
+    updatePresetFromSettings,
+    reconcileActivePreset,
+    PRESET_SETTINGS,
+} from './presetManager.js';
 
 const PROVIDER_TOOLS = {
     'unsloth': [
@@ -770,6 +780,8 @@ class KatabDialog {
             // Re-fetch context size when switching providers
             this._maxContextSize = 0;
             this._fetchMaxContext();
+            // Show/hide preset button based on provider
+            this._updatePresetButton();
         });
         this._settings.connect('changed::document-tool-enabled', () => {
             if (!this._isDocumentToolEnabled()) {
@@ -782,6 +794,18 @@ class KatabDialog {
                 this._updateToolButtons();
             }
         });
+        this._settings.connect('changed::ollama-active-preset', () => {
+            this._updatePresetButton();
+        });
+        // Detect when the user manually changes any Ollama setting after a
+        // preset was loaded — clears the active preset label so it never
+        // shows a name that no longer matches reality.
+        this._driftCheckTimeoutId = 0;
+        for (const { settingKey } of PRESET_SETTINGS) {
+            this._settings.connect(`changed::${settingKey}`, () => {
+                this._queuePresetDriftCheck();
+            });
+        }
 
         this._interfaceSettings = null;
         this._themeChangedId = 0;
@@ -1672,6 +1696,328 @@ class KatabDialog {
         this._entry.font_name = 'Sans 10';
     }
 
+    // ── Preset management ─────────────────────────────────────────────────────
+
+    _getActivePresetLabel() {
+        const presetId = this._settings.get_string('ollama-active-preset');
+        if (!presetId) return null;
+        const presets = loadPresets();
+        const preset = presets.find(p => p.id === presetId);
+        return preset ? preset.name : null;
+    }
+
+    _updatePresetButton() {
+        if (!this._presetBtn) return;
+        const isOllama = this._currentProvider === 'ollama';
+        this._presetBtn.visible = isOllama;
+        if (!isOllama) return;
+
+        const label = this._getActivePresetLabel();
+        const modelName = this._settings.get_string('ollama-model') || '';
+        if (label) {
+            this._presetBtnLabel.set_text(label);
+        } else if (modelName) {
+            this._presetBtnLabel.set_text(modelName);
+        } else {
+            this._presetBtnLabel.set_text('Presets');
+        }
+    }
+
+    _applyPreset(preset) {
+        // Set the ID *before* writing individual settings so the drift-check
+        // observer sees the preset as the active one while each key is applied
+        // and does not falsely clear it mid-apply.
+        this._settings.set_string('ollama-active-preset', preset.id);
+        applyPresetToSettings(this._settings, preset);
+        updatePresetFromSettings(this._settings, preset.id, { onlyMissing: true });
+        this._updatePresetButton();
+    }
+
+    _queuePresetDriftCheck() {
+        if (this._driftCheckTimeoutId) {
+            GLib.source_remove(this._driftCheckTimeoutId);
+        }
+        this._driftCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 400, () => {
+            this._driftCheckTimeoutId = 0;
+            this._checkPresetDrift();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _checkPresetDrift() {
+        const presetId = this._settings.get_string('ollama-active-preset');
+        if (!presetId) return;
+
+        if (!reconcileActivePreset(this._settings)) {
+            this._updatePresetButton();
+        }
+    }
+
+    _saveCurrentAsPreset(name) {
+        const preset = capturePresetFromSettings(this._settings, name);
+        addPreset(preset);
+        this._settings.set_string('ollama-active-preset', preset.id);
+        this._updatePresetButton();
+        return preset;
+    }
+
+    _togglePresetPicker() {
+        if (!this._presetPicker) return;
+
+        if (this._presetPicker.visible) {
+            this._presetPicker.hide();
+            this._chatScroll.show();
+            return;
+        }
+
+        // Close history view if open
+        if (this._historyView && this._historyView.visible) {
+            this._historyView.hide();
+        }
+
+        this._chatScroll.hide();
+        this._refreshPresetPicker();
+        this._presetPicker.show();
+    }
+
+    _refreshPresetPicker() {
+        if (!this._presetListBox) return;
+
+        // Destroy all current rows
+        let child = this._presetListBox.get_first_child();
+        while (child) {
+            const next = child.get_next_sibling();
+            this._presetListBox.remove_child(child);
+            child.destroy();
+            child = next;
+        }
+
+        const presets = loadPresets();
+        const activePresetId = this._settings.get_string('ollama-active-preset');
+
+        if (presets.length === 0) {
+            const emptyLabel = new St.Label({
+                text: 'No presets saved yet.\nType a name below and click Save to create one.',
+                style_class: 'katab-preset-empty-label',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: true,
+            });
+            emptyLabel.clutter_text.line_wrap = true;
+            emptyLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            emptyLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            this._presetListBox.add_child(emptyLabel);
+            return;
+        }
+
+        for (const preset of presets) {
+            const isActive = preset.id === activePresetId;
+
+            const row = new St.BoxLayout({
+                style_class: isActive
+                    ? 'katab-preset-row katab-preset-row-active'
+                    : 'katab-preset-row',
+                vertical: false,
+                x_expand: true,
+            });
+
+            const infoBox = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            row.add_child(infoBox);
+
+            const nameLabel = new St.Label({
+                text: preset.name || 'Unnamed Preset',
+                style_class: 'katab-preset-row-name',
+            });
+            infoBox.add_child(nameLabel);
+
+            const model = preset['model'] || '';
+            const ctx = preset['num-ctx'] ? `${preset['num-ctx']} ctx` : '';
+            const temp = preset['temperature'] !== undefined
+                ? `temp ${Number(preset['temperature']).toFixed(2)}`
+                : '';
+            const meta = [model, ctx, temp].filter(Boolean).join('  ·  ');
+            if (meta) {
+                const metaLabel = new St.Label({
+                    text: meta,
+                    style_class: 'katab-preset-row-meta',
+                });
+                infoBox.add_child(metaLabel);
+            }
+
+            const btnBox = new St.BoxLayout({
+                vertical: false,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            row.add_child(btnBox);
+
+            const loadBtn = new St.Button({
+                label: isActive ? '✓ Active' : 'Load',
+                style_class: isActive
+                    ? 'katab-preset-load-btn katab-preset-load-btn-active'
+                    : 'katab-preset-load-btn',
+                can_focus: !isActive,
+                reactive: !isActive,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            if (!isActive) {
+                loadBtn.connect('clicked', () => {
+                    this._applyPreset(preset);
+                    const modelName = preset['model'] || 'unchanged model';
+                    this._addSystemMessage(`Loaded preset "${preset.name}" (${modelName}).`);
+                    this._togglePresetPicker();
+                });
+            }
+            btnBox.add_child(loadBtn);
+
+            const deleteBtn = new St.Button({
+                child: new St.Icon({
+                    icon_name: 'edit-delete-symbolic',
+                    style_class: 'katab-preset-delete-icon',
+                }),
+                style_class: 'katab-preset-delete-btn',
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            deleteBtn.connect('clicked', () => {
+                deletePreset(preset.id);
+                if (isActive) {
+                    this._settings.set_string('ollama-active-preset', '');
+                    this._updatePresetButton();
+                }
+                this._refreshPresetPicker();
+            });
+            btnBox.add_child(deleteBtn);
+
+            this._presetListBox.add_child(row);
+        }
+    }
+
+    _buildPresetPicker() {
+        const picker = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-preset-picker',
+            x_expand: true,
+            y_expand: true,
+            visible: false,
+        });
+
+        // ── Header ────────────────────────────────────────────────────────────
+        const pickerHeader = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-preset-picker-header',
+        });
+        picker.add_child(pickerHeader);
+
+        const pickerTitle = new St.Label({
+            text: 'Ollama Presets',
+            style_class: 'katab-preset-picker-title',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        pickerHeader.add_child(pickerTitle);
+
+        const closePickerBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'window-close-symbolic',
+                style_class: 'katab-preset-picker-close-icon',
+            }),
+            style_class: 'katab-preset-picker-close-btn',
+            can_focus: true,
+        });
+        closePickerBtn.connect('clicked', () => this._togglePresetPicker());
+        pickerHeader.add_child(closePickerBtn);
+
+        // ── Preset list ────────────────────────────────────────────────────────
+        const pickerScroll = new St.ScrollView({
+            style_class: 'katab-preset-picker-scroll',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            x_expand: true,
+            y_expand: true,
+        });
+        picker.add_child(pickerScroll);
+
+        this._presetListBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-preset-list',
+            x_expand: true,
+        });
+        pickerScroll.add_child(this._presetListBox);
+
+        // ── Save-current-as-new-preset bar ─────────────────────────────────────
+        const saveBar = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-preset-save-bar',
+        });
+        picker.add_child(saveBar);
+
+        const nameEditorShell = new St.Widget({
+            style_class: 'katab-preset-name-editor',
+            layout_manager: new Clutter.BinLayout(),
+            x_expand: true,
+        });
+        saveBar.add_child(nameEditorShell);
+
+        const nameHint = new St.Label({
+            text: 'New preset name…',
+            style_class: 'katab-preset-name-hint',
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        nameEditorShell.add_child(nameHint);
+
+        this._presetNameEntry = new Clutter.Text({
+            editable: true,
+            selectable: true,
+            reactive: true,
+            single_line_mode: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.FILL,
+        });
+        this._presetNameEntry.font_name = 'Sans 10';
+        this._presetNameEntry.connect('text-changed', () => {
+            nameHint.visible = !(this._presetNameEntry.get_text() || '');
+        });
+        this._presetNameEntry.connect('key-press-event', (_actor, event) => {
+            const symbol = event.get_key_symbol();
+            if (symbol === Clutter.KEY_Return || symbol === Clutter.KEY_KP_Enter) {
+                this._doSavePreset(nameHint);
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+        nameEditorShell.add_child(this._presetNameEntry);
+
+        const savePresetBtn = new St.Button({
+            label: 'Save',
+            style_class: 'katab-preset-save-btn',
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        savePresetBtn.connect('clicked', () => this._doSavePreset(nameHint));
+        saveBar.add_child(savePresetBtn);
+
+        return picker;
+    }
+
+    _doSavePreset(nameHint) {
+        const name = (this._presetNameEntry?.get_text() || '').trim();
+        if (!name) {
+            this._presetNameEntry?.grab_key_focus();
+            return;
+        }
+        const saved = this._saveCurrentAsPreset(name);
+        this._presetNameEntry?.set_text('');
+        if (nameHint) nameHint.visible = true;
+        this._refreshPresetPicker();
+        this._addSystemMessage(`Preset "${saved.name}" saved.`);
+    }
+
     _buildUI() {
 
         let headerBox = new St.BoxLayout({
@@ -1734,6 +2080,31 @@ class KatabDialog {
         });
         this._providerStatusBox.add_child(this._providerStatusDot);
         headerBox.add_child(this._providerStatusBox);
+
+        // Preset selector button — visible only when Ollama is the active provider
+        this._presetBtn = new St.Button({
+            style_class: 'katab-preset-btn',
+            can_focus: true,
+            reactive: true,
+        });
+        const presetBtnInner = new St.BoxLayout({
+            vertical: false,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._presetBtnLabel = new St.Label({
+            text: 'Presets',
+            style_class: 'katab-preset-btn-label',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        presetBtnInner.add_child(this._presetBtnLabel);
+        presetBtnInner.add_child(new St.Label({
+            text: '▾',
+            style_class: 'katab-preset-btn-arrow',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        this._presetBtn.set_child(presetBtnInner);
+        this._presetBtn.connect('clicked', () => this._togglePresetPicker());
+        headerBox.add_child(this._presetBtn);
 
         let historyBtn = new St.Button({
             child: new St.Icon({
@@ -1825,6 +2196,10 @@ class KatabDialog {
             style_class: 'katab-history-container',
         });
         this._historyView.add_child(this._historyContainer);
+
+        // Preset picker panel (hidden by default, replaces chat scroll like history)
+        this._presetPicker = this._buildPresetPicker();
+        this.contentLayout.add_child(this._presetPicker);
 
         this._attachmentBox = new St.BoxLayout({
             style_class: 'katab-attachment-box',
@@ -2083,6 +2458,7 @@ class KatabDialog {
         this._addWelcomeMessage();
         this._updateToolButtons();
         this._updatePendingDocumentUI();
+        this._updatePresetButton();
     }
 
     _buildWelcomePanel() {
@@ -2452,6 +2828,11 @@ class KatabDialog {
             this._promptScrollFollowIdleId = 0;
         }
 
+        if (this._driftCheckTimeoutId) {
+            GLib.source_remove(this._driftCheckTimeoutId);
+            this._driftCheckTimeoutId = 0;
+        }
+
         if (this._themeChangedId && this._interfaceSettings) {
             this._interfaceSettings.disconnect(this._themeChangedId);
             this._themeChangedId = 0;
@@ -2753,6 +3134,7 @@ class KatabDialog {
 
     _showChatView() {
         this._historyView.visible = false;
+        if (this._presetPicker) this._presetPicker.visible = false;
         this._chatScroll.visible = true;
         this._footerBox.visible = true;
         if (this._welcomePanel?.visible) {
@@ -2771,6 +3153,8 @@ class KatabDialog {
         this._stopWelcomeAnimation();
         this._chatScroll.visible = false;
         this._footerBox.visible = false;
+        // Close preset picker if open
+        if (this._presetPicker) this._presetPicker.visible = false;
         this._historyView.visible = true;
         this._renderHistoryList();
     }

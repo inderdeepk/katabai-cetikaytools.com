@@ -4,6 +4,18 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import {
+    loadPresets,
+    addPreset,
+    deletePreset,
+    capturePresetFromSettings,
+    applyPresetToSettings,
+    getPresetById,
+    PRESET_SETTINGS,
+    reconcileActivePreset,
+    settingsMatchPreset,
+    updatePresetFromSettings,
+} from './presetManager.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -726,6 +738,268 @@ export default class KatabPreferences extends ExtensionPreferences {
             'ollama',
             'Local inference with fine-grained hardware, memory, and sampling controls.'
         );
+
+        // ── Model Presets section ──────────────────────────────────────────────
+        const modelPresetsGroup = createPreferencesGroup({
+            title: 'Model Presets',
+            description: 'Save named snapshots of all current Ollama settings (model, context, sampling, etc.). Load a preset to instantly switch configurations.',
+        });
+        ollamaPage.add(modelPresetsGroup);
+
+        // Entry row for the new preset name
+        const newPresetNameRow = addCssClasses(new Adw.EntryRow({
+            title: 'New Preset Name',
+        }), 'katab-prefs-row');
+        const saveCurrentBtn = addCssClasses(new Gtk.Button({
+            label: 'Save Current Settings',
+            valign: Gtk.Align.CENTER,
+        }), 'katab-prefs-button', 'suggested-action');
+        newPresetNameRow.add_suffix(saveCurrentBtn);
+        addPreferenceRow(modelPresetsGroup, newPresetNameRow);
+
+        // Container tracking for dynamically built preset rows
+        let _savedPresetRows = [];
+        let applyingSavedPreset = false;
+        let presetDriftCheckTimeoutId = 0;
+        let pendingPresetChangeId = '';
+        let lastChangedPresetSettingKey = '';
+        const presetSettingKeyMap = new Map(PRESET_SETTINGS.map(({ settingKey, key }) => [settingKey, key]));
+
+        const applySavedPreset = preset => {
+            if (!preset)
+                return;
+
+            applyingSavedPreset = true;
+            pendingPresetChangeId = '';
+            lastChangedPresetSettingKey = '';
+            settings.set_string('ollama-active-preset', preset.id);
+            applyPresetToSettings(settings, preset);
+            updatePresetFromSettings(settings, preset.id, { onlyMissing: true });
+            applyingSavedPreset = false;
+        };
+
+        const queuePresetDriftCheck = settingKey => {
+            if (applyingSavedPreset)
+                return;
+
+            lastChangedPresetSettingKey = settingKey || '';
+
+            if (presetDriftCheckTimeoutId) {
+                GLib.source_remove(presetDriftCheckTimeoutId);
+            }
+
+            presetDriftCheckTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+                presetDriftCheckTimeoutId = 0;
+
+                if (pendingPresetChangeId) {
+                    const pendingPreset = getPresetById(pendingPresetChangeId);
+                    if (!pendingPreset) {
+                        pendingPresetChangeId = '';
+                        refreshSavedPresetRows();
+                        return GLib.SOURCE_REMOVE;
+                    }
+
+                    if (settingsMatchPreset(settings, pendingPreset)) {
+                        pendingPresetChangeId = '';
+                        settings.set_string('ollama-active-preset', pendingPreset.id);
+                        refreshSavedPresetRows();
+                        return GLib.SOURCE_REMOVE;
+                    }
+                }
+
+                const activePresetId = settings.get_string('ollama-active-preset');
+                if (!activePresetId)
+                    return GLib.SOURCE_REMOVE;
+
+                const activePreset = getPresetById(activePresetId);
+                if (!activePreset) {
+                    settings.set_string('ollama-active-preset', '');
+                    refreshSavedPresetRows();
+                    return GLib.SOURCE_REMOVE;
+                }
+
+                const changedPresetKey = presetSettingKeyMap.get(lastChangedPresetSettingKey);
+                const changedMissingField = changedPresetKey
+                    && (activePreset[changedPresetKey] === undefined || activePreset[changedPresetKey] === null);
+
+                if (changedMissingField || !settingsMatchPreset(settings, activePreset)) {
+                    pendingPresetChangeId = activePreset.id;
+                    settings.set_string('ollama-active-preset', '');
+                    refreshSavedPresetRows();
+                }
+
+                return GLib.SOURCE_REMOVE;
+            });
+        };
+
+        window.connect('destroy', () => {
+            if (!presetDriftCheckTimeoutId)
+                return;
+
+            GLib.source_remove(presetDriftCheckTimeoutId);
+            presetDriftCheckTimeoutId = 0;
+        });
+
+        const refreshSavedPresetRows = () => {
+            // Remove stale rows
+            for (const row of _savedPresetRows) {
+                try { modelPresetsGroup.remove(row); } catch (_e) { }
+            }
+            _savedPresetRows = [];
+
+            const presets = loadPresets();
+            const activePresetId = settings.get_string('ollama-active-preset');
+            const pendingPreset = pendingPresetChangeId
+                ? getPresetById(pendingPresetChangeId, presets)
+                : null;
+
+            if (pendingPresetChangeId && !pendingPreset) {
+                pendingPresetChangeId = '';
+            }
+
+            if (presets.length === 0) {
+                const emptyRow = stylePreferenceRow(new Adw.ActionRow({
+                    title: 'No presets saved yet',
+                    subtitle: 'Fill in a name above and click "Save Current Settings" to create your first preset.',
+                    activatable: false,
+                }), 'katab-prefs-info-row');
+                addPreferenceRow(modelPresetsGroup, emptyRow);
+                _savedPresetRows.push(emptyRow);
+                return;
+            }
+
+            if (pendingPreset) {
+                const pendingRow = stylePreferenceRow(new Adw.ActionRow({
+                    title: `${pendingPreset.name || 'Unnamed Preset'} has unsaved changes`,
+                    subtitle: 'Save changes to update this preset, or discard changes to restore its saved values.',
+                    activatable: false,
+                }), 'katab-prefs-row', 'katab-prefs-info-row');
+
+                const pendingBtnBox = addCssClasses(new Gtk.Box({
+                    orientation: Gtk.Orientation.HORIZONTAL,
+                    spacing: 6,
+                    valign: Gtk.Align.CENTER,
+                }), 'katab-prefs-button-box');
+
+                const saveChangesBtn = addCssClasses(new Gtk.Button({
+                    label: 'Save Changes',
+                    valign: Gtk.Align.CENTER,
+                }), 'katab-prefs-button', 'suggested-action');
+                saveChangesBtn.connect('clicked', () => {
+                    const updatedPreset = updatePresetFromSettings(settings, pendingPreset.id);
+                    pendingPresetChangeId = '';
+                    lastChangedPresetSettingKey = '';
+                    if (updatedPreset) {
+                        settings.set_string('ollama-active-preset', updatedPreset.id);
+                    }
+                    refreshSavedPresetRows();
+                });
+                pendingBtnBox.append(saveChangesBtn);
+
+                const discardChangesBtn = addCssClasses(new Gtk.Button({
+                    label: 'Discard Changes',
+                    valign: Gtk.Align.CENTER,
+                }), 'katab-prefs-button');
+                discardChangesBtn.connect('clicked', () => {
+                    const presetToRestore = getPresetById(pendingPreset.id);
+                    pendingPresetChangeId = '';
+                    lastChangedPresetSettingKey = '';
+                    applySavedPreset(presetToRestore);
+                    refreshSavedPresetRows();
+                });
+                pendingBtnBox.append(discardChangesBtn);
+
+                pendingRow.add_suffix(pendingBtnBox);
+                addPreferenceRow(modelPresetsGroup, pendingRow);
+                _savedPresetRows.push(pendingRow);
+            }
+
+            const hasPendingPresetChanges = Boolean(pendingPresetChangeId);
+
+            for (const preset of presets) {
+                const isActive = preset.id === activePresetId
+                    && (applyingSavedPreset || settingsMatchPreset(settings, preset));
+                const modelName = preset['model'] || '—';
+                const ctx = preset['num-ctx'] ? `${preset['num-ctx']} ctx` : '';
+                const temp = preset['temperature'] !== undefined
+                    ? `temp ${Number(preset['temperature']).toFixed(2)}`
+                    : '';
+                const subtitleParts = [modelName, ctx, temp].filter(Boolean);
+
+                const presetRow = stylePreferenceRow(new Adw.ActionRow({
+                    title: preset.name || 'Unnamed Preset',
+                    subtitle: subtitleParts.join('  ·  '),
+                    activatable: false,
+                }), 'katab-prefs-row', isActive ? 'katab-prefs-preset-row-active' : '');
+
+                const rowBtnBox = addCssClasses(new Gtk.Box({
+                    orientation: Gtk.Orientation.HORIZONTAL,
+                    spacing: 6,
+                    valign: Gtk.Align.CENTER,
+                }), 'katab-prefs-button-box');
+
+                const applyBtn = addCssClasses(new Gtk.Button({
+                    label: isActive ? 'Active' : 'Load',
+                    valign: Gtk.Align.CENTER,
+                    sensitive: !isActive && !hasPendingPresetChanges,
+                }), 'katab-prefs-button', isActive ? '' : 'suggested-action');
+                applyBtn.connect('clicked', () => {
+                    // Set ID first so drift observers keep the preset marked
+                    // active while each saved key is being written.
+                    applySavedPreset(preset);
+                    refreshSavedPresetRows();
+                });
+                rowBtnBox.append(applyBtn);
+
+                const deleteBtn = addCssClasses(new Gtk.Button({
+                    icon_name: 'edit-delete-symbolic',
+                    valign: Gtk.Align.CENTER,
+                    tooltip_text: 'Delete this preset',
+                }), 'katab-prefs-button', 'destructive-action');
+                deleteBtn.connect('clicked', () => {
+                    deletePreset(preset.id);
+                    if (pendingPresetChangeId === preset.id)
+                        pendingPresetChangeId = '';
+                    if (isActive) settings.set_string('ollama-active-preset', '');
+                    refreshSavedPresetRows();
+                });
+                rowBtnBox.append(deleteBtn);
+
+                presetRow.add_suffix(rowBtnBox);
+                addPreferenceRow(modelPresetsGroup, presetRow);
+                _savedPresetRows.push(presetRow);
+            }
+        };
+
+        // Wire up "Save Current Settings" button
+        saveCurrentBtn.connect('clicked', () => {
+            const name = newPresetNameRow.text.trim();
+            if (!name) {
+                newPresetNameRow.grab_focus();
+                return;
+            }
+            const preset = capturePresetFromSettings(settings, name);
+            addPreset(preset);
+            pendingPresetChangeId = '';
+            lastChangedPresetSettingKey = '';
+            settings.set_string('ollama-active-preset', preset.id);
+            newPresetNameRow.set_text('');
+            refreshSavedPresetRows();
+        });
+
+        // Refresh list when active preset changes (e.g., from chat window) or
+        // when the prefs window is shown (in case presets.json changed)
+        settings.connect('changed::ollama-active-preset', refreshSavedPresetRows);
+        for (const { settingKey } of PRESET_SETTINGS) {
+            settings.connect(`changed::${settingKey}`, () => queuePresetDriftCheck(settingKey));
+        }
+
+        const reconciledActivePreset = reconcileActivePreset(settings);
+        if (reconciledActivePreset) {
+            updatePresetFromSettings(settings, reconciledActivePreset.id, { onlyMissing: true });
+        }
+        refreshSavedPresetRows();
+        // ─────────────────────────────────────────────────────────────────────
 
         const presetGroup = createPreferencesGroup({
             title: 'Workload Preset',

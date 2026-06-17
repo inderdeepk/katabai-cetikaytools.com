@@ -80,6 +80,13 @@
       <summary>CPU Thread Allocation</summary>
     </key>
 
+    <!-- Active preset tracking -->
+    <key name="ollama-active-preset" type="s">
+      <default>''</default>
+      <summary>Active Ollama Preset ID</summary>
+      <description>The ID of the currently active Ollama model preset, or empty string if no preset is loaded.</description>
+    </key>
+
     <!-- Ollama Statistical Sampling -->
     <key name="ollama-temperature" type="d">
       <default>0.7</default>
