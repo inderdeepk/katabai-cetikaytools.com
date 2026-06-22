@@ -30,6 +30,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as Animation from 'resource:///org/gnome/shell/ui/animation.js';
 import {
     buildDocumentPromptBlock,
     buildMissingDocumentPromptBlock,
@@ -103,6 +104,20 @@ const PROVIDER_META = {
     'anthropic': { label: 'Anthropic', iconFile: 'claude.svg' },
     'deepseek': { label: 'DeepSeek', iconFile: 'deepseek.svg' },
 };
+
+// Selectable DeepSeek model variants surfaced in the chat header dropdown.
+const DEEPSEEK_MODELS = [
+    {
+        id: 'deepseek-v4-flash',
+        label: 'Flash',
+        description: 'Fast, efficient model for everyday tasks and quick replies.',
+    },
+    {
+        id: 'deepseek-v4-pro',
+        label: 'Pro',
+        description: 'Stronger reasoning for complex, multi-step problems.',
+    },
+];
 
 const PROVIDER_LABELS = Object.fromEntries(
     Object.entries(PROVIDER_META).map(([provider, meta]) => [provider, meta.label])
@@ -846,6 +861,9 @@ class KatabDialog {
             this._addSystemMessage(`Switched engine to ${getProviderLabel(this._currentProvider)}.`);
             if (this._toolsBox) this._updateToolButtons();
             setProviderIcon(this._providerStatusIcon, this._currentProvider, this._extension.path);
+            if (this._providerStatusLabel) {
+                this._providerStatusLabel.set_text(getProviderLabel(this._currentProvider));
+            }
             if (this._extension.providerHealthMonitor) {
                 this._extension.providerHealthMonitor.refresh({ immediate: true });
             }
@@ -853,8 +871,9 @@ class KatabDialog {
             // Re-fetch context size when switching providers
             this._maxContextSize = 0;
             this._fetchMaxContext();
-            // Show/hide preset button based on provider
+            // Show/hide provider-specific selectors based on provider
             this._updatePresetButton();
+            this._updateDeepseekModelButton();
         });
         this._settings.connect('changed::document-tool-enabled', () => {
             if (!this._isDocumentToolEnabled()) {
@@ -874,6 +893,9 @@ class KatabDialog {
         });
         this._settings.connect('changed::ollama-active-preset', () => {
             this._updatePresetButton();
+        });
+        this._settings.connect('changed::deepseek-model', () => {
+            this._updateDeepseekModelButton();
         });
         // Detect when the user manually changes any Ollama setting after a
         // preset was loaded — clears the active preset label so it never
@@ -899,6 +921,7 @@ class KatabDialog {
         this._cancellable = null;
         this._retrySourceId = 0;
         this._isStreaming = false;
+        this._lastResponseErrored = false;
         this._activeResponseState = null;
         this._sendBtn = null;
         this._sendIcon = null;
@@ -1004,6 +1027,7 @@ class KatabDialog {
             conversationId: this._currentConversationId,
             isOpen: this.isOpen,
             isStreaming: this._isStreaming,
+            hasError: this._lastResponseErrored,
             status,
             title: userMessage
                 ? this._truncateText(userMessage.content.replace(/\s+/g, ' ').trim(), 44)
@@ -1126,6 +1150,7 @@ class KatabDialog {
     }
 
     _beginActiveResponse(uiElements, provider, mode = 'response', modelName = null) {
+        this._lastResponseErrored = false;
         this._activeResponseState = {
             accumulatedText: '',
             accumulatedThink: '',
@@ -1950,19 +1975,12 @@ class KatabDialog {
         if (!this._presetPicker) return;
 
         if (this._presetPicker.visible) {
-            this._presetPicker.hide();
-            this._chatScroll.show();
+            this._showChatView();
             return;
         }
 
-        // Close history view if open
-        if (this._historyView && this._historyView.visible) {
-            this._historyView.hide();
-        }
-
-        this._chatScroll.hide();
         this._refreshPresetPicker();
-        this._presetPicker.show();
+        this._openAuxPanel(this._presetPicker);
     }
 
     _refreshPresetPicker() {
@@ -2203,6 +2221,235 @@ class KatabDialog {
         this._addSystemMessage(`Preset "${saved.name}" saved.`);
     }
 
+    // ── Shared picker shell (provider + DeepSeek model dropdowns) ─────────────
+    _buildPickerShell(titleText) {
+        const picker = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-preset-picker',
+            x_expand: true,
+            y_expand: true,
+            visible: false,
+        });
+
+        const pickerHeader = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-preset-picker-header',
+        });
+        picker.add_child(pickerHeader);
+
+        const pickerTitle = new St.Label({
+            text: titleText,
+            style_class: 'katab-preset-picker-title',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        pickerHeader.add_child(pickerTitle);
+
+        const closePickerBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'window-close-symbolic',
+                style_class: 'katab-preset-picker-close-icon',
+            }),
+            style_class: 'katab-preset-picker-close-btn',
+            can_focus: true,
+        });
+        pickerHeader.add_child(closePickerBtn);
+
+        const pickerScroll = new St.ScrollView({
+            style_class: 'katab-preset-picker-scroll',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            x_expand: true,
+            y_expand: true,
+        });
+        picker.add_child(pickerScroll);
+
+        const listBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-preset-list',
+            x_expand: true,
+        });
+        pickerScroll.add_child(listBox);
+
+        return { picker, listBox, closePickerBtn };
+    }
+
+    _createSelectionRow({ icon, title, meta, isActive, onActivate }) {
+        const row = new St.BoxLayout({
+            style_class: isActive
+                ? 'katab-preset-row katab-selection-row katab-preset-row-active'
+                : 'katab-preset-row katab-selection-row',
+            vertical: false,
+            x_expand: true,
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+        });
+
+        if (icon) {
+            row.add_child(icon);
+        }
+
+        const textCol = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'katab-selection-row-text',
+        });
+
+        textCol.add_child(new St.Label({
+            text: title,
+            style_class: 'katab-preset-row-name',
+        }));
+
+        if (meta) {
+            const metaLabel = new St.Label({
+                text: meta,
+                style_class: 'katab-preset-row-meta',
+            });
+            metaLabel.clutter_text.line_wrap = true;
+            metaLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            metaLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            textCol.add_child(metaLabel);
+        }
+        row.add_child(textCol);
+
+        if (isActive) {
+            row.add_child(new St.Label({
+                text: 'Active',
+                style_class: 'katab-selection-row-badge',
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+        }
+
+        row.connect('button-press-event', () => {
+            onActivate();
+            return Clutter.EVENT_STOP;
+        });
+
+        return row;
+    }
+
+    // Hide the chat scroll and every auxiliary panel, then reveal the requested one.
+    _openAuxPanel(panel) {
+        this._stopWelcomeAnimation();
+        this._historyView.visible = false;
+        if (this._presetPicker) this._presetPicker.visible = false;
+        if (this._providerPicker) this._providerPicker.visible = false;
+        if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
+        this._chatScroll.visible = false;
+        panel.visible = true;
+    }
+
+    // ── Provider (engine) picker ─────────────────────────────────────────────
+    _buildProviderPicker() {
+        const { picker, listBox, closePickerBtn } = this._buildPickerShell('Choose Engine');
+        this._providerPickerListBox = listBox;
+        closePickerBtn.connect('clicked', () => this._showChatView());
+        return picker;
+    }
+
+    _getProviderModelSummary(provider) {
+        const model = this._settings.get_string(`${provider}-model`) || '';
+        if (provider === 'deepseek') {
+            const meta = DEEPSEEK_MODELS.find(m => m.id === model);
+            if (meta) return `${meta.label} model`;
+        }
+        return model || 'No model set';
+    }
+
+    _refreshProviderPicker() {
+        if (!this._providerPickerListBox) return;
+        this._providerPickerListBox.destroy_all_children();
+
+        for (const [key, label] of Object.entries(PROVIDER_LABELS)) {
+            const icon = createProviderIcon(
+                key,
+                this._extension.path,
+                'katab-provider-badge-icon katab-selection-row-icon'
+            );
+            const row = this._createSelectionRow({
+                icon,
+                title: label,
+                meta: this._getProviderModelSummary(key),
+                isActive: key === this._currentProvider,
+                onActivate: () => this._selectProvider(key),
+            });
+            this._providerPickerListBox.add_child(row);
+        }
+    }
+
+    _selectProvider(provider) {
+        if (provider !== this._currentProvider) {
+            this._settings.set_string('provider', provider);
+        }
+        this._showChatView();
+    }
+
+    _toggleProviderPicker() {
+        if (!this._providerPicker) return;
+        if (this._providerPicker.visible) {
+            this._showChatView();
+            return;
+        }
+        this._refreshProviderPicker();
+        this._openAuxPanel(this._providerPicker);
+    }
+
+    // ── DeepSeek model picker (Flash / Pro) ──────────────────────────────────
+    _buildDeepseekModelPicker() {
+        const { picker, listBox, closePickerBtn } = this._buildPickerShell('DeepSeek Model');
+        this._deepseekModelListBox = listBox;
+        closePickerBtn.connect('clicked', () => this._showChatView());
+        return picker;
+    }
+
+    _refreshDeepseekModelPicker() {
+        if (!this._deepseekModelListBox) return;
+        this._deepseekModelListBox.destroy_all_children();
+
+        const activeModel = this._settings.get_string('deepseek-model') || '';
+        for (const model of DEEPSEEK_MODELS) {
+            const row = this._createSelectionRow({
+                icon: null,
+                title: model.label,
+                meta: model.description,
+                isActive: model.id === activeModel,
+                onActivate: () => this._selectDeepseekModel(model.id),
+            });
+            this._deepseekModelListBox.add_child(row);
+        }
+    }
+
+    _selectDeepseekModel(modelId) {
+        if (this._settings.get_string('deepseek-model') !== modelId) {
+            this._settings.set_string('deepseek-model', modelId);
+        }
+        this._updateDeepseekModelButton();
+        this._showChatView();
+    }
+
+    _toggleDeepseekModelPicker() {
+        if (!this._deepseekModelPicker) return;
+        if (this._deepseekModelPicker.visible) {
+            this._showChatView();
+            return;
+        }
+        this._refreshDeepseekModelPicker();
+        this._openAuxPanel(this._deepseekModelPicker);
+    }
+
+    _updateDeepseekModelButton() {
+        if (!this._deepseekModelBtn) return;
+        const isDeepseek = this._currentProvider === 'deepseek';
+        this._deepseekModelBtn.visible = isDeepseek;
+        if (!isDeepseek) return;
+
+        const model = this._settings.get_string('deepseek-model') || '';
+        const meta = DEEPSEEK_MODELS.find(m => m.id === model);
+        this._deepseekModelBtnLabel.set_text(meta ? meta.label : (model || 'Model'));
+    }
+
     _buildUI() {
 
         let headerBox = new St.BoxLayout({
@@ -2238,10 +2485,18 @@ class KatabDialog {
         });
         headerBox.add_child(headerSpacer);
 
+        // Provider chip doubles as an engine switcher — clicking it opens the
+        // provider picker so the active engine can be changed from the chat window.
         this._providerStatusBox = new St.BoxLayout({
             style_class: 'katab-provider-status-box',
             y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+        });
+        this._providerStatusBox.connect('button-press-event', () => {
+            this._toggleProviderPicker();
+            return Clutter.EVENT_STOP;
         });
 
         this._providerStatusIcon = createProviderIcon(
@@ -2252,7 +2507,7 @@ class KatabDialog {
         this._providerStatusBox.add_child(this._providerStatusIcon);
 
         this._providerStatusLabel = new St.Label({
-            text: '',
+            text: getProviderLabel(this._currentProvider),
             style_class: 'katab-provider-status-label',
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -2264,6 +2519,12 @@ class KatabDialog {
             x_align: Clutter.ActorAlign.CENTER,
         });
         this._providerStatusBox.add_child(this._providerStatusDot);
+
+        this._providerStatusBox.add_child(new St.Label({
+            text: '▾',
+            style_class: 'katab-provider-status-arrow',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
         headerBox.add_child(this._providerStatusBox);
 
         // Preset selector button — visible only when Ollama is the active provider
@@ -2290,6 +2551,32 @@ class KatabDialog {
         this._presetBtn.set_child(presetBtnInner);
         this._presetBtn.connect('clicked', () => this._togglePresetPicker());
         headerBox.add_child(this._presetBtn);
+
+        // DeepSeek model selector — visible only when DeepSeek is the active provider
+        this._deepseekModelBtn = new St.Button({
+            style_class: 'katab-preset-btn katab-deepseek-model-btn',
+            can_focus: true,
+            reactive: true,
+            visible: false,
+        });
+        const deepseekBtnInner = new St.BoxLayout({
+            vertical: false,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._deepseekModelBtnLabel = new St.Label({
+            text: 'Model',
+            style_class: 'katab-preset-btn-label',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        deepseekBtnInner.add_child(this._deepseekModelBtnLabel);
+        deepseekBtnInner.add_child(new St.Label({
+            text: '▾',
+            style_class: 'katab-preset-btn-arrow',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        this._deepseekModelBtn.set_child(deepseekBtnInner);
+        this._deepseekModelBtn.connect('clicked', () => this._toggleDeepseekModelPicker());
+        headerBox.add_child(this._deepseekModelBtn);
 
         let historyBtn = new St.Button({
             child: new St.Icon({
@@ -2385,6 +2672,14 @@ class KatabDialog {
         // Preset picker panel (hidden by default, replaces chat scroll like history)
         this._presetPicker = this._buildPresetPicker();
         this.contentLayout.add_child(this._presetPicker);
+
+        // Provider picker panel — switch the active engine from the chat window
+        this._providerPicker = this._buildProviderPicker();
+        this.contentLayout.add_child(this._providerPicker);
+
+        // DeepSeek model picker panel (Flash / Pro)
+        this._deepseekModelPicker = this._buildDeepseekModelPicker();
+        this.contentLayout.add_child(this._deepseekModelPicker);
 
         this._attachmentBox = new St.BoxLayout({
             style_class: 'katab-attachment-box',
@@ -2644,6 +2939,7 @@ class KatabDialog {
         this._updateToolButtons();
         this._updatePendingDocumentUI();
         this._updatePresetButton();
+        this._updateDeepseekModelButton();
     }
 
     _buildWelcomePanel() {
@@ -2955,6 +3251,7 @@ class KatabDialog {
         this._updatePendingDocumentUI();
 
         this.isOpen = true;
+        this._lastResponseErrored = false;
 
         if (this._welcomePanel?.visible && this._chatScroll?.visible) {
             this._startWelcomeAnimation();
@@ -3620,6 +3917,7 @@ class KatabDialog {
 
     _loadConversation(entry) {
         this._cancelStream();
+        this._lastResponseErrored = false;
         this._currentConversationId = entry.id;
         this._messageHistory = [...entry.messages];
         this._sessionDocuments.clear();
@@ -3650,6 +3948,8 @@ class KatabDialog {
     _showChatView() {
         this._historyView.visible = false;
         if (this._presetPicker) this._presetPicker.visible = false;
+        if (this._providerPicker) this._providerPicker.visible = false;
+        if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
         this._chatScroll.visible = true;
         this._footerBox.visible = true;
         if (this._welcomePanel?.visible) {
@@ -3670,6 +3970,8 @@ class KatabDialog {
         this._footerBox.visible = false;
         // Close preset picker if open
         if (this._presetPicker) this._presetPicker.visible = false;
+        if (this._providerPicker) this._providerPicker.visible = false;
+        if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
         this._historyView.visible = true;
         this._renderHistoryList();
     }
@@ -3768,6 +4070,7 @@ class KatabDialog {
 
     _newChat() {
         this._cancelStream();
+        this._lastResponseErrored = false;
         this._saveCurrentConversation();
         this._currentConversationId = null;
         this._messageHistory = [];
@@ -4499,6 +4802,7 @@ class KatabDialog {
     }
 
     _renderRequestError(uiElements, summary, diagnostics) {
+        this._lastResponseErrored = true;
         this._applyAssistantRender(uiElements, summary, {
             plain: true,
             errorDetails: diagnostics,
@@ -6066,6 +6370,24 @@ const Indicator = GObject.registerClass(
             });
             iconStack.add_child(this._panelIcon);
 
+            // Shown in place of the logo while a response is streaming and the
+            // chat window is closed, so the panel signals work-in-progress.
+            this._panelSpinner = new Animation.Spinner(16, { animate: true, hideOnStop: true });
+            this._panelSpinner.add_style_class_name('katab-panel-activity-spinner');
+            this._panelSpinner.visible = false;
+            this._panelSpinnerActive = false;
+            iconStack.add_child(this._panelSpinner);
+
+            // Shown in place of the logo when the last response failed while the
+            // chat window was closed.
+            this._panelErrorIcon = new St.Icon({
+                icon_name: 'dialog-warning-symbolic',
+                style_class: 'system-status-icon katab-panel-error-icon',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._panelErrorIcon.visible = false;
+            iconStack.add_child(this._panelErrorIcon);
+
             this._panelStatusDot = new St.Widget({
                 style_class: 'katab-panel-status-dot',
                 y_align: Clutter.ActorAlign.CENTER,
@@ -6087,7 +6409,10 @@ const Indicator = GObject.registerClass(
                 this._extension.providerHealthMonitor.subscribe(this._providerHealthListener);
             }
 
-            this._currentChatListener = state => this._renderCurrentChatMenuItem(state);
+            this._currentChatListener = state => {
+                this._renderCurrentChatMenuItem(state);
+                this._renderPanelActivity(state);
+            };
             this._extension.subscribeCurrentChat(this._currentChatListener);
             this._currentChatBookIcon = Gio.icon_new_for_string(`${extension.path}/icons/katab-panel-icon.svg`);
 
@@ -6208,6 +6533,40 @@ const Indicator = GObject.registerClass(
             });
         }
 
+        _renderPanelActivity(state) {
+            if (!this._panelIcon || !this._panelSpinner || !this._panelErrorIcon) {
+                return;
+            }
+
+            // The panel only surfaces background activity while the chat window
+            // is closed; when it is open the user already sees the live status.
+            let busy = Boolean(state.isStreaming) && !state.isOpen;
+            let error = !busy && Boolean(state.hasError) && !state.isOpen;
+
+            if (busy) {
+                this._panelErrorIcon.visible = false;
+                this._panelIcon.visible = false;
+                if (!this._panelSpinnerActive) {
+                    this._panelSpinnerActive = true;
+                    this._panelSpinner.play();
+                }
+                return;
+            }
+
+            if (this._panelSpinnerActive) {
+                this._panelSpinnerActive = false;
+                this._panelSpinner.stop();
+            }
+
+            if (error) {
+                this._panelIcon.visible = false;
+                this._panelErrorIcon.visible = true;
+            } else {
+                this._panelErrorIcon.visible = false;
+                this._panelIcon.visible = true;
+            }
+        }
+
         _renderProviderStatus(state) {
             if (!this._panelStatusDot) {
                 return;
@@ -6239,17 +6598,23 @@ const Indicator = GObject.registerClass(
 
             this._currentChatPreviewLabel.set_text(state.title || 'Resume your active conversation');
 
-            let status = state.isStreaming ? 'replying' : (state.isOpen ? 'open' : 'ready');
-            let statusLabel = state.isStreaming ? 'Replying' : (state.isOpen ? 'Open' : 'Ready');
+            let status = state.isStreaming
+                ? 'replying'
+                : (state.hasError ? 'error' : (state.isOpen ? 'open' : 'ready'));
+            let statusLabel = state.isStreaming
+                ? 'Replying'
+                : (state.hasError ? 'Error' : (state.isOpen ? 'Open' : 'Ready'));
             this._currentChatStatusLabel.set_text(statusLabel);
 
             const statusClasses = [
                 'katab-current-chat-status-replying',
+                'katab-current-chat-status-error',
                 'katab-current-chat-status-open',
                 'katab-current-chat-status-ready',
             ];
             const iconClasses = [
                 'katab-current-chat-icon-replying',
+                'katab-current-chat-icon-error',
                 'katab-current-chat-icon-open',
                 'katab-current-chat-icon-ready',
             ];
@@ -6266,6 +6631,9 @@ const Indicator = GObject.registerClass(
             if (status === 'replying') {
                 this._currentChatIcon.gicon = null;
                 this._currentChatIcon.icon_name = 'view-refresh-symbolic';
+            } else if (status === 'error') {
+                this._currentChatIcon.gicon = null;
+                this._currentChatIcon.icon_name = 'dialog-warning-symbolic';
             } else {
                 this._currentChatIcon.icon_name = null;
                 this._currentChatIcon.gicon = this._currentChatBookIcon;
@@ -6455,6 +6823,7 @@ export default class KatabExtension extends Extension {
                 conversationId: null,
                 isOpen: false,
                 isStreaming: false,
+                hasError: false,
                 status: 'empty',
                 title: 'Current Chat',
             };

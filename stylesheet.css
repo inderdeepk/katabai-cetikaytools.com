@@ -45,6 +45,15 @@
     box-shadow: 0 0 10px rgba(249, 226, 175, 0.28);
 }
 
+.katab-panel-activity-spinner {
+    width: 16px;
+    height: 16px;
+}
+
+.katab-panel-error-icon {
+    color: #f38ba8;
+}
+
 /* ════════════════════════════════════════════
    CONTEXT TOKEN COUNTER
    ════════════════════════════════════════════ */
@@ -186,6 +195,11 @@
     border-color: rgba(251, 191, 160, 0.20);
 }
 
+.katab-provider-badge-icon.katab-provider-icon-deepseek {
+    background-color: rgba(77, 107, 254, 0.16);
+    border-color: rgba(150, 170, 255, 0.24);
+}
+
 .katab-provider-status-box.katab-provider-status-online {
     border-color: rgba(166, 227, 161, 0.24);
     background-color: rgba(166, 227, 161, 0.10);
@@ -199,6 +213,18 @@
 .katab-provider-status-box.katab-provider-status-needs-setup {
     border-color: rgba(249, 226, 175, 0.26);
     background-color: rgba(249, 226, 175, 0.12);
+}
+
+/* Provider chip is clickable — it opens the engine picker. */
+.katab-provider-status-box:hover {
+    border-color: rgba(255, 255, 255, 0.22);
+    background-color: rgba(72, 72, 72, 0.62);
+}
+
+.katab-provider-status-arrow {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.55);
+    margin-left: 2px;
 }
 
 .katab-provider-status-label {
@@ -259,6 +285,11 @@
     color: #89b4fa;
 }
 
+.katab-current-chat-status-error {
+    background-color: rgba(243, 139, 168, 0.14);
+    color: #f38ba8;
+}
+
 .katab-current-chat-status-open {
     background-color: rgba(249, 226, 175, 0.14);
     color: #f6e6bc;
@@ -275,6 +306,10 @@
 
 .katab-current-chat-icon-replying {
     color: #89b4fa;
+}
+
+.katab-current-chat-icon-error {
+    color: #f38ba8;
 }
 
 .katab-current-chat-icon-open {
@@ -1024,6 +1059,21 @@
     background-color: rgba(0, 0, 0, 0.04);
 }
 
+.katab-theme-light .katab-provider-status-box:hover {
+    border-color: rgba(0, 0, 0, 0.18);
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-provider-status-arrow {
+    color: rgba(0, 0, 0, 0.45);
+}
+
+.katab-theme-light .katab-selection-row-badge {
+    color: rgba(40, 80, 180, 0.90);
+    background-color: rgba(50, 100, 200, 0.10);
+    border-color: rgba(50, 100, 200, 0.22);
+}
+
 .katab-theme-light .katab-provider-badge-icon {
     border-color: rgba(0, 0, 0, 0.08);
     background-color: rgba(0, 0, 0, 0.04);
@@ -1333,15 +1383,18 @@
     margin: 0 4px;
     color: rgba(255, 255, 255, 0.82);
 }
+
 .katab-preset-btn:hover {
     background-color: rgba(255, 255, 255, 0.15);
     border-color: rgba(255, 255, 255, 0.22);
 }
+
 .katab-preset-btn-label {
     font-size: 12px;
     color: rgba(255, 255, 255, 0.82);
     max-width: 140px;
 }
+
 .katab-preset-btn-arrow {
     font-size: 10px;
     color: rgba(255, 255, 255, 0.52);
@@ -1353,16 +1406,19 @@
     background-color: #1e1e1e;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 .katab-preset-picker-header {
     padding: 10px 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     background-color: rgba(255, 255, 255, 0.04);
 }
+
 .katab-preset-picker-title {
     font-size: 13px;
     font-weight: bold;
     color: rgba(255, 255, 255, 0.88);
 }
+
 .katab-preset-picker-close-btn {
     background-color: transparent;
     border: none;
@@ -1370,16 +1426,20 @@
     border-radius: 6px;
     color: rgba(255, 255, 255, 0.52);
 }
+
 .katab-preset-picker-close-btn:hover {
     background-color: rgba(255, 255, 255, 0.10);
     color: rgba(255, 255, 255, 0.82);
 }
+
 .katab-preset-picker-close-icon {
     icon-size: 16px;
 }
+
 .katab-preset-picker-scroll {
     min-height: 80px;
 }
+
 .katab-preset-list {
     padding: 6px 0;
 }
@@ -1389,23 +1449,28 @@
     padding: 8px 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
+
 .katab-preset-row:hover {
     background-color: rgba(255, 255, 255, 0.04);
 }
+
 .katab-preset-row-active {
     background-color: rgba(100, 160, 255, 0.08);
     border-left: 3px solid rgba(100, 160, 255, 0.70);
 }
+
 .katab-preset-row-name {
     font-size: 13px;
     color: rgba(255, 255, 255, 0.90);
     font-weight: bold;
 }
+
 .katab-preset-row-meta {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.44);
     margin-top: 2px;
 }
+
 .katab-preset-load-btn {
     background-color: rgba(100, 160, 255, 0.18);
     border: 1px solid rgba(100, 160, 255, 0.30);
@@ -1414,14 +1479,17 @@
     color: rgba(150, 200, 255, 0.90);
     font-size: 11px;
 }
+
 .katab-preset-load-btn:hover {
     background-color: rgba(100, 160, 255, 0.28);
 }
+
 .katab-preset-load-btn-active {
     background-color: rgba(100, 160, 255, 0.10);
     border-color: rgba(100, 160, 255, 0.18);
     color: rgba(150, 200, 255, 0.55);
 }
+
 .katab-preset-delete-btn {
     background-color: transparent;
     border: 1px solid rgba(255, 80, 80, 0.22);
@@ -1430,18 +1498,45 @@
     margin-left: 6px;
     color: rgba(255, 100, 100, 0.70);
 }
+
 .katab-preset-delete-btn:hover {
     background-color: rgba(255, 60, 60, 0.12);
     border-color: rgba(255, 80, 80, 0.42);
     color: rgba(255, 120, 120, 0.90);
 }
+
 .katab-preset-delete-icon {
     icon-size: 14px;
 }
+
 .katab-preset-empty-label {
     padding: 20px;
     color: rgba(255, 255, 255, 0.38);
     font-size: 12px;
+}
+
+/* ── Selection rows (engine + DeepSeek model pickers) ───────────────────── */
+.katab-selection-row {
+    spacing: 10px;
+}
+
+.katab-selection-row-icon {
+    icon-size: 20px;
+    padding: 4px;
+}
+
+.katab-selection-row-text {
+    spacing: 2px;
+}
+
+.katab-selection-row-badge {
+    font-size: 10px;
+    font-weight: bold;
+    color: rgba(150, 200, 255, 0.90);
+    background-color: rgba(100, 160, 255, 0.16);
+    border: 1px solid rgba(100, 160, 255, 0.30);
+    border-radius: 6px;
+    padding: 2px 8px;
 }
 
 /* ── Save-as-preset bar ─────────────────────────────────────────────────── */
@@ -1451,6 +1546,7 @@
     background-color: rgba(0, 0, 0, 0.20);
     spacing: 8px;
 }
+
 .katab-preset-name-editor {
     background-color: rgba(255, 255, 255, 0.07);
     border: 1px solid rgba(255, 255, 255, 0.13);
@@ -1458,10 +1554,12 @@
     padding: 6px 10px;
     min-height: 32px;
 }
+
 .katab-preset-name-hint {
     color: rgba(255, 255, 255, 0.30);
     font-size: 12px;
 }
+
 .katab-preset-save-btn {
     background-color: rgba(100, 200, 120, 0.20);
     border: 1px solid rgba(100, 200, 120, 0.30);
@@ -1470,6 +1568,7 @@
     color: rgba(140, 220, 160, 0.90);
     font-size: 12px;
 }
+
 .katab-preset-save-btn:hover {
     background-color: rgba(100, 200, 120, 0.32);
 }
@@ -1480,90 +1579,114 @@
     border-color: rgba(0, 0, 0, 0.12);
     color: rgba(0, 0, 0, 0.72);
 }
+
 .katab-theme-light .katab-preset-btn:hover {
     background-color: rgba(0, 0, 0, 0.11);
 }
+
 .katab-theme-light .katab-preset-btn-label {
     color: rgba(0, 0, 0, 0.72);
 }
+
 .katab-theme-light .katab-preset-btn-arrow {
     color: rgba(0, 0, 0, 0.40);
 }
+
 .katab-theme-light .katab-preset-picker {
     background-color: #f4f4f4;
     border-color: rgba(0, 0, 0, 0.10);
 }
+
 .katab-theme-light .katab-preset-picker-header {
     background-color: rgba(0, 0, 0, 0.03);
     border-color: rgba(0, 0, 0, 0.08);
 }
+
 .katab-theme-light .katab-preset-picker-title {
     color: rgba(0, 0, 0, 0.82);
 }
+
 .katab-theme-light .katab-preset-picker-close-btn {
     color: rgba(0, 0, 0, 0.44);
 }
+
 .katab-theme-light .katab-preset-picker-close-btn:hover {
     background-color: rgba(0, 0, 0, 0.08);
     color: rgba(0, 0, 0, 0.72);
 }
+
 .katab-theme-light .katab-preset-row {
     border-color: rgba(0, 0, 0, 0.06);
 }
+
 .katab-theme-light .katab-preset-row:hover {
     background-color: rgba(0, 0, 0, 0.03);
 }
+
 .katab-theme-light .katab-preset-row-active {
     background-color: rgba(50, 100, 200, 0.07);
     border-left-color: rgba(50, 100, 200, 0.55);
 }
+
 .katab-theme-light .katab-preset-row-name {
     color: rgba(0, 0, 0, 0.86);
 }
+
 .katab-theme-light .katab-preset-row-meta {
     color: rgba(0, 0, 0, 0.42);
 }
+
 .katab-theme-light .katab-preset-load-btn {
     background-color: rgba(50, 100, 200, 0.10);
     border-color: rgba(50, 100, 200, 0.20);
     color: rgba(40, 80, 180, 0.90);
 }
+
 .katab-theme-light .katab-preset-load-btn:hover {
     background-color: rgba(50, 100, 200, 0.18);
 }
+
 .katab-theme-light .katab-preset-load-btn-active {
     background-color: rgba(50, 100, 200, 0.05);
     border-color: rgba(50, 100, 200, 0.12);
     color: rgba(50, 100, 200, 0.44);
 }
+
 .katab-theme-light .katab-preset-delete-btn {
     border-color: rgba(180, 30, 30, 0.18);
     color: rgba(160, 30, 30, 0.65);
 }
+
 .katab-theme-light .katab-preset-delete-btn:hover {
     background-color: rgba(200, 30, 30, 0.08);
     border-color: rgba(180, 30, 30, 0.34);
     color: rgba(160, 20, 20, 0.85);
 }
+
 .katab-theme-light .katab-preset-empty-label {
     color: rgba(0, 0, 0, 0.34);
 }
+
 .katab-theme-light .katab-preset-save-bar {
     background-color: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.08);
 }
+
 .katab-theme-light .katab-preset-name-editor {
     background-color: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.12);
 }
+
 .katab-theme-light .katab-preset-name-hint {
     color: rgba(0, 0, 0, 0.28);
 }
+
 .katab-theme-light .katab-preset-save-btn {
     background-color: rgba(40, 140, 60, 0.12);
     border-color: rgba(40, 140, 60, 0.22);
     color: rgba(30, 110, 50, 0.90);
 }
+
 .katab-theme-light .katab-preset-save-btn:hover {
     background-color: rgba(40, 140, 60, 0.20);
 }
