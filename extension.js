@@ -1264,6 +1264,23 @@ class KatabDialog {
             return Clutter.EVENT_STOP;
         }
 
+        // Ctrl+C copies the active text selection from any read-only chat text
+        // block (assistant/user/code/table/thinking/error). Those labels are
+        // non-editable, so Clutter has no native copy binding for them; read the
+        // focused actor's selection and place it on the clipboard ourselves.
+        let modifiers = event.get_state();
+        if ((modifiers & Clutter.ModifierType.CONTROL_MASK) &&
+            (symbol === Clutter.KEY_c || symbol === Clutter.KEY_C)) {
+            let focused = global.stage.get_key_focus();
+            if (focused instanceof Clutter.Text && focused !== this._entry) {
+                let sel = focused.get_selection();
+                if (sel) {
+                    St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, sel);
+                    return Clutter.EVENT_STOP;
+                }
+            }
+        }
+
         return Clutter.EVENT_PROPAGATE;
     }
 
@@ -4568,6 +4585,79 @@ class KatabDialog {
         };
     }
 
+    _positionFromTextEvent(clutterText, event) {
+        let [x, y] = event.get_coords();
+        let [ok, lx, ly] = clutterText.transform_stage_point(x, y);
+        if (!ok) {
+            return -1;
+        }
+        return clutterText.coords_to_position(lx, ly);
+    }
+
+    // Make a read-only chat text label drag-selectable without making it
+    // editable (which would strip its Pango markup). The underlying ClutterText
+    // stays non-editable but reactive + selectable, and selection is driven from
+    // our own pointer handlers. Returning EVENT_STOP from button-press suppresses
+    // Clutter's default press handler, which would otherwise call input-method
+    // functions that emit CRITICAL warnings for non-editable actors (and can
+    // crash gnome-shell when it runs with fatal-criticals).
+    _makeTextSelectable(label) {
+        let ct = label && label.clutter_text;
+        if (!ct) {
+            return label;
+        }
+
+        ct.editable = false;
+        ct.selectable = true;
+        ct.reactive = true;
+        ct.cursor_visible = true;
+        ct.selection_color = new Clutter.Color({ red: 53, green: 132, blue: 228, alpha: 255 });
+        ct.selected_text_color = new Clutter.Color({ red: 255, green: 255, blue: 255, alpha: 255 });
+
+        ct.connect('button-press-event', (actor, event) => {
+            if (event.get_button() !== Clutter.BUTTON_PRIMARY) {
+                return Clutter.EVENT_PROPAGATE;
+            }
+            let pos = this._positionFromTextEvent(actor, event);
+            if (pos < 0) {
+                return Clutter.EVENT_PROPAGATE;
+            }
+            actor.set_selection(pos, pos);
+            actor._katabSelAnchor = pos;
+            actor._katabSelecting = true;
+            actor.grab_key_focus();
+            return Clutter.EVENT_STOP;
+        });
+
+        ct.connect('motion-event', (actor, event) => {
+            if (!actor._katabSelecting) {
+                return Clutter.EVENT_PROPAGATE;
+            }
+            // If the primary button was released without us seeing the release
+            // (e.g. outside the actor), stop tracking instead of extending the
+            // selection on a plain hover.
+            if (!(event.get_state() & Clutter.ModifierType.BUTTON1_MASK)) {
+                actor._katabSelecting = false;
+                return Clutter.EVENT_PROPAGATE;
+            }
+            let pos = this._positionFromTextEvent(actor, event);
+            if (pos >= 0) {
+                actor.set_selection(actor._katabSelAnchor, pos);
+            }
+            return Clutter.EVENT_STOP;
+        });
+
+        ct.connect('button-release-event', (actor) => {
+            if (!actor._katabSelecting) {
+                return Clutter.EVENT_PROPAGATE;
+            }
+            actor._katabSelecting = false;
+            return Clutter.EVENT_STOP;
+        });
+
+        return label;
+    }
+
     _createAssistantTextLabel(markup, fallbackText) {
         let label = new St.Label({
             text: '',
@@ -4579,6 +4669,7 @@ class KatabDialog {
         label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         label.clutter_text.single_line_mode = false;
         label.clutter_text.can_focus = false;
+        this._makeTextSelectable(label);
         this._setLabelMarkup(label, markup, fallbackText);
         return label;
     }
@@ -4617,6 +4708,7 @@ class KatabDialog {
         label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         label.clutter_text.single_line_mode = false;
         label.clutter_text.can_focus = false;
+        this._makeTextSelectable(label);
 
         let markup = this._formatInlineMarkdown(text);
         if (header) {
@@ -4713,6 +4805,7 @@ class KatabDialog {
         codeLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         codeLabel.clutter_text.single_line_mode = false;
         codeLabel.clutter_text.can_focus = false;
+        this._makeTextSelectable(codeLabel);
         bodyBox.add_child(codeLabel);
         codeWindow.add_child(bodyBox);
 
@@ -5022,6 +5115,7 @@ class KatabDialog {
         thinkLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         thinkLabel.clutter_text.single_line_mode = false;
         thinkLabel.clutter_text.can_focus = false;
+        this._makeTextSelectable(thinkLabel);
 
         thinkButton.connect('notify::checked', () => {
             thinkLabel.visible = thinkButton.checked;
@@ -5050,6 +5144,7 @@ class KatabDialog {
         contentLabel.clutter_text.single_line_mode = false;
         contentLabel.clutter_text.can_focus = false;
         if (isUser) {
+            this._makeTextSelectable(contentLabel);
             contentBox.add_child(contentLabel);
         }
 
@@ -5144,6 +5239,7 @@ class KatabDialog {
             diagnosticLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
             diagnosticLabel.clutter_text.single_line_mode = false;
             diagnosticLabel.clutter_text.can_focus = false;
+            this._makeTextSelectable(diagnosticLabel);
             diagnosticBox.add_child(diagnosticLabel);
 
             bubbleBox.add_child(diagnosticBox);
