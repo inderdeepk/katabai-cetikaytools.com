@@ -153,6 +153,12 @@ const PROMPT_INPUT_MIN_HEIGHT = 44;
 const PROMPT_INPUT_MAX_HEIGHT = 220;
 const PROMPT_INPUT_VERTICAL_PADDING = 20;
 const PROMPT_INPUT_SCROLL_STEP = 36;
+// Clutter.Text re-lays out its whole content on every change and renders blank
+// once the actor grows past GPU paint limits, so the draft must stay bounded.
+// 16000 chars is ~4,270px tall worst-case, safely under the 8192px texture cap.
+const PROMPT_INPUT_MAX_CHARS = 16000;
+const PROMPT_INPUT_MAX_EDITOR_HEIGHT = 6000;
+const PROMPT_INPUT_CHAR_COUNTER_THRESHOLD = 0.7;
 const OLLAMA_VISION_MODEL_HINTS = [
     'vision',
     'llava',
@@ -1282,9 +1288,30 @@ class KatabDialog {
                 return GLib.SOURCE_REMOVE;
             }
 
+            // Only follow the newest text when the caret is at the end of the
+            // draft. Otherwise leave the scroll position alone so scrolling up
+            // to review earlier text is not yanked back down on every edit.
+            if (!this._isPromptCaretAtEnd()) {
+                return GLib.SOURCE_REMOVE;
+            }
+
             adjustment.set_value(Math.max(adjustment.lower, adjustment.upper - adjustment.page_size));
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _isPromptCaretAtEnd() {
+        if (!this._entry) {
+            return true;
+        }
+
+        let pos = this._entry.get_cursor_position();
+        if (pos < 0) {
+            return true; // Clutter uses -1 to indicate the end of the text.
+        }
+
+        let length = (this._entry.get_text() ?? '').length;
+        return pos >= length;
     }
 
     _syncPromptHintVisibility() {
@@ -1315,8 +1342,56 @@ class KatabDialog {
             contentHeight = PROMPT_INPUT_MIN_HEIGHT;
         }
 
-        this._promptEditor.set_height(contentHeight);
-        this._promptScroll.set_height(Math.max(PROMPT_INPUT_MIN_HEIGHT, Math.min(PROMPT_INPUT_MAX_HEIGHT, contentHeight)));
+        // Clamp the editor actor itself to a safe rendering height so the
+        // Clutter.Text never exceeds GPU paint limits and goes blank. With the
+        // character cap in place this ceiling is only a belt-and-suspenders.
+        let editorHeight = Math.min(contentHeight, PROMPT_INPUT_MAX_EDITOR_HEIGHT);
+        this._promptEditor.set_height(editorHeight);
+        this._promptScroll.set_height(Math.max(PROMPT_INPUT_MIN_HEIGHT, Math.min(PROMPT_INPUT_MAX_HEIGHT, editorHeight)));
+    }
+
+    _enforcePromptCharLimit() {
+        if (!this._entry || this._trimmingPrompt) {
+            return false;
+        }
+
+        let text = this._entry.get_text() ?? '';
+        if (text.length <= PROMPT_INPUT_MAX_CHARS) {
+            return false;
+        }
+
+        // set_text() re-emits text-changed; the flag stops it from recursing.
+        this._trimmingPrompt = true;
+        let trimmed = text.slice(0, PROMPT_INPUT_MAX_CHARS);
+        this._entry.set_text(trimmed);
+        this._entry.set_cursor_position(trimmed.length);
+        this._trimmingPrompt = false;
+        return true;
+    }
+
+    _renderPromptCharCounter(length) {
+        if (!this._promptCharCounter) {
+            return;
+        }
+
+        let max = PROMPT_INPUT_MAX_CHARS;
+        let threshold = Math.floor(max * PROMPT_INPUT_CHAR_COUNTER_THRESHOLD);
+
+        if (length < threshold) {
+            this._promptCharCounter.visible = false;
+            return;
+        }
+
+        this._promptCharCounter.visible = true;
+        this._promptCharCounter.set_text(`${length.toLocaleString()} / ${max.toLocaleString()} characters`);
+
+        this._promptCharCounter.remove_style_class_name('warn');
+        this._promptCharCounter.remove_style_class_name('danger');
+        if (length >= max) {
+            this._promptCharCounter.add_style_class_name('danger');
+        } else if (length >= max * 0.9) {
+            this._promptCharCounter.add_style_class_name('warn');
+        }
     }
 
     _scrollPromptBy(delta) {
@@ -2748,6 +2823,14 @@ class KatabDialog {
 
         footerBox.add_child(this._tokenBox);
 
+        this._promptColumn = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-prompt-column',
+            x_expand: true,
+            y_expand: false,
+        });
+        footerBox.add_child(this._promptColumn);
+
         this._promptScroll = new St.ScrollView({
             style_class: 'katab-prompt-scroll',
             hscrollbar_policy: St.PolicyType.NEVER,
@@ -2757,7 +2840,16 @@ class KatabDialog {
             x_expand: true,
             y_expand: false,
         });
-        footerBox.add_child(this._promptScroll);
+        this._promptColumn.add_child(this._promptScroll);
+
+        this._promptCharCounter = new St.Label({
+            text: '',
+            style_class: 'katab-prompt-char-counter',
+            x_align: Clutter.ActorAlign.END,
+            x_expand: true,
+            visible: false,
+        });
+        this._promptColumn.add_child(this._promptCharCounter);
 
         this._promptScrollContent = new St.BoxLayout({
             vertical: true,
@@ -2818,6 +2910,14 @@ class KatabDialog {
         footerBox.add_child(this._toolsBox);
 
         this._entry.connect('text-changed', () => {
+            // Safety-net character cap. If the draft is over the limit (typed,
+            // IME, or any path that bypassed the paste guard) trim it back.
+            // set_text() re-emits text-changed and that re-entrant pass
+            // (guarded by _trimmingPrompt) runs the UI updates below, so bail.
+            if (this._enforcePromptCharLimit()) {
+                return;
+            }
+
             if (this._tokenUpdateTimeout) {
                 GLib.source_remove(this._tokenUpdateTimeout);
             }
@@ -2828,6 +2928,7 @@ class KatabDialog {
             });
 
             this._syncPromptHintVisibility();
+            this._renderPromptCharCounter((this._entry.get_text() ?? '').length);
             this._syncPromptScrollHeight();
             this._queuePromptScrollToBottom();
         });
@@ -2862,7 +2963,31 @@ class KatabDialog {
                             if (!text || !this._entry) return;
                             this._entry.delete_selection();
                             let pos = this._entry.get_cursor_position();
-                            this._entry.insert_text(text, pos);
+
+                            // Keep the draft within the character cap. Insert
+                            // only what fits and tell the user exactly how much
+                            // was dropped instead of silently giving up.
+                            let currentLength = (this._entry.get_text() ?? '').length;
+                            let available = PROMPT_INPUT_MAX_CHARS - currentLength;
+                            if (available <= 0) {
+                                this._addSystemMessage(
+                                    `The prompt is already at its ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document.`,
+                                    { variant: 'warning' }
+                                );
+                                return;
+                            }
+
+                            let toInsert = text;
+                            if (text.length > available) {
+                                toInsert = text.slice(0, available);
+                                let dropped = text.length - available;
+                                this._addSystemMessage(
+                                    `Pasted text was ${dropped.toLocaleString()} character${dropped === 1 ? '' : 's'} too long and was trimmed to fit the ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character prompt limit. For long content, attach it as a document instead.`,
+                                    { variant: 'warning' }
+                                );
+                            }
+
+                            this._entry.insert_text(toInsert, pos);
                         }
                     );
                     return Clutter.EVENT_STOP;
@@ -5116,6 +5241,10 @@ class KatabDialog {
         }
 
         let rawPromptText = this._entry.get_text().trim();
+        // Defensive cap in case any path let the draft grow past the limit.
+        if (rawPromptText.length > PROMPT_INPUT_MAX_CHARS) {
+            rawPromptText = rawPromptText.slice(0, PROMPT_INPUT_MAX_CHARS);
+        }
         if (rawPromptText === '' && !this._pendingDocument)
             return;
 

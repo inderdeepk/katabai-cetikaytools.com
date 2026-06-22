@@ -921,6 +921,25 @@
     color: rgba(255, 255, 255, 0.38);
 }
 
+.katab-prompt-column {
+    spacing: 2px;
+}
+
+.katab-prompt-char-counter {
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.45);
+    padding: 2px 6px 0 0;
+}
+
+.katab-prompt-char-counter.warn {
+    color: #f9e2af;
+}
+
+.katab-prompt-char-counter.danger {
+    color: #f38ba8;
+    font-weight: bold;
+}
+
 .katab-prompt-scroll StScrollBar {
     min-width: 6px;
     min-height: 6px;
@@ -1335,6 +1354,10 @@
 
 .katab-theme-light .katab-prompt-hint {
     color: rgba(0, 0, 0, 0.34);
+}
+
+.katab-theme-light .katab-prompt-char-counter {
+    color: rgba(0, 0, 0, 0.45);
 }
 
 .katab-theme-light .katab-prompt-scroll StScrollBar StButton#vhandle {
