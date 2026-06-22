@@ -123,6 +123,51 @@ window.katab-prefs-window .navigation-sidebar,
 }
 
 /* ════════════════════════════════════════════
+   TOOLS INDEX (list → detail)
+   ════════════════════════════════════════════ */
+
+.katab-prefs-tool-row {
+    padding: 6px 4px;
+    background-color: rgba(36, 36, 36, 0.65);
+}
+
+.katab-prefs-tool-row:hover {
+    background-color: rgba(56, 56, 56, 0.56);
+}
+
+.katab-prefs-tool-icon {
+    padding: 8px;
+    margin-right: 4px;
+    border-radius: 8px;
+    color: #89b4fa;
+    background-color: rgba(26, 26, 26, 0.84);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    -gtk-icon-size: 20px;
+}
+
+.katab-prefs-tool-switch {
+    margin-right: 4px;
+}
+
+.katab-prefs-tool-chevron {
+    color: rgba(255, 255, 255, 0.45);
+    -gtk-icon-size: 16px;
+}
+
+.katab-prefs-tool-back-row {
+    padding: 4px;
+    background-color: rgba(36, 36, 36, 0.65);
+}
+
+.katab-prefs-tool-back-button {
+    min-width: 36px;
+    min-height: 34px;
+    padding: 0;
+    margin-right: 4px;
+    -gtk-icon-size: 18px;
+}
+
+/* ════════════════════════════════════════════
    FORM CONTROLS
    ════════════════════════════════════════════ */
 

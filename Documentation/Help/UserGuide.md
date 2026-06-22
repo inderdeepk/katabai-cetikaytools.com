@@ -133,13 +133,70 @@ If you type `/doc` without a quoted path, Katab opens the file picker. If the pi
 
 ---
 
-## 6. Troubleshooting & Tips
+## 6. Optional Web Search Tool
+
+Katab can give your model live web access using a **self-hosted [SearxNG](https://docs.searxng.org/)** instance. Katab talks straight to SearxNG's JSON API — there is no Docker spawning, no background subprocess, and no third-party search API key. The tool is disabled by default.
+
+> **Unsloth note:** When Unsloth is your active provider, web search, Python, and terminal already run on Unsloth's own servers. This local SearxNG tool is for **Ollama, OpenAI, Anthropic, and DeepSeek**.
+
+### Step 1 — Run SearxNG with JSON enabled
+SearxNG does not return JSON by default. Run an instance and enable the `json` format:
+
+```bash
+docker run --rm -d -p 8080:8080 \
+  -v "${PWD}/searxng:/etc/searxng" \
+  --name searxng searxng/searxng
+```
+
+In `searxng/settings.yml`, make sure JSON is allowed, then restart the container:
+
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+
+Confirm the API works:
+
+```bash
+curl 'http://localhost:8080/search?q=test&format=json' -H 'Accept: application/json'
+```
+
+### Step 2 — Enable it in Katab
+1. Open the **Settings (gear)** icon for Katab.
+2. Go to the **Tools** page and click **Web Search**.
+3. Turn on **Enable Web Search**.
+4. Set the **SearxNG URL** (for example `http://localhost:8080`).
+5. Click **Test Connection** — the status badge confirms Katab can reach the JSON API.
+
+### Step 3 — Search
+* **Manual:** begin a message with `/search` to force a lookup, e.g. `/search gnome 47 release date`. Katab gathers results and the model answers with source links.
+* **Autonomous:** with **Autonomous web search** on (default), the model can call the `web_search` and `read_url` tools by itself whenever a question needs current information.
+
+### Settings you can tune
+* **Result limit** — how many results reach the model (1–20).
+* **Time range / Safe search / Language / Categories / Engines** — passed to SearxNG to scope results.
+* **API key** — optional bearer token if your instance requires one.
+* **Read full pages (`read_url`)** — lets the model open a result and read its text. It only fetches `http`/`https` pages and blocks private/loopback addresses.
+* **Multi-query expansion** — turns one `/search` query into several related queries before searching. Off by default.
+* **Autonomous web search** — lets the model search without `/search`. On by default.
+* **Allow local/loopback addresses** — off by default; only enable on a trusted local-only setup.
+
+### Good to know
+* Search results and fetched pages are **untrusted**. Katab labels and truncates them and never runs anything they contain — be skeptical of instructions hidden inside results.
+* Reading PDF result pages reuses `pdftotext` from `poppler-utils`.
+
+---
+
+## 7. Troubleshooting & Tips
 
 * **Extension Not Showing**: Ensure you ran `glib-compile-schemas schemas/` during installation and restarted the GNOME shell (Log out/in on Wayland, or `Alt+F2`, type `r`, and hit Enter on X11).
 * **Connection Refused (Local)**: If using Unsloth or Ollama, make sure the respective server is running in the background.
 * **Image Attachments Fail in Ollama**: Make sure the active Ollama model is vision-capable, such as `llama3.2-vision` or `llava`.
 * **Invalid API Key**: If using OpenAI or Anthropic and responses fail, double-check your API keys in the settings panel. (Katab does not look for `.env` files for security reasons, it strictly uses the settings window).
 * **Document Tool Shows Install**: Open the **Tools** page, install the missing package (`poppler-utils`/`poppler` for PDF or `pandoc` for DOCX), then use **Refresh Detection**.
+* **Web Search Connection Fails**: Open **Tools → Web Search** and use **Test Connection**. Make sure SearxNG is running, the URL is correct, and the `json` format is enabled in its `settings.yml` (a plain `403`/HTML response usually means JSON is still disabled).
 * **File Picker Does Not Open**: Use `/doc "/absolute/path/to/file"` as a manual fallback.
 
 Enjoy utilizing Katab to enhance your GNOME desktop workflow!
