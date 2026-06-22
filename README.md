@@ -131,7 +131,7 @@ curl 'http://localhost:8080/search?q=test&format=json' -H 'Accept: application/j
 
 ### 3. Use it
 
-- **Manual search:** start a message with `/search` to force a web lookup, e.g. `/search gnome 47 release date`. Katab fetches results, then the model answers using them with source links.
+- **Manual search:** use `/search` at the start or end of a message to force a web lookup, e.g. `/search gnome 47 release date` or `gnome 47 release date /search`. Katab fetches results, then the model answers using them with source links.
 - **Autonomous search:** when `Autonomous web search` is on (default), capable providers (Ollama, OpenAI, Anthropic, DeepSeek) can decide to call the `web_search` and `read_url` tools on their own during a normal conversation.
 
 ### Settings reference

@@ -171,7 +171,7 @@ curl 'http://localhost:8080/search?q=test&format=json' -H 'Accept: application/j
 5. Click **Test Connection** — the status badge confirms Katab can reach the JSON API.
 
 ### Step 3 — Search
-* **Manual:** begin a message with `/search` to force a lookup, e.g. `/search gnome 47 release date`. Katab gathers results and the model answers with source links.
+* **Manual:** use `/search` at the start or end of a message to force a lookup, e.g. `/search gnome 47 release date` or `gnome 47 release date /search`. Katab gathers results and the model answers with source links.
 * **Autonomous:** with **Autonomous web search** on (default), the model can call the `web_search` and `read_url` tools by itself whenever a question needs current information.
 
 ### Settings you can tune

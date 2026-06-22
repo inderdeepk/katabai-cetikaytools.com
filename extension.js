@@ -1949,11 +1949,14 @@ class KatabDialog {
                 }
 
                 let currentText = this._entry.get_text().trim();
-                // Add the slash command, appending to existing text if any, or just starting it
-                if (currentText && !currentText.includes(tool.command)) {
-                    this._entry.set_text(currentText + ' ' + tool.command + ' ');
+                const startsWithCommand = currentText === tool.command || currentText.startsWith(`${tool.command} `);
+                const endsWithCommand = currentText.endsWith(` ${tool.command}`);
+                if (!currentText) {
+                    this._entry.set_text(`${tool.command} `);
+                } else if (startsWithCommand || endsWithCommand) {
+                    this._entry.set_text(currentText);
                 } else {
-                    this._entry.set_text(tool.command + ' ');
+                    this._entry.set_text(`${tool.command} ${currentText}`);
                 }
                 this.focusPrompt();
                 // move cursor to end
@@ -4591,7 +4594,47 @@ class KatabDialog {
         if (!ok) {
             return -1;
         }
-        return clutterText.coords_to_position(lx, ly);
+        // coords_to_position() returns a BYTE index into the layout text, but
+        // set_selection()/set_cursor_position() expect CHARACTER offsets. Without
+        // converting, any multi-byte UTF-8 character before the pointer (curly
+        // quotes, em dashes, ellipses, emoji, accented letters, …) shifts the
+        // selection to the right. Mirror Clutter's own handler, which runs the
+        // byte index through bytes_to_offset() before selecting.
+        let byteIndex = clutterText.coords_to_position(lx, ly);
+        if (byteIndex <= 0) {
+            return byteIndex < 0 ? -1 : 0;
+        }
+        return this._byteOffsetToCharOffset(clutterText.get_text(), byteIndex);
+    }
+
+    // Convert a UTF-8 byte offset into a character (code point) offset, matching
+    // GLib's bytes_to_offset()/g_utf8_strlen() so positions align with what the
+    // Clutter selection API expects.
+    _byteOffsetToCharOffset(text, byteIndex) {
+        if (!text || byteIndex <= 0) {
+            return 0;
+        }
+        let bytes = 0;
+        let chars = 0;
+        for (const ch of text) {
+            const cp = ch.codePointAt(0);
+            let cpBytes;
+            if (cp <= 0x7f) {
+                cpBytes = 1;
+            } else if (cp <= 0x7ff) {
+                cpBytes = 2;
+            } else if (cp <= 0xffff) {
+                cpBytes = 3;
+            } else {
+                cpBytes = 4;
+            }
+            if (bytes + cpBytes > byteIndex) {
+                break;
+            }
+            bytes += cpBytes;
+            chars += 1;
+        }
+        return chars;
     }
 
     // Make a read-only chat text label drag-selectable without making it
