@@ -159,6 +159,8 @@ const PROMPT_INPUT_SCROLL_STEP = 36;
 const PROMPT_INPUT_MAX_CHARS = 16000;
 const PROMPT_INPUT_MAX_EDITOR_HEIGHT = 6000;
 const PROMPT_INPUT_CHAR_COUNTER_THRESHOLD = 0.7;
+// How many previously sent prompts to keep for shell-style Up/Down recall.
+const PROMPT_HISTORY_MAX_ENTRIES = 100;
 const OLLAMA_VISION_MODEL_HINTS = [
     'vision',
     'llava',
@@ -937,6 +939,10 @@ class KatabDialog {
         this._draftUsage = 0;
         this._tokenUpdateTimeout = 0;
         this._promptScrollFollowIdleId = 0;
+        // Shell-style recall of previously sent prompts via the Up/Down keys.
+        this._promptHistory = [];
+        this._promptHistoryIndex = -1;
+        this._promptDraftBackup = '';
         this._hasConversationStarted = false;
         this._welcomePanel = null;
         this._welcomeStage = null;
@@ -1384,6 +1390,103 @@ class KatabDialog {
         this._entry.set_cursor_position(trimmed.length);
         this._trimmingPrompt = false;
         return true;
+    }
+
+    // ── Sent-prompt recall (shell-style Up/Down navigation) ─────────────
+    //
+    // Up walks backward through previously sent prompts when the caret is on
+    // the prompt's first line; Down walks forward and finally restores the
+    // draft that was in progress before navigation began. The edge-line checks
+    // keep ordinary multi-line caret movement intact for longer drafts.
+    _navigatePromptHistory(direction) {
+        if (!this._entry || !this._promptHistory || this._promptHistory.length === 0) {
+            return false;
+        }
+
+        let text = this._entry.get_text() ?? '';
+        let cursorPos = this._entry.get_cursor_position();
+        if (cursorPos < 0) {
+            cursorPos = text.length;
+        }
+
+        if (direction < 0) {
+            // Up: only recall history while the caret sits on the first line so
+            // multi-line drafts can still move the caret upward normally.
+            if (text.slice(0, cursorPos).indexOf('\n') !== -1) {
+                return false;
+            }
+
+            if (this._promptHistoryIndex === -1) {
+                // Starting a fresh walk — stash the live draft so Down can
+                // bring it back at the end.
+                this._promptDraftBackup = text;
+                this._promptHistoryIndex = this._promptHistory.length;
+            }
+
+            if (this._promptHistoryIndex <= 0) {
+                this._promptHistoryIndex = 0;
+            } else {
+                this._promptHistoryIndex -= 1;
+            }
+
+            this._applyPromptHistoryEntry(this._promptHistory[this._promptHistoryIndex]);
+            return true;
+        }
+
+        // Down: only meaningful while navigating, and only when the caret is on
+        // the last line so multi-line recalled prompts can move downward.
+        if (this._promptHistoryIndex === -1) {
+            return false;
+        }
+        if (text.slice(cursorPos).indexOf('\n') !== -1) {
+            return false;
+        }
+
+        if (this._promptHistoryIndex >= this._promptHistory.length - 1) {
+            // Past the newest entry — restore the in-progress draft.
+            this._promptHistoryIndex = -1;
+            this._applyPromptHistoryEntry(this._promptDraftBackup ?? '');
+            this._promptDraftBackup = '';
+            return true;
+        }
+
+        this._promptHistoryIndex += 1;
+        this._applyPromptHistoryEntry(this._promptHistory[this._promptHistoryIndex]);
+        return true;
+    }
+
+    _applyPromptHistoryEntry(text) {
+        if (!this._entry) {
+            return;
+        }
+
+        this._entry.set_text(text ?? '');
+        // Park the caret at the very end of the recalled prompt.
+        this._entry.set_cursor_position(-1);
+        this._syncPromptScrollHeight();
+    }
+
+    _recordSentPrompt(promptText) {
+        // Reset navigation so the next Up starts from the newest entry, and
+        // drop any stashed draft from an interrupted walk.
+        this._promptHistoryIndex = -1;
+        this._promptDraftBackup = '';
+
+        let value = String(promptText ?? '').trim();
+        if (!value) {
+            return;
+        }
+        if (!this._promptHistory) {
+            this._promptHistory = [];
+        }
+        // Skip consecutive duplicates, mirroring shell history behavior.
+        if (this._promptHistory[this._promptHistory.length - 1] === value) {
+            return;
+        }
+        this._promptHistory.push(value);
+        if (this._promptHistory.length > PROMPT_HISTORY_MAX_ENTRIES) {
+            this._promptHistory.splice(0, this._promptHistory.length - PROMPT_HISTORY_MAX_ENTRIES);
+        }
     }
 
     _renderPromptCharCounter(length) {
@@ -2968,6 +3071,20 @@ class KatabDialog {
 
                 this._sendMessage();
                 return Clutter.EVENT_STOP;
+            }
+
+            // Plain Up/Down recalls previously sent prompts (shell-style).
+            // Modifier combos (Shift/Ctrl/Alt) keep their normal selection and
+            // navigation behavior.
+            if ((symbol === Clutter.KEY_Up || symbol === Clutter.KEY_KP_Up ||
+                symbol === Clutter.KEY_Down || symbol === Clutter.KEY_KP_Down) &&
+                !(modifiers & (Clutter.ModifierType.SHIFT_MASK |
+                    Clutter.ModifierType.CONTROL_MASK |
+                    Clutter.ModifierType.MOD1_MASK))) {
+                let direction = (symbol === Clutter.KEY_Up || symbol === Clutter.KEY_KP_Up) ? -1 : 1;
+                if (this._navigatePromptHistory(direction))
+                    return Clutter.EVENT_STOP;
+                return Clutter.EVENT_PROPAGATE;
             }
 
             // Explicitly handle clipboard operations using St.Clipboard so they
@@ -5492,6 +5609,7 @@ class KatabDialog {
             userMessage.documents = [documentMeta];
         }
 
+        this._recordSentPrompt(rawPromptText);
         this._entry.set_text('');
         this._draftUsage = 0;
         this._renderTokenCounter();
