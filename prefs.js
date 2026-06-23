@@ -263,11 +263,16 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const setStringList = (row, labels) => {
-            const list = new Gtk.StringList();
-            for (const label of labels) {
-                list.append(label);
+            const currentModel = row.model;
+            if (currentModel instanceof Gtk.StringList) {
+                currentModel.splice(0, currentModel.get_n_items(), labels);
+            } else {
+                const list = new Gtk.StringList();
+                for (const label of labels) {
+                    list.append(label);
+                }
+                row.model = list;
             }
-            row.model = list;
         };
 
         const syncRowWithSetting = (key, row, property, getter, setter, signal, normalize = value => value) => {
@@ -586,10 +591,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                     labels.push(formatUnknown(currentValue));
                 }
 
+                syncing = true;
                 setStringList(row, labels);
                 row._choiceValues = values;
-
-                syncing = true;
                 row.selected = Math.max(0, values.indexOf(currentValue));
                 syncing = false;
             };
@@ -1244,10 +1248,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                 labels.push(`${currentCtx} (custom)`);
             }
 
+            syncingContextRow = true;
             setStringList(ctxRow, labels);
             ctxRow._choiceValues = values;
-
-            syncingContextRow = true;
             ctxRow.selected = Math.max(0, values.indexOf(currentCtx));
             syncingContextRow = false;
         };
