@@ -1071,6 +1071,15 @@ class KatabDialog {
         this._clearPendingRetry();
         this._activeResponseState = null;
         this._setStreamingState(false);
+
+        if (this._shouldNotifyOnResponseComplete && !this.isOpen) {
+            this._shouldNotifyOnResponseComplete = false;
+            if (this._lastResponseErrored) {
+                Main.notify('Katab', 'Request failed — open the chat for details.');
+            } else {
+                Main.notify('Katab', 'Response ready — open the chat to read it.');
+            }
+        }
     }
 
     _clearPendingRetry() {
@@ -1163,6 +1172,7 @@ class KatabDialog {
 
     _beginActiveResponse(uiElements, provider, mode = 'response', modelName = null) {
         this._lastResponseErrored = false;
+        this._shouldNotifyOnResponseComplete = true;
         this._activeResponseState = {
             accumulatedText: '',
             accumulatedThink: '',
@@ -1198,6 +1208,7 @@ class KatabDialog {
             return;
         }
 
+        this._shouldNotifyOnResponseComplete = false;
         let responseState = this._activeResponseState;
         this._cancelStream({ clearState: false });
 
@@ -3514,6 +3525,7 @@ class KatabDialog {
 
         this.isOpen = true;
         this._lastResponseErrored = false;
+        this._shouldNotifyOnResponseComplete = false;
 
         if (this._welcomePanel?.visible && this._chatScroll?.visible) {
             this._startWelcomeAnimation();
@@ -3706,7 +3718,7 @@ class KatabDialog {
         }
     }
 
-    _sanitizeHistoryMessage(message, { provider = this._currentProvider } = {}) {
+    _sanitizeHistoryMessage(message, { provider = this._currentProvider, thinkingEnabled = false } = {}) {
         let sanitized = {
             role: message.role,
         };
@@ -3730,16 +3742,28 @@ class KatabDialog {
 
         if (message.tool_calls !== undefined) {
             sanitized.tool_calls = message.tool_calls;
+            // OpenAI-compatible APIs (DeepSeek, OpenAI, Ollama) require content
+            // to be null or absent when tool_calls is present. Strip empty/falsy
+            // content so the API does not reject the message or return an empty reply.
+            if (!sanitized.content) {
+                delete sanitized.content;
+            }
         }
 
         if (message.tool_call_id !== undefined) {
             sanitized.tool_call_id = message.tool_call_id;
         }
 
-        // For DeepSeek: echo reasoning_content only on tool-call turns.
-        // The API auto-discards it on normal assistant turns and rejects it if sent back unnecessarily.
-        if (provider === 'deepseek' && message.reasoning_content && message.tool_calls !== undefined) {
-            sanitized.reasoning_content = message.reasoning_content;
+        // For DeepSeek: assistant messages that carry reasoning_content must
+        // echo it back. When the current request has thinking enabled the API
+        // requires it on *every* assistant message (to maintain chain-of-thought
+        // continuity). When thinking is disabled we still echo it on tool-call
+        // turns because the API generated that reasoning_content originally and
+        // expects it alongside the tool_calls.
+        if (provider === 'deepseek' && message.reasoning_content) {
+            if (thinkingEnabled || message.tool_calls !== undefined) {
+                sanitized.reasoning_content = message.reasoning_content;
+            }
         }
 
         if (message.name !== undefined) {
@@ -3757,8 +3781,9 @@ class KatabDialog {
         return sanitized;
     }
 
-    _getApiMessageHistory(provider = this._currentProvider) {
-        let messages = this._messageHistory.map(message => this._sanitizeHistoryMessage(message, { provider }));
+    _getApiMessageHistory(provider = this._currentProvider, { thinkingEnabled = false } = {}) {
+        let messages = this._messageHistory.map(message =>
+            this._sanitizeHistoryMessage(message, { provider, thinkingEnabled }));
         if (provider === 'deepseek') {
             return this._truncateDeepSeekMessages(messages);
         }
@@ -4347,6 +4372,23 @@ class KatabDialog {
         this._notifyCurrentChatChanged();
     }
 
+    _stripHtmlTags(text) {
+        // Convert AI-returned HTML into clean plain text suitable for Pango markup.
+        // Block-level elements gain newlines so references don't run together;
+        // all remaining tags are removed, preserving inner text content.
+        let result = String(text ?? '');
+        // <br> variants → newline
+        result = result.replace(/<br\s*\/?>/gi, '\n');
+        // <li> opens a bullet; </li> adds a newline
+        result = result.replace(/<li[^>]*>/gi, '• ');
+        result = result.replace(/<\/li>/gi, '\n');
+        // </p>, </div>, </ol>, </ul>, </h1>-</h6> → newline for separation
+        result = result.replace(/<\/(?:p|div|ol|ul|h[1-6])>/gi, '\n');
+        // strip every remaining HTML/XML tag
+        result = result.replace(/<[^>]*>/g, '');
+        return result;
+    }
+
     _escapeMarkup(text) {
         return String(text ?? '')
             .replace(/&/g, '&amp;')
@@ -4364,7 +4406,7 @@ class KatabDialog {
     }
 
     _renderPlainMarkup(text) {
-        return this._escapeMarkup(text).replace(/\t/g, '    ');
+        return this._escapeMarkup(this._stripHtmlTags(text)).replace(/\t/g, '    ');
     }
 
     _truncateText(text, maxLength = 48) {
@@ -4433,7 +4475,7 @@ class KatabDialog {
     }
 
     _formatInlineMarkdown(text) {
-        let escapedText = this._escapeMarkup(text);
+        let escapedText = this._escapeMarkup(this._stripHtmlTags(text));
         let codeTokens = [];
 
         escapedText = escapedText.replace(/`([^`\n]+)`/g, (_match, code) => {
@@ -5712,20 +5754,32 @@ class KatabDialog {
         }
 
         let payload = {};
-        const apiMessages = this._getApiMessageHistory(provider);
-        const requestHasImages = apiMessages.some(apiMessage => Array.isArray(apiMessage.images) && apiMessage.images.length > 0);
-        const webContentSafetyPolicy = this._shouldApplyWebContentSafetyPolicy(provider)
-            ? WEB_CONTENT_SAFETY_SYSTEM_PROMPT
-            : '';
-        const apiMessagesWithSystemPolicy = this._withSystemPromptText(apiMessages, webContentSafetyPolicy);
 
         // Advertise the local SearxNG tools to capable providers (never Unsloth, which
         // runs its own server-side tools), bounded by a tool-iteration cap to avoid loops.
+        // Must be computed before _getApiMessageHistory so DeepSeek thinking state can use it.
         const webSearchAutonomous = this._isWebSearchEnabled() && this._settings.get_boolean('web-search-autonomous-enabled');
         const webSearchFetchPage = this._settings.get_boolean('web-search-fetch-page-enabled');
         const advertiseLocalTools = provider !== 'unsloth'
             && webSearchAutonomous
             && (this._toolIterations || 0) < WEB_SEARCH_MAX_TOOL_ITERATIONS;
+
+        // Compute DeepSeek effective thinking state early so it can be threaded
+        // into message sanitization for reasoning_content echo.
+        let deepseekEffectiveThinking = false;
+        if (provider === 'deepseek') {
+            const thinkingEnabled = this._settings.get_boolean('deepseek-thinking-enabled');
+            const jsonMode = this._settings.get_boolean('deepseek-json-mode');
+            const hasTools = advertiseLocalTools && !jsonMode;
+            deepseekEffectiveThinking = thinkingEnabled && !hasTools;
+        }
+
+        const apiMessages = this._getApiMessageHistory(provider, { thinkingEnabled: deepseekEffectiveThinking });
+        const requestHasImages = apiMessages.some(apiMessage => Array.isArray(apiMessage.images) && apiMessage.images.length > 0);
+        const webContentSafetyPolicy = this._shouldApplyWebContentSafetyPolicy(provider)
+            ? WEB_CONTENT_SAFETY_SYSTEM_PROMPT
+            : '';
+        const apiMessagesWithSystemPolicy = this._withSystemPromptText(apiMessages, webContentSafetyPolicy);
 
         // Prepare Dialects
         if (provider === 'unsloth' || provider === 'openai') {
@@ -5781,7 +5835,6 @@ class KatabDialog {
             }
             headers['Content-Type'] = 'application/json';
 
-            const thinkingEnabled = this._settings.get_boolean('deepseek-thinking-enabled');
             const reasoningEffort = this._settings.get_string('deepseek-reasoning-effort') || 'high';
             const jsonMode = this._settings.get_boolean('deepseek-json-mode');
             let deepseekSystemPrompt = DEFAULT_DEEPSEEK_SYSTEM_PROMPT;
@@ -5796,16 +5849,32 @@ class KatabDialog {
             const deepseekPrompt = this._mergeSystemPromptParts(deepseekSystemPrompt, webContentSafetyPolicy);
             let deepseekMessages = this._withSystemPromptText(apiMessages, deepseekPrompt);
 
+            // Tools and JSON mode are mutually exclusive on DeepSeek.
+            const hasTools = advertiseLocalTools && !jsonMode;
+
+            // When thinking is enabled the API requires reasoning_content on every
+            // assistant message. Messages from old conversations may lack it.
+            // Inject an empty placeholder so the API doesn't reject the request.
+            // Skip tool-call messages — those intentionally omit reasoning_content
+            // when thinking was disabled for that turn.
+            if (deepseekEffectiveThinking) {
+                for (const msg of deepseekMessages) {
+                    if (msg.role === 'assistant' && msg.reasoning_content === undefined && !msg.tool_calls) {
+                        msg.reasoning_content = '';
+                    }
+                }
+            }
+
             payload = {
                 model: model,
                 messages: deepseekMessages,
                 stream: true,
                 stream_options: { include_usage: true },
-                thinking: { type: thinkingEnabled ? 'enabled' : 'disabled' },
+                thinking: { type: deepseekEffectiveThinking ? 'enabled' : 'disabled' },
                 user_id: this._buildDeepSeekUserId(),
             };
 
-            if (thinkingEnabled) {
+            if (deepseekEffectiveThinking) {
                 payload.reasoning_effort = reasoningEffort;
             }
 
@@ -5829,9 +5898,10 @@ class KatabDialog {
                 }
             }
 
-            // Tools and JSON mode are mutually exclusive on DeepSeek; skip tools in JSON mode.
-            if (advertiseLocalTools && !jsonMode) {
+            // Tools and JSON mode are mutually exclusive on DeepSeek.
+            if (hasTools) {
                 payload.tools = buildWebSearchToolSchemas({ provider: 'openai', fetchPageEnabled: webSearchFetchPage });
+                payload.tool_choice = 'auto';
             }
         } else if (provider === 'ollama') {
             if (!endpoint.endsWith('api/chat')) {
@@ -6046,7 +6116,14 @@ class KatabDialog {
                             });
                     } else {
                         this._applyAssistantRender(uiElements, finalContent, { final: true });
-                        this._messageHistory.push(this._buildAssistantHistoryMessage(finalContent, responseState.assistantMeta));
+                        const assistantMsg = this._buildAssistantHistoryMessage(finalContent, responseState.assistantMeta);
+                        // DeepSeek requires reasoning_content to be echoed back on
+                        // subsequent turns when thinking is enabled. Store it on the
+                        // history message so _sanitizeHistoryMessage can pick it up.
+                        if (provider === 'deepseek' && responseState.accumulatedThink) {
+                            assistantMsg.reasoning_content = responseState.accumulatedThink;
+                        }
+                        this._messageHistory.push(assistantMsg);
                         this._saveCurrentConversation();
                         this._clearActiveResponseState();
                     }
@@ -6481,7 +6558,6 @@ class KatabDialog {
         } else {
             const assistantToolMsg = {
                 role: 'assistant',
-                content: '',
                 tool_calls: toolCalls,
             };
             // DeepSeek requires reasoning_content echoed back on the tool-call turn.
