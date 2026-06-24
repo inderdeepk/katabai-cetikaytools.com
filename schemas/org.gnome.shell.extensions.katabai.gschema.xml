@@ -305,5 +305,37 @@
       <summary>Enable JSON Output Mode</summary>
       <description>Forces the model to return a valid JSON object. Katab automatically injects a JSON reminder into the system prompt if needed.</description>
     </key>
+
+    <!-- DeepSeek Account Balance -->
+    <key name="deepseek-balance-available" type="b">
+      <default>true</default>
+      <summary>DeepSeek Balance Available</summary>
+      <description>Whether the DeepSeek account balance is sufficient for API calls (is_available from the /user/balance endpoint).</description>
+    </key>
+    <key name="deepseek-balance-currency" type="s">
+      <default>''</default>
+      <summary>DeepSeek Balance Currency</summary>
+      <description>The currency code of the DeepSeek balance (e.g., CNY).</description>
+    </key>
+    <key name="deepseek-balance-total" type="s">
+      <default>''</default>
+      <summary>DeepSeek Total Balance</summary>
+      <description>Total DeepSeek account balance as a string (granted + topped-up). Stored as a string to preserve API precision.</description>
+    </key>
+    <key name="deepseek-balance-granted" type="s">
+      <default>''</default>
+      <summary>DeepSeek Granted Balance</summary>
+      <description>DeepSeek promotional or free credits that may expire.</description>
+    </key>
+    <key name="deepseek-balance-topped-up" type="s">
+      <default>''</default>
+      <summary>DeepSeek Topped-Up Balance</summary>
+      <description>DeepSeek funds added via top-up that do not expire.</description>
+    </key>
+    <key name="deepseek-balance-last-checked" type="x">
+      <default>0</default>
+      <summary>DeepSeek Balance Last Checked</summary>
+      <description>Unix timestamp (milliseconds) of the last successful balance check via the /user/balance endpoint.</description>
+    </key>
   </schema>
 </schemalist>

@@ -3,6 +3,7 @@ import Gdk from 'gi://Gdk';
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
+import Soup from 'gi://Soup?version=3.0';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import {
     loadPresets,
@@ -1479,6 +1480,141 @@ export default class KatabPreferences extends ExtensionPreferences {
         );
         deepseekPage.add(deepseekOutputGroup);
 
+        // --- DeepSeek Account Balance ---
+        const deepseekBalanceGroup = createPreferencesGroup({
+            title: 'Account Balance',
+            description: 'Current DeepSeek account balance. Refreshed automatically by the provider health check every 30 seconds while the extension is running.',
+        });
+
+        const createBalanceDisplayRow = (title, subtitle, getter) => {
+            const valueLabel = addCssClasses(new Gtk.Label({
+                label: '—',
+                xalign: 0,
+                halign: Gtk.Align.START,
+                valign: Gtk.Align.CENTER,
+                selectable: true,
+            }), 'katab-prefs-balance-value');
+
+            const row = stylePreferenceRow(new Adw.ActionRow({
+                title,
+                ...(subtitle && { subtitle }),
+                activatable: false,
+            }), 'katab-prefs-info-row');
+
+            const syncFromSettings = () => {
+                valueLabel.set_text(getter() || '—');
+            };
+            syncFromSettings();
+            settings.connect(`changed::deepseek-balance-${title.toLowerCase().replace(/\s+/g, '-')}`, syncFromSettings);
+            // Also refresh on these keys since the display row title may not match the key directly
+            settings.connect('changed::deepseek-balance-available', syncFromSettings);
+            settings.connect('changed::deepseek-balance-currency', syncFromSettings);
+            settings.connect('changed::deepseek-balance-total', syncFromSettings);
+            settings.connect('changed::deepseek-balance-granted', syncFromSettings);
+            settings.connect('changed::deepseek-balance-topped-up', syncFromSettings);
+            settings.connect('changed::deepseek-balance-last-checked', syncFromSettings);
+
+            row.add_suffix(valueLabel);
+            addPreferenceRow(deepseekBalanceGroup, row);
+            return { row, valueLabel };
+        };
+
+        // Available indicator
+        createBalanceDisplayRow(
+            'Available',
+            'Whether the current balance is sufficient for API calls.',
+            () => {
+                let ts = settings.get_int64('deepseek-balance-last-checked');
+                if (!ts) return 'Not checked yet';
+                return settings.get_boolean('deepseek-balance-available') ? 'Yes' : 'No — top up needed';
+            }
+        );
+
+        // Currency
+        createBalanceDisplayRow(
+            'Currency',
+            'The currency of your DeepSeek account balance.',
+            () => settings.get_string('deepseek-balance-currency') || '—'
+        );
+
+        // Total Balance
+        createBalanceDisplayRow(
+            'Total Balance',
+            'Total available funds (granted + topped-up).',
+            () => {
+                let total = settings.get_string('deepseek-balance-total');
+                let currency = settings.get_string('deepseek-balance-currency');
+                if (!total) return '—';
+                return currency ? `${currency} ${total}` : total;
+            }
+        );
+
+        // Granted Balance
+        createBalanceDisplayRow(
+            'Granted (Free Credits)',
+            'Promotional or free credits that may expire.',
+            () => {
+                let granted = settings.get_string('deepseek-balance-granted');
+                let currency = settings.get_string('deepseek-balance-currency');
+                if (!granted) return '—';
+                return currency ? `${currency} ${granted}` : granted;
+            }
+        );
+
+        // Topped-Up Balance
+        createBalanceDisplayRow(
+            'Topped Up',
+            'Funds added via top-up that do not expire.',
+            () => {
+                let toppedUp = settings.get_string('deepseek-balance-topped-up');
+                let currency = settings.get_string('deepseek-balance-currency');
+                if (!toppedUp) return '—';
+                return currency ? `${currency} ${toppedUp}` : toppedUp;
+            }
+        );
+
+        // Last Checked
+        const lastCheckedRow = createBalanceDisplayRow(
+            'Last Checked',
+            'When the balance was last fetched from the DeepSeek API.',
+            () => {
+                let ts = settings.get_int64('deepseek-balance-last-checked');
+                if (!ts) return 'Never';
+                try {
+                    let date = new Date(ts);
+                    return date.toLocaleString();
+                } catch (_e) {
+                    return 'Unknown';
+                }
+            }
+        );
+
+        // Refresh Balance button
+        const refreshBalanceBtn = addCssClasses(new Gtk.Button({
+            label: 'Refresh Balance',
+            valign: Gtk.Align.CENTER,
+            halign: Gtk.Align.START,
+        }), 'katab-prefs-button', 'suggested-action');
+        const refreshBtnRow = stylePreferenceRow(new Adw.ActionRow({
+            title: 'Check Balance Now',
+            subtitle: 'Makes a direct request to the DeepSeek /user/balance endpoint and updates the display above.',
+            activatable: false,
+        }), 'katab-prefs-info-row');
+        refreshBtnRow.add_suffix(refreshBalanceBtn);
+        refreshBtnRow.activatable_widget = refreshBalanceBtn;
+        addPreferenceRow(deepseekBalanceGroup, refreshBtnRow);
+
+        refreshBalanceBtn.connect('clicked', () => {
+            refreshBalanceBtn.set_label('Checking...');
+            refreshBalanceBtn.sensitive = false;
+            this._refreshDeepSeekBalance(settings, () => {
+                refreshBalanceBtn.set_label('Refresh Balance');
+                refreshBalanceBtn.sensitive = true;
+            });
+        });
+
+        deepseekPage.add(deepseekBalanceGroup);
+
         // --- Tools Settings ---
         const toolsPage = createPreferencesPage({
             title: 'Tools',
@@ -1893,5 +2029,65 @@ export default class KatabPreferences extends ExtensionPreferences {
             enabledKey: 'web-search-enabled',
             navPage: webSearchSubpage.navPage,
         });
+    }
+
+    async _refreshDeepSeekBalance(settings, onDone) {
+        let baseUrl = settings.get_string('deepseek-url');
+        let apiKey = settings.get_string('deepseek-api-key');
+
+        if (!baseUrl || !apiKey) {
+            onDone();
+            return;
+        }
+
+        // Strip trailing slash so joinUrl-like behaviour works
+        baseUrl = baseUrl.replace(/\/+$/, '');
+        let url = `${baseUrl}/user/balance`;
+
+        try {
+            let session = new Soup.Session();
+            session.timeout = 8;  // seconds, same as health monitor probe
+
+            let message = Soup.Message.new('GET', url);
+            message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
+
+            let bytes = await new Promise((resolve, reject) => {
+                session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, res) => {
+                    try {
+                        resolve(s.send_and_read_finish(res));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
+
+            if (message.status_code === 402) {
+                settings.set_boolean('deepseek-balance-available', false);
+                settings.set_int64('deepseek-balance-last-checked', Date.now());
+                onDone();
+                return;
+            }
+
+            if (message.status_code < 200 || message.status_code >= 300) {
+                onDone();
+                return;
+            }
+
+            let decoder = new TextDecoder('utf-8');
+            let responseBody = decoder.decode(bytes);
+            let parsed = JSON.parse(responseBody);
+
+            let balanceInfo = parsed.balance_infos?.[0] ?? null;
+            settings.set_boolean('deepseek-balance-available', Boolean(parsed.is_available));
+            settings.set_string('deepseek-balance-currency', balanceInfo?.currency ?? '');
+            settings.set_string('deepseek-balance-total', balanceInfo?.total_balance ?? '');
+            settings.set_string('deepseek-balance-granted', balanceInfo?.granted_balance ?? '');
+            settings.set_string('deepseek-balance-topped-up', balanceInfo?.topped_up_balance ?? '');
+            settings.set_int64('deepseek-balance-last-checked', Date.now());
+        } catch (_e) {
+            // Silently ignore errors — the UI already shows '—' for missing data.
+        }
+
+        onDone();
     }
 }

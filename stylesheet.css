@@ -22,25 +22,21 @@
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.katab-panel-status-dot.katab-provider-status-checking,
-.katab-provider-status-indicator.katab-provider-status-checking {
+.katab-panel-status-dot.katab-provider-status-checking {
     background-color: #89b4fa;
 }
 
-.katab-panel-status-dot.katab-provider-status-online,
-.katab-provider-status-indicator.katab-provider-status-online {
+.katab-panel-status-dot.katab-provider-status-online {
     background-color: #a6e3a1;
     box-shadow: 0 0 10px rgba(166, 227, 161, 0.40);
 }
 
-.katab-panel-status-dot.katab-provider-status-down,
-.katab-provider-status-indicator.katab-provider-status-down {
+.katab-panel-status-dot.katab-provider-status-down {
     background-color: #f38ba8;
     box-shadow: 0 0 10px rgba(243, 139, 168, 0.32);
 }
 
-.katab-panel-status-dot.katab-provider-status-needs-setup,
-.katab-provider-status-indicator.katab-provider-status-needs-setup {
+.katab-panel-status-dot.katab-provider-status-needs-setup {
     background-color: #f9e2af;
     box-shadow: 0 0 10px rgba(249, 226, 175, 0.28);
 }
@@ -245,12 +241,21 @@
     color: #f6e6bc;
 }
 
-.katab-provider-status-indicator {
-    width: 8px;
-    height: 8px;
-    margin-left: 2px;
-    border-radius: 99px;
-    background-color: #89b4fa;
+/* DeepSeek balance badge — compact currency + total shown next to the provider name */
+.katab-provider-balance-label {
+    font-size: 7.8pt;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.55);
+    margin-left: 6px;
+    font-family: monospace;
+}
+
+.katab-provider-balance-label.katab-provider-status-online {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.katab-provider-balance-label.katab-provider-status-down {
+    color: #f5b5c7;
 }
 
 .katab-provider-menu-status-dot {

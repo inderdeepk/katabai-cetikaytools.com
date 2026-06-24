@@ -435,13 +435,31 @@ class ProviderHealthMonitor {
     }
 
     _buildState({ provider, status, detail = '', lastChecked = 0 }) {
-        return {
+        let state = {
             provider,
             label: getProviderLabel(provider),
             status,
             detail,
             lastChecked,
         };
+
+        // Attach DeepSeek balance snapshot from GSettings so the chat UI and
+        // other consumers can render it without reading settings themselves.
+        if (provider === 'deepseek') {
+            let currency = this._settings.get_string('deepseek-balance-currency');
+            let total = this._settings.get_string('deepseek-balance-total');
+            let available = this._settings.get_boolean('deepseek-balance-available');
+            state.balance = {
+                is_available: available,
+                currency,
+                total: total || null,
+                granted: this._settings.get_string('deepseek-balance-granted') || null,
+                topped_up: this._settings.get_string('deepseek-balance-topped-up') || null,
+                last_checked: this._settings.get_int64('deepseek-balance-last-checked'),
+            };
+        }
+
+        return state;
     }
 
     _getInitialState(provider) {
@@ -607,14 +625,30 @@ class ProviderHealthMonitor {
 
         // For DeepSeek: check the is_available boolean from the balance endpoint.
         // A false value means funds are exhausted even though the HTTP status was 200.
+        // Also persist the full balance breakdown to GSettings so the chat header
+        // and preferences window can display it.
         if (config.provider === 'deepseek') {
             try {
                 let responseBody = decodeBytes(bytes);
                 let parsed = JSON.parse(responseBody);
+
+                // Persist balance data to GSettings for the chat UI and prefs.
+                let balanceInfo = parsed.balance_infos?.[0] ?? null;
+                this._settings.set_boolean('deepseek-balance-available', Boolean(parsed.is_available));
+                this._settings.set_string('deepseek-balance-currency', balanceInfo?.currency ?? '');
+                this._settings.set_string('deepseek-balance-total', balanceInfo?.total_balance ?? '');
+                this._settings.set_string('deepseek-balance-granted', balanceInfo?.granted_balance ?? '');
+                this._settings.set_string('deepseek-balance-topped-up', balanceInfo?.topped_up_balance ?? '');
+                this._settings.set_int64('deepseek-balance-last-checked', Date.now());
+
                 if (parsed.is_available === false) {
                     throw new Error('Insufficient balance — your DeepSeek prepaid balance is depleted. Top up at platform.deepseek.com.');
                 }
             } catch (e) {
+                // Persist that we checked even if is_available was false.
+                if (e.message.includes('balance')) {
+                    this._settings.set_int64('deepseek-balance-last-checked', Date.now());
+                }
                 // Re-throw only balance-specific errors; ignore JSON parse failures.
                 if (e.message.includes('balance')) throw e;
             }
@@ -1581,7 +1615,7 @@ class KatabDialog {
     }
 
     _renderProviderStatus(state) {
-        if (!this._providerStatusBox || !this._providerStatusLabel || !this._providerStatusDot) {
+        if (!this._providerStatusBox || !this._providerStatusLabel) {
             return;
         }
 
@@ -1590,7 +1624,20 @@ class KatabDialog {
         this._providerStatusLabel.set_text(`${state.label} ${getProviderStatusText(state.status)}`);
         syncProviderStatusClasses(this._providerStatusBox, state.status);
         syncProviderStatusClasses(this._providerStatusLabel, state.status);
-        syncProviderStatusClasses(this._providerStatusDot, state.status);
+
+        // DeepSeek balance badge — show compact currency + total when data is
+        // available; apply warning styling when funds are depleted.
+        if (this._balanceLabel) {
+            if (state.provider === 'deepseek' && state.balance && state.balance.currency && state.balance.total) {
+                this._balanceLabel.set_text(`${state.balance.currency} ${state.balance.total}`);
+                this._balanceLabel.visible = true;
+                syncProviderStatusClasses(this._balanceLabel, state.balance.is_available
+                    ? state.status
+                    : PROVIDER_STATUS.DOWN);
+            } else {
+                this._balanceLabel.visible = false;
+            }
+        }
     }
 
     _disconnectProviderStatus() {
@@ -2722,12 +2769,15 @@ class KatabDialog {
         });
         this._providerStatusBox.add_child(this._providerStatusLabel);
 
-        this._providerStatusDot = new St.Widget({
-            style_class: 'katab-provider-status-indicator',
+        // DeepSeek balance badge — compact currency + total shown next to the
+        // provider name when balance data is available.
+        this._balanceLabel = new St.Label({
+            text: '',
+            style_class: 'katab-provider-balance-label',
             y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.CENTER,
+            visible: false,
         });
-        this._providerStatusBox.add_child(this._providerStatusDot);
+        this._providerStatusBox.add_child(this._balanceLabel);
 
         this._providerStatusBox.add_child(new St.Label({
             text: '▾',
