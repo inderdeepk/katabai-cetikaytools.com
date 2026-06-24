@@ -84,6 +84,68 @@
       <description>Permit page reading of private, loopback, and link-local addresses. Leave disabled to prevent server-side request forgery against internal services.</description>
     </key>
 
+    <!-- Web Scraper Settings (Crawl4AI) -->
+    <key name="crawl4ai-enabled" type="b">
+      <default>false</default>
+      <summary>Enable Web Scraper</summary>
+      <description>Allow Katab to deep-scrape web pages through a self-hosted Crawl4AI Docker instance. Extracts clean Markdown from fully-rendered pages using a real browser.</description>
+    </key>
+    <key name="crawl4ai-url" type="s">
+      <default>'http://localhost:11235'</default>
+      <summary>Crawl4AI Base URL</summary>
+      <description>The base URL of a self-hosted Crawl4AI v0.9.x Docker instance.</description>
+    </key>
+    <key name="crawl4ai-api-token" type="s">
+      <default>''</default>
+      <summary>Crawl4AI API Token</summary>
+      <description>JWT Bearer token set via CRAWL4AI_API_TOKEN on the Docker container. Required only when the instance has security enabled.</description>
+    </key>
+    <key name="crawl4ai-fit-markdown-mode" type="s">
+      <default>'pruning'</default>
+      <summary>Content Filter Mode</summary>
+      <description>Algorithm used to strip boilerplate. 'pruning' removes low-density DOM nodes by heuristic; 'bm25' scores content chunks against the user query.</description>
+    </key>
+    <key name="crawl4ai-cache-mode" type="s">
+      <default>'bypass'</default>
+      <summary>Cache Mode</summary>
+      <description>Controls Crawl4AI's internal cache. 'bypass' fetches fresh, 'enabled' speeds up repeats, 'read_only' never hits the network.</description>
+    </key>
+    <key name="crawl4ai-word-count-threshold" type="i">
+      <default>10</default>
+      <summary>Minimum Word Count</summary>
+      <description>Pages with fewer words than this are discarded before Markdown generation (1–200).</description>
+    </key>
+    <key name="crawl4ai-page-timeout" type="i">
+      <default>60</default>
+      <summary>Page Timeout</summary>
+      <description>Maximum seconds to wait for a page to render before giving up (10–300).</description>
+    </key>
+    <key name="crawl4ai-max-chars" type="i">
+      <default>24000</default>
+      <summary>Maximum Output Characters</summary>
+      <description>Truncation cap on the scraped Markdown fed into the model context (500–100000).</description>
+    </key>
+    <key name="crawl4ai-simulate-user" type="b">
+      <default>false</default>
+      <summary>Stealth Mode</summary>
+      <description>Mimic human mouse movements, scrolls, and delays to reduce CAPTCHA and bot-detection challenges. Slower but more reliable for protected sites.</description>
+    </key>
+    <key name="crawl4ai-autonomous-enabled" type="b">
+      <default>true</default>
+      <summary>Allow Model-Triggered Scraping</summary>
+      <description>Advertise the crawl_url tool to capable models so they can decide when to scrape a page. When disabled only the manual /crawl command works.</description>
+    </key>
+    <key name="crawl4ai-allow-local-addresses" type="b">
+      <default>false</default>
+      <summary>Allow Local Network Addresses</summary>
+      <description>Permit scraping of private, loopback, and link-local addresses. Leave disabled to prevent server-side request forgery against internal services.</description>
+    </key>
+    <key name="crawl4ai-job-poll-ms" type="i">
+      <default>2000</default>
+      <summary>Async Job Polling Interval</summary>
+      <description>Milliseconds between status checks when polling Crawl4AI's async /crawl/job endpoint (500–10000).</description>
+    </key>
+
     <!-- Ollama Settings -->
     <key name="ollama-url" type="s">
       <default>'http://localhost:11434'</default>

@@ -18,6 +18,7 @@ import {
     updatePresetFromSettings,
 } from './presetManager.js';
 import { WebSearchRuntime, readWebSearchConfig } from './webSearchTools.js';
+import { Crawl4AIRuntime, readCrawl4AIConfig } from './crawl4aiTools.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -2013,6 +2014,214 @@ export default class KatabPreferences extends ExtensionPreferences {
             );
         }
 
+        // ----- Web Scraper tool detail subpage (Crawl4AI) -----
+        const crawl4aiSubpage = createToolSubpage('Web Scraper');
+        {
+            const detailPage = crawl4aiSubpage.detailPage;
+
+            const noticeGroup = createPreferencesGroup({});
+            detailPage.add(noticeGroup);
+            const noticeRow = createInfoRow(
+                'How web scraping works',
+                'Crawl4AI is a high-performance, LLM-friendly web crawler that renders pages in a real browser (Chromium), executes JavaScript, and extracts clean Markdown. Katab uses it to deep-scrape page content after SearxNG discovers URLs. Deploy your own Crawl4AI v0.9.x Docker container on any machine with sufficient RAM for Chromium.',
+                noticeGroup
+            );
+            noticeRow.add_prefix(addCssClasses(new Gtk.Image({
+                icon_name: 'dialog-information-symbolic',
+                valign: Gtk.Align.CENTER,
+            }), 'katab-prefs-tool-icon'));
+
+            // ---- Connection ----
+            const connectionGroup = createPreferencesGroup({
+                title: 'Connection',
+                description: 'Point Katab at your self-hosted Crawl4AI Docker instance.',
+            });
+            detailPage.add(connectionGroup);
+
+            createBooleanRow(
+                'Enable Web Scraper',
+                'Allow the /crawl command and let supported models deep-scrape web pages through Crawl4AI.',
+                'crawl4ai-enabled',
+                connectionGroup
+            );
+
+            createStringRow(
+                'Crawl4AI Instance URL',
+                'Base URL of your Crawl4AI v0.9.x instance, e.g. http://localhost:11235.',
+                'crawl4ai-url',
+                connectionGroup
+            );
+
+            createStringRow(
+                'API Token',
+                'JWT Bearer token set via CRAWL4AI_API_TOKEN when deploying the container. Required only when the instance has security enabled.',
+                'crawl4ai-api-token',
+                connectionGroup,
+                true
+            );
+
+            const { row: crawlConnStatusRow, badge: crawlConnBadge } = createStatusRow(
+                'Connection Status',
+                'Run a health check to confirm the instance is reachable.',
+                connectionGroup
+            );
+            setStatusBadge(crawlConnBadge, 'Untested', null);
+
+            const crawlTestRuntime = new Crawl4AIRuntime({ timeoutSeconds: 12 });
+            createButtonRow(
+                'Test Connection',
+                'Send a health check to verify the Crawl4AI endpoint responds.',
+                'Test',
+                () => {
+                    setStatusBadge(crawlConnBadge, 'Testing', null);
+                    crawlConnStatusRow.subtitle = 'Contacting the Crawl4AI instance\u2026';
+                    const config = readCrawl4AIConfig(settings);
+                    crawlTestRuntime.testConnection(config).then(result => {
+                        if (result.ok) {
+                            setStatusBadge(crawlConnBadge, 'Connected', 'katab-prefs-status-detected');
+                            crawlConnStatusRow.subtitle = result.version
+                                ? `Reachable. Server: ${result.version}`
+                                : 'Reachable.';
+                        } else {
+                            setStatusBadge(crawlConnBadge, 'Failed', 'katab-prefs-status-install');
+                            crawlConnStatusRow.subtitle = result.message || 'Connection test failed.';
+                        }
+                    }).catch(error => {
+                        setStatusBadge(crawlConnBadge, 'Failed', 'katab-prefs-status-install');
+                        crawlConnStatusRow.subtitle = error?.message || 'Connection test failed.';
+                    });
+                },
+                connectionGroup
+            );
+
+            // ---- Extraction ----
+            const extractionGroup = createPreferencesGroup({
+                title: 'Extraction',
+                description: 'How Crawl4AI filters and formats page content before sending it to the model.',
+            });
+            detailPage.add(extractionGroup);
+
+            const fitMarkdownRow = createChoiceRow(
+                'Content Filter',
+                'Algorithm used to strip boilerplate and extract the core page content.',
+                extractionGroup
+            );
+            bindChoiceRow(
+                fitMarkdownRow,
+                'crawl4ai-fit-markdown-mode',
+                [
+                    { value: 'pruning', label: 'Pruning (Heuristic)' },
+                    { value: 'bm25', label: 'BM25 (Query-Focused)' },
+                ],
+                settings.get_string.bind(settings),
+                settings.set_string.bind(settings)
+            );
+
+            const cacheRow = createChoiceRow(
+                'Cache Mode',
+                'Controls Crawl4AI\u2019s internal cache behavior.',
+                extractionGroup
+            );
+            bindChoiceRow(
+                cacheRow,
+                'crawl4ai-cache-mode',
+                [
+                    { value: 'bypass', label: 'Bypass (Always Fresh)' },
+                    { value: 'enabled', label: 'Enabled (Faster Repeats)' },
+                    { value: 'read_only', label: 'Read-Only (No Network)' },
+                ],
+                settings.get_string.bind(settings),
+                settings.set_string.bind(settings)
+            );
+
+            createIntRow(
+                'Minimum Word Count',
+                'Pages with fewer words are discarded before Markdown generation (1\u2013200).',
+                'crawl4ai-word-count-threshold',
+                extractionGroup,
+                1,
+                200,
+                1
+            );
+
+            createIntRow(
+                'Page Timeout',
+                'Maximum seconds to wait for a page to render before giving up (10\u2013300).',
+                'crawl4ai-page-timeout',
+                extractionGroup,
+                10,
+                300,
+                5
+            );
+
+            createIntRow(
+                'Maximum Output Characters',
+                'Truncation cap on extracted Markdown fed to the model context (500\u2013100000).',
+                'crawl4ai-max-chars',
+                extractionGroup,
+                500,
+                100000,
+                500
+            );
+
+            // ---- Advanced ----
+            const advancedGroup = createPreferencesGroup({
+                title: 'Advanced',
+                description: 'Anti-bot stealth, autonomous model use, and network address restrictions.',
+            });
+            detailPage.add(advancedGroup);
+
+            createBooleanRow(
+                'Stealth Mode',
+                'Mimic human mouse movements, scrolls, and timing to reduce CAPTCHA and bot-detection challenges. Slower but more reliable for protected sites.',
+                'crawl4ai-simulate-user',
+                advancedGroup
+            );
+
+            createBooleanRow(
+                'Autonomous Tool Use',
+                'Advertise the crawl_url tool to supported models so they can decide when to deep-scrape a page. With this off, only the manual /crawl command runs.',
+                'crawl4ai-autonomous-enabled',
+                advancedGroup
+            );
+
+            createBooleanRow(
+                'Allow Local Addresses',
+                'Permit scraping of private, loopback, and link-local addresses. Leave off unless you fully trust your network.',
+                'crawl4ai-allow-local-addresses',
+                advancedGroup
+            );
+
+            createIntRow(
+                'Async Polling Interval',
+                'Milliseconds between status checks when using async crawl jobs (500\u201310000).',
+                'crawl4ai-job-poll-ms',
+                advancedGroup,
+                500,
+                10000,
+                500
+            );
+
+            // ---- Setup ----
+            const setupGroup = createPreferencesGroup({
+                title: 'Crawl4AI Setup',
+                description: 'Katab does not bundle a web scraper. Deploy Crawl4AI with Docker on any machine with at least 2 GB RAM for Chromium.',
+            });
+            detailPage.add(setupGroup);
+
+            createInfoRow(
+                'Run Crawl4AI with Docker',
+                'docker run -d --name crawl4ai -p 11235:11235 \\\n  -e CRAWL4AI_API_TOKEN=your-secret-token \\\n  --shm-size=1g unclecode/crawl4ai:0.9.0',
+                setupGroup
+            );
+
+            createInfoRow(
+                'Security Note',
+                'Katab connects to Crawl4AI over HTTP by default. For remote deployments, place a reverse proxy (nginx / Caddy) with TLS in front, or use a VPN tunnel.',
+                setupGroup
+            );
+        }
+
         // Tool index rows (order defines display order on the Tools page).
         createToolIndexRow(toolsIndexGroup, {
             title: 'Document Tool',
@@ -2028,6 +2237,14 @@ export default class KatabPreferences extends ExtensionPreferences {
             iconName: 'system-search-symbolic',
             enabledKey: 'web-search-enabled',
             navPage: webSearchSubpage.navPage,
+        });
+
+        createToolIndexRow(toolsIndexGroup, {
+            title: 'Web Scraper',
+            subtitle: 'Deep-scrape web pages into clean Markdown through your self-hosted Crawl4AI instance.',
+            iconName: 'document-open-symbolic',
+            enabledKey: 'crawl4ai-enabled',
+            navPage: crawl4aiSubpage.navPage,
         });
     }
 

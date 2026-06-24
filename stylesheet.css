@@ -725,6 +725,66 @@
     margin-top: 10px;
 }
 
+/* ── Web Sources Section ───────────────────────────────── */
+
+.katab-chat-sources-box {
+    spacing: 0px;
+    margin-top: 10px;
+    border-radius: 7px;
+    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.katab-chat-sources-toggle {
+    padding: 8px 10px;
+    border-radius: 7px;
+    border: none;
+    background-color: transparent;
+}
+
+.katab-chat-sources-toggle:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.katab-chat-sources-header-row {
+    spacing: 6px;
+}
+
+.katab-chat-sources-arrow {
+    color: rgba(255, 255, 255, 0.42);
+}
+
+.katab-chat-sources-header {
+    font-size: 8.5pt;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.katab-chat-sources-list {
+    spacing: 5px;
+    padding: 0px 10px 8px 10px;
+}
+
+.katab-chat-source-button {
+    background-color: rgba(56, 56, 56, 0.50);
+    color: #a0c4ff;
+    border-radius: 5px;
+    border: 1px solid rgba(160, 196, 255, 0.15);
+    padding: 5px 9px;
+    font-size: 8.5pt;
+}
+
+.katab-chat-source-button:hover {
+    background-color: rgba(80, 80, 80, 0.70);
+    border-color: rgba(160, 196, 255, 0.35);
+    color: #c5ddff;
+}
+
+.katab-chat-source-button:active {
+    background-color: rgba(60, 60, 80, 0.85);
+    color: #ffffff;
+}
+
 .katab-error-box {
     spacing: 6px;
     margin-top: 10px;
@@ -1249,6 +1309,40 @@
     border-color: rgba(0, 0, 0, 0.16);
 }
 
+.katab-theme-light .katab-chat-sources-box {
+    background-color: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.07);
+}
+
+.katab-theme-light .katab-chat-sources-toggle:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.katab-theme-light .katab-chat-sources-arrow {
+    color: rgba(0, 0, 0, 0.35);
+}
+
+.katab-theme-light .katab-chat-sources-header {
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.katab-theme-light .katab-chat-source-button {
+    background-color: rgba(0, 0, 0, 0.04);
+    color: rgba(40, 70, 140, 0.82);
+    border-color: rgba(40, 70, 140, 0.15);
+}
+
+.katab-theme-light .katab-chat-source-button:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+    border-color: rgba(40, 70, 140, 0.30);
+    color: rgba(20, 50, 110, 0.92);
+}
+
+.katab-theme-light .katab-chat-source-button:active {
+    background-color: rgba(200, 210, 230, 0.50);
+    color: rgba(0, 0, 0, 0.85);
+}
+
 .katab-theme-light .katab-error-box {
     background-color: rgba(243, 139, 168, 0.08);
     border-color: rgba(200, 60, 80, 0.26);
@@ -1559,40 +1653,6 @@
     padding: 2px 8px;
 }
 
-/* ── Save-as-preset bar ─────────────────────────────────────────────────── */
-.katab-preset-save-bar {
-    padding: 8px 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    background-color: rgba(0, 0, 0, 0.20);
-    spacing: 8px;
-}
-
-.katab-preset-name-editor {
-    background-color: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.13);
-    border-radius: 6px;
-    padding: 6px 10px;
-    min-height: 32px;
-}
-
-.katab-preset-name-hint {
-    color: rgba(255, 255, 255, 0.30);
-    font-size: 12px;
-}
-
-.katab-preset-save-btn {
-    background-color: rgba(100, 200, 120, 0.20);
-    border: 1px solid rgba(100, 200, 120, 0.30);
-    border-radius: 6px;
-    padding: 4px 12px;
-    color: rgba(140, 220, 160, 0.90);
-    font-size: 12px;
-}
-
-.katab-preset-save-btn:hover {
-    background-color: rgba(100, 200, 120, 0.32);
-}
-
 /* ── Light-theme overrides ──────────────────────────────────────────────── */
 .katab-theme-light .katab-preset-btn {
     background-color: rgba(0, 0, 0, 0.06);
@@ -1685,28 +1745,4 @@
 
 .katab-theme-light .katab-preset-empty-label {
     color: rgba(0, 0, 0, 0.34);
-}
-
-.katab-theme-light .katab-preset-save-bar {
-    background-color: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.08);
-}
-
-.katab-theme-light .katab-preset-name-editor {
-    background-color: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.12);
-}
-
-.katab-theme-light .katab-preset-name-hint {
-    color: rgba(0, 0, 0, 0.28);
-}
-
-.katab-theme-light .katab-preset-save-btn {
-    background-color: rgba(40, 140, 60, 0.12);
-    border-color: rgba(40, 140, 60, 0.22);
-    color: rgba(30, 110, 50, 0.90);
-}
-
-.katab-theme-light .katab-preset-save-btn:hover {
-    background-color: rgba(40, 140, 60, 0.20);
 }

@@ -58,10 +58,19 @@ import {
     WebSearchToolError,
 } from './webSearchTools.js';
 import {
+    CRAWL4AI_TOOL_COMMAND,
+    CRAWL4AI_TOOL_NAME,
+    CRAWL4AI_TOOL_ICON,
+    Crawl4AIError,
+    Crawl4AIRuntime,
+    readCrawl4AIConfig,
+    parseCrawl4AICommand,
+    buildCrawl4AIToolSchema,
+    buildCrawlResultBlock,
+} from './crawl4aiTools.js';
+import {
     loadPresets,
-    addPreset,
     deletePreset,
-    capturePresetFromSettings,
     applyPresetToSettings,
     updatePresetFromSettings,
     reconcileActivePreset,
@@ -91,6 +100,14 @@ const WEB_SEARCH_LOCAL_TOOL = {
     command: WEB_SEARCH_TOOL_COMMAND,
     icon: WEB_SEARCH_TOOL_ICON,
     toolName: WEB_SEARCH_TOOL_NAME,
+};
+
+// Crawl4AI deep page scraping is a local tool for all providers.
+const CRAWL4AI_LOCAL_TOOL = {
+    label: 'Web Scraper',
+    command: CRAWL4AI_TOOL_COMMAND,
+    icon: CRAWL4AI_TOOL_ICON,
+    toolName: CRAWL4AI_TOOL_NAME,
 };
 
 // Cap how many sequential tool-call rounds a single user turn may trigger,
@@ -892,6 +909,7 @@ class KatabDialog {
         this._currentConversationId = null;
         this._documentToolRuntime = new DocumentToolRuntime();
         this._webSearchRuntime = new WebSearchRuntime();
+        this._crawl4aiRuntime = new Crawl4AIRuntime({ timeoutSeconds: 60 });
         this._sessionDocuments = new Map();
         this._ollamaVisionCapabilityCache = new Map();
         this._pendingDocument = null;
@@ -1660,6 +1678,10 @@ class KatabDialog {
         return this._settings.get_boolean('web-search-enabled');
     }
 
+    _isCrawl4AIEnabled() {
+        return this._settings.get_boolean('crawl4ai-enabled');
+    }
+
     _getProviderTools() {
         return PROVIDER_TOOLS[this._currentProvider] || [];
     }
@@ -1670,6 +1692,10 @@ class KatabDialog {
         // which runs its own server-side web search tool.
         if (this._currentProvider !== 'unsloth') {
             tools.push(WEB_SEARCH_LOCAL_TOOL);
+        }
+        // Crawl4AI deep page scraping is a local tool for all providers.
+        if (this._isCrawl4AIEnabled()) {
+            tools.push(CRAWL4AI_LOCAL_TOOL);
         }
         return tools;
     }
@@ -2082,6 +2108,7 @@ class KatabDialog {
             const isLocalWebSearch = tool.toolName === WEB_SEARCH_TOOL_NAME && this._currentProvider !== 'unsloth';
             const documentToolDisabled = tool.toolName === DOCUMENT_TOOL_NAME && !this._isDocumentToolEnabled();
             const webSearchDisabled = isLocalWebSearch && !this._isWebSearchEnabled();
+            const crawl4aiDisabled = tool.toolName === CRAWL4AI_TOOL_NAME && !this._isCrawl4AIEnabled();
             let btn = new St.Button({
                 child: new St.Icon({
                     icon_name: tool.icon,
@@ -2094,7 +2121,7 @@ class KatabDialog {
                 y_align: Clutter.ActorAlign.CENTER,
             });
 
-            if (documentToolDisabled || webSearchDisabled) {
+            if (documentToolDisabled || webSearchDisabled || crawl4aiDisabled) {
                 btn.add_style_class_name('katab-tool-btn-disabled');
             }
 
@@ -2111,6 +2138,11 @@ class KatabDialog {
 
                 if (isLocalWebSearch && !this._isWebSearchEnabled()) {
                     this._addSystemMessage('Web search is available, but it is currently off. Enable it in Settings > Tools > Web Search to use the /search command.');
+                    return;
+                }
+
+                if (tool.toolName === CRAWL4AI_TOOL_NAME && !this._isCrawl4AIEnabled()) {
+                    this._addSystemMessage('Web scraping is available, but it is currently off. Enable it in Settings > Tools > Web Scraper to use the /crawl command.');
                     return;
                 }
 
@@ -2224,14 +2256,6 @@ class KatabDialog {
         }
     }
 
-    _saveCurrentAsPreset(name) {
-        const preset = capturePresetFromSettings(this._settings, name);
-        addPreset(preset);
-        this._settings.set_string('ollama-active-preset', preset.id);
-        this._updatePresetButton();
-        return preset;
-    }
-
     _togglePresetPicker() {
         if (!this._presetPicker) return;
 
@@ -2261,7 +2285,7 @@ class KatabDialog {
 
         if (presets.length === 0) {
             const emptyLabel = new St.Label({
-                text: 'No presets saved yet.\nType a name below and click Save to create one.',
+                text: 'No presets saved yet.\nCreate presets in the Preferences → Ollama page.',
                 style_class: 'katab-preset-empty-label',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -2412,74 +2436,7 @@ class KatabDialog {
         });
         pickerScroll.add_child(this._presetListBox);
 
-        // ── Save-current-as-new-preset bar ─────────────────────────────────────
-        const saveBar = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-preset-save-bar',
-        });
-        picker.add_child(saveBar);
-
-        const nameEditorShell = new St.Widget({
-            style_class: 'katab-preset-name-editor',
-            layout_manager: new Clutter.BinLayout(),
-            x_expand: true,
-        });
-        saveBar.add_child(nameEditorShell);
-
-        const nameHint = new St.Label({
-            text: 'New preset name…',
-            style_class: 'katab-preset-name-hint',
-            x_align: Clutter.ActorAlign.START,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        nameEditorShell.add_child(nameHint);
-
-        this._presetNameEntry = new Clutter.Text({
-            editable: true,
-            selectable: true,
-            reactive: true,
-            single_line_mode: true,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.FILL,
-        });
-        this._presetNameEntry.font_name = 'Sans 10';
-        this._presetNameEntry.connect('text-changed', () => {
-            nameHint.visible = !(this._presetNameEntry.get_text() || '');
-        });
-        this._presetNameEntry.connect('key-press-event', (_actor, event) => {
-            const symbol = event.get_key_symbol();
-            if (symbol === Clutter.KEY_Return || symbol === Clutter.KEY_KP_Enter) {
-                this._doSavePreset(nameHint);
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-        nameEditorShell.add_child(this._presetNameEntry);
-
-        const savePresetBtn = new St.Button({
-            label: 'Save',
-            style_class: 'katab-preset-save-btn',
-            can_focus: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        savePresetBtn.connect('clicked', () => this._doSavePreset(nameHint));
-        saveBar.add_child(savePresetBtn);
-
         return picker;
-    }
-
-    _doSavePreset(nameHint) {
-        const name = (this._presetNameEntry?.get_text() || '').trim();
-        if (!name) {
-            this._presetNameEntry?.grab_key_focus();
-            return;
-        }
-        const saved = this._saveCurrentAsPreset(name);
-        this._presetNameEntry?.set_text('');
-        if (nameHint) nameHint.visible = true;
-        this._refreshPresetPicker();
-        this._addSystemMessage(`Preset "${saved.name}" saved.`);
     }
 
     // ── Shared picker shell (provider + DeepSeek model dropdowns) ─────────────
@@ -3800,6 +3757,16 @@ class KatabDialog {
             }
         }
 
+        if (message.crawl4aiContext) {
+            if (typeof sanitized.content === 'string') {
+                sanitized.content = sanitized.content
+                    ? `${sanitized.content}\n\n${message.crawl4aiContext}`
+                    : message.crawl4aiContext;
+            } else if (sanitized.content === undefined) {
+                sanitized.content = message.crawl4aiContext;
+            }
+        }
+
         if (message.tool_calls !== undefined) {
             sanitized.tool_calls = message.tool_calls;
             // OpenAI-compatible APIs (DeepSeek, OpenAI, Ollama) require content
@@ -3816,12 +3783,19 @@ class KatabDialog {
 
         // For DeepSeek: assistant messages that carry reasoning_content must
         // echo it back. When the current request has thinking enabled the API
-        // requires it on *every* assistant message (to maintain chain-of-thought
-        // continuity). When thinking is disabled we still echo it on tool-call
-        // turns because the API generated that reasoning_content originally and
-        // expects it alongside the tool_calls.
-        if (provider === 'deepseek' && message.reasoning_content) {
-            if (thinkingEnabled || message.tool_calls !== undefined) {
+        // requires it on *every* assistant message — even tool-call turns where
+        // thinking was disabled — to maintain chain-of-thought continuity.
+        // When thinking is disabled we still echo it on tool-call turns because
+        // the API generated that reasoning_content originally and expects it
+        // alongside the tool_calls.
+        if (provider === 'deepseek' && message.role === 'assistant') {
+            if (thinkingEnabled) {
+                // Thinking is ON: every assistant message MUST carry
+                // reasoning_content (at minimum an empty string).
+                sanitized.reasoning_content = message.reasoning_content || '';
+            } else if (message.tool_calls !== undefined && message.reasoning_content) {
+                // Thinking is OFF but this message had tool_calls with
+                // reasoning_content — echo it so the model can continue.
                 sanitized.reasoning_content = message.reasoning_content;
             }
         }
@@ -3858,11 +3832,16 @@ class KatabDialog {
         if (this._isWebSearchEnabled()) {
             return true;
         }
+        if (this._isCrawl4AIEnabled()) {
+            return true;
+        }
 
         return this._messageHistory.some(message => (
             Boolean(message?.webSearchContext)
+            || Boolean(message?.crawl4aiContext)
             || message?.name === WEB_SEARCH_TOOL_NAME
             || message?.name === READ_URL_TOOL_NAME
+            || message?.name === CRAWL4AI_TOOL_NAME
             || (Array.isArray(message?.content) && message.content.some(block => block?.type === 'tool_result'))
         ));
     }
@@ -5129,6 +5108,163 @@ class KatabDialog {
         }
     }
 
+    // ── Web sources collector ───────────────────────────────────────────────
+
+    _collectWebSources() {
+        const sources = [];
+        const seenUrls = new Set();
+
+        const addSource = (url, title = '') => {
+            const key = String(url || '').trim().replace(/\/+$/g, '').toLowerCase();
+            if (!key || seenUrls.has(key)) return;
+            seenUrls.add(key);
+            sources.push({
+                url: key,
+                title: String(title || '').trim() || key.replace(/^https?:\/\//i, ''),
+            });
+        };
+
+        // Extract URLs from plain text using a simple regex
+        const extractUrls = text => {
+            if (typeof text !== 'string') return;
+            const matches = text.matchAll(/https?:\/\/[^\s<>"')\]]+/gi);
+            for (const m of matches) {
+                let url = m[0].replace(/[.,;:!]+$/g, '');
+                if (url.length > 8) addSource(url);
+            }
+        };
+
+        for (const message of this._messageHistory) {
+            // User messages with webSearchContext or crawl4aiContext
+            if (message.webSearchContext) {
+                extractUrls(message.webSearchContext);
+            }
+            if (message.crawl4aiContext) {
+                extractUrls(message.crawl4aiContext);
+            }
+
+            // Tool-call assistant messages: extract URLs from tool call arguments
+            if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
+                for (const tc of message.tool_calls) {
+                    const args = tc.function?.arguments;
+                    if (typeof args === 'object' && args.url) {
+                        addSource(args.url, args.query || '');
+                    }
+                    if (typeof args === 'string') {
+                        try {
+                            const parsed = JSON.parse(args);
+                            if (parsed.url) addSource(parsed.url, parsed.query || '');
+                        } catch (_e) { /* not JSON */ }
+                    }
+                }
+            }
+
+            // Anthropic tool-use blocks
+            if (message.role === 'assistant' && Array.isArray(message.content)) {
+                for (const block of message.content) {
+                    if (block?.type === 'tool_use' && block?.input?.url) {
+                        addSource(block.input.url, block.input.query || '');
+                    }
+                }
+            }
+
+            // Tool result messages: extract URLs from the result text
+            if ((message.role === 'tool' || Array.isArray(message.content))
+                && (message.name === WEB_SEARCH_TOOL_NAME
+                    || message.name === CRAWL4AI_TOOL_NAME
+                    || message.name === READ_URL_TOOL_NAME)) {
+                const content = typeof message.content === 'string'
+                    ? message.content
+                    : Array.isArray(message.content)
+                        ? message.content.map(b => b?.content || '').join('\n')
+                        : '';
+                extractUrls(content);
+            }
+        }
+
+        return sources;
+    }
+
+    _renderSourcesSection(uiElements) {
+        const sourcesBox = uiElements?.sourcesBox;
+        if (!sourcesBox) return;
+
+        sourcesBox.destroy_all_children();
+
+        const sources = this._collectWebSources();
+        if (!sources || sources.length === 0) {
+            sourcesBox.visible = false;
+            return;
+        }
+
+        // Collapsible header row with disclosure arrow
+        const headerRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-chat-sources-header-row',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const arrowIcon = new St.Icon({
+            icon_name: 'pan-end-symbolic',
+            style_class: 'katab-chat-sources-arrow',
+            icon_size: 14,
+        });
+        headerRow.add_child(arrowIcon);
+
+        const headerLabel = new St.Label({
+            text: sources.length === 1 ? '1 Source' : `${sources.length} Sources`,
+            style_class: 'katab-chat-sources-header',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        headerRow.add_child(headerLabel);
+
+        // Toggle button that spans the header row
+        const toggleBtn = new St.Button({
+            style_class: 'katab-chat-sources-toggle',
+            can_focus: true,
+            toggle_mode: true,
+            checked: false,
+            x_expand: true,
+        });
+        toggleBtn.set_child(headerRow);
+
+        // Container for source buttons — hidden by default
+        const sourcesList = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-chat-sources-list',
+            x_expand: true,
+            visible: false,
+        });
+
+        for (const source of sources) {
+            const displayLabel = source.title && source.title !== source.url
+                ? source.title
+                : source.url.replace(/^https?:\/\//i, '');
+            const truncated = this._truncateText(displayLabel, 72);
+
+            const button = new St.Button({
+                label: truncated,
+                style_class: 'katab-chat-source-button',
+                can_focus: true,
+                x_expand: true,
+                x_align: Clutter.ActorAlign.START,
+            });
+            button.connect('clicked', () => this._openExternalLink(source.url));
+            sourcesList.add_child(button);
+        }
+
+        toggleBtn.connect('clicked', () => {
+            const expanded = toggleBtn.checked;
+            sourcesList.visible = expanded;
+            arrowIcon.icon_name = expanded ? 'pan-down-symbolic' : 'pan-end-symbolic';
+        });
+
+        sourcesBox.add_child(toggleBtn);
+        sourcesBox.add_child(sourcesList);
+        sourcesBox.visible = true;
+    }
+
     _updateLinkActions(linkBox, links) {
         if (!linkBox) {
             return;
@@ -5168,6 +5304,7 @@ class KatabDialog {
         let rendered = this._buildAssistantRenderModel(sourceText, options);
         this._renderAssistantSegments(uiElements.contentBox, rendered.segments);
         this._updateLinkActions(uiElements.linkBox, rendered.links);
+        this._renderSourcesSection(uiElements);
 
         if (uiElements.diagnosticBox && uiElements.diagnosticLabel) {
             const details = options.errorDetails ? String(options.errorDetails).trim() : '';
@@ -5466,6 +5603,7 @@ class KatabDialog {
         bubbleBox.add_child(copyBtnRow);
 
         let linkBox = null;
+        let sourcesBox = null;
         let diagnosticBox = null;
         let diagnosticLabel = null;
         if (!isUser) {
@@ -5476,6 +5614,14 @@ class KatabDialog {
                 visible: false,
             });
             bubbleBox.add_child(linkBox);
+
+            sourcesBox = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-chat-sources-box',
+                x_expand: true,
+                visible: false,
+            });
+            bubbleBox.add_child(sourcesBox);
 
             diagnosticBox = new St.BoxLayout({
                 vertical: true,
@@ -5576,12 +5722,12 @@ class KatabDialog {
                 contentBox.add_child(fileRow);
             }
         } else {
-            this._applyAssistantRender({ contentBox, linkBox, diagnosticBox, diagnosticLabel, footerRow: copyBtnRow }, text, { final: true });
+            this._applyAssistantRender({ contentBox, linkBox, sourcesBox, diagnosticBox, diagnosticLabel, footerRow: copyBtnRow }, text, { final: true });
         }
 
         this._scrollToBottom();
 
-        return { contentBox, contentLabel, thinkLabel, thinkWrapper, linkBox, diagnosticBox, diagnosticLabel, metricsLabel, footerRow: copyBtnRow };
+        return { contentBox, contentLabel, thinkLabel, thinkWrapper, linkBox, sourcesBox, diagnosticBox, diagnosticLabel, metricsLabel, footerRow: copyBtnRow };
     }
 
     _scrollToBottom() {
@@ -5703,6 +5849,34 @@ class KatabDialog {
             webSearchQuery = webSearchCommand.query;
         }
 
+        // Manual local web scraping (/crawl) — all providers.
+        // /crawl URL  → scrape that page directly.
+        // /crawl query → first search via SearxNG, then scrape the top result.
+        let crawl4aiTargetUrl = null;
+        let crawl4aiSearchQuery = null;
+        const crawlCommand = parseCrawl4AICommand(promptText);
+        if (crawlCommand?.isCommand) {
+            if (!this._isCrawl4AIEnabled()) {
+                this._addSystemMessage('Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command.', { variant: 'warning' });
+                return;
+            }
+
+            if (crawlCommand.url) {
+                // Direct URL scrape
+                crawl4aiTargetUrl = crawlCommand.url;
+            } else if (crawlCommand.query) {
+                // Search-then-scrape: need to first search to find a URL
+                if (!this._isWebSearchEnabled()) {
+                    this._addSystemMessage('Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search.', { variant: 'warning' });
+                    return;
+                }
+                crawl4aiSearchQuery = crawlCommand.query;
+            } else {
+                this._addSystemMessage('Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release.', { variant: 'warning' });
+                return;
+            }
+        }
+
         const userMessage = {
             role: 'user',
             content: webSearchQuery !== null ? webSearchQuery : promptText,
@@ -5748,6 +5922,50 @@ class KatabDialog {
                 }
             }
 
+            if (crawl4aiTargetUrl !== null || crawl4aiSearchQuery !== null) {
+                const crawlConfig = readCrawl4AIConfig(this._settings);
+                let scrapeUrl = crawl4aiTargetUrl;
+
+                // If user provided a search query, first search to find a URL
+                if (crawl4aiSearchQuery !== null) {
+                    this._applyAssistantRender(uiElements, `Searching for \u201c${crawl4aiSearchQuery}\u201d to scrape\u2026`, { plain: true });
+                    const webConfig = readWebSearchConfig(this._settings);
+                    const searchPayload = await this._webSearchRuntime.search(crawl4aiSearchQuery, webConfig, requestCancellable);
+                    const results = searchPayload?.results || [];
+                    if (results.length === 0) {
+                        this._renderLocalAssistantError(uiElements, `No results found for "${crawl4aiSearchQuery}" to scrape.`);
+                        return;
+                    }
+                    scrapeUrl = results[0].url;
+                    this._applyAssistantRender(
+                        uiElements,
+                        `Found: ${scrapeUrl}\nScraping page content\u2026`,
+                        { plain: true }
+                    );
+                } else {
+                    this._applyAssistantRender(uiElements, `Scraping ${scrapeUrl}\u2026`, { plain: true });
+                }
+
+                if (crawlConfig.fitMarkdownMode === 'bm25') {
+                    crawlConfig.query = crawl4aiSearchQuery || '';
+                }
+
+                const crawlResults = await this._crawl4aiRuntime.crawl(scrapeUrl, crawlConfig, requestCancellable);
+                if (!crawlResults || !crawlResults.length) {
+                    this._renderLocalAssistantError(uiElements, `Could not scrape ${scrapeUrl}.`);
+                    return;
+                }
+
+                const resultBlock = buildCrawlResultBlock(crawlResults[0]);
+                userMessage.crawl4aiContext = resultBlock;
+                this._messageHistory[this._messageHistory.length - 1] = userMessage;
+                this._saveCurrentConversation();
+
+                if (webSearchQuery !== null) {
+                    this._applyAssistantRender(uiElements, `Scraping complete. Sending results to the model\u2026`, { plain: true });
+                }
+            }
+
             if (webSearchQuery !== null) {
                 this._applyAssistantRender(uiElements, `Searching the web for \u201c${webSearchQuery}\u201d\u2026`, { plain: true });
                 const webConfig = readWebSearchConfig(this._settings);
@@ -5781,6 +5999,11 @@ class KatabDialog {
             }
 
             if (e instanceof WebSearchToolError) {
+                this._renderLocalAssistantError(uiElements, e.message);
+                return;
+            }
+
+            if (e instanceof Crawl4AIError) {
                 this._renderLocalAssistantError(uiElements, e.message);
                 return;
             }
@@ -5824,6 +6047,9 @@ class KatabDialog {
             && webSearchAutonomous
             && (this._toolIterations || 0) < WEB_SEARCH_MAX_TOOL_ITERATIONS;
 
+        const crawl4aiAutonomous = this._isCrawl4AIEnabled() && this._settings.get_boolean('crawl4ai-autonomous-enabled');
+        const advertiseCrawl4AI = crawl4aiAutonomous && (this._toolIterations || 0) < WEB_SEARCH_MAX_TOOL_ITERATIONS;
+
         // Compute DeepSeek effective thinking state early so it can be threaded
         // into message sanitization for reasoning_content echo.
         let deepseekEffectiveThinking = false;
@@ -5863,6 +6089,9 @@ class KatabDialog {
             if (advertiseLocalTools) {
                 payload.tools = buildWebSearchToolSchemas({ provider: 'openai', fetchPageEnabled: webSearchFetchPage });
             }
+            if (advertiseCrawl4AI) {
+                payload.tools = [...(payload.tools || []), ...buildCrawl4AIToolSchema({ provider: 'openai' })];
+            }
         } else if (provider === 'anthropic') {
             if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
                 endpoint += 'v1/messages';
@@ -5888,6 +6117,9 @@ class KatabDialog {
             if (advertiseLocalTools) {
                 payload.tools = buildWebSearchToolSchemas({ provider: 'anthropic', fetchPageEnabled: webSearchFetchPage });
             }
+            if (advertiseCrawl4AI) {
+                payload.tools = [...(payload.tools || []), ...buildCrawl4AIToolSchema({ provider: 'anthropic' })];
+            }
         } else if (provider === 'deepseek') {
             if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions')) {
                 if (!endpoint.endsWith('/')) endpoint += '/';
@@ -5910,16 +6142,16 @@ class KatabDialog {
             let deepseekMessages = this._withSystemPromptText(apiMessages, deepseekPrompt);
 
             // Tools and JSON mode are mutually exclusive on DeepSeek.
-            const hasTools = advertiseLocalTools && !jsonMode;
+            const hasTools = (advertiseLocalTools || advertiseCrawl4AI) && !jsonMode;
 
             // When thinking is enabled the API requires reasoning_content on every
-            // assistant message. Messages from old conversations may lack it.
-            // Inject an empty placeholder so the API doesn't reject the request.
-            // Skip tool-call messages — those intentionally omit reasoning_content
-            // when thinking was disabled for that turn.
+            // assistant message. _sanitizeHistoryMessage already ensures every
+            // assistant message carries at least an empty string when thinking is
+            // on. This loop is a defense-in-depth pass for any messages that may
+            // have slipped through (e.g. from old conversation files).
             if (deepseekEffectiveThinking) {
                 for (const msg of deepseekMessages) {
-                    if (msg.role === 'assistant' && msg.reasoning_content === undefined && !msg.tool_calls) {
+                    if (msg.role === 'assistant' && msg.reasoning_content === undefined) {
                         msg.reasoning_content = '';
                     }
                 }
@@ -5961,6 +6193,9 @@ class KatabDialog {
             // Tools and JSON mode are mutually exclusive on DeepSeek.
             if (hasTools) {
                 payload.tools = buildWebSearchToolSchemas({ provider: 'openai', fetchPageEnabled: webSearchFetchPage });
+                if (advertiseCrawl4AI) {
+                    payload.tools = [...payload.tools, ...buildCrawl4AIToolSchema({ provider: 'openai' })];
+                }
                 payload.tool_choice = 'auto';
             }
         } else if (provider === 'ollama') {
@@ -6039,6 +6274,9 @@ class KatabDialog {
 
             if (advertiseLocalTools) {
                 payload.tools = buildWebSearchToolSchemas({ provider: 'openai', fetchPageEnabled: webSearchFetchPage });
+            }
+            if (advertiseCrawl4AI) {
+                payload.tools = [...(payload.tools || []), ...buildCrawl4AIToolSchema({ provider: 'openai' })];
             }
         }
 
@@ -6621,8 +6859,11 @@ class KatabDialog {
                 tool_calls: toolCalls,
             };
             // DeepSeek requires reasoning_content echoed back on the tool-call turn.
-            if (activeProvider === 'deepseek' && reasoningContent) {
-                assistantToolMsg.reasoning_content = reasoningContent;
+            // Even when thinking was disabled for tools, the API still needs the
+            // field present (empty string) so the next thinking-enabled turn can
+            // include this message without a missing-key rejection.
+            if (activeProvider === 'deepseek') {
+                assistantToolMsg.reasoning_content = reasoningContent || '';
             }
             pendingMessages.push(assistantToolMsg);
         }
@@ -6653,6 +6894,19 @@ class KatabDialog {
                         const page = await this._webSearchRuntime.fetchPage(targetUrl, config, cancellable);
                         resultText = buildReadUrlResultBlock(page);
                     }
+                } else if (toolName === CRAWL4AI_TOOL_NAME) {
+                    const targetUrl = String(args.url ?? '').trim();
+                    if (!targetUrl) {
+                        resultText = 'No URL was provided to scrape.';
+                    } else {
+                        this._applyAssistantRender(uiElements, `Scraping ${targetUrl}\u2026`, { plain: true });
+                        const crawlConfig = readCrawl4AIConfig(this._settings);
+                        if (crawlConfig.fitMarkdownMode === 'bm25') {
+                            crawlConfig.query = String(args.query ?? '').trim();
+                        }
+                        const crawlResults = await this._crawl4aiRuntime.crawl(targetUrl, crawlConfig, cancellable);
+                        resultText = buildCrawlResultBlock(crawlResults[0]);
+                    }
                 } else {
                     resultText = `Tool ${toolName || 'unknown'} is not implemented locally in Katab.`;
                 }
@@ -6662,7 +6916,9 @@ class KatabDialog {
                 }
                 resultText = e instanceof WebSearchToolError
                     ? `Web search error: ${e.message}`
-                    : `Error executing tool: ${e.message}`;
+                    : e instanceof Crawl4AIError
+                        ? `Web scraping error: ${e.message}`
+                        : `Error executing tool: ${e.message}`;
             }
 
             if (activeProvider === 'anthropic') {

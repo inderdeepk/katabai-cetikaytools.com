@@ -2,6 +2,16 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Soup from 'gi://Soup';
 
+import {
+    isPrivateIPv4,
+    isBlockedIPv6,
+    isBlockedHost,
+    assertFetchableUrl as _assertFetchableUrlBase,
+    getUrlHost,
+    resolveRedirectUrl as _resolveRedirectUrlBase,
+    lookupHostAddresses,
+} from './networkGuard.js';
+
 export const WEB_SEARCH_TOOL_COMMAND = '/search';
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
 export const WEB_SEARCH_TOOL_ICON = 'system-search-symbolic';
@@ -295,157 +305,18 @@ export function htmlToText(html) {
     return text.trim();
 }
 
-// ── SSRF protection ───────────────────────────────────────────────────────────
-
-function isPrivateIPv4(host) {
-    const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-    if (!match) {
-        return false;
-    }
-
-    const octets = match.slice(1).map(Number);
-    if (octets.some(value => value > 255)) {
-        return false;
-    }
-
-    const [a, b] = octets;
-    if (a === 10 || a === 127 || a === 0) {
-        return true;
-    }
-    if (a === 169 && b === 254) {
-        return true; // link-local
-    }
-    if (a === 172 && b >= 16 && b <= 31) {
-        return true;
-    }
-    if (a === 192 && b === 168) {
-        return true;
-    }
-    if (a === 100 && b >= 64 && b <= 127) {
-        return true; // carrier-grade NAT
-    }
-    if (a === 192 && b === 0) {
-        return true;
-    }
-    if (a === 198 && (b === 18 || b === 19)) {
-        return true; // benchmark networks
-    }
-    if (a >= 224) {
-        return true; // multicast and reserved ranges
-    }
-
-    return false;
-}
-
-function isBlockedIPv6(host) {
-    const value = host.toLowerCase();
-    if (value === '::1' || value === '::') {
-        return true;
-    }
-    if (value.startsWith('fc') || value.startsWith('fd')) {
-        return true; // unique local fc00::/7
-    }
-    if (value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb')) {
-        return true; // link-local fe80::/10
-    }
-    const mapped = value.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (mapped) {
-        return isPrivateIPv4(mapped[1]);
-    }
-
-    return false;
-}
-
-function isBlockedHost(host, allowLocal) {
-    if (allowLocal) {
-        return false;
-    }
-    if (!host) {
-        return true;
-    }
-
-    let value = host.toLowerCase();
-    if (value.startsWith('[') && value.endsWith(']')) {
-        value = value.slice(1, -1);
-    }
-
-    if (value === 'localhost' || value.endsWith('.localhost') || value.endsWith('.local')) {
-        return true;
-    }
-    if (isPrivateIPv4(value)) {
-        return true;
-    }
-    if (value.includes(':') && isBlockedIPv6(value)) {
-        return true;
-    }
-
-    return false;
-}
+// ── SSRF protection (delegates to shared networkGuard.js) ─────────────────────
 
 function assertFetchableUrl(rawUrl, { allowLocal = false } = {}) {
-    const url = (rawUrl || '').trim();
-    if (!url) {
-        throw new WebSearchToolError('No URL was provided to read.', { code: 'no-url' });
-    }
-
-    let uri;
-    try {
-        uri = GLib.Uri.parse(url, GLib.UriFlags.NONE);
-    } catch (_error) {
-        throw new WebSearchToolError(`"${url}" is not a valid URL.`, { code: 'invalid-url' });
-    }
-
-    const scheme = (uri.get_scheme() || '').toLowerCase();
-    if (scheme !== 'http' && scheme !== 'https') {
-        throw new WebSearchToolError('Only http and https URLs can be read.', { code: 'bad-scheme' });
-    }
-
-    const host = uri.get_host() || '';
-    if (isBlockedHost(host, allowLocal)) {
-        throw new WebSearchToolError(
-            `Reading ${host || 'that address'} is blocked because it points to a private or local network. Enable local addresses in Settings if you trust it.`,
-            { code: 'blocked-host' }
-        );
-    }
-
-    return url;
-}
-
-function getUrlHost(url) {
-    try {
-        return GLib.Uri.parse(url, GLib.UriFlags.NONE).get_host() || '';
-    } catch (_error) {
-        return '';
-    }
+    return _assertFetchableUrlBase(rawUrl, { allowLocal }, WebSearchToolError);
 }
 
 function resolveRedirectUrl(baseUrl, location) {
-    const target = (location || '').trim();
-    if (!target) {
+    try {
+        return _resolveRedirectUrlBase(baseUrl, location);
+    } catch (_error) {
         throw new WebSearchToolError('The page redirected without a Location header.', { code: 'bad-redirect' });
     }
-    try {
-        return GLib.Uri.resolve_relative(baseUrl, target, GLib.UriFlags.NONE);
-    } catch (_error) {
-        throw new WebSearchToolError('The page redirected to an invalid URL.', { code: 'bad-redirect' });
-    }
-}
-
-function lookupHostAddresses(host, cancellable = null) {
-    return new Promise((resolve, reject) => {
-        try {
-            const resolver = Gio.Resolver.get_default();
-            resolver.lookup_by_name_async(host, cancellable, (source, result) => {
-                try {
-                    resolve(source.lookup_by_name_finish(result) || []);
-                } catch (error) {
-                    reject(error);
-                }
-            });
-        } catch (error) {
-            reject(error);
-        }
-    });
 }
 
 // ── Shared parsing helpers ────────────────────────────────────────────────────
