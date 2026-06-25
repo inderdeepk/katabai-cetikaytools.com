@@ -78,15 +78,15 @@ import {
 } from './presetManager.js';
 
 const PROVIDER_TOOLS = {
+    'ollama': [],
+    'deepseek': [],
     'unsloth': [
         { label: 'Web Search', command: '/search', icon: 'system-search-symbolic', toolName: 'web_search' },
         { label: 'Python', command: '/python', icon: 'applications-development-symbolic', toolName: 'python' },
         { label: 'Terminal', command: '/terminal', icon: 'utilities-terminal-symbolic', toolName: 'terminal' }
     ],
-    'ollama': [],
     'openai': [],
-    'anthropic': [],
-    'deepseek': []
+    'anthropic': []
 };
 
 const LOCAL_TOOLS = [
@@ -116,10 +116,10 @@ const WEB_SEARCH_MAX_TOOL_ITERATIONS = 5;
 
 const PROVIDER_META = {
     'ollama': { label: 'Ollama', iconFile: 'ollama.svg' },
+    'deepseek': { label: 'DeepSeek', iconFile: 'deepseek.svg' },
     'unsloth': { label: 'Unsloth Studio', iconFile: 'unsloth.png' },
     'openai': { label: 'OpenAI', iconFile: 'openai.svg' },
     'anthropic': { label: 'Anthropic', iconFile: 'claude.svg' },
-    'deepseek': { label: 'DeepSeek', iconFile: 'deepseek.svg' },
 };
 
 // Selectable DeepSeek model variants surfaced in the chat header dropdown.
@@ -991,6 +991,7 @@ class KatabDialog {
         this._draftUsage = 0;
         this._tokenUpdateTimeout = 0;
         this._promptScrollFollowIdleId = 0;
+        this._promptCursorScrollId = 0;
         // Shell-style recall of previously sent prompts via the Up/Down keys.
         this._promptHistory = [];
         this._promptHistoryIndex = -1;
@@ -1357,35 +1358,89 @@ class KatabDialog {
         return Clutter.EVENT_PROPAGATE;
     }
 
+    _scrollToCursorVisible() {
+        if (!this._promptScroll || !this._entry) {
+            return;
+        }
+
+        let pos = this._entry.get_cursor_position();
+        let text = this._entry.get_text() ?? '';
+        if (pos < 0) {
+            pos = text.length;
+        }
+
+        let adj = this._promptScroll.vadjustment;
+        if (!adj || adj.upper <= adj.page_size) {
+            return;  // content fits in viewport — nothing to scroll
+        }
+
+        // Estimate the cursor's vertical pixel position.  A simple
+        // character-proportional calculation (pos / totalChars) * upper
+        // is inaccurate because a single \n has the visual weight of an
+        // entire line (~50 regular chars).  We model each newline as
+        // contributing one full line-height slice of the total height,
+        // then distribute the remaining height proportionally by chars.
+        let totalChars = Math.max(1, text.length);
+        let totalNewlines = (text.match(/\n/g) || []).length;
+        let newlinesBefore = (text.slice(0, pos).match(/\n/g) || []).length;
+
+        let lineH = PROMPT_INPUT_SCROLL_STEP;
+        let newlineShare = Math.min(totalNewlines * lineH, adj.upper * 0.95);
+        let charShare = Math.max(1, adj.upper - newlineShare);
+        let nonNewlineTotal = Math.max(1, totalChars - totalNewlines);
+        let nonNewlineBefore = Math.max(0, pos - newlinesBefore);
+
+        let cursorY = newlinesBefore * (newlineShare / Math.max(1, totalNewlines))
+            + (nonNewlineBefore / nonNewlineTotal) * charShare;
+
+        // Clamp to sane bounds.
+        cursorY = Math.max(0, Math.min(adj.upper, cursorY));
+
+        let visibleTop = adj.value;
+        let visibleBottom = adj.value + adj.page_size;
+        let margin = PROMPT_INPUT_SCROLL_STEP;
+
+        if (cursorY < visibleTop + margin) {
+            adj.set_value(Math.max(adj.lower, cursorY - margin));
+        } else if (cursorY > visibleBottom - margin) {
+            adj.set_value(Math.min(adj.upper - adj.page_size,
+                cursorY - adj.page_size + margin));
+        }
+    }
+
+    _doPromptScrollToBottom() {
+        if (!this._promptScroll) {
+            return;
+        }
+
+        let adjustment = this._promptScroll.vadjustment;
+        if (!adjustment || adjustment.upper <= adjustment.page_size) {
+            return;
+        }
+
+        adjustment.set_value(adjustment.upper - adjustment.page_size);
+    }
+
     _queuePromptScrollToBottom() {
         if (!this._promptScroll) {
             return;
         }
 
+        // Defer the scroll: doing it synchronously inside the text-changed
+        // handler races with Clutter.Text's own layout recalculation and can
+        // break line-wrapping.  The idle fires after all layout is settled.
         if (this._promptScrollFollowIdleId) {
             GLib.source_remove(this._promptScrollFollowIdleId);
         }
 
         this._promptScrollFollowIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._promptScrollFollowIdleId = 0;
-
-            if (!this._promptScroll) {
-                return GLib.SOURCE_REMOVE;
+            if (this._isPromptCaretAtEnd()) {
+                this._doPromptScrollToBottom();
             }
-
-            let adjustment = this._promptScroll.vadjustment;
-            if (!adjustment) {
-                return GLib.SOURCE_REMOVE;
-            }
-
-            // Only follow the newest text when the caret is at the end of the
-            // draft. Otherwise leave the scroll position alone so scrolling up
-            // to review earlier text is not yanked back down on every edit.
-            if (!this._isPromptCaretAtEnd()) {
-                return GLib.SOURCE_REMOVE;
-            }
-
-            adjustment.set_value(Math.max(adjustment.lower, adjustment.upper - adjustment.page_size));
+            // Always re-check cursor visibility after layout settles —
+            // catches typing, pastes, and any other cursor movement.
+            this._scrollToCursorVisible();
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -1436,8 +1491,10 @@ class KatabDialog {
         // Clutter.Text never exceeds GPU paint limits and goes blank. With the
         // character cap in place this ceiling is only a belt-and-suspenders.
         let editorHeight = Math.min(contentHeight, PROMPT_INPUT_MAX_EDITOR_HEIGHT);
+        let scrollHeight = Math.max(PROMPT_INPUT_MIN_HEIGHT, Math.min(PROMPT_INPUT_MAX_HEIGHT, editorHeight));
+
         this._promptEditor.set_height(editorHeight);
-        this._promptScroll.set_height(Math.max(PROMPT_INPUT_MIN_HEIGHT, Math.min(PROMPT_INPUT_MAX_HEIGHT, editorHeight)));
+        this._promptScroll.set_height(scrollHeight);
     }
 
     _enforcePromptCharLimit() {
@@ -3047,6 +3104,12 @@ class KatabDialog {
             x_align: Clutter.ActorAlign.FILL,
             y_align: Clutter.ActorAlign.CENTER,
         });
+        // Keep the visible area centred on the cursor whenever it moves —
+        // typing, arrow keys, clicks, etc.  Clutter.Text does *not*
+        // automatically scroll its parent St.ScrollView, so we do it here.
+        this._entry.connect('notify::cursor-position', () => {
+            this._scrollToCursorVisible();
+        });
         this._entry.connect('scroll-event', this._handlePromptScrollEvent.bind(this));
         this._promptEditor.add_child(this._entry);
         this._applyPromptTextColor();
@@ -3111,6 +3174,15 @@ class KatabDialog {
                 let direction = (symbol === Clutter.KEY_Up || symbol === Clutter.KEY_KP_Up) ? -1 : 1;
                 if (this._navigatePromptHistory(direction))
                     return Clutter.EVENT_STOP;
+
+                // Cursor moved inside existing text — schedule a scroll check.
+                if (!this._promptCursorScrollId) {
+                    this._promptCursorScrollId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                        this._promptCursorScrollId = 0;
+                        this._scrollToCursorVisible();
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
                 return Clutter.EVENT_PROPAGATE;
             }
 
@@ -3199,6 +3271,20 @@ class KatabDialog {
                     this._entry.set_selection(0, len);
                     return Clutter.EVENT_STOP;
                 }
+            }
+
+            // For keys that Clutter.Text will handle internally (arrow keys,
+            // Home/End, Page Up/Down, typing, etc.) schedule a deferred scroll
+            // check.  notify::cursor-position does *not* fire reliably on
+            // Clutter.Text in all GNOME Shell versions, so we trigger here.
+            // Use a debounced idle to avoid queueing hundreds of callbacks
+            // during rapid typing — text-changed already covers that path.
+            if (!this._promptCursorScrollId) {
+                this._promptCursorScrollId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    this._promptCursorScrollId = 0;
+                    this._scrollToCursorVisible();
+                    return GLib.SOURCE_REMOVE;
+                });
             }
 
             return Clutter.EVENT_PROPAGATE;

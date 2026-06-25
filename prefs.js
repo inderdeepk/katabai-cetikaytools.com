@@ -216,6 +216,12 @@ export default class KatabPreferences extends ExtensionPreferences {
                 iconFile: 'ollama.svg',
                 description: 'Run local models with a fast desktop-native workflow and deep tuning controls.',
             },
+            deepseek: {
+                label: 'DeepSeek',
+                pageTitle: 'DeepSeek',
+                iconFile: 'deepseek.svg',
+                description: 'Access DeepSeek V4 models with a 1M token context window and advanced reasoning. Requires a funded prepaid account.',
+            },
             unsloth: {
                 label: 'Unsloth Studio',
                 pageTitle: 'Unsloth',
@@ -233,12 +239,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                 pageTitle: 'Claude',
                 iconFile: 'claude.svg',
                 description: 'Use Claude models through Anthropic for careful reasoning, writing, and long-context work.',
-            },
-            deepseek: {
-                label: 'DeepSeek',
-                pageTitle: 'DeepSeek',
-                iconFile: 'deepseek.svg',
-                description: 'Access DeepSeek V4 models with a 1M token context window and advanced reasoning. Requires a funded prepaid account.',
             },
         };
 
@@ -1356,40 +1356,6 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         ollamaPage.add(generationGroup);
 
-        // --- Unsloth Settings ---
-        const unslothPage = createProviderPage('unsloth');
-        const unslothGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', 'e.g. http://localhost:8888/v1 — the Unsloth Studio API root.', 'unsloth-url', unslothGroup);
-        createStringRow('API Key', 'Leave blank for local instances running without authentication.', 'unsloth-api-key', unslothGroup, true);
-        createStringRow('Model', 'The model identifier served by your Unsloth Studio instance.', 'unsloth-model', unslothGroup);
-        createIntRow('Context Window Size', 'Maximum tokens per request. Match this to your loaded model capacity.', 'unsloth-num-ctx', unslothGroup, 1024, 1048576, 1024);
-        unslothPage.add(unslothGroup);
-
-        const unslothToolsGroup = createPreferencesGroup({
-            title: 'Tools',
-            description: 'Unsloth Studio runs web search, Python, and terminal as server-side tools on its own backend.',
-        });
-        unslothPage.add(unslothToolsGroup);
-        createInfoRow(
-            'Server-side tools',
-            'When Unsloth is the active provider, tool calls are executed by Unsloth Studio, not by Katab. The local SearxNG Web Search tool on the Tools page applies to the Ollama, OpenAI, Anthropic, and DeepSeek providers instead.',
-            unslothToolsGroup
-        );
-        const openaiPage = createProviderPage('openai');
-        const openaiGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', 'e.g. https://api.openai.com/v1 — change only when using a proxy or compatible endpoint.', 'openai-url', openaiGroup);
-        createStringRow('API Key', 'Your OpenAI secret key starting with sk-. Never share or commit this value.', 'openai-api-key', openaiGroup, true);
-        createStringRow('Model', 'The model ID from your OpenAI account, such as gpt-4o or gpt-4o-mini.', 'openai-model', openaiGroup);
-        openaiPage.add(openaiGroup);
-
-        // --- Anthropic Settings ---
-        const anthropicPage = createProviderPage('anthropic');
-        const anthropicGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', 'e.g. https://api.anthropic.com — change only when using a proxy.', 'anthropic-url', anthropicGroup);
-        createStringRow('API Key', 'Your Anthropic key starting with sk-ant-. Never share or commit this value.', 'anthropic-api-key', anthropicGroup, true);
-        createStringRow('Model', 'The Claude model ID from your account, such as claude-opus-4-5.', 'anthropic-model', anthropicGroup);
-        anthropicPage.add(anthropicGroup);
-
         // --- DeepSeek Settings ---
         const deepseekPage = createProviderPage('deepseek');
 
@@ -1439,13 +1405,13 @@ export default class KatabPreferences extends ExtensionPreferences {
         const effortLabels = ['High (balanced speed and depth)', 'Max (maximum reasoning depth)'];
         const effortRow = createChoiceRow(
             'Reasoning Effort',
-            'Computational budget for the thinking phase. ‘High’ is the recommended default; ‘Max’ allocates the deepest analysis.',
+            'Computational budget for the thinking phase. \u2018High\u2019 is the recommended default; \u2018Max\u2019 allocates the deepest analysis.',
             deepseekReasoningGroup
         );
         setStringList(effortRow, effortLabels);
         effortRow._choiceValues = effortValues;
 
-        // Sync effort row ↔ GSettings
+        // Sync effort row \u2194 GSettings
         const syncEffortRow = () => {
             const currentEffort = settings.get_string('deepseek-reasoning-effort') || 'high';
             const idx = effortValues.indexOf(currentEffort);
@@ -1489,7 +1455,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const createBalanceDisplayRow = (title, subtitle, getter) => {
             const valueLabel = addCssClasses(new Gtk.Label({
-                label: '—',
+                label: '\u2014',
                 xalign: 0,
                 halign: Gtk.Align.START,
                 valign: Gtk.Align.CENTER,
@@ -1503,7 +1469,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             }), 'katab-prefs-info-row');
 
             const syncFromSettings = () => {
-                valueLabel.set_text(getter() || '—');
+                valueLabel.set_text(getter() || '\u2014');
             };
             syncFromSettings();
             settings.connect(`changed::deepseek-balance-${title.toLowerCase().replace(/\s+/g, '-')}`, syncFromSettings);
@@ -1527,7 +1493,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             () => {
                 let ts = settings.get_int64('deepseek-balance-last-checked');
                 if (!ts) return 'Not checked yet';
-                return settings.get_boolean('deepseek-balance-available') ? 'Yes' : 'No — top up needed';
+                return settings.get_boolean('deepseek-balance-available') ? 'Yes' : 'No \u2014 top up needed';
             }
         );
 
@@ -1535,7 +1501,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         createBalanceDisplayRow(
             'Currency',
             'The currency of your DeepSeek account balance.',
-            () => settings.get_string('deepseek-balance-currency') || '—'
+            () => settings.get_string('deepseek-balance-currency') || '\u2014'
         );
 
         // Total Balance
@@ -1545,7 +1511,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             () => {
                 let total = settings.get_string('deepseek-balance-total');
                 let currency = settings.get_string('deepseek-balance-currency');
-                if (!total) return '—';
+                if (!total) return '\u2014';
                 return currency ? `${currency} ${total}` : total;
             }
         );
@@ -1557,7 +1523,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             () => {
                 let granted = settings.get_string('deepseek-balance-granted');
                 let currency = settings.get_string('deepseek-balance-currency');
-                if (!granted) return '—';
+                if (!granted) return '\u2014';
                 return currency ? `${currency} ${granted}` : granted;
             }
         );
@@ -1569,7 +1535,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             () => {
                 let toppedUp = settings.get_string('deepseek-balance-topped-up');
                 let currency = settings.get_string('deepseek-balance-currency');
-                if (!toppedUp) return '—';
+                if (!toppedUp) return '\u2014';
                 return currency ? `${currency} ${toppedUp}` : toppedUp;
             }
         );
@@ -1615,6 +1581,40 @@ export default class KatabPreferences extends ExtensionPreferences {
         });
 
         deepseekPage.add(deepseekBalanceGroup);
+
+        // --- Unsloth Settings ---
+        const unslothPage = createProviderPage('unsloth');
+        const unslothGroup = createPreferencesGroup({ title: 'Connection & Model' });
+        createStringRow('Base URL', 'e.g. http://localhost:8888/v1 — the Unsloth Studio API root.', 'unsloth-url', unslothGroup);
+        createStringRow('API Key', 'Leave blank for local instances running without authentication.', 'unsloth-api-key', unslothGroup, true);
+        createStringRow('Model', 'The model identifier served by your Unsloth Studio instance.', 'unsloth-model', unslothGroup);
+        createIntRow('Context Window Size', 'Maximum tokens per request. Match this to your loaded model capacity.', 'unsloth-num-ctx', unslothGroup, 1024, 1048576, 1024);
+        unslothPage.add(unslothGroup);
+
+        const unslothToolsGroup = createPreferencesGroup({
+            title: 'Tools',
+            description: 'Unsloth Studio runs web search, Python, and terminal as server-side tools on its own backend.',
+        });
+        unslothPage.add(unslothToolsGroup);
+        createInfoRow(
+            'Server-side tools',
+            'When Unsloth is the active provider, tool calls are executed by Unsloth Studio, not by Katab. The local SearxNG Web Search tool on the Tools page applies to the Ollama, OpenAI, Anthropic, and DeepSeek providers instead.',
+            unslothToolsGroup
+        );
+        const openaiPage = createProviderPage('openai');
+        const openaiGroup = createPreferencesGroup({ title: 'Connection & Model' });
+        createStringRow('Base URL', 'e.g. https://api.openai.com/v1 — change only when using a proxy or compatible endpoint.', 'openai-url', openaiGroup);
+        createStringRow('API Key', 'Your OpenAI secret key starting with sk-. Never share or commit this value.', 'openai-api-key', openaiGroup, true);
+        createStringRow('Model', 'The model ID from your OpenAI account, such as gpt-4o or gpt-4o-mini.', 'openai-model', openaiGroup);
+        openaiPage.add(openaiGroup);
+
+        // --- Anthropic Settings ---
+        const anthropicPage = createProviderPage('anthropic');
+        const anthropicGroup = createPreferencesGroup({ title: 'Connection & Model' });
+        createStringRow('Base URL', 'e.g. https://api.anthropic.com — change only when using a proxy.', 'anthropic-url', anthropicGroup);
+        createStringRow('API Key', 'Your Anthropic key starting with sk-ant-. Never share or commit this value.', 'anthropic-api-key', anthropicGroup, true);
+        createStringRow('Model', 'The Claude model ID from your account, such as claude-opus-4-5.', 'anthropic-model', anthropicGroup);
+        anthropicPage.add(anthropicGroup);
 
         // --- Tools Settings ---
         const toolsPage = createPreferencesPage({
