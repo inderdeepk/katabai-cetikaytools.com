@@ -122,6 +122,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             'repeat-penalty': 'double',
             'temperature': 'double',
             'tfs-z': 'double',
+            'think': 'boolean',
             'top-k': 'int',
             'top-p': 'double',
             'typical-p': 'double',
@@ -1227,6 +1228,12 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Raw Prompt Mode',
             'Bypass Ollama chat templating. Leave this off unless your prompt is already fully structured.',
             'ollama-raw',
+            connectionGroup
+        );
+        createBooleanRow(
+            'Thinking Mode',
+            'Enable reasoning traces for models that support hybrid-thinking (Qwen3, DeepSeek-R1, etc.). When off, the model answers directly without a thinking step.',
+            'ollama-think',
             connectionGroup
         );
         createStringRow('Keep Alive', 'How long to keep the model loaded between requests, such as 5m, 0, or -1.', 'ollama-keep-alive', connectionGroup);

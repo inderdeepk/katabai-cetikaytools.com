@@ -5387,6 +5387,30 @@ class KatabDialog {
         if (uiElements.footerRow) {
             uiElements.footerRow._katabCopyText = sourceText;
         }
+
+        // ── Streaming fast path ──────────────────────────────────────────
+        // During non-final streaming renders, avoid the expensive full
+        // markdown parse + widget rebuild + sources/link collection that
+        // would run on every SSE delta. Use a simple text-label update
+        // throttled to ~33 ms (30 fps) to keep the UI responsive.
+        if (!options.final && !options.plain) {
+            const now = GLib.get_monotonic_time(); // microseconds
+            const lastRender = uiElements._katabStreamRenderUs || 0;
+            const throttleUs = options.forceRender ? 0 : 33000; // 33 ms
+
+            if (now - lastRender >= throttleUs || options.clearState) {
+                uiElements._katabStreamRenderUs = now;
+                this._renderAssistantStreamingFast(uiElements, sourceText);
+            }
+            return;
+        }
+        uiElements._katabStreamRenderUs = 0; // reset throttle
+
+        // Discard the streaming fast-path label before doing a full render.
+        if (uiElements._katabStreamLabel) {
+            uiElements._katabStreamLabel = null;
+        }
+
         let rendered = this._buildAssistantRenderModel(sourceText, options);
         this._renderAssistantSegments(uiElements.contentBox, rendered.segments);
         this._updateLinkActions(uiElements.linkBox, rendered.links);
@@ -5396,6 +5420,36 @@ class KatabDialog {
             const details = options.errorDetails ? String(options.errorDetails).trim() : '';
             uiElements.diagnosticLabel.set_text(details);
             uiElements.diagnosticBox.visible = details.length > 0;
+        }
+    }
+
+    // Fast incremental rendering path for streaming text. Uses a single
+    // persisted StLabel so we never destroy/recreate widgets mid-stream.
+    _renderAssistantStreamingFast(uiElements, text) {
+        // On first call, create the persistent streaming label.
+        if (!uiElements._katabStreamLabel) {
+            uiElements.contentBox.destroy_all_children();
+            const label = new St.Label({
+                text: '',
+                style_class: 'katab-chat-content-label',
+                x_expand: true,
+            });
+            label.clutter_text.line_wrap = true;
+            label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            label.clutter_text.single_line_mode = false;
+            label.clutter_text.can_focus = false;
+            this._makeTextSelectable(label);
+            uiElements.contentBox.add_child(label);
+            uiElements._katabStreamLabel = label;
+        }
+
+        // Plain-text update — MUCH faster than Pango markup re-parse.
+        uiElements._katabStreamLabel.clutter_text.set_text(text);
+
+        // Reset the persisted label when switching to full render.
+        if (!uiElements._katabStreamClearOnFull) {
+            uiElements._katabStreamClearOnFull = true;
         }
     }
 
@@ -5580,19 +5634,50 @@ class KatabDialog {
             vertical: true,
             style_class: 'katab-think-wrapper',
             visible: false,
+            x_expand: true,
         });
 
+        // ── Thinking header bar ─────────────────────────────────────────
+        let thinkHeader = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-think-header',
+            x_expand: true,
+        });
+
+        let thinkIcon = new St.Icon({
+            icon_name: 'brain-augemnted-symbolic',
+            style_class: 'katab-think-icon',
+        });
+        thinkHeader.add_child(thinkIcon);
+
+        let thinkTitle = new St.Label({
+            text: 'Thinking',
+            style_class: 'katab-think-title',
+        });
+        thinkHeader.add_child(thinkTitle);
+
         let thinkButton = new St.Button({
-            label: 'Show Thinking',
+            label: 'Show',
             style_class: 'katab-think-toggle-btn',
             toggle_mode: true,
             can_focus: true,
+        });
+        thinkHeader.add_child(thinkButton);
+
+        thinkWrapper.add_child(thinkHeader);
+
+        // ── Thinking content body ───────────────────────────────────────
+        let thinkBody = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-think-body',
+            visible: false,
+            x_expand: true,
         });
 
         let thinkLabel = new St.Label({
             text: '',
             style_class: 'katab-think-label',
-            visible: false,
+            visible: true,
             x_expand: true,
         });
         thinkLabel.clutter_text.line_wrap = true;
@@ -5601,14 +5686,20 @@ class KatabDialog {
         thinkLabel.clutter_text.single_line_mode = false;
         thinkLabel.clutter_text.can_focus = false;
         this._makeTextSelectable(thinkLabel);
+        thinkBody.add_child(thinkLabel);
+
+        thinkWrapper.add_child(thinkBody);
 
         thinkButton.connect('notify::checked', () => {
-            thinkLabel.visible = thinkButton.checked;
-            thinkButton.label = thinkButton.checked ? 'Hide Thinking' : 'Show Thinking';
+            thinkBody.visible = thinkButton.checked;
+            thinkButton.label = thinkButton.checked ? 'Hide' : 'Show';
+            if (thinkButton.checked) {
+                thinkWrapper.add_style_class_name('katab-think-wrapper-expanded');
+            } else {
+                thinkWrapper.remove_style_class_name('katab-think-wrapper-expanded');
+            }
         });
 
-        thinkWrapper.add_child(thinkButton);
-        thinkWrapper.add_child(thinkLabel);
         bubbleBox.add_child(thinkWrapper);
 
         let contentBox = new St.BoxLayout({
@@ -6138,12 +6229,15 @@ class KatabDialog {
 
         // Compute DeepSeek effective thinking state early so it can be threaded
         // into message sanitization for reasoning_content echo.
+        // V4 Pro handles tool calling better when thinking stays enabled alongside
+        // tools; Flash requires thinking to be disabled for structured tool_calls.
         let deepseekEffectiveThinking = false;
         if (provider === 'deepseek') {
             const thinkingEnabled = this._settings.get_boolean('deepseek-thinking-enabled');
             const jsonMode = this._settings.get_boolean('deepseek-json-mode');
             const hasTools = advertiseLocalTools && !jsonMode;
-            deepseekEffectiveThinking = thinkingEnabled && !hasTools;
+            const isProModel = model === 'deepseek-v4-pro';
+            deepseekEffectiveThinking = thinkingEnabled && (!hasTools || isProModel);
         }
 
         const apiMessages = this._getApiMessageHistory(provider, { thinkingEnabled: deepseekEffectiveThinking });
@@ -6340,13 +6434,14 @@ class KatabDialog {
             let keepAlive = this._settings.get_string('ollama-keep-alive');
             let responseFormat = this._settings.get_string('ollama-format');
             let rawMode = this._settings.get_boolean('ollama-raw');
+            let thinkMode = this._settings.get_boolean('ollama-think');
 
             payload = {
                 model: model,
                 messages: apiMessagesWithSystemPolicy,
                 stream: true,
                 keep_alive: keepAlive || "5m",
-                think: true,
+                think: thinkMode,
                 options: options,
             };
 
@@ -6375,6 +6470,9 @@ class KatabDialog {
         let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
         message.set_request_body_from_bytes('application/json', bodyBytes);
 
+        // Request diagnostics suppressed in production; enable for debugging by uncommenting the log below.
+        // log(`[Katab] DeepSeek request model=${model} thinking=${JSON.stringify(payload.thinking)} tools=${(payload.tools||[]).length}`);
+
         this._soupSession.timeout = provider === 'deepseek'
             ? DEEPSEEK_STREAM_TIMEOUT_SECONDS
             : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
@@ -6388,6 +6486,18 @@ class KatabDialog {
         }
 
         let responseState = this._beginActiveResponse(uiElements, provider);
+
+        // Stash the known tool names on the response state so the SSE reader
+        // (a class method without closure access) can use them for the
+        // text-based tool-call fallback parser.
+        responseState._knownToolNames = [];
+        if (advertiseLocalTools || advertiseCrawl4AI) {
+            responseState._knownToolNames.push(WEB_SEARCH_TOOL_NAME, READ_URL_TOOL_NAME);
+        }
+        if (advertiseCrawl4AI) {
+            responseState._knownToolNames.push(CRAWL4AI_TOOL_NAME);
+        }
+
         let currentCancellable = this._cancellable;
 
         this._soupSession.send_async(message, GLib.PRIORITY_DEFAULT, currentCancellable, (session, res) => {
@@ -6481,16 +6591,35 @@ class KatabDialog {
                 if (lineBytes === null) {
                     // Stream ended
                     let finalContent = responseState.accumulatedText;
+                    // Stream ended
                     if (responseState.accumulatedThink && !finalContent && responseState.accumulatedToolCalls.length === 0) {
                         finalContent = provider === 'deepseek'
                             ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
                             : 'Finished thinking, but no response provided.';
                     }
 
-                    if (responseState.accumulatedToolCalls.length > 0) {
+                    // If no structured tool_calls were streamed, check whether the
+                    // model embedded tool invocations as text (seen with some
+                    // reasoning models). Uses the known-tool list stashed on the
+                    // response state by _streamResponse.
+                    let effectiveToolCalls = responseState.accumulatedToolCalls;
+                    if (effectiveToolCalls.length === 0 && finalContent) {
+                        const knownNames = responseState._knownToolNames || [];
+                        const parsed = this._tryParseTextToolCalls(finalContent, knownNames);
+                        if (parsed !== null && parsed.length > 0) {
+                            log(`[Katab] Text-based tool-call fallback recovered ${parsed.length} call(s): ${parsed.map(tc => tc.function?.name).join(', ')}`);
+                            effectiveToolCalls = parsed;
+                            // Strip the raw tool-call text from the content so only
+                            // the model's natural-language framing remains visible.
+                            finalContent = '';
+                        }
+                    }
+
+                    if (effectiveToolCalls.length > 0) {
                         responseState.mode = 'tool';
+                        responseState.accumulatedToolCalls = effectiveToolCalls;
                         this._applyAssistantRender(uiElements, 'Running local tools...', { plain: true });
-                        this._handleToolCalls(responseState.accumulatedToolCalls, uiElements, responseState.accumulatedThink, provider)
+                        this._handleToolCalls(effectiveToolCalls, uiElements, responseState.accumulatedThink, provider)
                             .catch(error => {
                                 if (this._isRequestCancelled(error)) {
                                     return;
@@ -6531,10 +6660,13 @@ class KatabDialog {
                         if (parsed.message.content) {
                             deltaText = parsed.message.content;
                         }
-                        if (parsed.message.reasoning) {
+                        // Ollama returns the thinking trace in `message.thinking` (canonical
+                        // field name). Older or alternative model runners may use `message.reasoning`.
+                        let thinkText = parsed.message.thinking || parsed.message.reasoning;
+                        if (thinkText) {
                             responseState.usesSeparateThinkingStream = true;
                             thinkWrapper.visible = true;
-                            responseState.accumulatedThink += parsed.message.reasoning;
+                            responseState.accumulatedThink += thinkText;
                             thinkLabel.set_text(responseState.accumulatedThink);
                         }
                         if (parsed.message.tool_calls) {
@@ -6721,6 +6853,190 @@ class KatabDialog {
             }
         }
         return {};
+    }
+
+    // Fallback parser: when a model (e.g. DeepSeek V4 Pro) outputs tool calls as
+    // text in the content field instead of using structured delta.tool_calls, try
+    // to recover them so tools still execute. Handles:
+    //   JSON  : {"name":"read_url","arguments":{"url":"https://..."}}
+    //   func  : read_url({"url":"https://..."})
+    //   XML   : <function>read_url</function> followed by key:value pairs
+    _tryParseTextToolCalls(text, knownToolNames) {
+        if (!text || typeof text !== 'string' || !knownToolNames || knownToolNames.length === 0) {
+            return null;
+        }
+
+        const results = [];
+
+        // ----- JSON-object format: {"name":"tool","arguments":{...}} -----
+        // Use a character-by-character scan to find balanced JSON objects that
+        // contain "name" and "arguments" keys referencing a known tool.
+        const jsonResults = this._extractJsonToolCalls(text, knownToolNames);
+        for (const tc of jsonResults) {
+            results.push(tc);
+        }
+
+        // ----- Function-call format: tool_name({...}) -----
+        if (results.length === 0) {
+            for (const toolName of knownToolNames) {
+                // Find tool_name followed by parenthesised JSON arguments
+                const escaped = toolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const re = new RegExp(
+                    escaped + '\\s*\\(\\s*(\\{(?:[^{}]|\\{[^{}]*\\})*\\})\\s*\\)',
+                    'g'
+                );
+                let match;
+                while ((match = re.exec(text)) !== null) {
+                    try {
+                        const args = JSON.parse(match[1]);
+                        results.push({
+                            id: `txt_${results.length}_${Date.now()}`,
+                            type: 'function',
+                            function: { name: toolName, arguments: JSON.stringify(args) },
+                        });
+                    } catch (_) {
+                        // Not valid JSON – skip this match
+                    }
+                }
+            }
+        }
+
+        // ----- XML-ish / tagged format -----
+        // Some models wrap tool calls in <function> or <tool_call> tags with
+        // key:value parameter pairs on subsequent lines.
+        if (results.length === 0) {
+            results.push(...this._extractXmlStyleToolCalls(text, knownToolNames));
+        }
+
+        return results.length > 0 ? results : null;
+    }
+
+    // Scan for balanced JSON objects that look like tool calls: must have "name"
+    // and "arguments" keys where name is a known tool.
+    _extractJsonToolCalls(text, knownToolNames) {
+        const results = [];
+        // Find every `{` that could start a JSON tool-call object
+        for (let i = 0; i < text.length; i++) {
+            if (text[i] !== '{') continue;
+            const slice = text.slice(i);
+            // Quick sanity: the object must mention a known tool name within the
+            // first ~200 chars (avoids deeply scanning every brace).
+            const head = slice.slice(0, 200);
+            const hasKnownName = knownToolNames.some(n => head.includes(`"${n}"`));
+            if (!hasKnownName) continue;
+
+            const extracted = this._extractBalancedJson(slice);
+            if (!extracted) continue;
+
+            try {
+                const obj = JSON.parse(extracted);
+                if (obj && typeof obj === 'object' && typeof obj.name === 'string'
+                    && knownToolNames.includes(obj.name) && obj.arguments !== undefined) {
+                    results.push({
+                        id: `txt_${results.length}_${Date.now()}`,
+                        type: 'function',
+                        function: {
+                            name: obj.name,
+                            arguments: typeof obj.arguments === 'string'
+                                ? obj.arguments
+                                : JSON.stringify(obj.arguments),
+                        },
+                    });
+                }
+            } catch (_) {
+                // Not parseable JSON – skip
+            }
+        }
+        return results;
+    }
+
+    // Extract a balanced JSON object string starting at position 0 of `slice`.
+    _extractBalancedJson(slice) {
+        if (!slice || slice[0] !== '{') return null;
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        for (let j = 0; j < slice.length; j++) {
+            const ch = slice[j];
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (ch === '\\' && inString) {
+                escape = true;
+                continue;
+            }
+            if (ch === '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) continue;
+            if (ch === '{') depth++;
+            else if (ch === '}') {
+                depth--;
+                if (depth === 0) return slice.slice(0, j + 1);
+            }
+        }
+        return null;
+    }
+
+    // Parse XML-style tool call blocks (e.g. <function>read_url</function>
+    // followed by <parameter>key</parameter><parameter>value</parameter> pairs).
+    _extractXmlStyleToolCalls(text, knownToolNames) {
+        const results = [];
+        // Match <function>TOOL_NAME</function> blocks
+        const funcRe = /<function>\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*<\/function>/g;
+        let match;
+        while ((match = funcRe.exec(text)) !== null) {
+            const name = match[1];
+            if (!knownToolNames.includes(name)) continue;
+
+            // Gather <parameter>…</parameter> pairs after this function tag,
+            // stopping at the next <function> tag (or end of text).
+            const after = text.slice(match.index + match[0].length);
+            const nextFunc = after.search(/<function>/i);
+            const scope = nextFunc >= 0 ? after.slice(0, nextFunc) : after;
+
+            const paramRe = /<parameter>\s*([\s\S]*?)\s*<\/parameter>/g;
+            const params = [];
+            let pm;
+            while ((pm = paramRe.exec(scope)) !== null) {
+                params.push(pm[1]);
+            }
+
+            if (params.length === 0) continue;
+
+            // Heuristic: if even number of params, treat as key:value pairs
+            if (params.length % 2 === 0) {
+                const args = {};
+                for (let k = 0; k < params.length; k += 2) {
+                    args[params[k]] = params[k + 1];
+                }
+                results.push({
+                    id: `txt_${results.length}_${Date.now()}`,
+                    type: 'function',
+                    function: { name, arguments: JSON.stringify(args) },
+                });
+            } else {
+                // Single param – treat as the first required arg (e.g. "url")
+                const schema = this._getToolParamSchema(name);
+                const firstKey = schema.length > 0 ? schema[0] : 'url';
+                results.push({
+                    id: `txt_${results.length}_${Date.now()}`,
+                    type: 'function',
+                    function: { name, arguments: JSON.stringify({ [firstKey]: params[0] }) },
+                });
+            }
+        }
+        return results;
+    }
+
+    // Return the ordered parameter names for a known tool (best-effort).
+    _getToolParamSchema(toolName) {
+        if (toolName === WEB_SEARCH_TOOL_NAME) return ['query', 'categories', 'time_range', 'limit'];
+        if (toolName === READ_URL_TOOL_NAME) return ['url'];
+        if (toolName === CRAWL4AI_TOOL_NAME) return ['url', 'query'];
+        return ['url']; // sensible default
     }
 
     _accumulateStreamingToolCalls(responseState, deltaToolCalls) {

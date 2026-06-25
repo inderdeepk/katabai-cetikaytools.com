@@ -32,6 +32,7 @@ export const PRESET_SETTINGS = [
     { key: 'keep-alive', type: 'string', settingKey: 'ollama-keep-alive' },
     { key: 'format', type: 'string', settingKey: 'ollama-format' },
     { key: 'raw', type: 'boolean', settingKey: 'ollama-raw' },
+    { key: 'think', type: 'boolean', settingKey: 'ollama-think' },
     { key: 'use-mmap', type: 'boolean', settingKey: 'ollama-use-mmap' },
     { key: 'use-mlock', type: 'boolean', settingKey: 'ollama-use-mlock' },
     { key: 'num-gpu', type: 'int', settingKey: 'ollama-num-gpu' },

@@ -589,6 +589,125 @@
     spacing: 8px;
 }
 
+/* ════════════════════════════════════════════
+   THINKING / REASONING PANEL
+   ════════════════════════════════════════════ */
+
+.katab-think-wrapper {
+    margin: 6px 0 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(160, 196, 255, 0.16);
+    background-color: rgba(30, 40, 60, 0.45);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.katab-think-wrapper-expanded {
+    border-color: rgba(160, 196, 255, 0.28);
+    background-color: rgba(30, 40, 60, 0.58);
+}
+
+/* ── Thinking header bar ─────────────────── */
+.katab-think-header {
+    spacing: 8px;
+    padding: 8px 10px;
+    background-color: rgba(40, 55, 85, 0.35);
+    border-bottom: 1px solid rgba(160, 196, 255, 0.10);
+}
+
+.katab-think-icon {
+    icon-size: 16px;
+    color: #89b4fa;
+}
+
+.katab-think-title {
+    font-size: 9.5pt;
+    font-weight: 700;
+    color: #89b4fa;
+    letter-spacing: -0.3px;
+}
+
+.katab-think-toggle-btn {
+    padding: 3px 12px;
+    border-radius: 6px;
+    background-color: rgba(137, 180, 250, 0.14);
+    border: 1px solid rgba(137, 180, 250, 0.24);
+    color: #aac8ff;
+    font-size: 8.3pt;
+    font-weight: 600;
+}
+
+.katab-think-toggle-btn:hover {
+    background-color: rgba(137, 180, 250, 0.24);
+    border-color: rgba(137, 180, 250, 0.40);
+    color: #c5ddff;
+}
+
+.katab-think-toggle-btn:checked {
+    background-color: rgba(137, 180, 250, 0.22);
+    border-color: rgba(137, 180, 250, 0.42);
+    color: #ffffff;
+}
+
+/* ── Thinking body (scrollable content) ─── */
+.katab-think-body {
+    padding: 10px 12px 12px;
+    max-height: 320px;
+}
+
+.katab-think-label {
+    font-size: 9.8pt;
+    color: rgba(200, 215, 240, 0.78);
+    font-style: italic;
+    line-height: 1.5;
+}
+
+/* ── Light theme overrides ─────────────── */
+.katab-theme-light .katab-think-wrapper {
+    border-color: rgba(40, 80, 160, 0.18);
+    background-color: rgba(235, 240, 250, 0.72);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-think-wrapper-expanded {
+    border-color: rgba(40, 80, 160, 0.30);
+    background-color: rgba(235, 240, 250, 0.88);
+}
+
+.katab-theme-light .katab-think-header {
+    background-color: rgba(220, 228, 245, 0.55);
+    border-bottom-color: rgba(40, 80, 160, 0.12);
+}
+
+.katab-theme-light .katab-think-icon {
+    color: #3b6ec4;
+}
+
+.katab-theme-light .katab-think-title {
+    color: #3b6ec4;
+}
+
+.katab-theme-light .katab-think-toggle-btn {
+    background-color: rgba(59, 110, 196, 0.10);
+    border-color: rgba(59, 110, 196, 0.22);
+    color: #3b6ec4;
+}
+
+.katab-theme-light .katab-think-toggle-btn:hover {
+    background-color: rgba(59, 110, 196, 0.18);
+    color: #1a4a8a;
+}
+
+.katab-theme-light .katab-think-toggle-btn:checked {
+    background-color: rgba(59, 110, 196, 0.18);
+    border-color: rgba(59, 110, 196, 0.38);
+    color: #1a4a8a;
+}
+
+.katab-theme-light .katab-think-label {
+    color: rgba(30, 50, 80, 0.72);
+}
+
 .katab-markdown-rule {
     height: 1px;
     margin: 4px 0 2px;

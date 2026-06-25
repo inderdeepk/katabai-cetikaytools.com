@@ -190,6 +190,11 @@
       <summary>Raw Prompt Mode</summary>
       <description>Disables model chat templating when enabled.</description>
     </key>
+    <key name="ollama-think" type="b">
+      <default>true</default>
+      <summary>Enable Thinking Mode</summary>
+      <description>Toggle the Ollama 'think' parameter. When enabled, reasoning-capable models (Qwen3, DeepSeek-R1, etc.) produce a reasoning trace alongside their answer. When disabled, the model answers directly without a thinking step.</description>
+    </key>
     
     <!-- Ollama Memory & Hardware -->
     <key name="ollama-use-mmap" type="b">
