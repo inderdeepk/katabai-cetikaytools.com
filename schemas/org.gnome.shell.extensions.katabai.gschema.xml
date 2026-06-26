@@ -178,7 +178,7 @@
     <key name="ollama-keep-alive" type="s">
       <default>'5m'</default>
       <summary>Keep Alive Duration</summary>
-      <description>How long to retain the model in VRAM (e.g., '5m', '0' to unload immediately, '-1' for indefinite).</description>
+      <description>How long to retain the model in VRAM. Must be a duration string with a time unit (s, m, h). Examples: '5m' (5 minutes), '0' (unload immediately), '999999h' (effectively indefinite). The API rejects bare numbers and negative values.</description>
     </key>
     <key name="ollama-format" type="s">
       <default>''</default>

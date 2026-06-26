@@ -1236,7 +1236,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             'ollama-think',
             connectionGroup
         );
-        createStringRow('Keep Alive', 'How long to keep the model loaded between requests, such as 5m, 0, or -1.', 'ollama-keep-alive', connectionGroup);
+        createStringRow('Keep Alive', 'How long to keep the model loaded between requests. Must include a time unit (s, m, h), e.g. 5m, 0, or 999999h for indefinite.', 'ollama-keep-alive', connectionGroup);
 
         const contextGroup = createPreferencesGroup({ title: 'Context Limits' });
         const ctxRow = createChoiceRow(

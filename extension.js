@@ -830,6 +830,11 @@ class ProviderHealthMonitor {
 }
 
 class HistoryManager {
+    static _cache = null;
+    static _dirty = false;
+    static _flushSourceId = 0;
+    static FLUSH_DELAY_MS = 200;
+
     static get filePath() {
         return GLib.build_filenamev([
             GLib.get_user_data_dir(), 'katabai', 'history.json'
@@ -847,26 +852,75 @@ class HistoryManager {
         }
     }
 
-    static load() {
+    static _readFromDisk() {
         try {
             let file = Gio.File.new_for_path(this.filePath);
             let [, bytes] = file.load_contents(null);
-            return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+            this._cache = JSON.parse(new TextDecoder('utf-8').decode(bytes));
         } catch (_e) {
-            return [];
+            this._cache = [];
         }
+        return this._cache;
     }
 
-    static save(arr) {
+    /** Returns the cached array (reads disk once on first access). */
+    static load() {
+        if (this._cache === null) {
+            this._readFromDisk();
+        }
+        return this._cache;
+    }
+
+    /** Returns the cached array without ever touching disk. */
+    static getCached() {
+        if (this._cache === null) {
+            this._readFromDisk();
+        }
+        return this._cache;
+    }
+
+    /** Marks cache dirty and schedules a debounced flush to disk. */
+    static _scheduleFlush() {
+        this._dirty = true;
+        if (this._flushSourceId) {
+            return;
+        }
+        this._flushSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this.FLUSH_DELAY_MS, () => {
+            this._flushSourceId = 0;
+            this._flushNow();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    /** Writes the cache to disk immediately (called by the flush timer). */
+    static _flushNow() {
+        if (!this._dirty || this._cache === null) {
+            return;
+        }
+        this._dirty = false;
         try {
             this.ensureDir();
             let file = Gio.File.new_for_path(this.filePath);
-            let data = new TextEncoder().encode(JSON.stringify(arr, null, 2));
+            let data = new TextEncoder().encode(JSON.stringify(this._cache, null, 2));
             file.replace_contents(data, null, false,
                 Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {
             log(`Katab: failed to save history: ${e.message}`);
         }
+    }
+
+    /** Force an immediate disk flush. Call on disable/destroy. */
+    static flushSync() {
+        if (this._flushSourceId) {
+            GLib.source_remove(this._flushSourceId);
+            this._flushSourceId = 0;
+        }
+        this._flushNow();
+    }
+
+    /** Invalidate the in-memory cache so the next load() re-reads disk. */
+    static invalidateCache() {
+        this._cache = null;
     }
 
     static saveConversation(messageHistory, existingId = null) {
@@ -885,19 +939,21 @@ class HistoryManager {
             messages: [...messageHistory],
         };
 
+        // Use cache instead of re-reading disk
         let arr = this.load();
         if (existingId) {
             arr = arr.filter(e => e.id !== existingId);
         }
         arr.unshift(entry);
         if (arr.length > 50) arr.length = 50;
-        this.save(arr);
+        this._scheduleFlush();
         return id;
     }
 
     static deleteConversation(id) {
-        let arr = this.load().filter(e => e.id !== id);
-        this.save(arr);
+        let arr = this.load();
+        this._cache = arr.filter(e => e.id !== id);
+        this._scheduleFlush();
     }
 }
 
@@ -915,6 +971,13 @@ class KatabDialog {
         this._pendingDocument = null;
         this._attachmentBox = null;
         this._attachmentLabel = null;
+
+        // ── Performance caches ─────────────────────────────────────────
+        this._webSourcesCache = null;          // cached result of _collectWebSources
+        this._webSourcesCacheGen = 0;          // generation counter for invalidation
+        this._historyListCacheIds = null;       // cached history entry IDs for diff
+        this._notifyIdleId = 0;                // debounce ID for _notifyCurrentChatChanged
+        this._focusPromptTimeoutId = 0;         // timeout ID for deferred focusPrompt
 
         this._settings.connect('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
@@ -1107,7 +1170,17 @@ class KatabDialog {
     }
 
     _notifyCurrentChatChanged() {
-        this._extension.notifyCurrentChatChanged();
+        // Debounce rapid-fire notifications into a single idle callback so
+        // that cascades from _saveCurrentConversation / _setStreamingState /
+        // open / close don't trigger redundant indicator repaints.
+        if (this._notifyIdleId) {
+            return;
+        }
+        this._notifyIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._notifyIdleId = 0;
+            this._extension.notifyCurrentChatChanged();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _setStreamingState(isStreaming) {
@@ -2875,6 +2948,7 @@ class KatabDialog {
             }),
             style_class: 'katab-new-chat-btn',
             can_focus: true,
+            reactive: true,
         });
         newChatBtn.connect('clicked', () => this._newChat());
         headerBox.add_child(newChatBtn);
@@ -3682,6 +3756,16 @@ class KatabDialog {
         this._disconnectProviderStatus();
         this._stopWelcomeAnimation();
 
+        if (this._notifyIdleId) {
+            GLib.source_remove(this._notifyIdleId);
+            this._notifyIdleId = 0;
+        }
+
+        if (this._focusPromptTimeoutId) {
+            GLib.source_remove(this._focusPromptTimeoutId);
+            this._focusPromptTimeoutId = 0;
+        }
+
         if (this._promptScrollFollowIdleId) {
             GLib.source_remove(this._promptScrollFollowIdleId);
             this._promptScrollFollowIdleId = 0;
@@ -4316,6 +4400,7 @@ class KatabDialog {
         if (newId) {
             this._currentConversationId = newId;
         }
+        this._historyListCacheIds = null;
         this._notifyCurrentChatChanged();
     }
 
@@ -4324,7 +4409,26 @@ class KatabDialog {
         if (this._currentConversationId === id) {
             this._currentConversationId = null;
         }
+        this._historyListCacheIds = null;
         this._notifyCurrentChatChanged();
+    }
+
+    _isToolCallIntermediary(msg) {
+        // Non-Anthropic path: _handleToolCalls pushes
+        //   { role: 'assistant', tool_calls: [...] }
+        // with NO content field. These are never displayed during live chat
+        // and produce blank bubbles when loaded from history.
+        if (msg.tool_calls && (!msg.content || (typeof msg.content === 'string' && !msg.content.trim()))) {
+            return true;
+        }
+        // Anthropic path: _handleToolCalls pushes
+        //   { role: 'assistant', content: [{ type: 'tool_use', ... }] }
+        // where content is an array of tool-use blocks with no displayable text.
+        if (Array.isArray(msg.content) && msg.content.length > 0
+            && msg.content.every(b => b?.type === 'tool_use')) {
+            return true;
+        }
+        return false;
     }
 
     _loadConversation(entry) {
@@ -4332,21 +4436,46 @@ class KatabDialog {
         this._lastResponseErrored = false;
         this._currentConversationId = entry.id;
         this._messageHistory = [...entry.messages];
+        this._invalidateWebSourcesCache();
         this._sessionDocuments.clear();
         this._setPendingDocument(null);
         this._hasConversationStarted = entry.messages.length > 0;
         this._setWelcomeVisible(!this._hasConversationStarted);
         this._messageList.destroy_all_children();
+
+        // Suppress per-message source collection during replay — it would
+        // scan the growing history on every assistant bubble, producing O(N²)
+        // regex matching. We render sources once after all messages are built.
+        this._loadingConversation = true;
         let hasDetachedAttachments = false;
-        for (let msg of entry.messages) {
-            if (msg.role === 'user') {
-                if (this._getMessageAttachments(msg).length > 0) {
-                    hasDetachedAttachments = true;
+        let lastAssistantUI = null;
+        try {
+            for (let msg of entry.messages) {
+                if (msg.role === 'user') {
+                    if (Array.isArray(msg.content) && msg.content.length > 0
+                        && msg.content.every(b => b?.type === 'tool_result')) {
+                        continue;
+                    }
+                    if (this._getMessageAttachments(msg).length > 0) {
+                        hasDetachedAttachments = true;
+                    }
+                    this._addChatMessage('You', String(msg.content ?? '').trim(), 'user', { ...msg, _showMissingAttachmentNotice: true });
+                } else if (msg.role === 'assistant') {
+                    if (this._isToolCallIntermediary(msg)) {
+                        continue;
+                    }
+                    lastAssistantUI = this._addChatMessage('Katab AI', msg.content, 'assistant', msg);
                 }
-                this._addChatMessage('You', String(msg.content ?? '').trim(), 'user', { ...msg, _showMissingAttachmentNotice: true });
-            } else if (msg.role === 'assistant') {
-                this._addChatMessage('Katab AI', msg.content, 'assistant', msg);
             }
+        } finally {
+            this._loadingConversation = false;
+        }
+
+        // Render sources once using the final assistant bubble so the user
+        // sees the collected web-sources section immediately after load.
+        if (lastAssistantUI) {
+            this._invalidateWebSourcesCache();
+            this._renderSourcesSection(lastAssistantUI);
         }
         if (hasDetachedAttachments) {
             this._addSystemMessage('This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request.', { variant: 'warning' });
@@ -4368,7 +4497,15 @@ class KatabDialog {
             this._startWelcomeAnimation();
         }
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+        // Cancel any pending focusPrompt timeout from a previous showChatView
+        // so it can't steal focus mid-click when the user is already interacting
+        // with header buttons.
+        if (this._focusPromptTimeoutId) {
+            GLib.source_remove(this._focusPromptTimeoutId);
+            this._focusPromptTimeoutId = 0;
+        }
+        this._focusPromptTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+            this._focusPromptTimeoutId = 0;
             if (this.isOpen && this._entry) {
                 this.focusPrompt();
             }
@@ -4380,7 +4517,6 @@ class KatabDialog {
         this._stopWelcomeAnimation();
         this._chatScroll.visible = false;
         this._footerBox.visible = false;
-        // Close preset picker if open
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
@@ -4397,8 +4533,15 @@ class KatabDialog {
     }
 
     _renderHistoryList() {
+        // Avoid redundant rebuilds when the cached history hasn't changed.
+        let arr = HistoryManager.getCached();
+        let currentIds = arr.map(e => e.id).join(',');
+        if (this._historyListCacheIds === currentIds && this._historyContainer.get_n_children() > 0) {
+            return;
+        }
+        this._historyListCacheIds = currentIds;
+
         this._historyContainer.destroy_all_children();
-        let arr = HistoryManager.load();
 
         if (arr.length === 0) {
             let emptyLabel = new St.Label({
@@ -4486,14 +4629,34 @@ class KatabDialog {
         this._saveCurrentConversation();
         this._currentConversationId = null;
         this._messageHistory = [];
+        this._invalidateWebSourcesCache();
+        this._historyListCacheIds = null;
         this._sessionDocuments.clear();
         this._setPendingDocument(null);
         this._currentUsage = 0;
         this._draftUsage = 0;
         this._renderTokenCounter();
+
+        // Clear the prompt so the user sees a clean slate — stale text from
+        // a previous conversation can make it look like the click didn't work.
+        if (this._entry) {
+            this._entry.set_text('');
+        }
+
         this._messageList.destroy_all_children();
         this._showChatView();
         this._addWelcomeMessage();
+
+        // Reset scroll to top so the welcome panel is visible even when the
+        // previously loaded conversation had the viewport scrolled to the bottom.
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            let adj = this._chatScroll?.get_vscroll_bar()?.get_adjustment();
+            if (adj) {
+                adj.value = 0;
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+
         this._notifyCurrentChatChanged();
     }
 
@@ -5197,6 +5360,18 @@ class KatabDialog {
     // ── Web sources collector ───────────────────────────────────────────────
 
     _collectWebSources() {
+        // During conversation load the history is being replayed message by
+        // message — collecting sources per bubble would scan the growing
+        // history O(N²) times. Suppress and do one pass after load completes.
+        if (this._loadingConversation) {
+            return [];
+        }
+
+        // Return cached result when the message history hasn't changed.
+        if (this._webSourcesCache !== null && this._webSourcesCacheGen === this._messageHistory.length) {
+            return this._webSourcesCache;
+        }
+
         const sources = [];
         const seenUrls = new Set();
 
@@ -5268,7 +5443,15 @@ class KatabDialog {
             }
         }
 
+        // Cache the result; invalidated when history length changes
+        this._webSourcesCache = sources;
+        this._webSourcesCacheGen = this._messageHistory.length;
         return sources;
+    }
+
+    /** Invalidate the web-sources cache (call after any history mutation). */
+    _invalidateWebSourcesCache() {
+        this._webSourcesCache = null;
     }
 
     _renderSourcesSection(uiElements) {
@@ -5645,7 +5828,7 @@ class KatabDialog {
         });
 
         let thinkIcon = new St.Icon({
-            icon_name: 'brain-augemnted-symbolic',
+            icon_name: 'lightbulb-symbolic',
             style_class: 'katab-think-icon',
         });
         thinkHeader.add_child(thinkIcon);
@@ -6432,6 +6615,11 @@ class KatabDialog {
             });
 
             let keepAlive = this._settings.get_string('ollama-keep-alive');
+            // The Ollama API requires keep_alive to be a duration string with a unit (e.g. "5m", "999999h").
+            // Bare "-1" is rejected — convert it to the equivalent indefinite duration.
+            if (!keepAlive || keepAlive === '-1') {
+                keepAlive = '999999h';
+            }
             let responseFormat = this._settings.get_string('ollama-format');
             let rawMode = this._settings.get_boolean('ollama-raw');
             let thinkMode = this._settings.get_boolean('ollama-think');
@@ -6440,7 +6628,7 @@ class KatabDialog {
                 model: model,
                 messages: apiMessagesWithSystemPolicy,
                 stream: true,
-                keep_alive: keepAlive || "5m",
+                keep_alive: keepAlive,
                 think: thinkMode,
                 options: options,
             };
@@ -7868,7 +8056,7 @@ const Indicator = GObject.registerClass(
 
         _updateHistoryMenu() {
             this._historySection.removeAll();
-            let arr = HistoryManager.load();
+            let arr = HistoryManager.getCached();
 
             if (arr.length === 0) {
                 let emptyItem = new PopupMenu.PopupMenuItem('No history', { reactive: false });
@@ -7949,6 +8137,8 @@ export default class KatabExtension extends Extension {
     }
 
     disable() {
+        // Flush any pending history writes to disk before shutting down.
+        HistoryManager.flushSync();
         this._removeKeybindings();
         if (this._keybindingChangedId && this._settings) {
             this._settings.disconnect(this._keybindingChangedId);

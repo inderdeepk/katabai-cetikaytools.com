@@ -74,8 +74,8 @@
 
 .katab-message-token-label {
     margin-left: 8px;
-    font-size: 8.5pt;
-    color: rgba(255, 255, 255, 0.60);
+    font-size: 7.8pt;
+    color: rgba(255, 255, 255, 0.45);
 }
 
 .katab-token-progress {
@@ -814,7 +814,8 @@
    ════════════════════════════════════════════ */
 
 .katab-message-footer-row {
-    margin-top: 10px;
+    margin-top: 28px;
+    padding: 0;
     spacing: 8px;
 }
 
@@ -841,14 +842,14 @@
 
 .katab-chat-link-list {
     spacing: 6px;
-    margin-top: 10px;
+    margin-top: 6px;
 }
 
 /* ── Web Sources Section ───────────────────────────────── */
 
 .katab-chat-sources-box {
     spacing: 0px;
-    margin-top: 10px;
+    margin-top: 6px;
     border-radius: 7px;
     background-color: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.07);
@@ -1230,7 +1231,7 @@
 }
 
 .katab-theme-light .katab-message-token-label {
-    color: rgba(0, 0, 0, 0.48);
+    color: rgba(0, 0, 0, 0.38);
 }
 
 .katab-theme-light .katab-dialog-container {
@@ -1402,6 +1403,8 @@
 .katab-theme-light .katab-markdown-table-cell-label-header {
     color: rgba(0, 0, 0, 0.87);
 }
+
+
 
 .katab-theme-light .katab-copy-btn {
     background-color: rgba(0, 0, 0, 0.05);
