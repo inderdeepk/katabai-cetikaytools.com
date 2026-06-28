@@ -976,12 +976,25 @@ class KatabDialog {
         this._webSourcesCache = null;          // cached result of _collectWebSources
         this._webSourcesCacheGen = 0;          // generation counter for invalidation
         this._historyListCacheIds = null;       // cached history entry IDs for diff
+        this._historySearchQuery = '';          // current history search filter
+        this._historySearchTimeoutId = 0;       // debounce ID for search re-render
         this._notifyIdleId = 0;                // debounce ID for _notifyCurrentChatChanged
         this._focusPromptTimeoutId = 0;         // timeout ID for deferred focusPrompt
 
         this._settings.connect('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
             this._addSystemMessage(`Switched engine to ${getProviderLabel(this._currentProvider)}.`);
+            // Dismiss any stale /help box — the command list may differ for
+            // the new provider, and leaving it visible causes it to shrink
+            // as "Switched engine to …" messages pile up above it.
+            if (this._helpMessageBox) {
+                try {
+                    this._helpMessageBox.destroy();
+                } catch (_e) {
+                    // already disposed
+                }
+                this._helpMessageBox = null;
+            }
             if (this._toolsBox) this._updateToolButtons();
             setProviderIcon(this._providerStatusIcon, this._currentProvider, this._extension.path);
             if (this._providerStatusLabel) {
@@ -1832,6 +1845,56 @@ class KatabDialog {
 
     _getAvailableTools() {
         return [...this._getLocalTools(), ...this._getProviderTools()];
+    }
+
+    _buildHelpText() {
+        const lines = ['Katab Commands', '──────────────', ''];
+
+        // Always available
+        lines.push('/help — Show this help message');
+
+        // Document tool (needs enable)
+        if (this._isDocumentToolEnabled()) {
+            lines.push('/doc "path" — Attach a local file (txt, md, pdf, docx, png, jpg)');
+        } else {
+            lines.push('/doc — Attach a local file (disabled — enable in Settings > Tools)');
+        }
+
+        // Web search (local SearxNG for non-Unsloth; server-side for Unsloth)
+        if (this._currentProvider === 'unsloth') {
+            // Unsloth exposes server-side web_search, python, terminal
+            const pt = this._getProviderTools();
+            for (const t of pt) {
+                if (t.toolName === 'web_search') {
+                    lines.push('/search query — Search the web (Unsloth server-side)');
+                } else if (t.toolName === 'python') {
+                    lines.push('/python — Execute Python code (Unsloth server-side)');
+                } else if (t.toolName === 'terminal') {
+                    lines.push('/terminal — Run a shell command (Unsloth server-side)');
+                }
+            }
+        } else {
+            if (this._isWebSearchEnabled()) {
+                lines.push('/search query — Search the web via SearxNG');
+                lines.push('  Tip: add /search at the end of a message to force a lookup');
+            } else {
+                lines.push('/search — Search the web via SearxNG (disabled — enable in Settings > Tools > Web Search)');
+            }
+        }
+
+        // Crawl4AI deep scraper
+        if (this._isCrawl4AIEnabled()) {
+            lines.push('/crawl URL — Deep-scrape a web page with Crawl4AI');
+            lines.push('  /crawl query — Search then scrape the top result');
+        } else {
+            lines.push('/crawl — Deep-scrape a web page (disabled — enable in Settings > Tools > Web Scraper)');
+        }
+
+        lines.push('');
+        lines.push('Provider-specific commands above depend on your current engine.');
+        lines.push('Use the toolbar buttons or type a slash command directly.');
+
+        return lines.join('\n');
     }
 
     _rememberSessionDocument(document) {
@@ -3004,22 +3067,79 @@ class KatabDialog {
         });
         this._chatContainer.add_child(this._messageList);
 
-        // History view (hidden by default)
-        this._historyView = new St.ScrollView({
+        // History view (hidden by default) — wrapper with search bar + scrollable list
+        this._historyView = new St.BoxLayout({
+            vertical: true,
             style_class: 'katab-history-view',
-            hscrollbar_policy: St.PolicyType.NEVER,
-            vscrollbar_policy: St.PolicyType.AUTOMATIC,
             x_expand: true,
             y_expand: true,
             visible: false,
         });
         this.contentLayout.add_child(this._historyView);
 
+        // Search bar for filtering conversations
+        this._historySearchBox = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-history-search-box',
+            x_expand: true,
+        });
+        this._historyView.add_child(this._historySearchBox);
+
+        let searchIcon = new St.Icon({
+            icon_name: 'edit-find-symbolic',
+            style_class: 'katab-history-search-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._historySearchBox.add_child(searchIcon);
+
+        this._historySearchEntry = new St.Entry({
+            style_class: 'katab-history-search-entry',
+            hint_text: 'Search conversations…',
+            x_expand: true,
+            can_focus: true,
+            track_hover: true,
+        });
+        this._historySearchBox.add_child(this._historySearchEntry);
+
+        // Debounced search: re-render history list ~200ms after typing stops
+        this._historySearchEntry.clutter_text.connect('text-changed', () => {
+            if (this._historySearchTimeoutId) {
+                GLib.source_remove(this._historySearchTimeoutId);
+            }
+            this._historySearchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+                this._historySearchTimeoutId = 0;
+                let q = this._historySearchEntry.get_text();
+                this._historySearchQuery = q;
+                this._renderHistoryList(q || null);
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+
+        // Escape clears the search and returns focus to the list
+        this._historySearchEntry.clutter_text.connect('key-press-event', (entry, event) => {
+            let keyval = event.get_key_symbol();
+            if (keyval === Clutter.KEY_Escape) {
+                this._historySearchEntry.set_text('');
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
+        // Scrollable history list
+        let historyScroll = new St.ScrollView({
+            style_class: 'katab-history-scroll',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            x_expand: true,
+            y_expand: true,
+        });
+        this._historyView.add_child(historyScroll);
+
         this._historyContainer = new St.BoxLayout({
             vertical: true,
             style_class: 'katab-history-container',
         });
-        this._historyView.add_child(this._historyContainer);
+        historyScroll.add_child(this._historyContainer);
 
         // Preset picker panel (hidden by default, replaces chat scroll like history)
         this._presetPicker = this._buildPresetPicker();
@@ -4442,6 +4562,7 @@ class KatabDialog {
         this._hasConversationStarted = entry.messages.length > 0;
         this._setWelcomeVisible(!this._hasConversationStarted);
         this._messageList.destroy_all_children();
+        this._helpMessageBox = null;
 
         // Suppress per-message source collection during replay — it would
         // scan the growing history on every assistant bubble, producing O(N²)
@@ -4488,6 +4609,16 @@ class KatabDialog {
 
     _showChatView() {
         this._historyView.visible = false;
+        // Clear any active history search so the user gets a fresh list
+        // next time they open the history panel.
+        if (this._historySearchEntry) {
+            this._historySearchEntry.set_text('');
+        }
+        if (this._historySearchTimeoutId) {
+            GLib.source_remove(this._historySearchTimeoutId);
+            this._historySearchTimeoutId = 0;
+        }
+        this._historySearchQuery = '';
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
@@ -4521,7 +4652,7 @@ class KatabDialog {
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
         this._historyView.visible = true;
-        this._renderHistoryList();
+        this._renderHistoryList(this._historySearchQuery || null);
     }
 
     _toggleHistoryView() {
@@ -4532,20 +4663,63 @@ class KatabDialog {
         }
     }
 
-    _renderHistoryList() {
-        // Avoid redundant rebuilds when the cached history hasn't changed.
+    /** Extract searchable plain-text from a message object.
+     *  Handles string content, array content (Anthropic content blocks),
+     *  and tool results. Returns an empty string for unsearchable payloads. */
+    _extractMessageText(msg) {
+        let content = msg.content;
+        if (typeof content === 'string') {
+            return content;
+        }
+        if (Array.isArray(content)) {
+            let parts = [];
+            for (let block of content) {
+                if (!block) continue;
+                if (typeof block === 'string') {
+                    parts.push(block);
+                } else if (typeof block.text === 'string') {
+                    parts.push(block.text);
+                } else if (block.type === 'tool_result' && typeof block.content === 'string') {
+                    parts.push(block.content);
+                }
+            }
+            return parts.join(' ');
+        }
+        return '';
+    }
+
+    _renderHistoryList(filterQuery = null) {
+        // Avoid redundant rebuilds when neither the cached history nor the
+        // search query has changed.
         let arr = HistoryManager.getCached();
         let currentIds = arr.map(e => e.id).join(',');
-        if (this._historyListCacheIds === currentIds && this._historyContainer.get_n_children() > 0) {
+        let cacheKey = `${currentIds}|${filterQuery || ''}`;
+        if (this._historyListCacheIds === cacheKey && this._historyContainer.get_n_children() > 0) {
             return;
         }
-        this._historyListCacheIds = currentIds;
+        this._historyListCacheIds = cacheKey;
+
+        // Filter by search query (case-insensitive substring match)
+        if (filterQuery) {
+            let q = filterQuery.toLowerCase();
+            arr = arr.filter(entry => {
+                if (entry.title.toLowerCase().includes(q)) {
+                    return true;
+                }
+                return entry.messages.some(msg =>
+                    this._extractMessageText(msg).toLowerCase().includes(q)
+                );
+            });
+        }
 
         this._historyContainer.destroy_all_children();
 
         if (arr.length === 0) {
+            let msg = filterQuery
+                ? 'No conversations match your search.'
+                : 'No saved conversations yet.\nStart chatting and use New Chat to save.';
             let emptyLabel = new St.Label({
-                text: 'No saved conversations yet.\nStart chatting and use New Chat to save.',
+                text: msg,
                 style_class: 'katab-history-empty',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -4613,7 +4787,7 @@ class KatabDialog {
             });
             deleteBtn.connect('clicked', () => {
                 this._deleteConversation(entry.id);
-                this._renderHistoryList();
+                this._renderHistoryList(this._historySearchQuery || null);
             });
             row.add_child(deleteBtn);
 
@@ -4644,6 +4818,7 @@ class KatabDialog {
         }
 
         this._messageList.destroy_all_children();
+        this._helpMessageBox = null;
         this._showChatView();
         this._addWelcomeMessage();
 
@@ -5793,6 +5968,60 @@ class KatabDialog {
         this._scrollToBottom();
     }
 
+    _renderHelpMessage(text) {
+        // Before showing help, sweep away every system message
+        // ("Switched engine to …", tool-disabled notices, etc.) and any
+        // previous help box.  System messages are ephemeral UI notices,
+        // not conversation content — letting them pile up across provider
+        // switches eventually fills the message list and makes the help
+        // box illegible or invisible.
+        let container = this._messageList || this._chatContainer;
+        if (container) {
+            let children = container.get_children();
+            for (let i = children.length - 1; i >= 0; i--) {
+                let child = children[i];
+                try {
+                    if (child.has_style_class_name?.('katab-system-message-box') ||
+                        child.has_style_class_name?.('katab-help-message-box')) {
+                        child.destroy();
+                    }
+                } catch (_e) {
+                    // already disposed — skip
+                }
+            }
+        }
+        this._helpMessageBox = null;
+
+        this._helpMessageBox = new St.BoxLayout({
+            style_class: 'katab-help-message-box',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+
+        let label = new St.Label({
+            text: text,
+            style_class: 'katab-help-message-text',
+        });
+        label.clutter_text.line_wrap = true;
+        label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        label.clutter_text.single_line_mode = false;
+
+        this._helpMessageBox.add_child(label);
+
+        // Insert at the top so the help box is always the first thing
+        // visible, regardless of remaining chat bubbles below it.
+        container.insert_child_at_index(this._helpMessageBox, 0);
+
+        // Scroll to the top.  A short timeout lets the container finish
+        // its allocation pass.
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 80, () => {
+            let adj = this._chatScroll?.get_vscroll_bar()?.get_adjustment();
+            if (adj) {
+                adj.value = 0;
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _addChatMessage(sender, text, type, messageMeta = null) {
         let isUser = type === 'user';
 
@@ -6111,6 +6340,13 @@ class KatabDialog {
         }
         if (rawPromptText === '' && !this._pendingDocument)
             return;
+
+        // ── /help — offline, unconditional, no network ──────────────────────
+        if (rawPromptText === '/help' || rawPromptText.startsWith('/help ') || rawPromptText.endsWith(' /help')) {
+            this._renderHelpMessage(this._buildHelpText());
+            this._entry.set_text('');
+            return;
+        }
 
         let documentCommand = null;
         try {

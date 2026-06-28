@@ -432,6 +432,48 @@
 }
 
 /* ════════════════════════════════════════════
+   HISTORY SEARCH BAR
+   ════════════════════════════════════════════ */
+
+.katab-history-search-box {
+    padding: 0 6px 8px 6px;
+    spacing: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 4px;
+}
+
+.katab-history-search-icon {
+    icon-size: 15px;
+    color: rgba(255, 255, 255, 0.42);
+}
+
+.katab-history-search-entry {
+    background-color: rgba(56, 56, 56, 0.65);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
+    padding: 5px 10px;
+    font-size: 9pt;
+    caret-color: #ffffff;
+    selection-background-color: rgba(255, 255, 255, 0.18);
+}
+
+.katab-history-search-entry:focus {
+    border-color: rgba(255, 255, 255, 0.22);
+    background-color: rgba(72, 72, 72, 0.72);
+}
+
+.katab-history-search-entry StEntryHint {
+    color: rgba(255, 255, 255, 0.32);
+    font-size: 9pt;
+}
+
+.katab-history-scroll {
+    background-color: transparent;
+    border-radius: 6px;
+}
+
+/* ════════════════════════════════════════════
    CHAT AREA
    ════════════════════════════════════════════ */
 
@@ -959,6 +1001,20 @@
     font-style: italic;
 }
 
+.katab-help-message-box {
+    margin: 4px 0;
+    background-color: rgba(26, 26, 26, 0.75);
+    border-radius: 8px;
+    padding: 12px 20px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.katab-help-message-text {
+    font-size: 10pt;
+    color: rgba(255, 255, 255, 0.80);
+    font-family: monospace;
+}
+
 .typing-bubble {
     background-color: rgba(56, 56, 56, 0.84);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1346,6 +1402,31 @@
     color: rgba(0, 0, 0, 0.40);
 }
 
+.katab-theme-light .katab-history-search-box {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-history-search-icon {
+    color: rgba(0, 0, 0, 0.38);
+}
+
+.katab-theme-light .katab-history-search-entry {
+    background-color: rgba(255, 255, 255, 0.78);
+    color: rgba(0, 0, 0, 0.82);
+    border-color: rgba(0, 0, 0, 0.10);
+    caret-color: rgba(0, 0, 0, 0.82);
+    selection-background-color: rgba(0, 0, 0, 0.14);
+}
+
+.katab-theme-light .katab-history-search-entry:focus {
+    border-color: rgba(0, 0, 0, 0.22);
+    background-color: rgba(255, 255, 255, 0.92);
+}
+
+.katab-theme-light .katab-history-search-entry StEntryHint {
+    color: rgba(0, 0, 0, 0.32);
+}
+
 .katab-theme-light .katab-chat-scroll {
     background-color: rgba(0, 0, 0, 0.03);
     border-color: rgba(0, 0, 0, 0.08);
@@ -1477,6 +1558,15 @@
 
 .katab-theme-light .katab-system-message-text {
     color: rgba(0, 0, 0, 0.48);
+}
+
+.katab-theme-light .katab-help-message-box {
+    background-color: rgba(0, 0, 0, 0.06);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-help-message-text {
+    color: rgba(0, 0, 0, 0.72);
 }
 
 .katab-theme-light .typing-bubble {

@@ -66,6 +66,22 @@ Once configured:
 2. If you change your provider in the settings, the chat will display a system message confirming the engine swap (e.g., "Switched engine to Ollama (Local).").
 3. Type your message and hit Enter to send. Press Shift+Enter to insert a new line in the prompt box.
 
+### Slash Commands
+
+Katab supports several slash commands you can type directly in the chat. Type `/help` at any time to see which commands are available for your current provider and settings.
+
+| Command | Description |
+| --- | --- |
+| `/help` | Show a list of all available commands |
+| `/doc "path"` | Attach a local file (txt, md, pdf, docx, png, jpg) |
+| `/search query` | Search the web via SearxNG |
+| `/crawl URL` | Deep-scrape a web page with Crawl4AI |
+| `/crawl query` | Search then scrape the top result |
+| `/python` | Execute Python code (Unsloth only) |
+| `/terminal` | Run a shell command (Unsloth only) |
+
+> **Tips:** Add `/search` at the start or end of a message to force a web lookup. Toolbar buttons at the bottom of the chat let you insert commands with one click.
+
 ---
 
 ## 5. Optional Document Tool
