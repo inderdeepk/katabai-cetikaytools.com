@@ -250,7 +250,32 @@ export class Crawl4AIRuntime {
         const payload = this._buildCrawlPayload(validatedUrls, config);
         const jsonBody = JSON.stringify(payload);
 
-        return this._requestCrawl(endpoint, jsonBody, config.apiToken, validatedUrls, cancellable);
+        // Retry once with backoff on transient failures (connection drops,
+        // 502/503 server errors).  Do NOT retry on 4xx client errors.
+        const MAX_ATTEMPTS = 2;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            if (cancellable && cancellable.is_cancelled()) {
+                throw new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' });
+            }
+
+            try {
+                const results = await this._requestCrawl(endpoint, jsonBody, config.apiToken, validatedUrls, cancellable);
+                return results;
+            } catch (error) {
+                if (cancellable && cancellable.is_cancelled()) {
+                    throw error;
+                }
+                const isRetryable = error instanceof Crawl4AIError
+                    && (error.code === 'connection-failed' || error.code === 'network-error');
+                if (isRetryable && attempt < MAX_ATTEMPTS) {
+                    const backoffMs = 1500 * attempt;
+                    log(`[Katab:crawl4ai] Attempt ${attempt} failed, retrying after ${backoffMs}ms: ${error.message}`);
+                    await this._sleep(backoffMs);
+                    continue;
+                }
+                throw error;
+            }
+        }
     }
 
     /**
@@ -374,35 +399,29 @@ export class Crawl4AIRuntime {
             ? { user_query: config.query || '', threshold: 0.5 }
             : { threshold: 0.48, threshold_type: 'fixed' };
 
-        const extraArgs = ['--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox'];
-
+        // Crawl4AI v0.9.x expects flat browser_config / crawler_config objects
+        // (no { type, params } wrapping — that was the older API shape).
         return {
             urls,
             browser_config: {
-                type: 'BrowserConfig',
-                params: {
-                    headless: true,
-                    verbose: false,
-                    viewport_width: 1920,
-                    viewport_height: 1080,
-                    user_agent_mode: 'random',
-                    simulate_user: Boolean(config.simulateUser),
-                    extra_args: extraArgs,
-                },
+                headless: true,
+                verbose: false,
+                viewport_width: 1920,
+                viewport_height: 1080,
+                user_agent_mode: 'random',
+                simulate_user: Boolean(config.simulateUser),
+                extra_args: ['--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox'],
             },
             crawler_config: {
-                type: 'CrawlerRunConfig',
-                params: {
-                    cache_mode: config.cacheMode || 'bypass',
-                    word_count_threshold: config.wordCountThreshold || CRAWL4AI_DEFAULT_WORD_COUNT,
-                    page_timeout: (config.pageTimeout || CRAWL4AI_DEFAULT_PAGE_TIMEOUT) * 1000,
-                    markdown_generator: {
-                        type: 'DefaultMarkdownGenerator',
-                        params: {
-                            content_filter: {
-                                type: filterType,
-                                params: filterParams,
-                            },
+                cache_mode: config.cacheMode || 'bypass',
+                word_count_threshold: config.wordCountThreshold || CRAWL4AI_DEFAULT_WORD_COUNT,
+                page_timeout: (config.pageTimeout || CRAWL4AI_DEFAULT_PAGE_TIMEOUT) * 1000,
+                markdown_generator: {
+                    type: 'DefaultMarkdownGenerator',
+                    params: {
+                        content_filter: {
+                            type: filterType,
+                            params: filterParams,
                         },
                     },
                 },
@@ -418,9 +437,13 @@ export class Crawl4AIRuntime {
             if (cancellable && cancellable.is_cancelled()) {
                 throw error;
             }
+            // Preserve the original Crawl4AIError code (e.g. 'http-error',
+            // 'unauthorized') so callers can decide whether to retry.
+            const origCode = error instanceof Crawl4AIError ? error.code : null;
+            const code = origCode || 'connection-failed';
             throw new Crawl4AIError(
                 `Could not reach the Crawl4AI instance at ${endpoint}: ${error.message}`,
-                { code: 'connection-failed', detail: error?.message }
+                { code, detail: error?.message }
             );
         }
 

@@ -208,14 +208,17 @@ function getLocalDateStamp() {
     return now ? now.format('%Y-%m-%d') : new Date().toISOString().slice(0, 10);
 }
 
-export function buildWebSearchResultBlock(query, payload, { includeGuard = true } = {}) {
+export function buildWebSearchResultBlock(query, payload, { includeGuard = true, consecutiveEmptySearches = 0, totalSearchesThisTurn = 1 } = {}) {
     const results = Array.isArray(payload) ? payload : (payload?.results || []);
     const answers = Array.isArray(payload) ? [] : (payload?.answers || []);
     const truncated = Array.isArray(payload) ? false : Boolean(payload?.truncated);
     const searchDate = getLocalDateStamp();
 
     if (results.length === 0 && answers.length === 0) {
-        return `Web search run on ${searchDate} for "${query}" returned no results. Tell the user that nothing relevant was found and offer to refine the search.`;
+        const stopHint = consecutiveEmptySearches >= 2
+            ? `\n\nIMPORTANT: This is your ${consecutiveEmptySearches + 1}th consecutive search that returned no results. Stop searching. Instead, use read_url to fetch the full content of URLs you found in earlier successful searches, or provide your answer based on the information you already have.`
+            : '\n\nNo results found. Consider using read_url to explore URLs from your earlier searches instead of searching again.';
+        return `Web search run on ${searchDate} for "${query}" returned no results.${stopHint}`;
     }
 
     const lines = [
@@ -244,6 +247,12 @@ export function buildWebSearchResultBlock(query, payload, { includeGuard = true 
 
     if (truncated) {
         lines.push('(Some results were omitted to fit the chat context.)');
+    }
+
+    // Prompt the model to read URLs for deeper context instead of searching again.
+    lines.push('To get full page content from any of these URLs, use read_url with the exact URL.');
+    if (totalSearchesThisTurn >= 2) {
+        lines.push(`You have already run ${totalSearchesThisTurn} web search(es) this turn. Consider reading pages with read_url before searching again.`);
     }
 
     return lines.join('\n').trim();
@@ -405,6 +414,22 @@ export class WebSearchRuntime {
     constructor({ session = null, timeoutSeconds = WEB_SEARCH_DEFAULT_TIMEOUT_SECONDS } = {}) {
         this._session = session || new Soup.Session();
         this._session.timeout = timeoutSeconds;
+        // Deduplication cache: maps lower-cased query → timestamp (ms).
+        // Prevents sending identical queries to SearxNG within the same
+        // conversation turn, avoiding upstream-engine rate limiting.
+        this._recentQueries = new Map();
+        // Queries older than this (ms) are evicted from the dedup cache.
+        this._QUERY_DEDUP_WINDOW_MS = 30_000; // 30 seconds
+    }
+
+    // Promise-based sleep for backoff delays (uses GLib main loop).
+    _sleepMs(ms) {
+        return new Promise(resolve => {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+                resolve();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
     }
 
     async search(queries, config, cancellable = null) {
@@ -422,20 +447,55 @@ export class WebSearchRuntime {
             throw new WebSearchToolError('Enter something to search for.', { code: 'empty-query' });
         }
 
+        // Deduplicate queries that were already sent recently, keeping
+        // the first occurrence of each unique (case-folded) query.
+        const now = Date.now();
+        const deduped = [];
+        for (const query of list) {
+            const key = query.toLowerCase();
+            const lastSent = this._recentQueries.get(key);
+            if (lastSent !== undefined && (now - lastSent) < this._QUERY_DEDUP_WINDOW_MS) {
+                log(`[Katab:webSearch] Skipping duplicate query: "${query}" (sent ${now - lastSent}ms ago)`);
+                continue;
+            }
+            this._recentQueries.set(key, now);
+            deduped.push(query);
+        }
+
+        // Evict stale entries from the cache.
+        for (const [key, ts] of this._recentQueries) {
+            if (now - ts > this._QUERY_DEDUP_WINDOW_MS) {
+                this._recentQueries.delete(key);
+            }
+        }
+
+        if (deduped.length === 0) {
+            log('[Katab:webSearch] All queries were duplicates — returning empty result set.');
+            return {
+                query: list.join(' | '),
+                queries: list,
+                results: [],
+                answers: [],
+                truncated: false,
+            };
+        }
+
+        // Reassign list to deduped for the rest of the function.
+        // (list is const, so we use deduped directly in the branches below.)
         const limit = clampLimit(config.resultLimit);
 
-        if (list.length === 1) {
-            const { results, answers } = await this._searchSingle(list[0], config, cancellable);
+        if (deduped.length === 1) {
+            const { results, answers } = await this._searchSingle(deduped[0], config, cancellable);
             return {
-                query: list[0],
-                queries: list,
+                query: deduped[0],
+                queries: deduped,
                 results: results.slice(0, limit),
                 answers,
                 truncated: results.length > limit,
             };
         }
 
-        const batches = await Promise.all(list.map(query => (
+        const batches = await Promise.all(deduped.map(query => (
             this._searchSingle(query, config, cancellable).catch(error => {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
@@ -447,8 +507,8 @@ export class WebSearchRuntime {
         const merged = mergeResults(batches.map(batch => batch.results));
         const answers = dedupeStrings(batches.flatMap(batch => batch.answers));
         return {
-            query: list.join(' | '),
-            queries: list,
+            query: deduped.join(' | '),
+            queries: deduped,
             results: merged.slice(0, limit),
             answers,
             truncated: merged.length > limit,
@@ -522,55 +582,102 @@ export class WebSearchRuntime {
 
     async _searchSingle(query, config, cancellable) {
         const url = this._buildSearchUrl(query, config);
+        log(`[Katab:webSearch] Query: "${query}"`);
 
-        let response;
-        try {
-            response = await this._request(url, {
-                accept: 'application/json',
-                apiKey: config.apiKey,
-                maxBytes: WEB_SEARCH_JSON_MAX_BYTES,
-            }, cancellable);
-        } catch (error) {
+        const MAX_ATTEMPTS = 2;
+
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (cancellable && cancellable.is_cancelled()) {
-                throw error;
+                throw new WebSearchToolError('Search cancelled.', { code: 'cancelled' });
             }
-            throw new WebSearchToolError(
-                `Could not reach the SearxNG instance at ${config.url}. Make sure it is running and the URL is correct.`,
-                { code: 'connection-failed', detail: error?.message }
-            );
+
+            let response;
+            try {
+                response = await this._request(url, {
+                    accept: 'application/json',
+                    apiKey: config.apiKey,
+                    maxBytes: WEB_SEARCH_JSON_MAX_BYTES,
+                }, cancellable);
+            } catch (error) {
+                if (cancellable && cancellable.is_cancelled()) {
+                    throw error;
+                }
+                if (attempt < MAX_ATTEMPTS) {
+                    log(`[Katab:webSearch] Connection attempt ${attempt} failed for "${query}", retrying after backoff…`);
+                    await this._sleepMs(1500 * attempt);
+                    continue;
+                }
+                log(`[Katab:webSearch] Connection failed for "${query}" after ${MAX_ATTEMPTS} attempts: ${error.message}`);
+                throw new WebSearchToolError(
+                    `Could not reach the SearxNG instance at ${config.url}. Make sure it is running and the URL is correct.`,
+                    { code: 'connection-failed', detail: error?.message }
+                );
+            }
+
+            if (response.status === 403) {
+                throw new WebSearchToolError(
+                    'SearxNG refused the request (HTTP 403). Enable the JSON output format in its settings.yml (formats: [json]) and restart the instance.',
+                    { code: 'json-disabled' }
+                );
+            }
+
+            if (response.status === 429) {
+                if (attempt < MAX_ATTEMPTS) {
+                    const backoffMs = 3000 * attempt;
+                    log(`[Katab:webSearch] Rate-limited (HTTP 429) for "${query}", retrying after ${backoffMs}ms…`);
+                    await this._sleepMs(backoffMs);
+                    continue;
+                }
+                throw new WebSearchToolError(
+                    'SearxNG is rate limiting requests (HTTP 429). Wait a moment before searching again.',
+                    { code: 'rate-limited' }
+                );
+            }
+
+            if (response.status < 200 || response.status >= 300) {
+                throw new WebSearchToolError(`SearxNG returned HTTP ${response.status}.`, { code: 'http-error' });
+            }
+
+            const body = decodeBytes(response.bytes);
+            let data;
+            try {
+                data = JSON.parse(body);
+            } catch (_error) {
+                throw new WebSearchToolError(
+                    'SearxNG did not return valid JSON. Confirm the JSON output format is enabled on the instance.',
+                    { code: 'invalid-json' }
+                );
+            }
+
+            const results = normalizeResults(data);
+            const answers = Array.isArray(data?.answers) ? data.answers.filter(Boolean) : [];
+
+            // If we got 0 results, it may be a transient upstream-engine failure.
+            // Retry once after a backoff delay.
+            if (results.length === 0 && answers.length === 0 && attempt < MAX_ATTEMPTS) {
+                const backoffMs = 1500 * attempt;
+                log(`[Katab:webSearch] Query "${query}" returned 0 results on attempt ${attempt}, retrying after ${backoffMs}ms…`);
+                await this._sleepMs(backoffMs);
+                continue;
+            }
+
+            this._logSearchResult(query, results, answers);
+            return { results, answers };
         }
 
-        if (response.status === 403) {
-            throw new WebSearchToolError(
-                'SearxNG refused the request (HTTP 403). Enable the JSON output format in its settings.yml (formats: [json]) and restart the instance.',
-                { code: 'json-disabled' }
-            );
-        }
-        if (response.status === 429) {
-            throw new WebSearchToolError(
-                'SearxNG is rate limiting requests (HTTP 429). Wait a moment before searching again.',
-                { code: 'rate-limited' }
-            );
-        }
-        if (response.status < 200 || response.status >= 300) {
-            throw new WebSearchToolError(`SearxNG returned HTTP ${response.status}.`, { code: 'http-error' });
-        }
+        // Should not reach here, but belt-and-suspenders.
+        log(`[Katab:webSearch] Query "${query}" exhausted all ${MAX_ATTEMPTS} attempts.`);
+        return { results: [], answers: [] };
+    }
 
-        const body = decodeBytes(response.bytes);
-        let data;
-        try {
-            data = JSON.parse(body);
-        } catch (_error) {
-            throw new WebSearchToolError(
-                'SearxNG did not return valid JSON. Confirm the JSON output format is enabled on the instance.',
-                { code: 'invalid-json' }
-            );
+    _logSearchResult(query, results, answers) {
+        const resultCount = results.length;
+        const answerCount = answers.length;
+        if (resultCount === 0 && answerCount === 0) {
+            log(`[Katab:webSearch] Query "${query}" returned 0 results and 0 answers — SearxNG returned empty. Check the SearxNG instance's configured engines and rate limits.`);
+        } else {
+            log(`[Katab:webSearch] Query "${query}" → ${resultCount} result(s), ${answerCount} answer(s)`);
         }
-
-        return {
-            results: normalizeResults(data),
-            answers: Array.isArray(data?.answers) ? data.answers.filter(Boolean) : [],
-        };
     }
 
     _buildSearchUrl(query, config) {

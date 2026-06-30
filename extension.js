@@ -157,6 +157,10 @@ const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
 const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 30;
 const DEEPSEEK_STREAM_TIMEOUT_SECONDS = 1800;
+// Ollama runs locally; large models can take minutes to load and process
+// 128K-context prompts.  Use 0 (= no timeout) since the user can cancel via
+// the UI stop button and network latency is not a concern for localhost.
+const OLLAMA_STREAM_TIMEOUT_SECONDS = 0;
 const DEEPSEEK_MAX_RETRY_ATTEMPTS = 3;
 const DEEPSEEK_BACKOFF_BASE_MS = 1000;
 const DEEPSEEK_BACKOFF_CAP_MS = 15000;
@@ -927,9 +931,17 @@ class HistoryManager {
         let userMsgs = messageHistory.filter(m => m.role === 'user');
         if (userMsgs.length === 0) return null;
 
-        let rawTitle = userMsgs[0].content.replace(/\s*\n\s*/g, ' ').trim();
+        // Safely extract the title from the first user message, handling
+        // array content (Anthropic blocks) and non-string edge cases.
+        let firstContent = userMsgs[0].content;
+        let rawTitle = (typeof firstContent === 'string'
+            ? firstContent
+            : Array.isArray(firstContent)
+                ? firstContent.map(b => (b?.text || b?.content || '')).join(' ')
+                : String(firstContent ?? '')
+        ).replace(/\s*\n\s*/g, ' ').trim();
         let title = rawTitle.slice(0, 60);
-        if (rawTitle.length > 60) title += '…';
+        if (rawTitle.length > 60) title += '\u2026';
 
         let id = existingId || `conv_${Date.now()}`;
         let entry = {
@@ -939,10 +951,13 @@ class HistoryManager {
             messages: [...messageHistory],
         };
 
-        // Use cache instead of re-reading disk
+        // Use cache instead of re-reading disk — mutate in-place so that
+        // _flushNow writes the updated array. Array.filter() returns a new
+        // array, which would silently detach from this._cache.
         let arr = this.load();
         if (existingId) {
-            arr = arr.filter(e => e.id !== existingId);
+            let idx = arr.findIndex(e => e.id === existingId);
+            if (idx >= 0) arr.splice(idx, 1);
         }
         arr.unshift(entry);
         if (arr.length > 50) arr.length = 50;
@@ -1384,6 +1399,7 @@ class KatabDialog {
         });
         this._messageHistory.push(this._buildAssistantHistoryMessage(finalContent, assistantMeta));
         this._saveCurrentConversation();
+        HistoryManager.flushSync();
         this._clearActiveResponseState();
 
         if (accumulatedText) {
@@ -3861,6 +3877,7 @@ class KatabDialog {
         }
         if (saveConversation) {
             this._saveCurrentConversation();
+            HistoryManager.flushSync();
         }
         this._stopWelcomeAnimation();
         this.isOpen = false;
@@ -4585,7 +4602,15 @@ class KatabDialog {
                     if (this._isToolCallIntermediary(msg)) {
                         continue;
                     }
-                    lastAssistantUI = this._addChatMessage('Katab AI', msg.content, 'assistant', msg);
+                    // If content is missing/empty but this is a legitimate
+                    // assistant message (not a tool intermediary), render it
+                    // with a placeholder so the bubble is still visible.
+                    const displayContent = (typeof msg.content === 'string' && msg.content.trim())
+                        ? msg.content
+                        : (msg.content !== undefined && msg.content !== null
+                            ? String(msg.content)
+                            : '[No response content was saved for this message.]');
+                    lastAssistantUI = this._addChatMessage('Katab AI', displayContent, 'assistant', msg);
                 }
             }
         } finally {
@@ -4653,6 +4678,10 @@ class KatabDialog {
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
         this._historyView.visible = true;
         this._renderHistoryList(this._historySearchQuery || null);
+        // Auto-focus the search bar so the user can start typing immediately
+        if (this._historySearchEntry) {
+            this._historySearchEntry.grab_key_focus();
+        }
     }
 
     _toggleHistoryView() {
@@ -4798,9 +4827,16 @@ class KatabDialog {
     // ── Chat management ──────────────────────────────────────────────────
 
     _newChat() {
-        this._cancelStream();
+        // Stop any active response first — this saves the partial response
+        // (if any) to history before we start a fresh conversation.
+        if (this._isStreaming) {
+            this._stopActiveResponse();
+        } else {
+            this._cancelStream();
+        }
         this._lastResponseErrored = false;
         this._saveCurrentConversation();
+        HistoryManager.flushSync();
         this._currentConversationId = null;
         this._messageHistory = [];
         this._invalidateWebSourcesCache();
@@ -5926,6 +5962,7 @@ class KatabDialog {
         let historyContent = diagnostics ? `${summary}\n\n${diagnostics}` : summary;
         this._messageHistory.push({ role: 'assistant', content: historyContent });
         this._saveCurrentConversation();
+        HistoryManager.flushSync();
         this._cancellable = null;
         this._clearActiveResponseState();
         this._scrollToBottom();
@@ -5935,6 +5972,7 @@ class KatabDialog {
         this._applyAssistantRender(uiElements, summary, { plain: true });
         this._messageHistory.push({ role: 'assistant', content: summary });
         this._saveCurrentConversation();
+        HistoryManager.flushSync();
         this._cancellable = null;
         this._clearActiveResponseState();
         this._scrollToBottom();
@@ -6113,6 +6151,18 @@ class KatabDialog {
         });
 
         bubbleBox.add_child(thinkWrapper);
+
+        // ── Tool call log (visible when tools are executed) ─────────
+        let toolCallLogBox = null;
+        if (!isUser) {
+            toolCallLogBox = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-tool-call-log',
+                visible: false,
+                x_expand: true,
+            });
+            bubbleBox.add_child(toolCallLogBox);
+        }
 
         let contentBox = new St.BoxLayout({
             vertical: true,
@@ -6316,7 +6366,7 @@ class KatabDialog {
 
         this._scrollToBottom();
 
-        return { contentBox, contentLabel, thinkLabel, thinkWrapper, linkBox, sourcesBox, diagnosticBox, diagnosticLabel, metricsLabel, footerRow: copyBtnRow };
+        return { contentBox, contentLabel, thinkLabel, thinkWrapper, toolCallLogBox, linkBox, sourcesBox, diagnosticBox, diagnosticLabel, metricsLabel, footerRow: copyBtnRow };
     }
 
     _scrollToBottom() {
@@ -6325,6 +6375,116 @@ class KatabDialog {
             adj.value = adj.upper - adj.page_size;
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    // ── Rate-limit helpers ───────────────────────────────────────────────
+    // Promise-based sleep using GLib main loop. Used to add polite delays
+    // between sequential tool calls so SearxNG upstream engines are not
+    // rate-limited.
+
+    _sleepMs(ms) {
+        return new Promise(resolve => {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+                resolve();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+    }
+
+    // Returns a randomised delay in ms to insert between consecutive tool
+    // calls.  Keeps sequential tool use under ~2 req/s to stay below
+    // typical SearxNG + upstream-engine rate-limit thresholds.
+    _toolCallDelayMs() {
+        return 500 + Math.floor(Math.random() * 1000); // 500-1500 ms
+    }
+
+    // ── Tool Call Log ────────────────────────────────────────────────────
+    // Adds a persistent entry to the assistant bubble's tool-call log box,
+    // showing which tools are being executed, their status, and any errors.
+    // Returns the entry BoxLayout so callers can update status later.
+    _addToolCallLogEntry(uiElements, { toolName, status = 'pending', detail = '', error = '' }) {
+        if (!uiElements || !uiElements.toolCallLogBox) {
+            return null;
+        }
+
+        const logBox = uiElements.toolCallLogBox;
+        logBox.visible = true;
+
+        const entry = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-tool-call-entry',
+            x_expand: true,
+        });
+
+        // Icon: spinner for pending, checkmark for success, warning for error
+        let iconName = 'content-loading-symbolic';
+        let iconClass = 'katab-tool-call-icon katab-tool-call-icon-pending';
+        if (status === 'success') {
+            iconName = 'emblem-ok-symbolic';
+            iconClass = 'katab-tool-call-icon katab-tool-call-icon-success';
+        } else if (status === 'error') {
+            iconName = 'dialog-warning-symbolic';
+            iconClass = 'katab-tool-call-icon katab-tool-call-icon-error';
+        }
+
+        const icon = new St.Icon({
+            icon_name: iconName,
+            style_class: iconClass,
+        });
+        entry.add_child(icon);
+
+        // Text column: tool name + detail/error
+        const textCol = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-tool-call-text-col',
+            x_expand: true,
+        });
+
+        const nameLabel = new St.Label({
+            text: toolName || 'Unknown tool',
+            style_class: 'katab-tool-call-name',
+        });
+        textCol.add_child(nameLabel);
+
+        const detailLabel = new St.Label({
+            text: detail,
+            style_class: error ? 'katab-tool-call-error' : 'katab-tool-call-detail',
+            visible: !!(detail || error),
+            x_expand: true,
+        });
+        detailLabel.clutter_text.line_wrap = true;
+        detailLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        textCol.add_child(detailLabel);
+
+        entry.add_child(textCol);
+
+        // Store references on the entry for later updates.
+        entry._katabToolIcon = icon;
+        entry._katabToolNameLabel = nameLabel;
+        entry._katabToolDetailLabel = detailLabel;
+
+        logBox.add_child(entry);
+
+        return entry;
+    }
+
+    // Update a previously created tool-call log entry (e.g. pending → success).
+    _updateToolCallLogEntry(entry, { status = 'success', detail = '', error = '' }) {
+        if (!entry || !entry._katabToolIcon) return;
+
+        if (status === 'success') {
+            entry._katabToolIcon.icon_name = 'emblem-ok-symbolic';
+            entry._katabToolIcon.style_class = 'katab-tool-call-icon katab-tool-call-icon-success';
+        } else if (status === 'error') {
+            entry._katabToolIcon.icon_name = 'dialog-warning-symbolic';
+            entry._katabToolIcon.style_class = 'katab-tool-call-icon katab-tool-call-icon-error';
+        }
+
+        if (detail || error) {
+            entry._katabToolDetailLabel.text = error || detail;
+            entry._katabToolDetailLabel.style_class = error ? 'katab-tool-call-error' : 'katab-tool-call-detail';
+            entry._katabToolDetailLabel.visible = true;
+        }
     }
 
     async _sendMessage() {
@@ -6899,7 +7059,9 @@ class KatabDialog {
 
         this._soupSession.timeout = provider === 'deepseek'
             ? DEEPSEEK_STREAM_TIMEOUT_SECONDS
-            : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+            : provider === 'ollama'
+                ? OLLAMA_STREAM_TIMEOUT_SECONDS
+                : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
 
         this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
         if (!cancellable) {
@@ -7013,55 +7175,112 @@ class KatabDialog {
             try {
                 let [lineBytes, length] = stream.read_line_finish(res);
                 if (lineBytes === null) {
-                    // Stream ended
-                    let finalContent = responseState.accumulatedText;
-                    // Stream ended
-                    if (responseState.accumulatedThink && !finalContent && responseState.accumulatedToolCalls.length === 0) {
-                        finalContent = provider === 'deepseek'
-                            ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
-                            : 'Finished thinking, but no response provided.';
-                    }
+                    // ── Stream ended (EOF) ───────────────────────────────────
+                    log(`[Katab:save] SSE EOF reached — provider=${provider} accumulatedText=${(responseState.accumulatedText || '').length} toolCalls=${responseState.accumulatedToolCalls.length} historyLen=${this._messageHistory.length}`);
+                    // EOF processing has its OWN try-catch so that errors during
+                    // final rendering or history save are logged and recovered
+                    // rather than silently swallowed by the line-parsing catch.
+                    try {
+                        let finalContent = responseState.accumulatedText;
+                        let effectiveToolCalls = responseState.accumulatedToolCalls;
 
-                    // If no structured tool_calls were streamed, check whether the
-                    // model embedded tool invocations as text (seen with some
-                    // reasoning models). Uses the known-tool list stashed on the
-                    // response state by _streamResponse.
-                    let effectiveToolCalls = responseState.accumulatedToolCalls;
-                    if (effectiveToolCalls.length === 0 && finalContent) {
-                        const knownNames = responseState._knownToolNames || [];
-                        const parsed = this._tryParseTextToolCalls(finalContent, knownNames);
-                        if (parsed !== null && parsed.length > 0) {
-                            log(`[Katab] Text-based tool-call fallback recovered ${parsed.length} call(s): ${parsed.map(tc => tc.function?.name).join(', ')}`);
-                            effectiveToolCalls = parsed;
-                            // Strip the raw tool-call text from the content so only
-                            // the model's natural-language framing remains visible.
-                            finalContent = '';
-                        }
-                    }
-
-                    if (effectiveToolCalls.length > 0) {
-                        responseState.mode = 'tool';
-                        responseState.accumulatedToolCalls = effectiveToolCalls;
-                        this._applyAssistantRender(uiElements, 'Running local tools...', { plain: true });
-                        this._handleToolCalls(effectiveToolCalls, uiElements, responseState.accumulatedThink, provider)
-                            .catch(error => {
-                                if (this._isRequestCancelled(error)) {
-                                    return;
+                        // If we have thinking but no content and no structured tool calls,
+                        // try to recover tool invocations embedded in the thinking trace.
+                        if (responseState.accumulatedThink && !finalContent && effectiveToolCalls.length === 0) {
+                            const knownNames = responseState._knownToolNames || [];
+                            if (knownNames.length > 0) {
+                                const thinkTools = this._tryParseTextToolCalls(responseState.accumulatedThink, knownNames);
+                                if (thinkTools !== null && thinkTools.length > 0) {
+                                    log(`[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content: ${thinkTools.map(tc => tc.function?.name).join(', ')}`);
+                                    effectiveToolCalls = thinkTools;
+                                    finalContent = ''; // suppress the "no response" fallback text
                                 }
-                                this._renderLocalAssistantError(uiElements, error?.message || 'Local tool execution failed.');
-                                this._clearActiveResponseState();
-                            });
-                    } else {
-                        this._applyAssistantRender(uiElements, finalContent, { final: true });
-                        const assistantMsg = this._buildAssistantHistoryMessage(finalContent, responseState.assistantMeta);
-                        // DeepSeek requires reasoning_content to be echoed back on
-                        // subsequent turns when thinking is enabled. Store it on the
-                        // history message so _sanitizeHistoryMessage can pick it up.
-                        if (provider === 'deepseek' && responseState.accumulatedThink) {
-                            assistantMsg.reasoning_content = responseState.accumulatedThink;
+                            }
+                            if (effectiveToolCalls.length === 0) {
+                                // If Ollama returned a mid-stream error, include it so the user
+                                // knows why the response is empty instead of just seeing
+                                // "Finished thinking, but no response provided."
+                                if (responseState._ollamaStreamError) {
+                                    finalContent = provider === 'deepseek'
+                                        ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
+                                        : `Finished thinking, but Ollama returned an error before the response could be generated.\n\nThe model may have tried to use tools in a format that Ollama rejected (e.g. XML-style tool calls instead of JSON). Try disabling Ollama \u201cthink\u201d mode or using a different model for tool-based queries.\n\nError details: ${responseState._ollamaStreamError}`;
+                                } else {
+                                    finalContent = provider === 'deepseek'
+                                        ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
+                                        : 'Finished thinking, but no response provided.';
+                                }
+                            }
                         }
-                        this._messageHistory.push(assistantMsg);
-                        this._saveCurrentConversation();
+
+                        // If no structured tool_calls were streamed, check whether the
+                        // model embedded tool invocations as text (seen with some
+                        // reasoning models). Uses the known-tool list stashed on the
+                        // response state by _streamResponse.
+                        if (effectiveToolCalls.length === 0 && finalContent) {
+                            const knownNames = responseState._knownToolNames || [];
+                            const parsed = this._tryParseTextToolCalls(finalContent, knownNames);
+                            if (parsed !== null && parsed.length > 0) {
+                                log(`[Katab] Text-based tool-call fallback recovered ${parsed.length} call(s): ${parsed.map(tc => tc.function?.name).join(', ')}`);
+                                effectiveToolCalls = parsed;
+                                // Strip the raw tool-call text from the content so only
+                                // the model's natural-language framing remains visible.
+                                finalContent = '';
+                            }
+                        }
+                        // Also scan accumulatedThink if content didn't yield tool calls.
+                        if (effectiveToolCalls.length === 0 && finalContent) {
+                            const knownNames = responseState._knownToolNames || [];
+                            if (knownNames.length > 0 && responseState.accumulatedThink) {
+                                const thinkTools = this._tryParseTextToolCalls(responseState.accumulatedThink, knownNames);
+                                if (thinkTools !== null && thinkTools.length > 0) {
+                                    log(`[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content (secondary scan): ${thinkTools.map(tc => tc.function?.name).join(', ')}`);
+                                    effectiveToolCalls = thinkTools;
+                                }
+                            }
+                        }
+
+                        if (effectiveToolCalls.length > 0) {
+                            responseState.mode = 'tool';
+                            responseState.accumulatedToolCalls = effectiveToolCalls;
+                            this._applyAssistantRender(uiElements, 'Running local tools...', { plain: true });
+                            this._handleToolCalls(effectiveToolCalls, uiElements, responseState.accumulatedThink, provider)
+                                .catch(error => {
+                                    if (this._isRequestCancelled(error)) {
+                                        return;
+                                    }
+                                    this._renderLocalAssistantError(uiElements, error?.message || 'Local tool execution failed.');
+                                    this._clearActiveResponseState();
+                                });
+                        } else {
+                            this._applyAssistantRender(uiElements, finalContent, { final: true });
+                            const assistantMsg = this._buildAssistantHistoryMessage(finalContent, responseState.assistantMeta);
+                            // DeepSeek requires reasoning_content to be echoed back on
+                            // subsequent turns when thinking is enabled. Store it on the
+                            // history message so _sanitizeHistoryMessage can pick it up.
+                            if (provider === 'deepseek' && responseState.accumulatedThink) {
+                                assistantMsg.reasoning_content = responseState.accumulatedThink;
+                            }
+                            this._messageHistory.push(assistantMsg);
+                            this._saveCurrentConversation();
+                            // Flush immediately so the assistant response is durable
+                            // even if the dialog is closed or a new chat is started
+                            // before the debounce timer fires.
+                            HistoryManager.flushSync();
+                            this._clearActiveResponseState();
+                        }
+                    } catch (eofError) {
+                        log(`[Katab] Error during SSE stream-end finalization: ${eofError.message || eofError}`);
+                        // Still try to save whatever we accumulated, then clean up.
+                        try {
+                            if (responseState?.accumulatedText) {
+                                const fallbackMsg = this._buildAssistantHistoryMessage(responseState.accumulatedText, responseState.assistantMeta);
+                                this._messageHistory.push(fallbackMsg);
+                                this._saveCurrentConversation();
+                                HistoryManager.flushSync();
+                            }
+                        } catch (saveError) {
+                            log(`[Katab] Failed to save conversation after stream-end error: ${saveError.message || saveError}`);
+                        }
                         this._clearActiveResponseState();
                     }
                     return;
@@ -7080,6 +7299,26 @@ class KatabDialog {
 
                 if (provider === 'ollama' && lineStr.startsWith('{')) {
                     let parsed = JSON.parse(lineStr);
+                    // Handle Ollama mid-stream errors (context overflow, XML tool-call
+                    // rejection, model crash, etc.). Store the error on the response state
+                    // rather than overwriting accumulatedText — the stream-end handler
+                    // will decide how to surface it after trying text-based tool recovery.
+                    if (parsed.error) {
+                        const errMsg = typeof parsed.error === 'string' ? parsed.error : (parsed.error.message || 'Unknown Ollama error');
+                        log(`[Katab] Ollama mid-stream error: ${errMsg}`);
+                        // Surface the error in the diagnostic box immediately.
+                        if (uiElements.diagnosticBox && uiElements.diagnosticLabel) {
+                            uiElements.diagnosticLabel.set_text(`Ollama error: ${errMsg}`);
+                            uiElements.diagnosticBox.visible = true;
+                        }
+                        // Stash the error on the response state so the stream-end handler
+                        // can use it for fallback messaging without destroying any
+                        // content or thinking that may have been accumulated.
+                        responseState._ollamaStreamError = errMsg;
+                        // Continue reading — the stream may still have a done frame with metrics.
+                        this._readSSE(dataInputStream, responseState, provider, cancellable);
+                        return;
+                    }
                     if (parsed.message) {
                         if (parsed.message.content) {
                             deltaText = parsed.message.content;
@@ -7094,8 +7333,18 @@ class KatabDialog {
                             thinkLabel.set_text(responseState.accumulatedThink);
                         }
                         if (parsed.message.tool_calls) {
+                            const firstDetection = responseState.accumulatedToolCalls.length === 0;
                             for (let tc of parsed.message.tool_calls) {
                                 responseState.accumulatedToolCalls.push(tc);
+                            }
+                            // Log first tool-call detection so the user sees it immediately.
+                            if (firstDetection) {
+                                log(`[Katab] Ollama streaming tool call(s) detected: ${parsed.message.tool_calls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
+                                this._addToolCallLogEntry(uiElements, {
+                                    toolName: parsed.message.tool_calls.map(tc => tc.function?.name).filter(Boolean).join(', '),
+                                    status: 'pending',
+                                    detail: 'Model requested tool execution',
+                                });
                             }
                         }
                     }
@@ -7144,11 +7393,20 @@ class KatabDialog {
                                     } catch (_e) {
                                         toolInput = {};
                                     }
+                                    const firstDetection = responseState.accumulatedToolCalls.length === 0;
                                     responseState.accumulatedToolCalls.push({
                                         id: toolBlock.id,
                                         type: 'function',
                                         function: { name: toolBlock.name, arguments: JSON.stringify(toolInput) },
                                     });
+                                    if (firstDetection) {
+                                        log(`[Katab] Anthropic streaming tool call detected: ${toolBlock.name}`);
+                                        this._addToolCallLogEntry(uiElements, {
+                                            toolName: toolBlock.name,
+                                            status: 'pending',
+                                            detail: 'Model requested tool execution',
+                                        });
+                                    }
                                 }
                             }
                         } else if (provider === 'deepseek') {
@@ -7167,7 +7425,16 @@ class KatabDialog {
                                     }
                                     // DeepSeek streams tool-call fragments by index (OpenAI-compatible).
                                     if (delta.tool_calls) {
+                                        const firstDetection = responseState.accumulatedToolCalls.length === 0;
                                         this._accumulateStreamingToolCalls(responseState, delta.tool_calls);
+                                        if (firstDetection && responseState.accumulatedToolCalls.length > 0) {
+                                            log(`[Katab] DeepSeek streaming tool call(s) detected: ${responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
+                                            this._addToolCallLogEntry(uiElements, {
+                                                toolName: responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', '),
+                                                status: 'pending',
+                                                detail: 'Model requested tool execution',
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -7195,7 +7462,16 @@ class KatabDialog {
                                     }
                                     // OpenAI streams tool-call fragments by index; assemble them.
                                     if (delta.tool_calls) {
+                                        const firstDetection = responseState.accumulatedToolCalls.length === 0;
                                         this._accumulateStreamingToolCalls(responseState, delta.tool_calls);
+                                        if (firstDetection && responseState.accumulatedToolCalls.length > 0) {
+                                            log(`[Katab] OpenAI/Unsloth streaming tool call(s) detected: ${responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
+                                            this._addToolCallLogEntry(uiElements, {
+                                                toolName: responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', '),
+                                                status: 'pending',
+                                                detail: 'Model requested tool execution',
+                                            });
+                                        }
                                     }
                                 }
                             }
@@ -7696,34 +7972,107 @@ class KatabDialog {
 
         const anthropicResultBlocks = [];
 
+        // Track search state across tool calls so we can inject guidance
+        // when the model keeps searching instead of reading.
+        let totalWebSearchesThisTurn = 0;
+        let consecutiveEmptySearches = 0;
+
+        let toolCallIndex = 0;
         for (const tc of toolCalls) {
+            // Insert a randomised delay between consecutive tool calls to
+            // stay below SearxNG + upstream-engine rate-limit thresholds.
+            if (toolCallIndex > 0) {
+                const delayMs = this._toolCallDelayMs();
+                await this._sleepMs(delayMs);
+            }
+            toolCallIndex++;
+
             const toolName = tc.function?.name;
             const args = this._parseToolArguments(tc.function?.arguments);
             let resultText = '';
 
+            // Build a human-readable args summary for the log entry.
+            let argsSummary = '';
+            if (toolName === WEB_SEARCH_TOOL_NAME) {
+                const q = String(args.query ?? args.q ?? '').trim();
+                argsSummary = q ? `"${q.substring(0, 60)}${q.length > 60 ? '…' : ''}"` : '';
+            } else if (toolName === READ_URL_TOOL_NAME || toolName === CRAWL4AI_TOOL_NAME) {
+                const u = String(args.url ?? '').trim();
+                argsSummary = u ? u.substring(0, 60) + (u.length > 60 ? '…' : '') : '';
+            }
+
+            // Create a pending log entry before execution.
+            const logEntry = this._addToolCallLogEntry(uiElements, {
+                toolName: toolName || 'unknown',
+                status: 'pending',
+                detail: argsSummary || 'Executing…',
+            });
+
             try {
+                let logUpdated = false;
+
                 if (toolName === WEB_SEARCH_TOOL_NAME) {
                     const query = String(args.query ?? args.q ?? '').trim();
                     if (!query) {
                         resultText = 'No search query was provided.';
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'error',
+                            error: resultText,
+                        });
+                        logUpdated = true;
                     } else {
                         this._applyAssistantRender(uiElements, `Searching the web for \u201c${query}\u201d\u2026`, { plain: true });
                         const searchPayload = await this._webSearchRuntime.search(query, config, cancellable);
-                        resultText = buildWebSearchResultBlock(query, searchPayload, { includeGuard: true });
+                        totalWebSearchesThisTurn++;
+                        const resultCount = searchPayload?.results?.length || 0;
+                        if (resultCount === 0) {
+                            consecutiveEmptySearches++;
+                            log(`[Katab] web_search for "${query}" returned 0 results from SearxNG. The query may be too specific, or the SearxNG instance may be rate-limiting.`);
+                        } else {
+                            consecutiveEmptySearches = 0; // reset on success
+                        }
+                        resultText = buildWebSearchResultBlock(query, searchPayload, {
+                            includeGuard: true,
+                            consecutiveEmptySearches,
+                            totalSearchesThisTurn: totalWebSearchesThisTurn,
+                        });
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'success',
+                            detail: resultCount > 0 ? `Found ${resultCount} result${resultCount !== 1 ? 's' : ''}` : 'No results found',
+                        });
+                        logUpdated = true;
                     }
                 } else if (toolName === READ_URL_TOOL_NAME) {
+                    consecutiveEmptySearches = 0; // model is reading — good!
                     const targetUrl = String(args.url ?? '').trim();
                     if (!targetUrl) {
                         resultText = 'No URL was provided.';
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'error',
+                            error: resultText,
+                        });
+                        logUpdated = true;
                     } else {
                         this._applyAssistantRender(uiElements, `Reading ${targetUrl}\u2026`, { plain: true });
                         const page = await this._webSearchRuntime.fetchPage(targetUrl, config, cancellable);
                         resultText = buildReadUrlResultBlock(page);
+                        const contentLen = page?.content?.length || 0;
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'success',
+                            detail: contentLen > 0 ? `Read ${(contentLen / 1024).toFixed(1)} KB` : 'Page fetched',
+                        });
+                        logUpdated = true;
                     }
                 } else if (toolName === CRAWL4AI_TOOL_NAME) {
+                    consecutiveEmptySearches = 0; // model is scraping — good!
                     const targetUrl = String(args.url ?? '').trim();
                     if (!targetUrl) {
                         resultText = 'No URL was provided to scrape.';
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'error',
+                            error: resultText,
+                        });
+                        logUpdated = true;
                     } else {
                         this._applyAssistantRender(uiElements, `Scraping ${targetUrl}\u2026`, { plain: true });
                         const crawlConfig = readCrawl4AIConfig(this._settings);
@@ -7732,9 +8081,20 @@ class KatabDialog {
                         }
                         const crawlResults = await this._crawl4aiRuntime.crawl(targetUrl, crawlConfig, cancellable);
                         resultText = buildCrawlResultBlock(crawlResults[0]);
+                        const fitLen = crawlResults?.[0]?.fitMarkdown?.length || 0;
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'success',
+                            detail: fitLen > 0 ? `Scraped ${(fitLen / 1024).toFixed(1)} KB` : 'Page scraped',
+                        });
+                        logUpdated = true;
                     }
                 } else {
                     resultText = `Tool ${toolName || 'unknown'} is not implemented locally in Katab.`;
+                    this._updateToolCallLogEntry(logEntry, {
+                        status: 'error',
+                        error: resultText,
+                    });
+                    logUpdated = true;
                 }
             } catch (e) {
                 if (this._isRequestCancelled(e)) {
@@ -7745,6 +8105,10 @@ class KatabDialog {
                     : e instanceof Crawl4AIError
                         ? `Web scraping error: ${e.message}`
                         : `Error executing tool: ${e.message}`;
+                this._updateToolCallLogEntry(logEntry, {
+                    status: 'error',
+                    error: resultText,
+                });
             }
 
             if (activeProvider === 'anthropic') {
@@ -7771,6 +8135,8 @@ class KatabDialog {
             this._messageHistory.push(message);
         }
         this._saveCurrentConversation();
+        // Flush immediately so tool execution progress is durable on disk.
+        HistoryManager.flushSync();
 
         // Bounce back to the API with the tool results for a final (or further) response.
         this._applyAssistantRender(uiElements, 'Waiting for final response...', { plain: true });
