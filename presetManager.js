@@ -26,6 +26,7 @@ import Gio from 'gi://Gio';
 export const PRESET_SETTINGS = [
     { key: 'url', type: 'string', settingKey: 'ollama-url' },
     { key: 'model', type: 'string', settingKey: 'ollama-model' },
+    { key: 'system-prompt', type: 'string', settingKey: 'ollama-system-prompt' },
     { key: 'num-ctx', type: 'int', settingKey: 'ollama-num-ctx' },
     { key: 'num-predict', type: 'int', settingKey: 'ollama-num-predict' },
     { key: 'num-keep', type: 'int', settingKey: 'ollama-num-keep' },
