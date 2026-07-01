@@ -410,7 +410,6 @@ export class Crawl4AIRuntime {
                 viewport_height: 1080,
                 user_agent_mode: 'random',
                 simulate_user: Boolean(config.simulateUser),
-                extra_args: ['--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox'],
             },
             crawler_config: {
                 cache_mode: config.cacheMode || 'bypass',

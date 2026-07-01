@@ -1244,17 +1244,23 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Choose a standard context size. If a custom value is already saved, it stays visible instead of snapping back to 4096.',
             contextGroup
         );
-        const ctxValues = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
+        const ctxValues = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 147456, 163840, 196608, 229376, 262144, 524288, 1048576];
         let syncingContextRow = false;
+
+        const fmtCtx = v => {
+            if (v >= 1048576 && v % 1048576 === 0) return `${v} (${v / 1048576}M)`;
+            if (v >= 1024 && v % 1024 === 0) return `${v} (${v / 1024}K)`;
+            return `${v}`;
+        };
 
         const syncContextRow = () => {
             const currentCtx = settings.get_int('ollama-num-ctx');
             const values = [...ctxValues];
-            const labels = ctxValues.map(value => value.toString());
+            const labels = ctxValues.map(value => fmtCtx(value));
 
             if (!values.includes(currentCtx) && currentCtx > 0) {
                 values.push(currentCtx);
-                labels.push(`${currentCtx} (custom)`);
+                labels.push(`${fmtCtx(currentCtx)} (custom)`);
             }
 
             syncingContextRow = true;
@@ -1279,7 +1285,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         });
 
         createIntRow('Predict Tokens', 'Maximum number of tokens Ollama may generate for a reply. Use -1 for no hard cap.', 'ollama-num-predict', contextGroup, -1, 128000, 100);
-        createIntRow('Keep Tokens', 'Preserve this many leading tokens when the context window rolls over so core instructions stay anchored.', 'ollama-num-keep', contextGroup, 0, 128000, 100);
+        createIntRow('Keep Tokens', 'Preserve this many leading tokens when the context window rolls over so core instructions stay anchored.', 'ollama-num-keep', contextGroup, 0, 1048576, 100);
         ollamaPage.add(connectionGroup);
         ollamaPage.add(contextGroup);
 
@@ -2001,6 +2007,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Permit fetching localhost and private LAN addresses when reading page content. Leave off unless you fully trust your network.',
                 'web-search-allow-local-addresses',
                 advancedGroup
+            );
+
+            createIntRow(
+                'Max Tool Iterations',
+                'Rounds of sequential tool calls the model may trigger per message before being forced to answer. Raise if the model needs more search/read steps.',
+                'web-search-max-tool-iterations',
+                advancedGroup,
+                1, 50, 1
             );
 
             const setupGroup = createPreferencesGroup({

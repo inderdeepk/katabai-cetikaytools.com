@@ -83,6 +83,11 @@
       <summary>Allow Local Network Addresses</summary>
       <description>Permit page reading of private, loopback, and link-local addresses. Leave disabled to prevent server-side request forgery against internal services.</description>
     </key>
+    <key name="web-search-max-tool-iterations" type="i">
+      <default>10</default>
+      <summary>Max Tool Iterations</summary>
+      <description>Maximum rounds of sequential tool calls the model may trigger per user message before being forced to answer. Raise this if the model needs more search/read steps to answer. (1–50)</description>
+    </key>
 
     <!-- Web Scraper Settings (Crawl4AI) -->
     <key name="crawl4ai-enabled" type="b">
@@ -165,7 +170,7 @@
     <key name="ollama-num-ctx" type="i">
       <default>4096</default>
       <summary>Context Window Size</summary>
-      <description>The context window size for the Ollama model (e.g., 4096, 8192).</description>
+      <description>The context window size for the Ollama model (e.g., 4096, 8192, 131072, 1048576).</description>
     </key>
     <key name="ollama-num-predict" type="i">
       <default>-1</default>
