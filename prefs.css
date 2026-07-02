@@ -76,10 +76,9 @@ window.katab-prefs-window .navigation-sidebar,
    ════════════════════════════════════════════ */
 
 .katab-prefs-provider-image {
-    padding: 8px;
-    border-radius: 8px;
-    background-color: rgba(26, 26, 26, 0.84);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 0;
+    background-color: transparent;
+    border: none;
 }
 
 .katab-prefs-provider-badge {
@@ -294,11 +293,6 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row:hover {
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-row,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander {
     background-color: rgba(255, 255, 255, 0.85);
-}
-
-window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-image {
-    background-color: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.08);
 }
 
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge {
