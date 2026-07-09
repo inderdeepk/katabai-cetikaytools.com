@@ -205,7 +205,52 @@ curl 'http://localhost:8080/search?q=test&format=json' -H 'Accept: application/j
 
 ---
 
-## 7. Troubleshooting & Tips
+## 7. AI Token Breakdown
+
+Katab tracks how many tokens your conversations use and presents it with a playful twist. Everything stays on your computer.
+
+### Opening the breakdown
+* **Chat window** — click the **Tokens** button in the top middle of the chat header.
+* **Top bar** — the panel dropdown shows a condensed snapshot row (companion face, selected-range total, local share, leading provider, and a tiny provider share bar). Activating it opens the full breakdown.
+
+### What you'll see
+* **Time ranges** — switch between Today, Week, Month, Year, and All Time.
+* **Chat combo** — each reply in the same conversation builds a streak counter. The combo card shows your current reply count and session token score. Combos reset when you start a new chat.
+* **Live counter** — during streaming, a token estimate appears in the chat header so you can see how much is being generated in real time.
+* **Totals** — overall tokens plus the prompt/reply split, reply counts, and DeepSeek cached-token savings when present.
+* **Efficiency** — average tokens per reply, prompt:completion ratio, and cache hit rate for DeepSeek/Anthropic.
+* **Trend** — a compact comparison with the previous range and your most active day.
+* **By provider** — a stacked share bar and per-provider rows showing tokens, percentages, reply counts, and `~` markers for estimated totals.
+* **Top models** — which models consumed the most tokens in the selected range.
+* **Local & self-hosted share** — how much of your usage ran on hardware you control, with a quick action that switches the next draft to Ollama.
+* **Achievements** — 21 unlockable badges across progression, streak, and special categories. Newly unlocked achievements appear as in-chat messages.
+* **Milestones** — small badges for first reply, first local tokens, local-heavy usage, streaks, and other companion achievements.
+* **Activity strip** — a mini bar chart of the last 14 days.
+* **Estimated cost** — built-in pricing for major models helps track approximate API spend.
+
+### Your companion
+A little desktop pet lives at the top of the breakdown. It hatches with your first tracked reply and grows through stages as tokens accumulate: Hatchling → Sprout → Scholar → Sage → Archmage. Its name follows your dominant provider (Ollie for Ollama, Pearl for DeepSeek, Sparky for OpenAI, Clyde for Claude, Slothy for Unsloth — or Mixie for a balanced blend), and its mood reflects your local-vs-cloud balance. Feeding it local tokens keeps it a happy homebody. Optional milestone celebrations appear as small in-chat system messages when it reaches a new growth stage.
+
+### Settings
+Open **Settings → General → AI Token Breakdown** to manage the feature:
+* **Track Token Usage** pauses or resumes recording without deleting existing data.
+* **Default Range** controls the initial range in the breakdown and top-bar snapshot.
+* **Retention** can keep the ledger forever, prune after 90 days, or prune after 1 year.
+* **Companion Celebrations** toggles growth-stage celebration messages.
+* **Token Budget & Warnings** — set a monthly USD budget and warning threshold. Katab estimates costs from token counts and warns you in-chat and via desktop notification when approaching the limit.
+* **Desktop Notifications** — receive GNOME notifications for companion stage-ups, new achievements, and budget alerts.
+* **Export Usage** — export your ledger as JSON, CSV spreadsheet, Markdown report, or self-contained HTML page.
+* **Reset Usage Ledger** deletes all token analytics and re-hatches the companion. Chat history is not affected.
+
+### Accuracy & privacy
+* **Exact counts** come from providers that report them: Ollama's response metrics, DeepSeek's usage chunks, and OpenAI/Anthropic streaming usage data when available.
+* **Estimates** (≈ characters ÷ 4) are used when a provider doesn't report counts or a response is stopped early; the breakdown shows what percentage of your data is measured exactly.
+* **Tracking starts now** — the ledger begins the first time this feature runs. Old conversations are never scanned or backfilled.
+* **Local only** — data lives in `~/.local/share/katabai/token-usage.json` and never leaves your machine. Use the settings reset button or delete that file to reset the ledger.
+
+---
+
+## 8. Troubleshooting & Tips
 
 * **Extension Not Showing**: Ensure you ran `glib-compile-schemas schemas/` during installation and restarted the GNOME shell (Log out/in on Wayland, or `Alt+F2`, type `r`, and hit Enter on X11).
 * **Connection Refused (Local)**: If using Unsloth or Ollama, make sure the respective server is running in the background.

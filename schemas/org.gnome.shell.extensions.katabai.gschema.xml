@@ -17,6 +17,48 @@
       <description>Enable optional local document parsing for supported text, PDF, and DOCX files.</description>
     </key>
 
+    <!-- AI Token Breakdown Settings -->
+    <key name="token-usage-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Token Usage Analytics</summary>
+      <description>Record local-only token usage summaries for the AI Token Breakdown panel. Data is stored under ~/.local/share/katabai and never uploaded.</description>
+    </key>
+    <key name="token-usage-default-range" type="s">
+      <default>'month'</default>
+      <summary>Default Token Breakdown Range</summary>
+      <description>Initial range shown by the AI Token Breakdown panel. Valid values are 'day', 'week', 'month', 'year', or 'all'.</description>
+    </key>
+    <key name="token-usage-retention-days" type="i">
+      <default>0</default>
+      <summary>Token Usage Retention Days</summary>
+      <description>How many days of token usage to keep. 0 keeps the local ledger forever; positive values prune older daily buckets.</description>
+    </key>
+    <key name="token-usage-celebrations-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Token Milestone Celebrations</summary>
+      <description>Show a small in-chat message when the token companion reaches a new growth stage.</description>
+    </key>
+    <key name="token-budget-enabled" type="b">
+      <default>false</default>
+      <summary>Enable Monthly Token Budget</summary>
+      <description>Track estimated API spend against a monthly budget and show warnings when approaching the limit.</description>
+    </key>
+    <key name="token-budget-monthly-usd" type="d">
+      <default>5.0</default>
+      <summary>Monthly Token Budget (USD)</summary>
+      <description>Maximum estimated monthly spend before Katab warns you. Set to 0 to disable budget tracking.</description>
+    </key>
+    <key name="token-budget-warning-pct" type="i">
+      <default>70</default>
+      <summary>Budget Warning Threshold (%)</summary>
+      <description>Percentage of the monthly budget at which Katab starts showing a warning. Default is 70%.</description>
+    </key>
+    <key name="token-desktop-notifications-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Desktop Notifications for Tokens</summary>
+      <description>Show GNOME desktop notifications for companion stage-ups, achievements, and budget warnings.</description>
+    </key>
+
     <!-- Web Search Tool Settings (SearxNG) -->
     <key name="web-search-enabled" type="b">
       <default>false</default>

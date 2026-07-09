@@ -76,6 +76,14 @@ import {
     reconcileActivePreset,
     PRESET_SETTINGS,
 } from './presetManager.js';
+import {
+    buildCompanionState,
+    buildUsageMilestones,
+    formatTokenCount,
+    isLocalModelEndpoint,
+    TOKEN_USAGE_RANGES,
+    TokenUsageManager,
+} from './tokenUsageManager.js';
 
 const PROVIDER_TOOLS = {
     'ollama': [],
@@ -1006,6 +1014,7 @@ class KatabDialog {
         this._sessionDocuments = new Map();
         this._ollamaVisionCapabilityCache = new Map();
         this._pendingDocuments = [];
+        this._clipboardTempFiles = [];          // clipboard-pasted temp files for cleanup
         this._attachmentBox = null;
         this._attachmentChipsContainer = null;
         this._webSearchMode = TOOL_MODE_AUTO;
@@ -1079,6 +1088,17 @@ class KatabDialog {
         this._settings.connect('changed::deepseek-model', () => {
             this._updateDeepseekModelButton();
         });
+        this._settings.connect('changed::token-usage-enabled', () => {
+            if (this._usagePanel?.visible) this._refreshUsagePanel();
+        });
+        this._settings.connect('changed::token-usage-default-range', () => {
+            this._usageRangeKey = this._getDefaultUsageRange();
+            if (this._usagePanel?.visible) this._refreshUsagePanel();
+        });
+        this._settings.connect('changed::token-usage-retention-days', () => {
+            TokenUsageManager.prune(this._settings.get_int('token-usage-retention-days'));
+            if (this._usagePanel?.visible) this._refreshUsagePanel();
+        });
         // Detect when the user manually changes any Ollama setting after a
         // preset was loaded — clears the active preset label so it never
         // shows a name that no longer matches reality.
@@ -1121,6 +1141,7 @@ class KatabDialog {
         this._promptHistory = [];
         this._promptHistoryIndex = -1;
         this._promptDraftBackup = '';
+        this._usageRangeKey = null;
         this._hasConversationStarted = false;
         this._welcomePanel = null;
         this._welcomeStage = null;
@@ -1358,6 +1379,101 @@ class KatabDialog {
         return assistantMessage;
     }
 
+    // Records one token-usage event per model response into the local ledger.
+    // Exact metrics are preferred (Ollama done-frame, DeepSeek/OpenAI usage
+    // chunks, Anthropic usage frames); otherwise a chars/4 estimate is stored
+    // and marked as estimated. Guarded so each response records at most once.
+    _recordUsageEvent(responseState, status = 'completed') {
+        if (!responseState || responseState._usageRecorded) {
+            return;
+        }
+        if (!this._settings.get_boolean('token-usage-enabled')) {
+            return;
+        }
+        if (responseState.mode === 'pull' || responseState.mode === 'document') {
+            return;
+        }
+        responseState._usageRecorded = true;
+
+        try {
+            const provider = responseState.provider;
+            const ctx = responseState._usageContext || {};
+            const metrics = responseState.assistantMeta?.metrics || null;
+
+            let promptTokens = 0;
+            let completionTokens = 0;
+            let reasoningTokens = 0;
+            let cachedHitTokens = 0;
+            let exact = false;
+            let source = 'estimate';
+
+            if (provider === 'ollama' && metrics
+                && (metrics.prompt_eval_count !== null || metrics.eval_count !== null)) {
+                promptTokens = metrics.prompt_eval_count || 0;
+                completionTokens = metrics.eval_count || 0;
+                exact = true;
+                source = 'ollama-metrics';
+            } else if (provider === 'deepseek' && metrics
+                && (metrics.prompt_tokens !== null || metrics.completion_tokens !== null)) {
+                promptTokens = metrics.prompt_tokens || 0;
+                completionTokens = metrics.completion_tokens || 0;
+                reasoningTokens = metrics.reasoning_tokens || 0;
+                cachedHitTokens = metrics.cached_tokens_hit || 0;
+                exact = true;
+                source = 'deepseek-usage';
+            } else if (responseState._usageFromStream
+                && ((responseState._usageFromStream.prompt_tokens || 0) > 0
+                    || (responseState._usageFromStream.completion_tokens || 0) > 0)) {
+                promptTokens = responseState._usageFromStream.prompt_tokens || 0;
+                completionTokens = responseState._usageFromStream.completion_tokens || 0;
+                exact = true;
+                source = provider === 'anthropic' ? 'anthropic-usage' : 'openai-usage';
+            } else {
+                promptTokens = Math.ceil((ctx.promptChars || 0) / 4);
+                completionTokens = Math.ceil(
+                    ((responseState.accumulatedText || '').length
+                        + (responseState.accumulatedThink || '').length) / 4
+                );
+            }
+
+            const result = TokenUsageManager.recordUsageEvent({
+                eventId: responseState._usageEventId,
+                provider,
+                model: ctx.model || responseState.modelName || '',
+                promptTokens,
+                completionTokens,
+                reasoningTokens,
+                cachedHitTokens,
+                exact,
+                source,
+                status,
+                local: isLocalModelEndpoint(provider, ctx.url),
+            });
+            TokenUsageManager.prune(this._settings.get_int('token-usage-retention-days'));
+            this._maybeCelebrateUsageMilestone(result);
+        } catch (e) {
+            log(`Katab: failed to record token usage: ${e.message || e}`);
+        }
+    }
+
+    _maybeCelebrateUsageMilestone(result) {
+        if (!result?.recorded || !result.celebration) {
+            return;
+        }
+        if (!this._settings.get_boolean('token-usage-celebrations-enabled')) {
+            return;
+        }
+
+        const celebration = result.celebration;
+        this._addSystemMessage(
+            `${celebration.face} Your token companion reached ${celebration.stageLabel} after ${formatTokenCount(celebration.totalTokens)} tracked tokens.`,
+            { variant: 'success' }
+        );
+        if (this._settings.get_boolean('token-desktop-notifications-enabled')) {
+            Main.notify('Katab', `${celebration.face} Token companion reached ${celebration.stageLabel}!`);
+        }
+    }
+
     _beginActiveResponse(uiElements, provider, mode = 'response', modelName = null) {
         this._lastResponseErrored = false;
         this._shouldNotifyOnResponseComplete = true;
@@ -1371,6 +1487,7 @@ class KatabDialog {
             mode,
             modelName,
             provider,
+            _usageEventId: GLib.uuid_string_random(),
             uiElements,
         };
         this._setStreamingState(true);
@@ -1434,6 +1551,7 @@ class KatabDialog {
         this._messageHistory.push(this._buildAssistantHistoryMessage(finalContent, assistantMeta));
         this._saveCurrentConversation();
         HistoryManager.flushSync();
+        this._recordUsageEvent(responseState, 'stopped');
         this._clearActiveResponseState();
 
         if (accumulatedText) {
@@ -2210,6 +2328,13 @@ class KatabDialog {
 
     _setPendingDocument(documentMeta) {
         if (documentMeta === null) {
+            // Clean up clipboard temp files when clearing all attachments
+            if (this._clipboardTempFiles && this._clipboardTempFiles.length) {
+                for (const tp of this._clipboardTempFiles) {
+                    try { Gio.File.new_for_path(tp).delete(null); } catch (_e) { }
+                }
+                this._clipboardTempFiles = [];
+            }
             this._pendingDocuments = [];
         } else if (documentMeta) {
             this._pendingDocuments.push(documentMeta);
@@ -2219,6 +2344,12 @@ class KatabDialog {
 
     _removePendingDocument(index) {
         if (index >= 0 && index < this._pendingDocuments.length) {
+            const doc = this._pendingDocuments[index];
+            // Clean up temp file if this was a clipboard paste
+            if (this._clipboardTempFiles && doc.path && this._clipboardTempFiles.includes(doc.path)) {
+                try { Gio.File.new_for_path(doc.path).delete(null); } catch (_e) { }
+                this._clipboardTempFiles = this._clipboardTempFiles.filter(p => p !== doc.path);
+            }
             this._pendingDocuments.splice(index, 1);
             this._updatePendingDocumentUI();
         }
@@ -2991,6 +3122,7 @@ class KatabDialog {
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
+        if (this._usagePanel) this._usagePanel.visible = false;
         this._chatScroll.visible = false;
         panel.visible = true;
     }
@@ -3104,6 +3236,526 @@ class KatabDialog {
         this._deepseekModelBtnLabel.set_text(meta ? meta.label : (model || 'Model'));
     }
 
+    // ── AI Token Breakdown panel ─────────────────────────────────────────────
+    _buildUsagePanel() {
+        const { picker, listBox, closePickerBtn } = this._buildPickerShell('AI Token Breakdown');
+        picker.add_style_class_name('katab-usage-panel');
+        this._usagePanelListBox = listBox;
+        closePickerBtn.connect('clicked', () => this._showChatView());
+        return picker;
+    }
+
+    _toggleUsagePanel() {
+        if (!this._usagePanel) return;
+        if (this._usagePanel.visible) {
+            this._showChatView();
+            return;
+        }
+        this._openUsagePanel();
+    }
+
+    // Also used by the top-panel indicator to jump straight to the breakdown.
+    _openUsagePanel() {
+        if (!this._usagePanel) return;
+        this._refreshUsagePanel();
+        this._openAuxPanel(this._usagePanel);
+    }
+
+    _refreshUsagePanel() {
+        if (!this._usagePanelListBox) return;
+        this._usagePanelListBox.destroy_all_children();
+
+        if (!this._usageRangeKey || !this._isValidUsageRange(this._usageRangeKey)) {
+            this._usageRangeKey = this._getDefaultUsageRange();
+        }
+
+        let summary;
+        let allSummary;
+        try {
+            allSummary = TokenUsageManager.getSummary('all');
+            summary = this._usageRangeKey === 'all'
+                ? allSummary
+                : TokenUsageManager.getSummary(this._usageRangeKey);
+        } catch (e) {
+            this._usagePanelListBox.add_child(new St.Label({
+                text: `Could not load usage data: ${e.message || e}`,
+                style_class: 'katab-usage-privacy-note',
+            }));
+            return;
+        }
+
+        const box = this._usagePanelListBox;
+        const trackingEnabled = this._settings.get_boolean('token-usage-enabled');
+        if (!trackingEnabled) {
+            box.add_child(this._buildUsagePausedCard());
+        }
+
+        // Empty state — tracking starts with the first recorded reply.
+        if (allSummary.totalTokens === 0) {
+            box.add_child(this._buildUsageCompanionCard(allSummary, summary));
+            const emptyCard = this._createUsageCard(null);
+            emptyCard.add_child(new St.Label({
+                text: 'No tokens tracked yet',
+                style_class: 'katab-usage-hero-value',
+            }));
+            const emptyHint = new St.Label({
+                text: trackingEnabled
+                    ? 'Tracking starts with your next reply. Old chats are not scanned or backfilled, and the ledger stays on this computer.'
+                    : 'Tracking is paused. Turn it back on in Settings > General > AI Token Breakdown when you want the companion to start counting again.',
+                style_class: 'katab-usage-note',
+            });
+            emptyHint.clutter_text.line_wrap = true;
+            emptyHint.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            emptyCard.add_child(emptyHint);
+            box.add_child(emptyCard);
+            box.add_child(this._buildUsagePrivacyNote());
+            return;
+        }
+
+        box.add_child(this._buildUsageRangeSelector());
+        box.add_child(this._buildUsageCompanionCard(allSummary, summary));
+        box.add_child(this._buildUsageHeroCard(summary));
+        box.add_child(this._buildUsageTrendCard(summary));
+        box.add_child(this._buildUsageLocalCard(summary));
+        box.add_child(this._buildUsageMilestoneCard(allSummary));
+        if (summary.providers.length > 0) {
+            box.add_child(this._buildUsageProviderCard(summary));
+        }
+        if (summary.models.length > 0) {
+            box.add_child(this._buildUsageModelCard(summary));
+        }
+        box.add_child(this._buildUsageTimelineCard(summary));
+        box.add_child(this._buildUsagePrivacyNote());
+    }
+
+    _createUsageCard(titleText = null) {
+        const card = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            style_class: 'katab-usage-card',
+        });
+        if (titleText) {
+            card.add_child(new St.Label({
+                text: titleText,
+                style_class: 'katab-usage-card-title',
+            }));
+        }
+        return card;
+    }
+
+    _getDefaultUsageRange() {
+        try {
+            const saved = this._settings.get_string('token-usage-default-range');
+            if (this._isValidUsageRange(saved)) {
+                return saved;
+            }
+        } catch (_e) { /* fallback below */ }
+        return 'month';
+    }
+
+    _isValidUsageRange(rangeKey) {
+        return TOKEN_USAGE_RANGES.some(range => range.key === rangeKey);
+    }
+
+    _buildUsagePausedCard() {
+        const card = this._createUsageCard('Tracking Paused');
+        const label = new St.Label({
+            text: 'Token analytics are disabled. Existing local data remains here, but new replies will not be counted until you turn tracking back on.',
+            style_class: 'katab-usage-note',
+        });
+        label.clutter_text.line_wrap = true;
+        label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        card.add_child(label);
+        return card;
+    }
+
+    _buildUsageRangeSelector() {
+        const row = new St.BoxLayout({
+            vertical: false,
+            x_expand: true,
+            style_class: 'katab-usage-range-row',
+        });
+        for (const range of TOKEN_USAGE_RANGES) {
+            const active = range.key === this._usageRangeKey;
+            const btn = new St.Button({
+                label: range.label,
+                style_class: active
+                    ? 'katab-usage-range-btn katab-usage-range-btn-active'
+                    : 'katab-usage-range-btn',
+                can_focus: true,
+                reactive: true,
+                x_expand: true,
+            });
+            btn.connect('clicked', () => {
+                this._usageRangeKey = range.key;
+                this._refreshUsagePanel();
+            });
+            row.add_child(btn);
+        }
+        return row;
+    }
+
+    // The cute desktop companion — identity derived from ALL-TIME usage so it
+    // grows steadily no matter which range is being inspected.
+    _buildUsageCompanionCard(allSummary, recentSummary = null) {
+        const companion = buildCompanionState(allSummary, recentSummary || allSummary);
+
+        const card = new St.BoxLayout({
+            vertical: false,
+            x_expand: true,
+            style_class: 'katab-usage-card katab-usage-companion-card',
+        });
+
+        const body = new St.BoxLayout({
+            vertical: true,
+            style_class: `katab-usage-companion-body katab-usage-companion-body-${companion.stageKey} katab-usage-companion-provider-${companion.primaryProvider || 'none'}${companion.recentLocalShare >= 0.5 ? ' katab-usage-companion-local' : ''}`,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        body.add_child(new St.Label({
+            text: companion.face,
+            style_class: 'katab-usage-companion-face',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+            y_expand: true,
+        }));
+        card.add_child(body);
+
+        const textCol = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'katab-usage-companion-text',
+        });
+        textCol.add_child(new St.Label({
+            text: `${companion.name} · ${companion.stageLabel}`,
+            style_class: 'katab-usage-companion-name',
+        }));
+        textCol.add_child(new St.Label({
+            text: companion.mood,
+            style_class: 'katab-usage-companion-mood',
+        }));
+        const flavor = new St.Label({
+            text: companion.flavorText,
+            style_class: 'katab-usage-companion-flavor',
+        });
+        flavor.clutter_text.line_wrap = true;
+        flavor.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        textCol.add_child(flavor);
+        card.add_child(textCol);
+
+        if (companion.primaryProvider) {
+            const badgeCol = new St.BoxLayout({
+                vertical: true,
+                y_align: Clutter.ActorAlign.CENTER,
+                style_class: 'katab-usage-companion-badges',
+            });
+            badgeCol.add_child(createProviderIcon(
+                companion.primaryProvider,
+                this._extension.path,
+                'katab-usage-companion-provider-icon'
+            ));
+            if (companion.secondaryProvider) {
+                badgeCol.add_child(createProviderIcon(
+                    companion.secondaryProvider,
+                    this._extension.path,
+                    'katab-usage-companion-secondary-icon'
+                ));
+            }
+            if (companion.recentLocalShare >= 0.5) {
+                badgeCol.add_child(new St.Icon({
+                    icon_name: 'user-home-symbolic',
+                    style_class: 'katab-usage-companion-home-icon',
+                }));
+            }
+            card.add_child(badgeCol);
+        }
+
+        return card;
+    }
+
+    _buildUsageHeroCard(summary) {
+        const card = this._createUsageCard(summary.label);
+        card.add_child(new St.Label({
+            text: `${formatTokenCount(summary.totalTokens)} tokens`,
+            style_class: 'katab-usage-hero-value',
+        }));
+
+        let detailText = `${formatTokenCount(summary.promptTokens)} prompt · ${formatTokenCount(summary.completionTokens)} reply`;
+        if (summary.cachedHitTokens > 0) {
+            detailText += ` · ${formatTokenCount(summary.cachedHitTokens)} cached`;
+        }
+        card.add_child(new St.Label({
+            text: detailText,
+            style_class: 'katab-usage-note',
+        }));
+
+        const exactPct = Math.round(summary.exactShare * 100);
+        card.add_child(new St.Label({
+            text: `${exactPct}% measured exactly · tracking since ${this._formatUsageDate(summary.trackingStartedAt)}`,
+            style_class: 'katab-usage-meta',
+        }));
+        return card;
+    }
+
+    _buildUsageTrendCard(summary) {
+        const card = this._createUsageCard('Compared To You');
+        const trendText = summary.tokenTrend === null
+            ? 'No previous range yet'
+            : `${summary.tokenTrend >= 0 ? '+' : ''}${Math.round(summary.tokenTrend * 100)}% vs previous ${summary.label.toLowerCase()}`;
+        const averageText = summary.todayVsAverage === null
+            ? 'Today is waiting for tokens'
+            : `${summary.todayVsAverage >= 0 ? '+' : ''}${Math.round(summary.todayVsAverage * 100)}% vs your active-day average`;
+        const localTrendText = summary.localShareTrend === null
+            ? 'Local trend starts after the next full range'
+            : `${summary.localShareTrend >= 0 ? '+' : ''}${Math.round(summary.localShareTrend * 100)} pts local share vs previous range`;
+        const mostActive = summary.mostActiveDay
+            ? `${this._formatUsageDay(summary.mostActiveDay.dayKey)} was busiest (${formatTokenCount(summary.mostActiveDay.total)})`
+            : 'No active day yet';
+
+        for (const text of [trendText, averageText, localTrendText, mostActive, `${summary.localStreakDays} day local streak`]) {
+            card.add_child(new St.Label({
+                text,
+                style_class: 'katab-usage-note',
+            }));
+        }
+        return card;
+    }
+
+    _buildUsageLocalCard(summary) {
+        const card = this._createUsageCard('Local & Self-Hosted');
+        const pct = Math.round(summary.localShare * 100);
+
+        // Two-segment share bar: local (green) vs cloud (muted). 320px track.
+        const barRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-usage-share-bar',
+        });
+        const localWidth = summary.localShare > 0
+            ? Math.max(4, Math.round(summary.localShare * 320))
+            : 0;
+        if (localWidth > 0) {
+            barRow.add_child(new St.Widget({
+                style_class: 'katab-usage-share-seg katab-usage-local-fill',
+                width: Math.min(localWidth, 320),
+                height: 10,
+            }));
+        }
+        const remoteWidth = 320 - Math.min(localWidth, 320);
+        if (remoteWidth > 0) {
+            barRow.add_child(new St.Widget({
+                style_class: 'katab-usage-share-seg katab-usage-remote-fill',
+                width: remoteWidth,
+                height: 10,
+            }));
+        }
+        card.add_child(barRow);
+
+        card.add_child(new St.Label({
+            text: `${pct}% on hardware you control · ${formatTokenCount(summary.localTokens)} local · ${formatTokenCount(summary.remoteTokens)} cloud`,
+            style_class: 'katab-usage-note',
+        }));
+
+        let nudge;
+        if (summary.localShare >= 0.75) {
+            nudge = 'Self-hosting champion! Your models, your machine, your rules.';
+        } else if (summary.localShare >= 0.4) {
+            nudge = 'Great balance — every local token is one you fully own.';
+        } else if (summary.localShare > 0) {
+            nudge = 'A sprinkle of local power! Local models are great for drafts and iteration.';
+        } else {
+            nudge = 'Tip: a local Ollama model gives you private, offline replies — and helps the companion grow roots.';
+        }
+        const nudgeLabel = new St.Label({
+            text: nudge,
+            style_class: 'katab-usage-nudge',
+        });
+        nudgeLabel.clutter_text.line_wrap = true;
+        nudgeLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        card.add_child(nudgeLabel);
+
+        const actionRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-usage-action-row',
+        });
+        const localBtn = new St.Button({
+            label: this._currentProvider === 'ollama' ? 'Already Drafting Locally' : 'Try Next Draft Locally',
+            style_class: 'katab-usage-action-btn',
+            reactive: true,
+            can_focus: true,
+        });
+        localBtn.connect('clicked', () => this._switchToLocalDraft());
+        actionRow.add_child(localBtn);
+        card.add_child(actionRow);
+        return card;
+    }
+
+    _switchToLocalDraft() {
+        if (this._settings.get_string('provider') !== 'ollama') {
+            this._settings.set_string('provider', 'ollama');
+        }
+        this._showChatView();
+    }
+
+    _buildUsageMilestoneCard(allSummary) {
+        const card = this._createUsageCard('Milestones');
+        const row = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-usage-milestone-row',
+        });
+        for (const milestone of buildUsageMilestones(allSummary)) {
+            row.add_child(new St.Label({
+                text: milestone.label,
+                style_class: milestone.achieved
+                    ? 'katab-usage-milestone katab-usage-milestone-achieved'
+                    : 'katab-usage-milestone',
+            }));
+        }
+        card.add_child(row);
+        return card;
+    }
+
+    _buildUsageProviderCard(summary) {
+        const card = this._createUsageCard('By Provider');
+
+        // Stacked provider share bar (320px track).
+        const stack = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-usage-share-bar',
+        });
+        for (const entry of summary.providers) {
+            if (entry.share <= 0) continue;
+            stack.add_child(new St.Widget({
+                style_class: `katab-usage-share-seg katab-usage-fill-${entry.provider}`,
+                width: Math.max(4, Math.round(entry.share * 320)),
+                height: 10,
+            }));
+        }
+        card.add_child(stack);
+
+        for (const entry of summary.providers) {
+            const row = new St.BoxLayout({
+                vertical: false,
+                x_expand: true,
+                style_class: 'katab-usage-provider-row',
+            });
+            row.add_child(createProviderIcon(
+                entry.provider,
+                this._extension.path,
+                'katab-usage-provider-row-icon'
+            ));
+            const nameCol = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            nameCol.add_child(new St.Label({
+                text: getProviderLabel(entry.provider),
+                style_class: 'katab-usage-provider-name',
+            }));
+            nameCol.add_child(new St.Label({
+                text: `${entry.events} ${entry.events === 1 ? 'reply' : 'replies'}`,
+                style_class: 'katab-usage-provider-meta',
+            }));
+            row.add_child(nameCol);
+            row.add_child(new St.Label({
+                text: `${entry.estimated > 0 ? '~' : ''}${formatTokenCount(entry.total)} · ${Math.round(entry.share * 100)}%`,
+                style_class: 'katab-usage-provider-value',
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+            card.add_child(row);
+        }
+        return card;
+    }
+
+    _buildUsageModelCard(summary) {
+        const card = this._createUsageCard('Top Models');
+        for (const entry of summary.models) {
+            const row = new St.BoxLayout({
+                vertical: false,
+                x_expand: true,
+                style_class: 'katab-usage-model-row',
+            });
+            const nameLabel = new St.Label({
+                text: entry.model,
+                style_class: 'katab-usage-model-name',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            nameLabel.clutter_text.single_line_mode = true;
+            row.add_child(nameLabel);
+            row.add_child(new St.Label({
+                text: `${entry.estimated > 0 ? '~' : ''}${formatTokenCount(entry.total)} · ${Math.round(entry.share * 100)}%`,
+                style_class: 'katab-usage-provider-value',
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+            card.add_child(row);
+        }
+        return card;
+    }
+
+    _formatUsageDay(dayKey) {
+        try {
+            const parts = String(dayKey).split('-').map(Number);
+            const dt = GLib.DateTime.new_local(parts[0], parts[1], parts[2], 0, 0, 0);
+            return `${dt.format('%b')} ${dt.get_day_of_month()}`;
+        } catch (_e) {
+            return dayKey || 'Unknown day';
+        }
+    }
+
+    _buildUsageTimelineCard(summary) {
+        const card = this._createUsageCard('Last 14 Days');
+        const chart = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-usage-timeline',
+        });
+        const max = Math.max(...summary.timeline.map(d => d.total), 1);
+        for (const day of summary.timeline) {
+            const height = day.total > 0
+                ? Math.max(4, Math.round((day.total / max) * 44))
+                : 2;
+            chart.add_child(new St.Widget({
+                style_class: day.total > 0
+                    ? 'katab-usage-day-bar'
+                    : 'katab-usage-day-bar katab-usage-day-bar-empty',
+                width: 14,
+                height,
+                y_align: Clutter.ActorAlign.END,
+                y_expand: false,
+            }));
+        }
+        card.add_child(chart);
+        card.add_child(new St.Label({
+            text: `${summary.activeDays} active ${summary.activeDays === 1 ? 'day' : 'days'} in this range · ${summary.events} ${summary.events === 1 ? 'reply' : 'replies'}`,
+            style_class: 'katab-usage-meta',
+        }));
+        return card;
+    }
+
+    _buildUsagePrivacyNote() {
+        const note = new St.Label({
+            text: 'All usage data stays on this computer — nothing is uploaded anywhere.',
+            style_class: 'katab-usage-privacy-note',
+        });
+        note.clutter_text.line_wrap = true;
+        note.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        return note;
+    }
+
+    _formatUsageDate(unixSeconds) {
+        if (!unixSeconds) {
+            return 'today';
+        }
+        try {
+            const dt = GLib.DateTime.new_from_unix_local(unixSeconds);
+            return `${dt.format('%b')} ${dt.get_day_of_month()}, ${dt.get_year()}`;
+        } catch (_e) {
+            return 'recently';
+        }
+    }
+
     _buildUI() {
 
         let headerBox = new St.BoxLayout({
@@ -3133,11 +3785,42 @@ class KatabDialog {
         });
         titleWrapper.add_child(titleLabel);
 
-        let headerSpacer = new St.Widget({
+        let headerSpacerLeft = new St.Widget({
             x_expand: true,
             y_expand: true,
         });
-        headerBox.add_child(headerSpacer);
+        headerBox.add_child(headerSpacerLeft);
+
+        // AI Token Breakdown — centered header button opening the usage panel.
+        this._usageBtn = new St.Button({
+            style_class: 'katab-usage-btn',
+            can_focus: true,
+            reactive: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        const usageBtnInner = new St.BoxLayout({
+            vertical: false,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        usageBtnInner.add_child(new St.Icon({
+            icon_name: 'utilities-system-monitor-symbolic',
+            style_class: 'katab-usage-btn-icon',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        usageBtnInner.add_child(new St.Label({
+            text: 'Tokens',
+            style_class: 'katab-usage-btn-label',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        this._usageBtn.set_child(usageBtnInner);
+        this._usageBtn.connect('clicked', () => this._toggleUsagePanel());
+        headerBox.add_child(this._usageBtn);
+
+        let headerSpacerRight = new St.Widget({
+            x_expand: true,
+            y_expand: true,
+        });
+        headerBox.add_child(headerSpacerRight);
 
         // Subtle running total of prompt-cache savings for the current chat.
         // Only shown for DeepSeek once at least a little has been saved.
@@ -3416,6 +4099,10 @@ class KatabDialog {
         this._deepseekModelPicker = this._buildDeepseekModelPicker();
         this.contentLayout.add_child(this._deepseekModelPicker);
 
+        // AI Token Breakdown panel — local usage analytics + companion
+        this._usagePanel = this._buildUsagePanel();
+        this.contentLayout.add_child(this._usagePanel);
+
         this._attachmentBox = new St.BoxLayout({
             style_class: 'katab-attachment-box',
             vertical: true,
@@ -3655,34 +4342,67 @@ class KatabDialog {
                     St.Clipboard.get_default().get_text(
                         St.ClipboardType.CLIPBOARD,
                         (_cb, text) => {
-                            if (!text || !this._entry) return;
-                            this._entry.delete_selection();
-                            let pos = this._entry.get_cursor_position();
+                            if (!this._entry) return;
 
-                            // Keep the draft within the character cap. Insert
-                            // only what fits and tell the user exactly how much
-                            // was dropped instead of silently giving up.
-                            let currentLength = (this._entry.get_text() ?? '').length;
-                            let available = PROMPT_INPUT_MAX_CHARS - currentLength;
-                            if (available <= 0) {
-                                this._addSystemMessage(
-                                    `The prompt is already at its ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document.`,
-                                    { variant: 'warning' }
-                                );
+                            // ── File URI list (copied from file manager) ──
+                            const filePaths = this._looksLikeFileUriList(text);
+                            if (filePaths) {
+                                let attached = 0;
+                                for (const fp of filePaths) {
+                                    const meta = this._buildDocumentMeta(fp);
+                                    if (meta) {
+                                        this._setPendingDocument(meta);
+                                        attached++;
+                                    }
+                                }
+                                if (attached > 0) {
+                                    this._addSystemMessage(
+                                        `Attached ${attached} file${attached === 1 ? '' : 's'} from clipboard.`
+                                    );
+                                    if (this.isOpen) this.focusPrompt();
+                                }
                                 return;
                             }
 
-                            let toInsert = text;
-                            if (text.length > available) {
-                                toInsert = text.slice(0, available);
-                                let dropped = text.length - available;
-                                this._addSystemMessage(
-                                    `Pasted text was ${dropped.toLocaleString()} character${dropped === 1 ? '' : 's'} too long and was trimmed to fit the ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character prompt limit. For long content, attach it as a document instead.`,
-                                    { variant: 'warning' }
-                                );
+                            // ── Normal text paste ──
+                            if (text) {
+                                this._entry.delete_selection();
+                                let pos = this._entry.get_cursor_position();
+
+                                let currentLength = (this._entry.get_text() ?? '').length;
+                                let available = PROMPT_INPUT_MAX_CHARS - currentLength;
+                                if (available <= 0) {
+                                    this._addSystemMessage(
+                                        `The prompt is already at its ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document.`,
+                                        { variant: 'warning' }
+                                    );
+                                    return;
+                                }
+
+                                let toInsert = text;
+                                if (text.length > available) {
+                                    toInsert = text.slice(0, available);
+                                    let dropped = text.length - available;
+                                    this._addSystemMessage(
+                                        `Pasted text was ${dropped.toLocaleString()} character${dropped === 1 ? '' : 's'} too long and was trimmed to fit the ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character prompt limit. For long content, attach it as a document instead.`,
+                                        { variant: 'warning' }
+                                    );
+                                }
+
+                                this._entry.insert_text(toInsert, pos);
+                                return;
                             }
 
-                            this._entry.insert_text(toInsert, pos);
+                            // ── Non-text clipboard (image, etc.) ──
+                            this._saveClipboardImageAsync().then(tempPath => {
+                                if (!tempPath) return;
+                                const meta = this._buildDocumentMeta(tempPath);
+                                if (meta) {
+                                    this._setPendingDocument(meta);
+                                    this._addSystemMessage('Image attached from clipboard.');
+                                    if (this.isOpen) this.focusPrompt();
+                                }
+                            }).catch(() => { /* clipboard image save failed — ignore */ });
                         }
                     );
                     return Clutter.EVENT_STOP;
@@ -4117,6 +4837,127 @@ class KatabDialog {
         return true;
     }
 
+    // ── Clipboard paste helpers ────────────────────────────────────────
+
+    _detectDisplayServer() {
+        if (GLib.getenv('WAYLAND_DISPLAY')) return 'wayland';
+        const sessionType = GLib.getenv('XDG_SESSION_TYPE');
+        if (sessionType === 'x11') return 'x11';
+        if (sessionType === 'wayland') return 'wayland';
+        return null;
+    }
+
+    async _saveClipboardImageAsync() {
+        const displayServer = this._detectDisplayServer();
+        if (!displayServer) return null;
+
+        let argv;
+        if (displayServer === 'wayland') {
+            argv = ['wl-paste', '-t', 'image/png'];
+        } else {
+            argv = ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-o'];
+        }
+
+        const toolPath = GLib.find_program_in_path(argv[0]);
+        if (!toolPath) return null;
+
+        let subprocess;
+        try {
+            subprocess = Gio.Subprocess.new(
+                argv,
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+            );
+        } catch (_e) {
+            return null;
+        }
+
+        let timedOut = false;
+        const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+            timedOut = true;
+            try { subprocess.force_exit(); } catch (_e) { }
+            return GLib.SOURCE_REMOVE;
+        });
+
+        try {
+            const [, stdoutBytes] = await new Promise((resolve, reject) => {
+                subprocess.communicate_async(null, null, (_src, result) => {
+                    try {
+                        resolve(subprocess.communicate_finish(result));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
+
+            if (timedOut) return null;
+
+            const byteSize = typeof stdoutBytes?.get_size === 'function'
+                ? stdoutBytes.get_size()
+                : stdoutBytes?.length || 0;
+            if (byteSize === 0) return null;
+            if (!subprocess.get_successful()) return null;
+
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).slice(2, 8);
+            const tempPath = GLib.build_filenamev([
+                GLib.get_tmp_dir(),
+                `katab-clipboard-${timestamp}-${random}.png`
+            ]);
+
+            const file = Gio.File.new_for_path(tempPath);
+            await new Promise((resolve, reject) => {
+                file.replace_contents_bytes_async(
+                    stdoutBytes,
+                    null,
+                    false,
+                    Gio.FileCreateFlags.NONE,
+                    null,
+                    (_src, result) => {
+                        try {
+                            file.replace_contents_finish(result);
+                            resolve();
+                        } catch (e) {
+                            reject(e);
+                        }
+                    }
+                );
+            });
+
+            this._clipboardTempFiles.push(tempPath);
+            return tempPath;
+        } catch (_e) {
+            return null;
+        } finally {
+            GLib.source_remove(timeoutId);
+        }
+    }
+
+    _looksLikeFileUriList(text) {
+        if (!text || typeof text !== 'string') return null;
+        const trimmed = text.trim();
+        if (!trimmed) return null;
+
+        const uriPattern = /^file:\/\/\/[^\s]+$/;
+        const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+        if (lines.length === 0) return null;
+        if (!lines.every(line => uriPattern.test(line))) return null;
+
+        const paths = [];
+        for (const uri of lines) {
+            try {
+                const path = GLib.filename_from_uri(uri);
+                if (path && GLib.file_test(path, GLib.FileTest.EXISTS)) {
+                    paths.push(path);
+                }
+            } catch (_e) {
+                // skip malformed URIs
+            }
+        }
+
+        return paths.length > 0 ? paths : null;
+    }
+
     close({ cancelStream = false, saveConversation = true } = {}) {
         if (!this.isOpen) return;
 
@@ -4134,6 +4975,15 @@ class KatabDialog {
         if (this.actor.get_parent()) {
             Main.layoutManager.removeChrome(this.actor);
         }
+
+        // Clean up clipboard temp files
+        if (this._clipboardTempFiles && this._clipboardTempFiles.length) {
+            for (const tempPath of this._clipboardTempFiles) {
+                try { Gio.File.new_for_path(tempPath).delete(null); } catch (_e) { }
+            }
+            this._clipboardTempFiles = [];
+        }
+
         this._notifyCurrentChatChanged();
     }
 
@@ -5057,6 +5907,7 @@ class KatabDialog {
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
+        if (this._usagePanel) this._usagePanel.visible = false;
         this._chatScroll.visible = true;
         this._footerBox.visible = true;
         if (this._welcomePanel?.visible) {
@@ -5086,6 +5937,7 @@ class KatabDialog {
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
+        if (this._usagePanel) this._usagePanel.visible = false;
         this._historyView.visible = true;
         this._renderHistoryList(this._historySearchQuery || null);
         // Auto-focus the search bar so the user can start typing immediately
@@ -6395,12 +7247,9 @@ class KatabDialog {
     }
 
     _addSystemMessage(text, { variant = null } = {}) {
-        const boxClass = variant === 'warning'
-            ? 'katab-system-message-box warning'
-            : 'katab-system-message-box';
-        const textClass = variant === 'warning'
-            ? 'katab-system-message-text warning'
-            : 'katab-system-message-text';
+        const variantClass = ['warning', 'success'].includes(variant) ? ` ${variant}` : '';
+        const boxClass = `katab-system-message-box${variantClass}`;
+        const textClass = `katab-system-message-text${variantClass}`;
         let msgBox = new St.BoxLayout({
             style_class: boxClass,
             x_align: Clutter.ActorAlign.CENTER,
@@ -7487,6 +8336,11 @@ class KatabDialog {
                 messages: apiMessagesWithSystemPolicy,
                 stream: true
             };
+            if (provider === 'openai') {
+                // Ask OpenAI to append a final usage chunk so token analytics
+                // can record exact counts instead of estimates.
+                payload.stream_options = { include_usage: true };
+            }
             if (this._forcedTool) {
                 payload.tool_choice = { type: "function", function: { name: this._forcedTool } };
             }
@@ -7733,7 +8587,7 @@ class KatabDialog {
             this._cancellable = cancellable;
         }
 
-        let responseState = this._beginActiveResponse(uiElements, provider);
+        let responseState = this._beginActiveResponse(uiElements, provider, 'response', model);
 
         // Stash the known tool names on the response state so the SSE reader
         // (a class method without closure access) can use them for the
@@ -7745,6 +8599,21 @@ class KatabDialog {
         if (advertiseCrawl4AI) {
             responseState._knownToolNames.push(CRAWL4AI_TOOL_NAME);
         }
+
+        // Context for the token-usage ledger: model, endpoint (for local vs
+        // remote classification), and prompt size for estimate fallbacks.
+        let usagePromptChars = 0;
+        try {
+            usagePromptChars = JSON.stringify(payload.messages || []).length;
+        } catch (_e) {
+            usagePromptChars = 0;
+        }
+        responseState._usageContext = {
+            model,
+            url,
+            requestBytes: bodyBytes.get_size(),
+            promptChars: usagePromptChars,
+        };
 
         let currentCancellable = this._cancellable;
 
@@ -7918,10 +8787,12 @@ class KatabDialog {
                                 this._messageHistory.push(assistantMsg);
                                 this._saveCurrentConversation();
                                 HistoryManager.flushSync();
+                                this._recordUsageEvent(responseState, 'completed');
                                 this._clearActiveResponseState();
                             } else {
                                 responseState.mode = 'tool';
                                 responseState.accumulatedToolCalls = effectiveToolCalls;
+                                this._recordUsageEvent(responseState, 'tool-call-turn');
                                 this._applyAssistantRender(uiElements, 'Running local tools...', { plain: true });
                                 this._handleToolCalls(effectiveToolCalls, uiElements, responseState.accumulatedThink, provider)
                                     .catch(error => {
@@ -7947,6 +8818,7 @@ class KatabDialog {
                             // even if the dialog is closed or a new chat is started
                             // before the debounce timer fires.
                             HistoryManager.flushSync();
+                            this._recordUsageEvent(responseState, 'completed');
                             this._clearActiveResponseState();
                         }
                     } catch (eofError) {
@@ -7962,6 +8834,7 @@ class KatabDialog {
                         } catch (saveError) {
                             log(`[Katab] Failed to save conversation after stream-end error: ${saveError.message || saveError}`);
                         }
+                        this._recordUsageEvent(responseState, 'completed');
                         this._clearActiveResponseState();
                     }
                     return;
@@ -8079,6 +8952,18 @@ class KatabDialog {
                                         log(`[Katab] Anthropic streaming tool call detected: ${toolBlock.name}`);
                                     }
                                 }
+                            } else if (parsed.type === 'message_start' && parsed.message?.usage) {
+                                // Anthropic reports prompt tokens up front on message_start.
+                                responseState._usageFromStream = {
+                                    ...(responseState._usageFromStream || {}),
+                                    prompt_tokens: Number(parsed.message.usage.input_tokens) || 0,
+                                };
+                            } else if (parsed.type === 'message_delta' && parsed.usage?.output_tokens !== undefined) {
+                                // message_delta carries the cumulative output token count.
+                                responseState._usageFromStream = {
+                                    ...(responseState._usageFromStream || {}),
+                                    completion_tokens: Number(parsed.usage.output_tokens) || 0,
+                                };
                             }
                         } else if (provider === 'deepseek') {
                             if (parsed.choices && parsed.choices.length > 0) {
@@ -8148,6 +9033,10 @@ class KatabDialog {
                             if (u.prompt_tokens !== undefined && u.completion_tokens !== undefined) {
                                 this._currentUsage += u.prompt_tokens + u.completion_tokens;
                                 this._renderTokenCounter();
+                                responseState._usageFromStream = {
+                                    prompt_tokens: Number(u.prompt_tokens) || 0,
+                                    completion_tokens: Number(u.completion_tokens) || 0,
+                                };
                             }
                         }
                     }
@@ -9137,6 +10026,59 @@ const Indicator = GObject.registerClass(
             this.menu.addMenuItem(this._currentChatMenuItem);
             this._renderCurrentChatMenuItem(this._extension.getCurrentChatState());
 
+            // Token snapshot — condensed AI Token Breakdown (companion + totals).
+            this._usageMenuItem = new PopupMenu.PopupBaseMenuItem({
+                reactive: true,
+                can_focus: true,
+            });
+            this._usageFaceLabel = new St.Label({
+                text: '─ ‿ ─',
+                style_class: 'katab-usage-menu-face',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._usageMenuItem.add_child(this._usageFaceLabel);
+
+            let usageTextCol = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                style_class: 'katab-usage-menu-text-col',
+            });
+            this._usageMenuTitle = new St.Label({
+                text: 'Token Breakdown',
+                style_class: 'katab-usage-menu-title',
+                x_expand: true,
+            });
+            usageTextCol.add_child(this._usageMenuTitle);
+            this._usageMenuSubtitle = new St.Label({
+                text: 'Hatches with your next reply',
+                style_class: 'katab-usage-menu-subtitle',
+                x_expand: true,
+            });
+            this._usageMenuSubtitle.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            this._usageMenuSubtitle.clutter_text.single_line_mode = true;
+            usageTextCol.add_child(this._usageMenuSubtitle);
+            this._usageMenuBar = new St.BoxLayout({
+                vertical: false,
+                style_class: 'katab-usage-menu-bar',
+            });
+            usageTextCol.add_child(this._usageMenuBar);
+            this._usageMenuItem.add_child(usageTextCol);
+
+            this._usageMenuValue = new St.Label({
+                text: '0',
+                style_class: 'katab-usage-menu-value',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._usageMenuItem.add_child(this._usageMenuValue);
+
+            this._usageMenuItem.connect('activate', () => {
+                this.menu.close();
+                let dialog = this._extension.showCurrentChat();
+                dialog._openUsagePanel();
+            });
+            this.menu.addMenuItem(this._usageMenuItem);
+            this._updateUsageSnapshot();
+
             this._settingsMenuItem = new PopupMenu.PopupMenuItem('Settings');
             let settingsIcon = new St.Icon({ icon_name: 'emblem-system-symbolic', style_class: 'popup-menu-icon' });
             this._settingsMenuItem.insert_child_at_index(settingsIcon, 0);
@@ -9190,9 +10132,52 @@ const Indicator = GObject.registerClass(
             this.menu.connect('open-state-changed', (menu, open) => {
                 if (open) {
                     this._updateHistoryMenu();
+                    this._updateUsageSnapshot();
                     this._extension.providerHealthMonitor?.refreshAll({ immediate: true });
                 }
             });
+        }
+
+        // Refreshes the condensed token snapshot row from the local ledger.
+        _updateUsageSnapshot() {
+            if (!this._usageMenuValue || !this._usageMenuTitle || !this._usageMenuSubtitle || !this._usageFaceLabel || !this._usageMenuBar) {
+                return;
+            }
+            try {
+                const defaultRange = this._settings.get_string('token-usage-default-range') || 'month';
+                const snapshot = TokenUsageManager.getSnapshot(defaultRange);
+                const { allSummary, summary, companion, topProvider } = snapshot;
+                this._usageFaceLabel.set_text(companion.face);
+                this._usageMenuBar.destroy_all_children();
+
+                if (allSummary.totalTokens === 0) {
+                    this._usageMenuTitle.set_text(`${companion.name} · Token Breakdown`);
+                    this._usageMenuSubtitle.set_text(this._settings.get_boolean('token-usage-enabled')
+                        ? 'Hatches with your next reply'
+                        : 'Tracking is paused');
+                    this._usageMenuValue.set_text('0');
+                    return;
+                }
+
+                const localPct = Math.round(summary.localShare * 100);
+                const topLabel = topProvider ? getProviderLabel(topProvider.provider) : '—';
+                this._usageMenuTitle.set_text(`${companion.name} · ${companion.stageLabel}`);
+                this._usageMenuSubtitle.set_text(this._settings.get_boolean('token-usage-enabled')
+                    ? `${summary.label}: ${localPct}% local · ${topLabel} leads`
+                    : `Paused · ${summary.label}: ${localPct}% local`);
+                this._usageMenuValue.set_text(formatTokenCount(summary.totalTokens));
+
+                const barWidth = 86;
+                for (const entry of summary.providers.slice(0, 4)) {
+                    this._usageMenuBar.add_child(new St.Widget({
+                        style_class: `katab-usage-menu-bar-seg katab-usage-fill-${entry.provider}`,
+                        width: Math.max(3, Math.round(entry.share * barWidth)),
+                        height: 4,
+                    }));
+                }
+            } catch (e) {
+                log(`Katab: failed to refresh token snapshot: ${e.message || e}`);
+            }
         }
 
         _renderPanelActivity(state) {
@@ -9419,6 +10404,7 @@ export default class KatabExtension extends Extension {
     enable() {
         this._currentChatListeners = new Set();
         this._settings = this.getSettings('org.gnome.shell.extensions.katabai');
+        TokenUsageManager.prune(this._settings.get_int('token-usage-retention-days'));
         this._keybindingChangedId = this._settings.connect('changed::toggle-current-chat', () => this._registerKeybindings());
         this._keybindingRegisteredViaExtension = false;
         this._hasRegisteredKeybinding = false;
@@ -9433,6 +10419,7 @@ export default class KatabExtension extends Extension {
     disable() {
         // Flush any pending history writes to disk before shutting down.
         HistoryManager.flushSync();
+        TokenUsageManager.flushSync();
         this._removeKeybindings();
         if (this._keybindingChangedId && this._settings) {
             this._settings.disconnect(this._keybindingChangedId);

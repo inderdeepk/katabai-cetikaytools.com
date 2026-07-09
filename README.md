@@ -159,6 +159,21 @@ Assistant responses now render a chat-friendly markdown subset instead of showin
 
 Links are extracted from assistant responses and shown as clickable actions below the message bubble so they can be opened with your default browser. Markdown tables now render as structured chat tables; images and full CommonMark edge cases are still treated as plain text.
 
+## AI Token Breakdown
+
+Katab keeps a private, local-only ledger of your AI token usage and turns it into a fun companion with gamification:
+
+- **Tokens button (top middle of the chat window)** — opens the full breakdown: totals for today / week / month / year / all time, combo streak with score, provider and model percentages with share bars, local-vs-cloud split, efficiency metrics (avg/reply, P:C ratio), trend card, milestone row, achievement badges, and a 14-day activity strip.
+- **Chat combo system** — each reply in the same conversation builds a combo streak visible in the chat header. Combos rack up a token score and unlock achievements; starting a new chat resets the counter to zero.
+- **Header live counter** — a streaming token counter appears next to the combo indicator during active responses, showing estimated tokens in real time.
+- **Achievement system** — 21 achievements across progression, streak, and special categories. Unlock badges like "Homegrown", "Deep Dive", "Diplomat", and "Penny Pincher". New unlocks show in-chat and in the achievements panel.
+- **Model pricing & cost** — built-in pricing for major models (GPT-4o, Claude, DeepSeek, etc.) with estimated spend calculation. The efficiency card shows tokens/reply averages and prompt:completion ratios.
+- **Panel dropdown snapshot** — the GNOME top-bar menu shows a condensed summary with companion face, selected-range total, local share, leading provider, and a tiny provider share bar. Click it to jump straight to the full breakdown.
+- **Companion** — a cute desktop pet that hatches with your first tracked reply, grows through stages (Hatchling → Sprout → Scholar → Sage → Archmage), and takes its name, mood, and badges from your provider mix.
+- **Gentle local nudge** — the local card explains how much usage ran on hardware you control and includes a quick action that switches the next draft to Ollama.
+- **Export formats** — export your usage data as JSON, CSV, Markdown report, or a self-contained HTML page via the preferences panel.
+- **Settings controls** — Settings → General → AI Token Breakdown lets you pause tracking, choose default range, set retention, enable celebrations, manage monthly budget with warnings, toggle desktop notifications, export data in multiple formats, or reset the ledger. Everything stays local.
+
 ## Contribution Guidelines
 
 * **NEVER commit any API keys, credentials, or secrets to the repository.**

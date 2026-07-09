@@ -19,6 +19,11 @@ import {
 } from './presetManager.js';
 import { WebSearchRuntime, readWebSearchConfig } from './webSearchTools.js';
 import { Crawl4AIRuntime, readCrawl4AIConfig } from './crawl4aiTools.js';
+import {
+    formatTokenCount,
+    TOKEN_USAGE_RANGES,
+    TokenUsageManager,
+} from './tokenUsageManager.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -255,6 +260,12 @@ export default class KatabPreferences extends ExtensionPreferences {
             description: 'Set a global shortcut to open or hide the chat from anywhere on the desktop.',
         });
         page.add(accessibilityGroup);
+
+        const tokenUsageGroup = createPreferencesGroup({
+            title: 'AI Token Breakdown',
+            description: 'Control the local-only usage ledger, companion celebrations, default range, retention, reset, and export.',
+        });
+        page.add(tokenUsageGroup);
 
         const addPreferenceRow = (group, row) => {
             if (typeof group.add_row === 'function') {
@@ -848,6 +859,95 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it.',
             'toggle-current-chat',
             accessibilityGroup
+        );
+
+        createBooleanRow(
+            'Track Token Usage',
+            'Record local-only token totals for the Tokens panel. Existing data stays on disk when this is off.',
+            'token-usage-enabled',
+            tokenUsageGroup
+        );
+
+        const tokenRangeRow = createChoiceRow(
+            'Default Range',
+            'Initial range shown when opening the AI Token Breakdown panel or top-bar snapshot.',
+            tokenUsageGroup
+        );
+        bindChoiceRow(
+            tokenRangeRow,
+            'token-usage-default-range',
+            TOKEN_USAGE_RANGES.map(range => ({ label: range.label, value: range.key })),
+            settings.get_string.bind(settings),
+            settings.set_string.bind(settings),
+            value => `Custom (${value})`
+        );
+
+        const retentionRow = createChoiceRow(
+            'Retention',
+            'How long to keep daily token buckets before pruning. Forever keeps the local ledger until you reset it.',
+            tokenUsageGroup
+        );
+        bindChoiceRow(
+            retentionRow,
+            'token-usage-retention-days',
+            [
+                { label: 'Forever', value: 0 },
+                { label: '90 days', value: 90 },
+                { label: '1 year', value: 365 },
+            ],
+            settings.get_int.bind(settings),
+            settings.set_int.bind(settings),
+            value => `${value} days`
+        );
+
+        createBooleanRow(
+            'Companion Celebrations',
+            'Show a small in-chat message when the token companion reaches a new growth stage.',
+            'token-usage-celebrations-enabled',
+            tokenUsageGroup
+        );
+
+        const { badge: tokenUsageBadge } = createStatusRow(
+            'Usage Ledger',
+            'Private JSON ledger stored under ~/.local/share/katabai/token-usage.json.',
+            tokenUsageGroup
+        );
+        const refreshTokenUsageBadge = () => {
+            try {
+                const summary = TokenUsageManager.getSummary('all');
+                setStatusBadge(tokenUsageBadge, `${formatTokenCount(summary.totalTokens)} tokens`, 'katab-prefs-status-detected');
+            } catch (_e) {
+                setStatusBadge(tokenUsageBadge, 'Unavailable', 'katab-prefs-status-install');
+            }
+        };
+        refreshTokenUsageBadge();
+
+        createButtonRow(
+            'Export Usage JSON',
+            'Write a timestamped copy of the local ledger into your Documents folder (or home folder if Documents is unavailable).',
+            'Export',
+            () => {
+                try {
+                    const path = TokenUsageManager.exportCopy();
+                    setStatusBadge(tokenUsageBadge, 'Exported', 'katab-prefs-status-detected');
+                    log(`Katab: exported token usage ledger to ${path}`);
+                } catch (e) {
+                    setStatusBadge(tokenUsageBadge, 'Export failed', 'katab-prefs-status-install');
+                    log(`Katab: failed to export token usage ledger: ${e.message || e}`);
+                }
+            },
+            tokenUsageGroup
+        );
+
+        createButtonRow(
+            'Reset Usage Ledger',
+            'Delete all local token analytics and restart the companion from an egg. This does not affect chat history.',
+            'Reset',
+            () => {
+                TokenUsageManager.reset();
+                refreshTokenUsageBadge();
+            },
+            tokenUsageGroup
         );
 
         // --- Ollama Page ---
