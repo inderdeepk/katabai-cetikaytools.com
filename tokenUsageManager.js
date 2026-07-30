@@ -11,6 +11,21 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
 import { isBlockedHost } from './networkGuard.js';
+import {
+    canUnlockMixie,
+    createEmptyCollectionState,
+    getMixieStage,
+    getPetDefinition,
+    getPetStage,
+    getPetStageProgress,
+    getQualifyingPairKeys,
+    getStageKeysThrough,
+    isPetProvider,
+    normalizeCollectionState,
+    parsePairKey,
+    PET_PROVIDERS,
+    resolveActivePetForm,
+} from './petCollection.js';
 
 // ── Ranges ───────────────────────────────────────────────────────────────────
 
@@ -24,9 +39,100 @@ export const TOKEN_USAGE_RANGES = [
 
 const TIMELINE_DAYS = 14;
 const MAX_MODEL_ROWS = 6;
-const STORE_VERSION = 2;
+const STORE_VERSION = 3;
 const RECENT_EVENT_ID_LIMIT = 2000;
 const STATUS_KEYS = ['completed', 'stopped', 'tool-call-turn'];
+
+// ── Model pricing (USD per 1M tokens, input / output) ────────────────────────
+
+const MODEL_PRICING = {
+    // OpenAI
+    'gpt-4o': { input: 2.50, output: 10.00 },
+    'gpt-4o-mini': { input: 0.15, output: 0.60 },
+    'gpt-4-turbo': { input: 10.00, output: 30.00 },
+    'gpt-4': { input: 30.00, output: 60.00 },
+    'gpt-3.5-turbo': { input: 0.50, output: 1.50 },
+    'o1': { input: 15.00, output: 60.00 },
+    'o1-mini': { input: 1.10, output: 4.40 },
+    'o3-mini': { input: 1.10, output: 4.40 },
+    // Anthropic
+    'claude-3-5-sonnet-20241022': { input: 3.00, output: 15.00 },
+    'claude-3-5-haiku-20241022': { input: 0.80, output: 4.00 },
+    'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
+    'claude-3-sonnet-20240229': { input: 3.00, output: 15.00 },
+    'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
+    // DeepSeek
+    'deepseek-v4-pro': { input: 0.60, output: 2.40 },
+    'deepseek-v4-flash': { input: 0.20, output: 0.80 },
+    'deepseek-chat': { input: 0.27, output: 1.10 },
+    'deepseek-reasoner': { input: 0.55, output: 2.19 },
+    // Ollama / Unsloth — local, effectively zero cost
+    '__local__': { input: 0, output: 0 },
+};
+
+const DEFAULT_CLOUD_PRICING = { input: 1.00, output: 4.00 };
+
+function pricingForModel(model, provider) {
+    const key = String(model || '').trim();
+    if (!key) return provider === 'ollama' || provider === 'unsloth' ? MODEL_PRICING.__local__ : DEFAULT_CLOUD_PRICING;
+    const lower = key.toLowerCase();
+    for (const [pricingKey, pricing] of Object.entries(MODEL_PRICING)) {
+        if (lower === pricingKey.toLowerCase() || lower.startsWith(pricingKey.toLowerCase() + '-') || lower.includes(pricingKey.toLowerCase())) {
+            return pricing;
+        }
+    }
+    if (provider === 'ollama' || provider === 'unsloth') return MODEL_PRICING.__local__;
+    if (provider === 'openai') return MODEL_PRICING['gpt-4o-mini'];
+    if (provider === 'anthropic') return MODEL_PRICING['claude-3-5-haiku-20241022'];
+    if (provider === 'deepseek') return MODEL_PRICING['deepseek-v4-flash'];
+    return DEFAULT_CLOUD_PRICING;
+}
+
+export function formatCost(usd) {
+    if (usd === undefined || usd === null) return '—';
+    const n = Number(usd) || 0;
+    if (n < 0.01) return '<$0.01';
+    return `$${n.toFixed(2)}`;
+}
+
+export function estimateCost(model, provider, promptTokens, completionTokens) {
+    const pricing = pricingForModel(model, provider);
+    const inputCost = (promptTokens / 1_000_000) * pricing.input;
+    const outputCost = (completionTokens / 1_000_000) * pricing.output;
+    return inputCost + outputCost;
+}
+
+export function estimateSummaryCost(summary) {
+    let total = 0;
+    const perProvider = {};
+    const perModel = [];
+    for (const provider of summary.providers || []) {
+        const providerModels = (summary.models || []).filter(m => m.provider === provider.provider);
+        let providerCost = 0;
+        for (const model of providerModels) {
+            // Distribute prompt/completion proportionally
+            const share = summary.totalTokens > 0 ? model.total / summary.totalTokens : 0;
+            const approxPrompt = Math.round((summary.promptTokens || 0) * share);
+            const approxCompletion = Math.round((summary.completionTokens || 0) * share);
+            const cost = estimateCost(model.model, model.provider, approxPrompt, approxCompletion);
+            providerCost += cost;
+            perModel.push({ ...model, cost });
+        }
+        if (providerModels.length === 0) {
+            const share2 = summary.totalTokens > 0 ? provider.total / summary.totalTokens : 0;
+            const approxP = Math.round((summary.promptTokens || 0) * share2);
+            const approxC = Math.round((summary.completionTokens || 0) * share2);
+            const cost2 = estimateCost('', provider.provider, approxP, approxC);
+            providerCost = cost2;
+        }
+        total += providerCost;
+        perProvider[provider.provider] = { ...provider, cost: providerCost };
+    }
+    // Estimate savings from local tokens
+    const avgCloudCostPerMTok = 3.00; // conservative blended rate
+    const localSavings = ((summary.localTokens || 0) / 1_000_000) * avgCloudCostPerMTok;
+    return { total, perProvider, perModel, localSavings };
+}
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
@@ -150,12 +256,21 @@ export class TokenUsageManager {
 
     static _freshStore() {
         const now = Math.floor(Date.now() / 1000);
-        return { version: STORE_VERSION, trackingStartedAt: now, lastUpdatedAt: now, recentEventIds: [], milestonesCelebrated: [], days: {} };
+        return {
+            version: STORE_VERSION,
+            trackingStartedAt: now,
+            lastUpdatedAt: now,
+            recentEventIds: [],
+            milestonesCelebrated: [],
+            days: {},
+            collection: createEmptyCollectionState(),
+        };
     }
 
     static _migrateStore(store) {
+        const sourceVersion = Number.isFinite(store.version) ? store.version : 0;
         let changed = false;
-        if (!Number.isFinite(store.version) || store.version < STORE_VERSION) { store.version = STORE_VERSION; changed = true; }
+        if (sourceVersion !== STORE_VERSION) { store.version = STORE_VERSION; changed = true; }
         if (!Number.isFinite(store.trackingStartedAt)) { store.trackingStartedAt = Math.floor(Date.now() / 1000); changed = true; }
         if (!Number.isFinite(store.lastUpdatedAt)) { store.lastUpdatedAt = store.trackingStartedAt; changed = true; }
         if (!store.days || typeof store.days !== 'object') { store.days = {}; changed = true; }
@@ -181,6 +296,13 @@ export class TokenUsageManager {
                 }
             }
         }
+
+        const nextCollection = sourceVersion < STORE_VERSION || !store.collection
+            ? buildMigratedCollection(store)
+            : normalizeCollectionState(store.collection);
+        if (JSON.stringify(store.collection) !== JSON.stringify(nextCollection)) changed = true;
+        store.collection = nextCollection;
+
         if (changed) this._dirty = true;
         return store;
     }
@@ -223,6 +345,53 @@ export class TokenUsageManager {
 
     static reset() { this._cache = this._freshStore(); this._dirty = true; this.flushSync(); }
 
+    static getCollectionState() {
+        return buildCollectionSnapshot(this.load().collection);
+    }
+
+    static getPetState(provider) {
+        if (!isPetProvider(provider)) return null;
+        return this.getCollectionState().pets[provider];
+    }
+
+    static getUnlockedCrossbreeds() {
+        const collection = normalizeCollectionState(this.load().collection);
+        return Object.entries(collection.unlockedPairs).map(([pairKey, unlock]) => ({
+            pairKey,
+            providers: parsePairKey(pairKey),
+            unlockedAt: unlock.unlockedAt,
+        }));
+    }
+
+    static getActiveCompanion({ currentProvider, selectionMode, pinnedForm } = {}) {
+        const collection = normalizeCollectionState(this.load().collection);
+        const form = resolveActivePetForm({ collection, currentProvider, selectionMode, pinnedForm });
+        const baseDefinition = form.baseProvider ? getPetDefinition(form.baseProvider) : null;
+        const accentDefinition = form.accentProvider ? getPetDefinition(form.accentProvider) : null;
+        const xp = form.type === 'mixie'
+            ? minimumPetXp(collection)
+            : collection.pets[form.baseProvider].xp;
+        const progress = getPetStageProgress(xp);
+
+        return {
+            ...form,
+            name: form.type === 'mixie'
+                ? 'Mixie'
+                : form.type === 'crossbreed'
+                    ? `${baseDefinition.name} + ${accentDefinition.name}`
+                    : baseDefinition.name,
+            xp,
+            stageKey: progress.stage.key,
+            stageLabel: progress.stage.label,
+            stageRank: progress.stage.rank,
+            spriteFamily: progress.stage.spriteFamily,
+            progress: progress.progress,
+            nextStageKey: progress.nextStage?.key || null,
+            nextStageLabel: progress.nextStage?.label || null,
+            nextStageXp: progress.nextStage?.minXp || null,
+        };
+    }
+
     static exportCopy() {
         this.load(); this._dirty = true; this.flushSync();
         const source = Gio.File.new_for_path(this.filePath);
@@ -261,6 +430,12 @@ export class TokenUsageManager {
         if (eventId && store.recentEventIds.includes(eventId)) return { recorded: false, duplicate: true };
 
         const beforeStage = companionStageForTokens(storeTotal(store));
+        const collectionEvents = [];
+        const pet = isPetProvider(provider) ? store.collection.pets[provider] : null;
+        const beforePetStage = pet ? getPetStage(pet.xp) : null;
+        const wasHatched = Boolean(pet && pet.xp > 0);
+        const wasMixieUnlocked = store.collection.mixie.unlockedAt > 0;
+        const beforeMixieStage = getMixieStage(store.collection);
         const dayKey = GLib.DateTime.new_now_local().format('%Y-%m-%d');
 
         if (!store.days[dayKey]) store.days[dayKey] = { total: 0, statuses: emptyStatusCounts(), providers: {} };
@@ -304,6 +479,73 @@ export class TokenUsageManager {
                 store.recentEventIds.splice(0, store.recentEventIds.length - RECENT_EVENT_ID_LIMIT);
         }
 
+        if (pet) {
+            const now = Math.floor(Date.now() / 1000);
+            pet.xp += total;
+            if (status !== 'tool-call-turn') pet.replyCount += 1;
+            if (!pet.hatchedAt) pet.hatchedAt = now;
+            pet.lastFedAt = now;
+
+            const definition = getPetDefinition(provider);
+            const afterPetStage = getPetStage(pet.xp);
+            pet.celebratedStages = mergeStageKeys(pet.celebratedStages, afterPetStage.key);
+
+            if (!wasHatched) {
+                collectionEvents.push({
+                    type: 'pet-hatched',
+                    provider,
+                    petName: definition.name,
+                    stageKey: afterPetStage.key,
+                    stageLabel: afterPetStage.label,
+                });
+            }
+            if (afterPetStage.rank > beforePetStage.rank && afterPetStage.key !== 'hatchling') {
+                collectionEvents.push({
+                    type: 'pet-stage-up',
+                    provider,
+                    petName: definition.name,
+                    stageKey: afterPetStage.key,
+                    stageLabel: afterPetStage.label,
+                    xp: pet.xp,
+                });
+            }
+
+            for (const pairKey of getQualifyingPairKeys(store.collection)) {
+                if (store.collection.unlockedPairs[pairKey]) continue;
+                store.collection.unlockedPairs[pairKey] = { unlockedAt: now };
+                const providers = parsePairKey(pairKey);
+                collectionEvents.push({
+                    type: 'crossbreed-unlocked',
+                    pairKey,
+                    providers,
+                    petNames: providers.map(key => getPetDefinition(key).name),
+                });
+            }
+
+            const mixieCanUnlock = canUnlockMixie(store.collection);
+            const afterMixieStage = getMixieStage(store.collection);
+            if (!wasMixieUnlocked && mixieCanUnlock) {
+                store.collection.mixie.unlockedAt = now;
+                store.collection.mixie.celebrated = true;
+                store.collection.mixie.celebratedStages = mergeStageKeys([], afterMixieStage.key);
+                collectionEvents.push({
+                    type: 'mixie-unlocked',
+                    stageKey: afterMixieStage.key,
+                    stageLabel: afterMixieStage.label,
+                });
+            } else if (wasMixieUnlocked && afterMixieStage.rank > beforeMixieStage.rank) {
+                store.collection.mixie.celebratedStages = mergeStageKeys(
+                    store.collection.mixie.celebratedStages,
+                    afterMixieStage.key
+                );
+                collectionEvents.push({
+                    type: 'mixie-stage-up',
+                    stageKey: afterMixieStage.key,
+                    stageLabel: afterMixieStage.label,
+                });
+            }
+        }
+
         const afterTotal = storeTotal(store);
         const afterStage = companionStageForTokens(afterTotal);
         let celebration = null;
@@ -313,7 +555,7 @@ export class TokenUsageManager {
         }
         store.lastUpdatedAt = Math.floor(Date.now() / 1000);
         this._scheduleFlush();
-        return { recorded: true, celebration };
+        return { recorded: true, celebration, events: collectionEvents };
     }
 
     static getSummary(rangeKey = 'all') {
@@ -464,4 +706,103 @@ function buildAllMilestoneSummary(store) {
     }
     s.localShare = s.totalTokens > 0 ? s.localTokens / s.totalTokens : 0;
     return s;
+}
+
+function buildCollectionSnapshot(rawCollection) {
+    const collection = normalizeCollectionState(rawCollection);
+    const pets = {};
+    for (const provider of PET_PROVIDERS) {
+        const pet = collection.pets[provider];
+        const definition = getPetDefinition(provider);
+        const progress = getPetStageProgress(pet.xp);
+        pets[provider] = {
+            ...pet,
+            provider,
+            name: definition.name,
+            directory: definition.directory,
+            stageKey: progress.stage.key,
+            stageLabel: progress.stage.label,
+            stageRank: progress.stage.rank,
+            spriteFamily: progress.stage.spriteFamily,
+            progress: progress.progress,
+            nextStageKey: progress.nextStage?.key || null,
+            nextStageLabel: progress.nextStage?.label || null,
+            nextStageXp: progress.nextStage?.minXp || null,
+        };
+    }
+
+    const mixieXp = minimumPetXp(collection);
+    const mixieProgress = getPetStageProgress(mixieXp);
+    return {
+        pets,
+        unlockedPairs: Object.fromEntries(
+            Object.entries(collection.unlockedPairs).map(([key, value]) => [key, { ...value }])
+        ),
+        mixie: {
+            ...collection.mixie,
+            name: 'Mixie',
+            xp: mixieXp,
+            stageKey: mixieProgress.stage.key,
+            stageLabel: mixieProgress.stage.label,
+            stageRank: mixieProgress.stage.rank,
+            spriteFamily: mixieProgress.stage.spriteFamily,
+            progress: mixieProgress.progress,
+            nextStageKey: mixieProgress.nextStage?.key || null,
+            nextStageLabel: mixieProgress.nextStage?.label || null,
+            nextStageXp: mixieProgress.nextStage?.minXp || null,
+        },
+    };
+}
+
+function minimumPetXp(collection) {
+    return Math.min(...PET_PROVIDERS.map(provider => clampCount(collection.pets[provider]?.xp)));
+}
+
+function mergeStageKeys(existingKeys, stageKey) {
+    const merged = new Set(Array.isArray(existingKeys) ? existingKeys : []);
+    for (const key of getStageKeysThrough(stageKey)) merged.add(key);
+    return [...merged];
+}
+
+function buildMigratedCollection(store) {
+    const collection = createEmptyCollectionState();
+    const dayEntries = Object.entries(store.days || {}).sort(([left], [right]) => left.localeCompare(right));
+
+    for (const [dayKey, day] of dayEntries) {
+        const timestamp = dayKeyToTimestamp(dayKey);
+        for (const [provider, bucket] of Object.entries(day?.providers || {})) {
+            if (!isPetProvider(provider) || !bucket || typeof bucket !== 'object') continue;
+            const pet = collection.pets[provider];
+            const tokens = clampCount(bucket.total);
+            if (tokens <= 0) continue;
+
+            pet.xp += tokens;
+            pet.replyCount += clampCount(bucket.statuses?.completed) + clampCount(bucket.statuses?.stopped);
+            if (!pet.hatchedAt && timestamp) pet.hatchedAt = timestamp;
+            if (timestamp) pet.lastFedAt = timestamp;
+        }
+    }
+
+    for (const provider of PET_PROVIDERS) {
+        const pet = collection.pets[provider];
+        pet.celebratedStages = getStageKeysThrough(getPetStage(pet.xp).key);
+    }
+
+    const acknowledgedAt = Math.max(1, Math.floor(Number(store.lastUpdatedAt) || Date.now() / 1000));
+    for (const pairKey of getQualifyingPairKeys(collection)) {
+        collection.unlockedPairs[pairKey] = { unlockedAt: acknowledgedAt };
+    }
+
+    if (canUnlockMixie(collection)) {
+        collection.mixie.unlockedAt = acknowledgedAt;
+        collection.mixie.celebrated = true;
+        collection.mixie.celebratedStages = getStageKeysThrough(getMixieStage(collection).key);
+    }
+
+    return normalizeCollectionState(collection);
+}
+
+function dayKeyToTimestamp(dayKey) {
+    const parsed = Date.parse(`${dayKey}T00:00:00`);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed / 1000) : 0;
 }

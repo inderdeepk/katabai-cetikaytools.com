@@ -24,6 +24,11 @@ import {
     TOKEN_USAGE_RANGES,
     TokenUsageManager,
 } from './tokenUsageManager.js';
+import {
+    getPetDefinition,
+    parsePetForm,
+    PET_SELECTION_MODES,
+} from './petCollection.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -266,6 +271,12 @@ export default class KatabPreferences extends ExtensionPreferences {
             description: 'Control the local-only usage ledger, companion celebrations, default range, retention, reset, and export.',
         });
         page.add(tokenUsageGroup);
+
+        const petCompanionGroup = createPreferencesGroup({
+            title: 'Pet Companion',
+            description: 'Choose whether the visible companion follows the active provider or stays pinned to a form selected in the Pet Collection.',
+        });
+        page.add(petCompanionGroup);
 
         const addPreferenceRow = (group, row) => {
             if (typeof group.add_row === 'function') {
@@ -526,6 +537,44 @@ export default class KatabPreferences extends ExtensionPreferences {
             if (suffix) {
                 row.add_suffix(suffix);
             }
+
+            addPreferenceRow(group, row);
+            return row;
+        };
+
+        const createInstructionRow = (title, text, group) => {
+            const body = new Gtk.Box({
+                orientation: Gtk.Orientation.VERTICAL,
+                spacing: 6,
+                margin_top: 10,
+                margin_bottom: 10,
+                margin_start: 12,
+                margin_end: 12,
+            });
+
+            const titleLabel = new Gtk.Label({
+                label: title,
+                xalign: 0,
+                halign: Gtk.Align.START,
+            });
+            titleLabel.add_css_class('katab-prefs-instruction-title');
+
+            const bodyLabel = new Gtk.Label({
+                label: text,
+                selectable: true,
+                wrap: true,
+                xalign: 0,
+                halign: Gtk.Align.START,
+            });
+            bodyLabel.add_css_class('katab-prefs-instruction-body');
+
+            body.append(titleLabel);
+            body.append(bodyLabel);
+
+            const row = stylePreferenceRow(new Adw.PreferencesRow({
+                child: body,
+                activatable: false,
+            }), 'katab-prefs-instruction-row');
 
             addPreferenceRow(group, row);
             return row;
@@ -902,10 +951,63 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createBooleanRow(
             'Companion Celebrations',
-            'Show a small in-chat message when the token companion reaches a new growth stage.',
+            'Show in-chat messages for pet hatches, growth stages, crossbreed unlocks, and Mixie milestones.',
             'token-usage-celebrations-enabled',
             tokenUsageGroup
         );
+
+        const petSelectionRow = createChoiceRow(
+            'Active Companion',
+            'Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection.',
+            petCompanionGroup
+        );
+        bindChoiceRow(
+            petSelectionRow,
+            'pet-selection-mode',
+            [
+                { label: 'Follow Current Provider', value: PET_SELECTION_MODES.FOLLOW_PROVIDER },
+                { label: 'Pinned', value: PET_SELECTION_MODES.PINNED },
+            ],
+            settings.get_string.bind(settings),
+            settings.set_string.bind(settings),
+            value => `Custom (${value})`
+        );
+
+        const { badge: activePetBadge } = createStatusRow(
+            'Current Form',
+            'Pinned forms are selected from the Pet Collection inside the Token Breakdown panel.',
+            petCompanionGroup
+        );
+        const refreshActivePetBadge = () => {
+            try {
+                const currentProvider = settings.get_string('provider');
+                const selectionMode = settings.get_string('pet-selection-mode');
+                const pinnedForm = settings.get_string('pet-pinned-form');
+                const companion = TokenUsageManager.getActiveCompanion({
+                    currentProvider,
+                    selectionMode,
+                    pinnedForm,
+                });
+                const parsedPinned = parsePetForm(pinnedForm);
+                const isValidPin = selectionMode === PET_SELECTION_MODES.PINNED
+                    && parsedPinned
+                    && companion.id === pinnedForm;
+                if (selectionMode === PET_SELECTION_MODES.PINNED && !isValidPin) {
+                    settings.set_string('pet-selection-mode', PET_SELECTION_MODES.FOLLOW_PROVIDER);
+                    return;
+                }
+                const label = isValidPin
+                    ? companion.name
+                    : `${getPetDefinition(currentProvider)?.name || companion.name} · Following`;
+                setStatusBadge(activePetBadge, label, 'katab-prefs-status-detected');
+            } catch (_e) {
+                setStatusBadge(activePetBadge, 'Unavailable', 'katab-prefs-status-install');
+            }
+        };
+        refreshActivePetBadge();
+        settings.connect('changed::provider', refreshActivePetBadge);
+        settings.connect('changed::pet-selection-mode', refreshActivePetBadge);
+        settings.connect('changed::pet-pinned-form', refreshActivePetBadge);
 
         const { badge: tokenUsageBadge } = createStatusRow(
             'Usage Ledger',
@@ -941,11 +1043,14 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createButtonRow(
             'Reset Usage Ledger',
-            'Delete all local token analytics and restart the companion from an egg. This does not affect chat history.',
+            'Delete local token analytics, all pet XP, crossbreed unlocks, and Mixie progress. Chat history is not affected.',
             'Reset',
             () => {
                 TokenUsageManager.reset();
+                settings.set_string('pet-pinned-form', '');
+                settings.set_string('pet-selection-mode', PET_SELECTION_MODES.FOLLOW_PROVIDER);
                 refreshTokenUsageBadge();
+                refreshActivePetBadge();
             },
             tokenUsageGroup
         );
@@ -2139,12 +2244,12 @@ export default class KatabPreferences extends ExtensionPreferences {
             });
             detailPage.add(setupGroup);
 
-            createInfoRow(
+            createInstructionRow(
                 'Run SearxNG with Docker',
                 'docker run -d --name searxng -p 8080:8080 searxng/searxng',
                 setupGroup
             );
-            createInfoRow(
+            createInstructionRow(
                 'Enable the JSON API',
                 'In settings.yml add "json" to the search.formats list, then restart the container. Without it SearxNG returns HTTP 403 to API calls.',
                 setupGroup
@@ -2346,16 +2451,667 @@ export default class KatabPreferences extends ExtensionPreferences {
             });
             detailPage.add(setupGroup);
 
-            createInfoRow(
+            createInstructionRow(
                 'Run Crawl4AI with Docker',
                 'docker run -d --name crawl4ai -p 11235:11235 \\\n  -e CRAWL4AI_API_TOKEN=your-secret-token \\\n  --shm-size=1g unclecode/crawl4ai:0.9.0',
                 setupGroup
             );
 
-            createInfoRow(
+            createInstructionRow(
                 'Security Note',
                 'Katab connects to Crawl4AI over HTTP by default. For remote deployments, place a reverse proxy (nginx / Caddy) with TLS in front, or use a VPN tunnel.',
                 setupGroup
+            );
+        }
+
+        // ── Knowledge Base (Local RAG) ───────────────────────────────────────
+        const ragSubpage = createToolSubpage('Knowledge Base');
+        {
+            const detailPage = ragSubpage.detailPage;
+
+            const noticeGroup = createPreferencesGroup({});
+            detailPage.add(noticeGroup);
+            const noticeRow = createInfoRow(
+                'How the Knowledge Base works',
+                'Your documents, conversations, and research results are chunked, embedded with Ollama\u2019s nomic-embed-text model, and stored in a local ChromaDB vector database. When you ask a question, Katab finds the most semantically similar chunks and feeds them as context. Everything runs locally \u2014 no data leaves your machine.\n\nPhase 3 adds hybrid BM25 keyword matching, cross-encoder reranking (bge-reranker-v2-m3), and automatic web search fallback when knowledge base results are low-quality. See the Setup section below for installation instructions.',
+                noticeGroup
+            );
+            noticeRow.add_prefix(addCssClasses(new Gtk.Image({
+                icon_name: 'drive-harddisk-symbolic',
+                valign: Gtk.Align.CENTER,
+            }), 'katab-prefs-tool-icon'));
+
+            // ---- Setup (collapsible) ----
+            const setupExpander = createExpanderRow({});
+            setupExpander.add_prefix(addCssClasses(new Gtk.Label({
+                label: 'Setup \u2014 Install & Run the RAG Service',
+                xalign: 0,
+                halign: Gtk.Align.START,
+            }), 'katab-prefs-expander-title'));
+            setupExpander.subtitle = 'The Python service must be running for the Knowledge Base to work.';
+            noticeGroup.add(setupExpander);
+
+            createInstructionRow('Installation', [
+                '1. Create a virtual environment for the RAG service',
+                '',
+                '   cd ~/.local/share/katabai/rag-service',
+                '   python3 -m venv .venv',
+                '',
+                '2. Install the Python dependencies inside the venv',
+                '',
+                '   .venv/bin/pip install chromadb ollama fastapi "uvicorn[standard]" rank-bm25',
+                '',
+                '   Or use the bundled requirements file:',
+                '',
+                '   .venv/bin/pip install -r requirements.txt',
+                '',
+                '   The rank-bm25 package enables hybrid keyword+semantic search',
+                '   (optional but recommended — the service works without it).',
+                '',
+                '3. Pull the Ollama embedding model on your Ollama host',
+                '   (Auto-pulled on first use if skipped)',
+                '',
+                '   ollama pull nomic-embed-text',
+                '',
+                '4. (Optional) Pull the reranker model for improved precision',
+                '   Only needed if you enable Cross-Encoder Reranking in Advanced Retrieval.',
+                '   Adds ~200ms per search. Skip this step if you don\'t need reranking.',
+                '',
+                '   ollama pull bge-reranker-v2-m3',
+            ].join('\n'), setupExpander);
+
+            createInstructionRow('Running the Service', [
+                '5. Start the RAG service from a terminal',
+                '',
+                '   cd ~/.local/share/katabai/rag-service',
+                '   .venv/bin/python3 server.py',
+                '',
+                '   Once started you will see:',
+                '',
+                '   Service URL:  http://127.0.0.1:11435',
+                '   Data stored:  ~/.local/share/katabai/chroma/',
+                '',
+                '   At startup the service rebuilds BM25 keyword indices from',
+                '   existing ChromaDB data and checks for the reranker model.',
+                '   Keep this terminal open to keep the service alive.',
+                '   Press Ctrl+C to stop it when done.',
+            ].join('\n'), setupExpander);
+
+            createInstructionRow('Auto-Start with systemd (Recommended)', [
+                '6. Create a user systemd service so the RAG backend',
+                '   starts automatically on login.',
+                '',
+                '   a) Create the service file:',
+                '',
+                '      mkdir -p ~/.config/systemd/user',
+                '      nano ~/.config/systemd/user/katabai-rag.service',
+                '',
+                '   b) Paste this content into the file:',
+                '',
+                '[Unit]',
+                'Description=Katabai RAG Service',
+                'After=network.target',
+                '',
+                '[Service]',
+                'Type=simple',
+                'ExecStart=%h/.local/share/katabai/rag-service/.venv/bin/python3 %h/.local/share/katabai/rag-service/server.py',
+                'WorkingDirectory=%h/.local/share/katabai/rag-service',
+                'Restart=on-failure',
+                'RestartSec=5',
+                '',
+                '[Install]',
+                'WantedBy=default.target',
+                '',
+                '   c) Enable and start the service:',
+                '',
+                '      systemctl --user daemon-reload',
+                '      systemctl --user enable katabai-rag.service',
+                '      systemctl --user start katabai-rag.service',
+                '',
+                '   d) Verify everything is working:',
+                '',
+                '      systemctl --user status katabai-rag.service',
+                '      curl http://127.0.0.1:11435/health',
+                '',
+                '   If curl returns {"status":"ok"} the service is ready.',
+                '   If it fails, run the command below to see error details:',
+                '',
+                '      journalctl --user -u katabai-rag.service --no-pager -n 30',
+            ].join('\n'), setupExpander);
+
+            // ---- Connection ----
+            const connectionGroup = createPreferencesGroup({
+                title: 'Connection',
+                description: 'Point Katab at your local RAG Python service.',
+            });
+            detailPage.add(connectionGroup);
+
+            createBooleanRow(
+                'Enable Knowledge Base',
+                'Allow the /kb command, Knowledge footer button, and autonomous knowledge searching by supported models.',
+                'rag-enabled',
+                connectionGroup
+            );
+
+            createBooleanRow(
+                'Enable Memory',
+                'Master switch for automatic indexing. When enabled, Katab indexes documents, conversations, and research results (respecting the per-type toggles below). When disabled, no new content is indexed but existing knowledge remains searchable.',
+                'rag-memory-enabled',
+                connectionGroup
+            );
+
+            createStringRow(
+                'RAG Service URL',
+                'Base URL of your local Katabai RAG service, e.g. http://localhost:11435.',
+                'rag-service-url',
+                connectionGroup
+            );
+
+            createStringRow(
+                'Ollama URL for Embeddings',
+                'The Ollama instance used for generating text embeddings. Can be remote (e.g. http://192.168.1.100:11434) if Ollama runs on a separate AI PC.',
+                'rag-ollama-url',
+                connectionGroup
+            );
+
+            createStringRow(
+                'Embedding Model',
+                'Ollama model used for generating text embeddings. Must be pulled first with: ollama pull nomic-embed-text.',
+                'rag-embedding-model',
+                connectionGroup
+            );
+
+            const { row: ragConnStatusRow, badge: ragConnBadge } = createStatusRow(
+                'Connection Status',
+                'Run a health check to confirm the RAG service is reachable.',
+                connectionGroup
+            );
+            setStatusBadge(ragConnBadge, 'Untested', null);
+
+            const testButton = createButtonRow(
+                'Test Connection',
+                'Send a health check to verify the RAG service responds.',
+                'Test',
+                () => {
+                    setStatusBadge(ragConnBadge, 'Testing', null);
+                    ragConnStatusRow.subtitle = 'Contacting the RAG service\u2026';
+
+                    const config = {
+                        serviceUrl: settings.get_string('rag-service-url'),
+                    };
+
+                    // Simple HTTP GET health check via Soup
+                    try {
+                        const session = new Soup.Session();
+                        session.timeout = 8;
+                        const url = `${config.serviceUrl.replace(/\/+$/, '')}/health`;
+                        const message = Soup.Message.new('GET', url);
+                        message.request_headers.append('Accept', 'application/json');
+
+                        session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                            try {
+                                const bytes = s.send_and_read_finish(result);
+                                const decoder = new TextDecoder('utf-8');
+                                const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
+                                if (body?.ok) {
+                                    const colCount = Object.keys(body.collections || {}).length;
+                                    const limits = body?.limits || {};
+                                    const rerankerOk = limits.reranker_available ? ' reranker✓' : '';
+                                    const bm25Ok = limits.bm25_available ? ' BM25✓' : '';
+                                    const features = `${rerankerOk}${bm25Ok}`.trim();
+                                    setStatusBadge(ragConnBadge, 'Connected', 'katab-prefs-status-detected');
+                                    ragConnStatusRow.subtitle = body.version
+                                        ? `Reachable. v${body.version}, ${colCount} collection${colCount !== 1 ? 's' : ''}.${features ? ` Features: ${features}` : ''}`
+                                        : `Reachable.${features ? ` Features: ${features}` : ''}`;
+                                } else {
+                                    setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
+                                    ragConnStatusRow.subtitle = 'Service returned an error.';
+                                }
+                            } catch (e) {
+                                setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
+                                ragConnStatusRow.subtitle = e?.message || 'Connection test failed.';
+                            }
+                        });
+                    } catch (e) {
+                        setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
+                        ragConnStatusRow.subtitle = e?.message || 'Connection test failed.';
+                    }
+                },
+                connectionGroup
+            );
+
+            // ---- Indexing ----
+            const indexingGroup = createPreferencesGroup({
+                title: 'Indexing',
+                description: 'Control how text is chunked and what gets indexed.',
+            });
+            detailPage.add(indexingGroup);
+
+            createIntRow(
+                'Chunk Size',
+                'Characters per text chunk. Larger chunks preserve context but reduce precision. (200–4000)',
+                'rag-chunk-size',
+                indexingGroup,
+                200, 4000, 50
+            );
+
+            createIntRow(
+                'Chunk Overlap',
+                'Character overlap between chunks. Prevents information loss at boundaries. (0–500)',
+                'rag-chunk-overlap',
+                indexingGroup,
+                0, 500, 10
+            );
+
+            createIntRow(
+                'Result Count',
+                'Number of top results to retrieve per query. (1–20)',
+                'rag-top-k',
+                indexingGroup,
+                1, 20, 1
+            );
+
+            // ---- Storage Limits ----
+            const limitsGroup = createPreferencesGroup({
+                title: 'Storage Limits',
+                description: 'Prevent the knowledge base from growing beyond your disk budget. Set to 0 to disable a cap.',
+            });
+            detailPage.add(limitsGroup);
+
+            createIntRow(
+                'Max Chunks Per Collection',
+                'Hard cap on chunks in any single collection. 0 = unlimited. (0–100000)',
+                'rag-max-chunks-per-collection',
+                limitsGroup,
+                0, 100000, 1000
+            );
+
+            createIntRow(
+                'Max Total Storage (MB)',
+                'Estimated maximum disk usage for the ChromaDB directory. 0 = unlimited. (0–10000)',
+                'rag-max-total-size-mb',
+                limitsGroup,
+                0, 10000, 50
+            );
+
+            createBooleanRow(
+                'Auto-Prune Oldest Chunks',
+                'When a collection hits its size cap, automatically remove the oldest chunks to make room. When disabled, new indexing is rejected at the cap.',
+                'rag-auto-prune',
+                limitsGroup
+            );
+
+            createBooleanRow(
+                'Index Document Attachments',
+                'Automatically add attached documents (txt, md, pdf, docx) to the knowledge base.',
+                'rag-index-documents',
+                indexingGroup
+            );
+
+            createBooleanRow(
+                'Index Conversations',
+                'Automatically add past conversation turns to the knowledge base for cross-session retrieval.',
+                'rag-index-conversations',
+                indexingGroup
+            );
+
+            createBooleanRow(
+                'Index Research Cache',
+                'Automatically add web search and scraping results to the knowledge base.',
+                'rag-index-research-cache',
+                indexingGroup
+            );
+
+            // ---- Autonomous ----
+            const autonomousGroup = createPreferencesGroup({
+                title: 'Autonomous Tool Use',
+                description: 'Let supported models call knowledge_search on their own when they think it would help.',
+            });
+            detailPage.add(autonomousGroup);
+
+            createBooleanRow(
+                'Allow Model-Triggered Knowledge Search',
+                'Advertise the knowledge_search tool to capable models. When disabled, only the manual /kb command works.',
+                'rag-autonomous-enabled',
+                autonomousGroup
+            );
+
+            createBooleanRow(
+                'Auto-Update Knowledge Base',
+                'When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you\'ll be asked to confirm each update.',
+                'rag-auto-update-enabled',
+                autonomousGroup
+            );
+
+            // ---- Advanced Retrieval (Phase 3) ----
+            const advancedGroup = createPreferencesGroup({
+                title: 'Advanced Retrieval',
+                description: 'Fine-tune how the knowledge base finds and ranks results. These features require additional models and add latency, but significantly improve result quality.',
+            });
+            detailPage.add(advancedGroup);
+
+            // -- Coverage Fallback --
+            createBooleanRow(
+                'Auto-Fallback to Web Search',
+                'When knowledge base results are low-quality, automatically trigger a web search as a supplement. This is the reverse direction of the existing suppression for high-confidence KB results.',
+                'rag-fallback-enabled',
+                advancedGroup
+            );
+
+            const fallbackThresholds = [
+                [0.35, 'Strict (only fallback when KB is very poor)'],
+                [0.60, 'Moderate (recommended)'],
+                [0.80, 'Aggressive (fallback frequently)'],
+            ];
+            const { row: fallbackThreshRow } = createDoubleRow(
+                'Fallback Threshold',
+                'Minimum best-result score (0.0–1.0) before auto-triggering web search.',
+                'rag-fallback-threshold',
+                advancedGroup,
+                0.0, 1.0, 0.05, 2
+            );
+
+            // Update the threshold subtitle based on current value
+            const updateFallbackSubtitle = () => {
+                try {
+                    const val = settings.get_double('rag-fallback-threshold');
+                    let desc = '';
+                    for (const [threshold, label] of fallbackThresholds) {
+                        if (val < threshold) { desc = label; break; }
+                    }
+                    if (!desc) desc = fallbackThresholds[fallbackThresholds.length - 1][1];
+                    fallbackThreshRow.subtitle = `Current: ${val.toFixed(2)} — ${desc}`;
+                } catch (_) { /* settings may not be ready */ }
+            };
+            updateFallbackSubtitle();
+            settings.connect('changed::rag-fallback-threshold', updateFallbackSubtitle);
+
+            // -- Reranking --
+            createBooleanRow(
+                'Cross-Encoder Reranking',
+                'Apply a cross-encoder model (bge-reranker-v2-m3 via Ollama) to re-rank top candidate chunks for improved precision. Requires ollama pull bge-reranker-v2-m3. Adds ~200ms latency per search.',
+                'rag-rerank-enabled',
+                advancedGroup
+            );
+
+            createStringRow(
+                'Reranker Model',
+                'Ollama model used for cross-encoder reranking. Must be pulled first.',
+                'rag-rerank-model',
+                advancedGroup
+            );
+
+            createIntRow(
+                'Candidate Pool Multiplier',
+                'How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)',
+                'rag-rerank-candidate-multiplier',
+                advancedGroup,
+                1, 10, 1
+            );
+
+            // -- Hybrid BM25 --
+            createBooleanRow(
+                'Hybrid BM25 + Dense Retrieval',
+                'Combine keyword matching (BM25) with semantic search (dense embeddings) for better recall. Enabled by default — the service falls back to dense-only if rank-bm25 is not installed.',
+                'rag-hybrid-enabled',
+                advancedGroup
+            );
+
+            // ---- Maintenance ----
+            const maintenanceGroup = createPreferencesGroup({
+                title: 'Maintenance',
+                description: 'Export, rebuild, or clear the knowledge base.',
+            });
+            detailPage.add(maintenanceGroup);
+
+            // Usage summary — refreshed when the page opens or on demand
+            const { row: ragUsageRow, badge: ragUsageBadge } = createStatusRow(
+                'Current Usage',
+                'Click "Refresh" to check usage against your storage limits.',
+                maintenanceGroup
+            );
+            setStatusBadge(ragUsageBadge, 'Unknown', null);
+
+            const refreshUsage = () => {
+                setStatusBadge(ragUsageBadge, 'Checking', null);
+                ragUsageRow.subtitle = 'Querying the RAG service\u2026';
+
+                const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/health`;
+                try {
+                    const session = new Soup.Session();
+                    session.timeout = 8;
+                    const message = Soup.Message.new('GET', url);
+                    message.request_headers.append('Accept', 'application/json');
+
+                    session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                        try {
+                            const bytes = s.send_and_read_finish(result);
+                            const decoder = new TextDecoder('utf-8');
+                            const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
+                            const limits = body?.limits || {};
+                            const totalChunks = limits.total_chunks || 0;
+                            const estMb = limits.estimated_size_mb || 0;
+                            const maxChunks = limits.max_chunks_per_collection || 0;
+                            const maxMb = limits.max_total_size_mb || 0;
+
+                            let pctText = '';
+                            if (maxMb > 0 && estMb > 0) {
+                                const pct = Math.round((estMb / maxMb) * 100);
+                                pctText = ` (${pct}% of cap)`;
+                            }
+
+                            const colNames = Object.keys(body?.collections || {}).join(', ') || '(none)';
+
+                            // Phase 3: feature availability
+                            const rerankerOk = limits.reranker_available ? '✓rerank' : '';
+                            const bm25Info = limits.bm25_collections > 0 ? `✓bm25(${limits.bm25_collections})` : '';
+                            const features = [rerankerOk, bm25Info].filter(Boolean).join(' ');
+                            const featureStr = features ? ` [${features}]` : '';
+
+                            if (totalChunks === 0) {
+                                setStatusBadge(ragUsageBadge, 'Empty', null);
+                                ragUsageRow.subtitle = `Knowledge base is empty.${featureStr}`;
+                            } else if (maxMb > 0 && estMb >= maxMb * 0.9) {
+                                setStatusBadge(ragUsageBadge, 'Near Limit', 'katab-prefs-status-install');
+                                ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
+                            } else {
+                                setStatusBadge(ragUsageBadge, 'Healthy', 'katab-prefs-status-detected');
+                                ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
+                            }
+                        } catch (e) {
+                            setStatusBadge(ragUsageBadge, 'Unavailable', 'katab-prefs-status-install');
+                            ragUsageRow.subtitle = 'Cannot reach RAG service.';
+                        }
+                    });
+                } catch (e) {
+                    setStatusBadge(ragUsageBadge, 'Unavailable', 'katab-prefs-status-install');
+                    ragUsageRow.subtitle = 'Cannot reach RAG service.';
+                }
+            };
+
+            createButtonRow(
+                'Refresh Usage',
+                'Query the RAG service for current chunk counts and estimated disk usage.',
+                'Refresh',
+                refreshUsage,
+                maintenanceGroup
+            );
+
+            // Auto-refresh on first open
+            GLib.idle_add(GLib.PRIORITY_LOW, () => {
+                if (settings.get_boolean('rag-enabled')) refreshUsage();
+                return GLib.SOURCE_REMOVE;
+            });
+
+            // Status row shared by Clear and Export operations
+            const { row: ragMaintStatusRow, badge: ragMaintBadge } = createStatusRow(
+                'Operation Status',
+                'Idle.',
+                maintenanceGroup
+            );
+            setStatusBadge(ragMaintBadge, 'Idle', null);
+
+            createButtonRow(
+                'Export Knowledge Base',
+                'Download all indexed data as a JSON file for backup or inspection.',
+                'Export',
+                () => {
+                    setStatusBadge(ragMaintBadge, 'Running', null);
+                    ragMaintStatusRow.subtitle = 'Fetching data from the RAG service\u2026';
+
+                    const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/export`;
+                    try {
+                        const session = new Soup.Session();
+                        session.timeout = 30;
+                        const message = Soup.Message.new('GET', url);
+                        message.request_headers.append('Accept', 'application/json');
+
+                        session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                            try {
+                                const bytes = s.send_and_read_finish(result);
+                                const decoder = new TextDecoder('utf-8');
+                                const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
+                                const collections = body?.collections || {};
+
+                                let totalEntries = 0;
+                                for (const entries of Object.values(collections)) {
+                                    totalEntries += Array.isArray(entries) ? entries.length : 0;
+                                }
+
+                                if (totalEntries === 0) {
+                                    setStatusBadge(ragMaintBadge, 'Empty', null);
+                                    ragMaintStatusRow.subtitle = 'Knowledge base is empty — nothing to export.';
+                                    return;
+                                }
+
+                                // Save to ~/Documents/katabai-rag-export-<date>.json
+                                const now = GLib.DateTime.new_now_local();
+                                const dateStr = now ? now.format('%Y-%m-%d') : 'unknown';
+                                const filename = `katabai-rag-export-${dateStr}.json`;
+                                const docsDir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS);
+                                const filePath = GLib.build_filenamev([docsDir, filename]);
+
+                                const file = Gio.File.new_for_path(filePath);
+                                const outStream = file.replace(null, false, Gio.FileCreateFlags.NONE, null);
+                                const jsonStr = JSON.stringify(collections, null, 2);
+                                outStream.write(jsonStr, null);
+                                outStream.close(null);
+
+                                const colNames = Object.keys(collections).join(', ');
+                                setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
+                                ragMaintStatusRow.subtitle = `Exported ${totalEntries} entries (${colNames}) to ${filePath}`;
+                            } catch (e) {
+                                setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
+                                ragMaintStatusRow.subtitle = e?.message || 'Export failed — is the RAG service running?';
+                            }
+                        });
+                    } catch (e) {
+                        setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
+                        ragMaintStatusRow.subtitle = e?.message || 'Export failed.';
+                    }
+                },
+                maintenanceGroup
+            );
+
+            createButtonRow(
+                'Re-index Knowledge Base',
+                'Re-scan all documents, conversations, and research cache and rebuild the vector index from scratch.',
+                'Re-index',
+                () => {
+                    const dialog = new Gtk.MessageDialog({
+                        transient_for: window,
+                        modal: true,
+                        message_type: Gtk.MessageType.WARNING,
+                        buttons: Gtk.ButtonsType.OK_CANCEL,
+                        text: 'Re-index the entire knowledge base?',
+                        secondary_text: 'This will clear all existing index state and re-process your documents, conversations, and research cache on the next chat message.',
+                    });
+                    dialog.connect('response', (dlg, responseId) => {
+                        if (responseId === Gtk.ResponseType.OK) {
+                            // Delete the sentinel file to force re-indexing
+                            const path = GLib.build_filenamev([
+                                GLib.get_home_dir(),
+                                '.local', 'share', 'katabai', 'rag-index-state.json',
+                            ]);
+                            try {
+                                const file = Gio.File.new_for_path(path);
+                                if (file.query_exists(null)) file.delete(null);
+                            } catch (_) { /* best effort */ }
+
+                            setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
+                            ragMaintStatusRow.subtitle = 'Index state cleared. Content will be re-indexed on the next chat message.';
+                        }
+                        dlg.destroy();
+                    });
+                    dialog.present();
+                },
+                maintenanceGroup
+            );
+
+            createButtonRow(
+                'Clear Knowledge Base',
+                'Permanently delete ALL indexed data from the vector database. This cannot be undone.',
+                'Clear',
+                () => {
+                    const dialog = new Gtk.MessageDialog({
+                        transient_for: window,
+                        modal: true,
+                        message_type: Gtk.MessageType.WARNING,
+                        buttons: Gtk.ButtonsType.OK_CANCEL,
+                        text: 'Delete the entire knowledge base?',
+                        secondary_text: 'All indexed documents, conversations, and research cache will be permanently removed from the ChromaDB database. This cannot be undone.',
+                    });
+                    dialog.connect('response', (dlg, responseId) => {
+                        if (responseId === Gtk.ResponseType.OK) {
+                            setStatusBadge(ragMaintBadge, 'Running', null);
+                            ragMaintStatusRow.subtitle = 'Clearing all collections\u2026';
+
+                            const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/clear`;
+                            try {
+                                const session = new Soup.Session();
+                                session.timeout = 15;
+                                const message = Soup.Message.new('POST', url);
+                                message.request_headers.append('Accept', 'application/json');
+
+                                session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                                    try {
+                                        const bytes = s.send_and_read_finish(result);
+                                        const decoder = new TextDecoder('utf-8');
+                                        const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
+                                        const dropped = body?.dropped || [];
+
+                                        // Also clear the sentinel file
+                                        const sentinelPath = GLib.build_filenamev([
+                                            GLib.get_home_dir(),
+                                            '.local', 'share', 'katabai', 'rag-index-state.json',
+                                        ]);
+                                        try {
+                                            const f = Gio.File.new_for_path(sentinelPath);
+                                            if (f.query_exists(null)) f.delete(null);
+                                        } catch (_) { /* best effort */ }
+
+                                        if (dropped.length > 0) {
+                                            setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
+                                            ragMaintStatusRow.subtitle = `Cleared ${dropped.length} collection(s): ${dropped.join(', ')}.`;
+                                        } else {
+                                            setStatusBadge(ragMaintBadge, 'Empty', null);
+                                            ragMaintStatusRow.subtitle = 'Knowledge base was already empty.';
+                                        }
+                                    } catch (e) {
+                                        setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
+                                        ragMaintStatusRow.subtitle = e?.message || 'Clear failed — is the RAG service running?';
+                                    }
+                                });
+                            } catch (e) {
+                                setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
+                                ragMaintStatusRow.subtitle = e?.message || 'Clear failed.';
+                            }
+                        }
+                        dlg.destroy();
+                    });
+                    dialog.present();
+                },
+                maintenanceGroup
             );
         }
 
@@ -2382,6 +3138,14 @@ export default class KatabPreferences extends ExtensionPreferences {
             iconName: 'document-open-symbolic',
             enabledKey: 'crawl4ai-enabled',
             navPage: crawl4aiSubpage.navPage,
+        });
+
+        createToolIndexRow(toolsIndexGroup, {
+            title: 'Knowledge Base',
+            subtitle: 'Semantically search across documents, conversations, and research using local RAG.',
+            iconName: 'drive-harddisk-symbolic',
+            enabledKey: 'rag-enabled',
+            navPage: ragSubpage.navPage,
         });
     }
 

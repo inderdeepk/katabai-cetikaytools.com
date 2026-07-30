@@ -400,7 +400,21 @@ export class DocumentToolRuntime {
             });
         }
 
-        const info = await queryFileInfoAsync(file, cancellable);
+        let info;
+        try {
+            info = await queryFileInfoAsync(file, cancellable);
+        } catch (e) {
+            if (e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND)) {
+                throw new DocumentToolError(
+                    `The file "${resolvedPath}" no longer exists. It may have been moved, deleted, or the clipboard image could not be saved. Try pasting the image again.`,
+                    { code: 'file-not-found' }
+                );
+            }
+            throw new DocumentToolError(
+                `Could not read "${resolvedPath}": ${e.message || 'unknown error'}`,
+                { code: 'file-read-error' }
+            );
+        }
         if (info.get_file_type() !== Gio.FileType.REGULAR) {
             throw new DocumentToolError('Katab can only attach regular files, not folders or special paths.', {
                 code: 'not-regular-file',

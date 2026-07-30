@@ -168,11 +168,13 @@ Katab keeps a private, local-only ledger of your AI token usage and turns it int
 - **Header live counter** — a streaming token counter appears next to the combo indicator during active responses, showing estimated tokens in real time.
 - **Achievement system** — 21 achievements across progression, streak, and special categories. Unlock badges like "Homegrown", "Deep Dive", "Diplomat", and "Penny Pincher". New unlocks show in-chat and in the achievements panel.
 - **Model pricing & cost** — built-in pricing for major models (GPT-4o, Claude, DeepSeek, etc.) with estimated spend calculation. The efficiency card shows tokens/reply averages and prompt:completion ratios.
-- **Panel dropdown snapshot** — the GNOME top-bar menu shows a condensed summary with companion face, selected-range total, local share, leading provider, and a tiny provider share bar. Click it to jump straight to the full breakdown.
-- **Companion** — a cute desktop pet that hatches with your first tracked reply, grows through stages (Hatchling → Sprout → Scholar → Sage → Archmage), and takes its name, mood, and badges from your provider mix.
+- **Panel dropdown snapshot** — the GNOME top-bar menu shows the active pet sprite, selected-range total, local share, leading provider, and a tiny provider share bar. Click it to jump straight to the full breakdown.
+- **Pet collection** — Ollie, Slothy, Sparky, Clyde, and Pearl each hatch and gain permanent XP from their own provider's token usage. Every pet independently grows through Hatchling → Sprout → Scholar → Sage → Archmage.
+- **Active companion** — follow the currently selected provider automatically or pin any available provider pet, crossbreed form, or Mixie from the collection view.
+- **Crossbreeds and Mixie** — raising two pets to Sprout permanently unlocks both directional crossbreed forms. Raising all five to Sprout unlocks Mixie, whose stage follows the least-advanced provider pet.
 - **Gentle local nudge** — the local card explains how much usage ran on hardware you control and includes a quick action that switches the next draft to Ollama.
 - **Export formats** — export your usage data as JSON, CSV, Markdown report, or a self-contained HTML page via the preferences panel.
-- **Settings controls** — Settings → General → AI Token Breakdown lets you pause tracking, choose default range, set retention, enable celebrations, manage monthly budget with warnings, toggle desktop notifications, export data in multiple formats, or reset the ledger. Everything stays local.
+- **Settings controls** — Settings → General lets you pause tracking, choose the analytics range and retention, select follow/pinned companion behavior, enable celebrations, manage monthly budget warnings, export data, or reset analytics and collection progress. Everything stays local.
 
 ## Contribution Guidelines
 

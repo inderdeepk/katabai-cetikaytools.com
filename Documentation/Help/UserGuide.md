@@ -211,7 +211,7 @@ Katab tracks how many tokens your conversations use and presents it with a playf
 
 ### Opening the breakdown
 * **Chat window** — click the **Tokens** button in the top middle of the chat header.
-* **Top bar** — the panel dropdown shows a condensed snapshot row (companion face, selected-range total, local share, leading provider, and a tiny provider share bar). Activating it opens the full breakdown.
+* **Top bar** — the panel dropdown shows a condensed snapshot row (active pet sprite, selected-range total, local share, leading provider, and a tiny provider share bar). Activating it opens the full breakdown.
 
 ### What you'll see
 * **Time ranges** — switch between Today, Week, Month, Year, and All Time.
@@ -229,23 +229,31 @@ Katab tracks how many tokens your conversations use and presents it with a playf
 * **Estimated cost** — built-in pricing for major models helps track approximate API spend.
 
 ### Your companion
-A little desktop pet lives at the top of the breakdown. It hatches with your first tracked reply and grows through stages as tokens accumulate: Hatchling → Sprout → Scholar → Sage → Archmage. Its name follows your dominant provider (Ollie for Ollama, Pearl for DeepSeek, Sparky for OpenAI, Clyde for Claude, Slothy for Unsloth — or Mixie for a balanced blend), and its mood reflects your local-vs-cloud balance. Feeding it local tokens keeps it a happy homebody. Optional milestone celebrations appear as small in-chat system messages when it reaches a new growth stage.
+Five provider pets live in your collection: Ollie for Ollama, Slothy for Unsloth, Sparky for OpenAI, Clyde for Anthropic, and Pearl for DeepSeek. A provider's first tracked response hatches its egg, and only tokens used with that provider feed its pet. Each pet keeps independent XP and progresses through Hatchling → Sprout → Scholar → Sage → Archmage.
+
+Open **View Collection** from the companion card to inspect every pet and its progress. The active companion follows the current chat provider by default. Open a pet or unlocked form and choose **Make Companion** to pin it instead; provider usage still feeds the pet belonging to the provider that generated the response. Choose **Follow Current Provider** in the collection to return to automatic switching.
+
+When two provider pets reach Sprout, their crossbreed pair unlocks permanently in both directions. The selected base pet supplies the body and stage, while the other pet supplies an accessory overlay. When all five pets reach Sprout, Mixie unlocks. Mixie's stage always equals the lowest stage shared by all five provider pets.
+
+Pet XP and unlocks are permanent collection data. Analytics retention may remove old daily charts, but it does not lower pet stages or relock forms. The companion's mood still reflects recent local-vs-cloud usage. Optional in-chat and desktop celebrations announce hatches, stage changes, crossbreeds, and Mixie milestones.
 
 ### Settings
 Open **Settings → General → AI Token Breakdown** to manage the feature:
 * **Track Token Usage** pauses or resumes recording without deleting existing data.
 * **Default Range** controls the initial range in the breakdown and top-bar snapshot.
 * **Retention** can keep the ledger forever, prune after 90 days, or prune after 1 year.
-* **Companion Celebrations** toggles growth-stage celebration messages.
+* **Pet Companion** chooses whether the active pet follows the current provider or remains pinned to a collection form.
+* **Companion Celebrations** toggles hatch, growth, crossbreed, and Mixie messages.
 * **Token Budget & Warnings** — set a monthly USD budget and warning threshold. Katab estimates costs from token counts and warns you in-chat and via desktop notification when approaching the limit.
 * **Desktop Notifications** — receive GNOME notifications for companion stage-ups, new achievements, and budget alerts.
 * **Export Usage** — export your ledger as JSON, CSV spreadsheet, Markdown report, or self-contained HTML page.
-* **Reset Usage Ledger** deletes all token analytics and re-hatches the companion. Chat history is not affected.
+* **Reset Usage Ledger** deletes token analytics, all provider-pet XP, crossbreed unlocks, and Mixie progress. Chat history is not affected.
 
 ### Accuracy & privacy
 * **Exact counts** come from providers that report them: Ollama's response metrics, DeepSeek's usage chunks, and OpenAI/Anthropic streaming usage data when available.
 * **Estimates** (≈ characters ÷ 4) are used when a provider doesn't report counts or a response is stopped early; the breakdown shows what percentage of your data is measured exactly.
 * **Tracking starts now** — the ledger begins the first time this feature runs. Old conversations are never scanned or backfilled.
+* **Existing ledger migration** — upgrading derives initial pet XP from retained provider buckets and silently acknowledges stages already earned.
 * **Local only** — data lives in `~/.local/share/katabai/token-usage.json` and never leaves your machine. Use the settings reset button or delete that file to reset the ledger.
 
 ---

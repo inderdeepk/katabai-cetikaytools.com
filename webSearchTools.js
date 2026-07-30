@@ -11,11 +11,108 @@ import {
     resolveRedirectUrl as _resolveRedirectUrlBase,
     lookupHostAddresses,
 } from './networkGuard.js';
+import {
+    cacheSearchResults,
+    getCachedSearchResults,
+} from './researchCache.js';
 
 export const WEB_SEARCH_TOOL_COMMAND = '/search';
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
 export const WEB_SEARCH_TOOL_ICON = 'system-search-symbolic';
 export const READ_URL_TOOL_NAME = 'read_url';
+
+// ── Query quality gating ─────────────────────────────────────────────────────
+// Lightweight heuristic: is this a natural language question (needs expansion)
+// or an already keyword-like query (search directly)?
+
+/**
+ * Heuristic checks that avoid an extra LLM round-trip for queries that already
+ * look like good search-engine keywords.  Returns true when the query looks
+ * conversational and would benefit from expansion.
+ */
+export function needsExpansion(query) {
+    const text = String(query || '').trim();
+    if (!text) return false;
+
+    const indicators = [
+        text.length < 10,                                // Too short for good keywords
+        /^(what|how|why|who|when|where)\b/i.test(text),  // Starts with question word
+        text.endsWith('?'),                              // Is a question
+        text.split(/\s+/).length > 12,                   // Conversational length
+        /^(can you|could you|please|tell me|explain|find me|show me|look up|search for)\b/i.test(text), // Politeness / task framing
+    ];
+
+    // 2+ indicators → natural language, expand it
+    return indicators.filter(Boolean).length >= 2;
+}
+
+// ── Multi-part query detection ────────────────────────────────────────────────
+
+/**
+ * Returns true when the query looks like a comparison, list, or compound
+ * question that should be decomposed into sub-queries rather than expanded.
+ */
+export function detectMultiPartQuery(query) {
+    const text = String(query || '').trim().toLowerCase();
+    if (!text) return false;
+
+    const signals = [
+        /\b(vs|versus|compared to|difference between)\b/i.test(text),
+        /\b(and also|or also|plus)\b/i.test(text),
+        text.includes(':'),
+        (text.match(/\b(and|or)\b/gi) || []).length >= 2,
+    ];
+
+    return signals.filter(Boolean).length >= 1;
+}
+
+// ── Intent-based engine routing ───────────────────────────────────────────────
+
+/**
+ * Maps query intent categories to optimal SearxNG engine/category combinations.
+ * Uses keyword heuristics (no LLM call) for speed.
+ */
+export const ENGINE_ROUTES = {
+    code: {
+        engines: 'stackoverflow,github,gitlab',
+        categories: 'it',
+    },
+    facts: {
+        engines: 'wikipedia,wikidata',
+        categories: 'general',
+    },
+    news: {
+        categories: 'news',
+        timeRange: 'week',
+    },
+    academic: {
+        engines: 'google scholar,arxiv',
+        categories: 'science',
+    },
+    general: {
+        categories: 'general',
+    },
+};
+
+/**
+ * Classify a query into one of the ENGINE_ROUTES keys using keyword heuristics.
+ * Returns the route key string (e.g. 'code', 'news', 'general').
+ */
+export function classifyQueryIntent(query) {
+    const text = String(query || '').trim().toLowerCase();
+    if (!text) return 'general';
+
+    if (/error|bug|crashed?|undefined|syntax|compile|import |function |class |async|await|npm |pip |cargo |rustc|go build|dockerfile|api endpoint|http status|rest api|graphql/i.test(text))
+        return 'code';
+    if (/when|today|yesterday|this week|this month|202[456789]|breaking|announced|just released|latest news/i.test(text))
+        return 'news';
+    if (/paper|doi|arxiv|study|research|journal|conference|proceedings|phd thesis/i.test(text))
+        return 'academic';
+    if (/define|what is|who is|capital of|population|located in|how old|born|died|founded/i.test(text))
+        return 'facts';
+
+    return 'general';
+}
 
 const WEB_SEARCH_USER_AGENT = 'Katab/1.0 (GNOME Shell extension; +https://cetikaytools.com)';
 const WEB_SEARCH_DEFAULT_TIMEOUT_SECONDS = 20;
@@ -33,6 +130,15 @@ const WEB_SEARCH_BACKOFF_MS = [2000, 5000, 12000];
 // Cooldown window after a search returns zero results (ms). Prevents
 // rapid-fire retries that would repeatedly hit upstream-engine rate limits.
 const WEB_SEARCH_EMPTY_RESULT_COOLDOWN_MS = 8000;
+// Engine fallback chain: when the primary search returns empty or is rate-limited,
+// try these alternative engine configurations in order. Each entry specifies
+// the SearxNG 'engines' or 'categories' to use as fallback.
+const ENGINE_FALLBACK_CHAIN = [
+    { engines: 'duckduckgo', categories: 'general', label: 'DuckDuckGo' },
+    { categories: 'general', label: 'General (no engine filter)' },
+];
+// Max fallback engines to try before giving up (prevents infinite chains).
+const MAX_FALLBACK_ATTEMPTS = 2;
 
 const WEB_SEARCH_TOOL_DESCRIPTION =
     'Search the live web through a private SearxNG instance and return the most relevant titles, ' +
@@ -214,13 +320,18 @@ function getLocalDateStamp() {
     return now ? now.format('%Y-%m-%d') : new Date().toISOString().slice(0, 10);
 }
 
-export function buildWebSearchResultBlock(query, payload, { includeGuard = true, consecutiveEmptySearches = 0, totalSearchesThisTurn = 1 } = {}) {
+export function buildWebSearchResultBlock(query, payload, { includeGuard = true, consecutiveEmptySearches = 0, totalSearchesThisTurn = 1, totalReadUrlFailuresThisTurn = 0, totalReadUrlAttemptsThisTurn = 0 } = {}) {
     const results = Array.isArray(payload) ? payload : (payload?.results || []);
     const answers = Array.isArray(payload) ? [] : (payload?.answers || []);
     const truncated = Array.isArray(payload) ? false : Boolean(payload?.truncated);
     const unresponsiveEngines = Array.isArray(payload?.unresponsiveEngines) ? payload.unresponsiveEngines : [];
     const suggestions = Array.isArray(payload?.suggestions) ? payload.suggestions : [];
     const searchDate = getLocalDateStamp();
+
+    // Search-decision router: check if any result URLs look like JS-heavy
+    // domains that would benefit from Crawl4AI's full browser rendering.
+    const jsHeavyPatterns = /docs\.|app\.|dashboard\.|react|vue|angular|nextjs|nuxt|svelte|vercel\.app|netlify\.app|pages\.dev/i;
+    const hasJsHeavyResult = results.some(r => jsHeavyPatterns.test(r.url || ''));
 
     if (results.length === 0 && answers.length === 0) {
         const allEnginesDown = unresponsiveEngines.length > 0;
@@ -290,8 +401,24 @@ export function buildWebSearchResultBlock(query, payload, { includeGuard = true,
 
     // Prompt the model to read URLs for deeper context instead of searching again.
     lines.push('To get full page content from any of these URLs, use read_url with the exact URL.');
-    if (totalSearchesThisTurn >= 2) {
+    // Suggest crawl_url for JS-heavy sites that won't render well as plain HTML.
+    if (hasJsHeavyResult) {
+        lines.push('Some of these URLs look like modern web apps (docs sites, dashboards, JS frameworks). For those, prefer crawl_url over read_url — it renders JavaScript for complete content.');
+    }
+    if (totalSearchesThisTurn >= 5) {
+        lines.push(`\nSTOP SEARCHING: You have already run ${totalSearchesThisTurn} web searches this turn. Do NOT search again. Read pages with read_url if you need more detail, but prefer synthesising your answer from the results you already have.`);
+    } else if (totalSearchesThisTurn >= 3) {
+        lines.push(`\nYou have already run ${totalSearchesThisTurn} web searches this turn. Strongly prefer using read_url on existing result URLs over running another search.`);
+    } else if (totalSearchesThisTurn >= 2) {
         lines.push(`You have already run ${totalSearchesThisTurn} web search(es) this turn. Consider reading pages with read_url before searching again.`);
+    }
+    // Read-before-you-search: if the model has searched 2+ times but never
+    // read a page, nudge it to read before the next search.
+    if (totalSearchesThisTurn >= 2 && totalReadUrlAttemptsThisTurn === 0) {
+        lines.push(`\nYou have searched ${totalSearchesThisTurn} times without reading any pages. Read at least one promising URL (with read_url or crawl_url) before performing another search.`);
+    }
+    if (totalReadUrlFailuresThisTurn >= 2) {
+        lines.push(`\nPAY ATTENTION: ${totalReadUrlFailuresThisTurn} page-reading attempts have already failed this turn. Do NOT call read_url or crawl_url again \u2014 the sites you are finding likely block scraping. Synthesise your answer from the search results and information you already have.`);
     }
 
     return lines.join('\n').trim();
@@ -416,17 +543,22 @@ function normalizeResults(data) {
 function mergeResults(lists) {
     const map = new Map();
     let order = 0;
-    for (const list of lists) {
-        for (const result of list) {
+    for (let listIdx = 0; listIdx < lists.length; listIdx++) {
+        for (const result of lists[listIdx]) {
             const key = normalizeUrlKey(result.url);
             const existing = map.get(key);
             if (existing) {
                 existing.count += 1;
+                // Track which expanded queries matched this result.
+                if (!existing.matchedBy.includes(listIdx)) {
+                    existing.matchedBy.push(listIdx);
+                }
             } else {
-                map.set(key, { ...result, count: 1, order: order++ });
+                map.set(key, { ...result, count: 1, matchedBy: [listIdx], order: order++ });
             }
         }
     }
+    // Sort by: how many queries found it (relevanceBoost), then score, then order.
     return Array.from(map.values()).sort((a, b) => (
         (b.count - a.count) || (b.score - a.score) || (a.order - b.order)
     ));
@@ -538,6 +670,33 @@ export class WebSearchRuntime {
         // (list is const, so we use deduped directly in the branches below.)
         const limit = clampLimit(config.resultLimit);
 
+        // Category-aware parallelism: when no explicit engines/categories are
+        // configured by the user, issue the same query across multiple SearxNG
+        // categories in parallel and merge the results.  This improves coverage
+        // without the user needing to think about categories.
+        const parallelCategories = config.parallelCategories;
+        if (parallelCategories && Array.isArray(parallelCategories) && parallelCategories.length > 1) {
+            const batches = await Promise.all(parallelCategories.map(cat =>
+                this._searchSingle(deduped[0], { ...config, categories: cat, parallelCategories: null, intentRoute: null }, cancellable).catch(error => {
+                    if (cancellable && cancellable.is_cancelled()) throw error;
+                    return { results: [], answers: [], unresponsiveEngines: [], suggestions: [] };
+                })
+            ));
+            const merged = mergeResults(batches.map(b => b.results));
+            const answers = dedupeStrings(batches.flatMap(b => b.answers));
+            const allUnresponsive = batches.flatMap(b => b.unresponsiveEngines || []);
+            const allSuggestions = dedupeStrings(batches.flatMap(b => b.suggestions || []));
+            return {
+                query: deduped[0],
+                queries: deduped,
+                results: merged.slice(0, limit),
+                answers,
+                unresponsiveEngines: allUnresponsive,
+                suggestions: allSuggestions,
+                truncated: merged.length > limit,
+            };
+        }
+
         if (deduped.length === 1) {
             const { results, answers, unresponsiveEngines = [], suggestions = [] } = await this._searchSingle(deduped[0], config, cancellable);
             return {
@@ -641,13 +800,64 @@ export class WebSearchRuntime {
     }
 
     async _searchSingle(query, config, cancellable) {
+        // ── Research cache: check for recent identical query ────────────
+        const cached = getCachedSearchResults(query);
+        if (cached) {
+            log(`[Katab:webSearch] Cache HIT for "${query}"`);
+            return cached;
+        }
+
+        // Try primary config + fallback engine chain
+        let currentConfig = config;
+        let fallbackIdx = 0;
+
+        while (true) {
+            const isFallback = fallbackIdx > 0;
+            const maxAttempts = isFallback ? 1 : WEB_SEARCH_MAX_ATTEMPTS;
+            const result = await this._attemptSearch(query, currentConfig, cancellable, maxAttempts);
+            if (result) return result; // got results — success
+
+            // No results — try next fallback engine if available
+            if (fallbackIdx >= ENGINE_FALLBACK_CHAIN.length || fallbackIdx >= MAX_FALLBACK_ATTEMPTS) {
+                // All fallbacks exhausted — return empty
+                this._lastEmptyResultTime = Date.now();
+                log(`[Katab:webSearch] Query "${query}" — all engines exhausted, returning empty.`);
+                return { results: [], answers: [], unresponsiveEngines: [], suggestions: [] };
+            }
+
+            const fallback = ENGINE_FALLBACK_CHAIN[fallbackIdx];
+            fallbackIdx++;
+            log(`[Katab:webSearch] Primary search empty — trying fallback engine: ${fallback.label} (${fallback.engines || 'any'})`);
+
+            // Build fallback config by merging fallback engine spec into current config
+            currentConfig = { ...config };
+            if (fallback.engines) {
+                currentConfig.engines = fallback.engines;
+            }
+            if (fallback.categories) {
+                currentConfig.categories = fallback.categories;
+            }
+            // Remove intent routing — fallback uses explicit engine/category
+            currentConfig.intentRoute = null;
+            currentConfig.parallelCategories = null;
+        }
+    }
+
+    /**
+     * Execute a single search attempt with the given config, with exponential
+     * backoff retries. Returns null if all retries exhausted with empty results
+     * or rate limiting — the caller should try fallback engines.
+     * @param {number} [maxAttempts=WEB_SEARCH_MAX_ATTEMPTS] - Max retries (fewer for fallback engines)
+     */
+    async _attemptSearch(query, config, cancellable, maxAttempts = WEB_SEARCH_MAX_ATTEMPTS) {
         const url = this._buildSearchUrl(query, config);
+        const attempts = Math.min(maxAttempts, WEB_SEARCH_MAX_ATTEMPTS);
         log(`[Katab:webSearch] Query: "${query}"`);
         log(`[Katab:webSearch] URL: ${url}`);
 
         let rawBody = ''; // captured for zero-result diagnostics
 
-        for (let attempt = 1; attempt <= WEB_SEARCH_MAX_ATTEMPTS; attempt++) {
+        for (let attempt = 1; attempt <= attempts; attempt++) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw new WebSearchToolError('Search cancelled.', { code: 'cancelled' });
             }
@@ -663,13 +873,13 @@ export class WebSearchRuntime {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
                 }
-                if (attempt < WEB_SEARCH_MAX_ATTEMPTS) {
+                if (attempt < attempts) {
                     const backoffMs = WEB_SEARCH_BACKOFF_MS[attempt - 1] || 2000;
                     log(`[Katab:webSearch] Connection attempt ${attempt} failed for "${query}", retrying after ${backoffMs}ms…`);
                     await this._sleepMs(backoffMs);
                     continue;
                 }
-                log(`[Katab:webSearch] Connection failed for "${query}" after ${WEB_SEARCH_MAX_ATTEMPTS} attempts: ${error.message}`);
+                log(`[Katab:webSearch] Connection failed for "${query}" after ${attempts} attempts: ${error.message}`);
                 throw new WebSearchToolError(
                     `Could not reach the SearxNG instance at ${config.url}. Make sure it is running and the URL is correct.`,
                     { code: 'connection-failed', detail: error?.message }
@@ -684,7 +894,7 @@ export class WebSearchRuntime {
             }
 
             if (response.status === 429) {
-                if (attempt < WEB_SEARCH_MAX_ATTEMPTS) {
+                if (attempt < attempts) {
                     const backoffMs = WEB_SEARCH_BACKOFF_MS[attempt - 1] || 5000;
                     log(`[Katab:webSearch] Rate-limited (HTTP 429) for "${query}", retrying after ${backoffMs}ms…`);
                     await this._sleepMs(backoffMs);
@@ -720,7 +930,7 @@ export class WebSearchRuntime {
 
             // If we got 0 results, it may be a transient upstream-engine failure.
             // Retry with exponential backoff to give upstream rate limits time to clear.
-            if (results.length === 0 && answers.length === 0 && attempt < WEB_SEARCH_MAX_ATTEMPTS) {
+            if (results.length === 0 && answers.length === 0 && attempt < attempts) {
                 const backoffMs = WEB_SEARCH_BACKOFF_MS[attempt - 1] || 2000;
                 log(`[Katab:webSearch] Query "${query}" returned 0 results on attempt ${attempt}, retrying after ${backoffMs}ms…`);
                 await this._sleepMs(backoffMs);
@@ -728,15 +938,19 @@ export class WebSearchRuntime {
             }
 
             this._logSearchResult(query, results, answers, rawBody, unresponsiveEngines);
-            return { results, answers, unresponsiveEngines, suggestions };
+            const resultPayload = { results, answers, unresponsiveEngines, suggestions };
+            // Cache successful results
+            if (results.length > 0 || answers.length > 0) {
+                cacheSearchResults(query, resultPayload);
+            }
+            return resultPayload;
         }
 
-        // All attempts exhausted with zero results — record cooldown timestamp
-        // so subsequent searches wait for upstream rate limits to clear.
-        this._lastEmptyResultTime = Date.now();
+        // All attempts exhausted with zero results — return null so the
+        // caller can try the engine fallback chain.
         this._logSearchResult(query, [], [], rawBody, []);
-        log(`[Katab:webSearch] Query "${query}" exhausted all ${WEB_SEARCH_MAX_ATTEMPTS} attempts — enforcing ${WEB_SEARCH_EMPTY_RESULT_COOLDOWN_MS}ms cooldown before next search.`);
-        return { results: [], answers: [], unresponsiveEngines: [], suggestions: [] };
+        log(`[Katab:webSearch] Query "${query}" exhausted all ${attempts} attempts with current engine config — trying fallback if available.`);
+        return null;
     }
 
     _logSearchResult(query, results, answers, rawBody = '', unresponsiveEngines = []) {
@@ -773,17 +987,36 @@ export class WebSearchRuntime {
             'format=json',
         ];
 
-        if (config.categories) {
-            params.push(`categories=${GLib.Uri.escape_string(config.categories, null, true)}`);
+        // Intent-routing overrides: if config has an intentRoute, those
+        // values take priority over the global defaults.  If the user set
+        // explicit engines/categories/timeRange in GSettings, the intent
+        // route is NOT applied (the user knows what they want).
+        const route = config.intentRoute;
+        const useRoute = route
+            && !config.engines          // user didn't set explicit engines
+            && config.categories === 'general'; // user didn't override categories
+
+        const categories = useRoute && route.categories
+            ? route.categories
+            : config.categories;
+        const engines = useRoute && route.engines
+            ? route.engines
+            : config.engines;
+        const timeRange = useRoute && route.timeRange
+            ? route.timeRange
+            : config.timeRange;
+
+        if (categories) {
+            params.push(`categories=${GLib.Uri.escape_string(categories, null, true)}`);
         }
         if (config.language) {
             params.push(`language=${GLib.Uri.escape_string(config.language, null, true)}`);
         }
-        if (config.timeRange) {
-            params.push(`time_range=${GLib.Uri.escape_string(config.timeRange, null, true)}`);
+        if (timeRange) {
+            params.push(`time_range=${GLib.Uri.escape_string(timeRange, null, true)}`);
         }
-        if (config.engines) {
-            params.push(`engines=${GLib.Uri.escape_string(config.engines, null, true)}`);
+        if (engines) {
+            params.push(`engines=${GLib.Uri.escape_string(engines, null, true)}`);
         }
         if (Number.isInteger(config.safesearch)) {
             params.push(`safesearch=${config.safesearch}`);

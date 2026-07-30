@@ -5,7 +5,12 @@
    ════════════════════════════════════════════ */
 
 .katab-shell-overlay {
-    background-color: transparent;
+    /* Nearly-transparent background is required for the widget to have a
+       proper input region so clicks on the overlay (outside the dialog)
+       are captured.  A fully transparent background causes St to skip
+       hit-testing.  See GNOME Shell's own _check-box.scss for the same
+       pattern. */
+    background-color: rgba(0, 0, 0, 0.01);
 }
 
 .katab-panel-indicator-box {
@@ -55,11 +60,11 @@
    ════════════════════════════════════════════ */
 
 .katab-token-box {
-    padding: 4px 6px;
-    border-radius: 7px;
-    background-color: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    width: 78px;
+    padding: 0 7px;
+    border-radius: 6px;
+    background-color: transparent;
+    border: none;
+    min-width: 72px;
     height: 44px;
 }
 
@@ -68,13 +73,13 @@
 }
 
 .katab-token-label {
-    font-size: 9.6pt;
-    font-weight: 700;
-    color: rgba(255, 255, 255, 0.65);
+    font-size: 8.2pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.55);
 }
 
 .katab-token-label.katab-token-warn {
-    font-size: 13pt;
+    font-size: 9pt;
     color: #f9e2af;
 }
 
@@ -85,24 +90,183 @@
 }
 
 .katab-token-progress {
-    height: 3px;
-    width: 56px;
-    background-color: rgba(255, 255, 255, 0.10);
-    border-radius: 2px;
+    height: 6px;
+    width: 64px;
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 
 .katab-token-progress-fill {
-    height: 3px;
+    height: 6px;
     background-color: #a6e3a1;
-    border-radius: 2px;
+    border-radius: 3px;
+    box-shadow: 0 0 6px rgba(166, 227, 161, 0.35);
+}
+
+.katab-token-progress-fill.medium {
+    background-color: #a6e3a1;
+    box-shadow: 0 0 6px rgba(166, 227, 161, 0.35);
 }
 
 .katab-token-progress-fill.warn {
     background-color: #f9e2af;
+    box-shadow: 0 0 8px rgba(249, 226, 175, 0.45);
+}
+
+.katab-token-progress-fill.high {
+    background-color: #fab387;
+    box-shadow: 0 0 8px rgba(250, 179, 135, 0.45);
 }
 
 .katab-token-progress-fill.danger {
     background-color: #f38ba8;
+    box-shadow: 0 0 10px rgba(243, 139, 168, 0.55);
+}
+
+.katab-token-box:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.katab-token-box:active {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.katab-token-info-icon {
+    color: rgba(255, 255, 255, 0.35);
+    margin-top: 1px;
+}
+
+/* ════════════════════════════════════════════
+   SESSION INFO POPUP — floating context detail
+   ════════════════════════════════════════════ */
+
+.katab-session-info-popup {
+    background-color: rgba(30, 30, 30, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 0;
+    min-width: 280px;
+    max-width: 340px;
+}
+
+.katab-session-info-header {
+    padding: 10px 12px 8px 14px;
+}
+
+.katab-session-info-title {
+    font-size: 10pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.80);
+}
+
+.katab-session-info-close-btn {
+    padding: 2px;
+    border: none;
+    background: transparent;
+}
+
+.katab-session-info-close-icon {
+    icon-size: 14px;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.katab-session-info-close-btn:hover .katab-session-info-close-icon {
+    color: rgba(255, 255, 255, 0.80);
+}
+
+.katab-session-info-section {
+    padding: 0 14px 6px 14px;
+}
+
+.katab-session-info-section-title {
+    font-size: 7.2pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.35);
+    text-transform: uppercase;
+    margin-top: 6px;
+    margin-bottom: 3px;
+}
+
+.katab-session-info-row {
+    padding: 2px 0;
+}
+
+.katab-session-info-row-label {
+    font-size: 8.2pt;
+    color: rgba(255, 255, 255, 0.60);
+}
+
+.katab-session-info-row-value {
+    font-size: 8.2pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    min-width: 80px;
+    text-align: right;
+}
+
+.katab-session-info-progress {
+    height: 6px;
+    margin: 4px 0 2px 0;
+    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.katab-session-info-progress-track {
+    border-radius: 3px;
+}
+
+.katab-session-info-progress-fill {
+    height: 6px;
+    border-radius: 3px;
+    background-color: #a6e3a1;
+}
+
+.katab-session-info-progress-fill.medium {
+    background-color: #a6e3a1;
+}
+
+.katab-session-info-progress-fill.warn {
+    background-color: #f9e2af;
+}
+
+.katab-session-info-progress-fill.high {
+    background-color: #fab387;
+}
+
+.katab-session-info-progress-fill.danger {
+    background-color: #f38ba8;
+}
+
+.katab-session-info-reserved-label {
+    font-size: 6.8pt;
+    font-style: italic;
+    color: rgba(255, 255, 255, 0.30);
+    text-align: center;
+    margin-bottom: 4px;
+}
+
+.katab-session-info-action-row {
+    padding: 4px 12px 10px 12px;
+}
+
+.katab-session-info-action-btn {
+    padding: 8px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 8.6pt;
+    font-weight: 600;
+}
+
+.katab-session-info-action-btn:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.20);
+}
+
+.katab-session-info-action-btn:active {
+    background-color: rgba(255, 255, 255, 0.14);
 }
 
 /* ════════════════════════════════════════════
@@ -112,9 +276,7 @@
 .katab-dialog-container {
     background-color: rgba(36, 36, 36, 0.65);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 16px;
     padding: 18px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.40);
     color: #ffffff;
 }
 
@@ -123,35 +285,45 @@
    ════════════════════════════════════════════ */
 
 .katab-header-box {
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    spacing: 9px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    spacing: 7px;
 }
 
 .katab-title-wrapper {
-    spacing: 11px;
+    spacing: 9px;
 }
 
 .katab-logo-icon {
-    icon-size: 32px;
+    icon-size: 28px;
 }
 
 .katab-title-label {
     font-size: 16pt;
-    font-weight: bold;
+    font-weight: 700;
     color: #ffffff;
-    letter-spacing: -1px;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.50);
+    letter-spacing: -0.5px;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.40);
 }
 
-.katab-provider-status-box {
-    spacing: 9px;
-    padding: 6px 12px 6px 10px;
-    margin-right: 4px;
-    border-radius: 8px;
+/* ── Unified header chip — all pill-shaped header controls share this base ── */
+.katab-header-chip {
+    padding: 6px 13px;
+    border-radius: 11px;
     border: 1px solid rgba(255, 255, 255, 0.10);
-    background-color: rgba(56, 56, 56, 0.50);
+    background-color: rgba(255, 255, 255, 0.06);
+    spacing: 7px;
+}
+
+.katab-header-chip:hover {
+    border-color: rgba(255, 255, 255, 0.20);
+    background-color: rgba(255, 255, 255, 0.11);
+}
+
+/* ── Provider status chip ───────────────────────────────────────────────── */
+.katab-provider-status-box {
+    spacing: 7px;
 }
 
 .katab-provider-badge-icon {
@@ -161,40 +333,48 @@
 
 .katab-provider-status-icon {
     icon-size: 20px;
-    padding: 5px;
 }
 
 .katab-provider-menu-icon {
     icon-size: 15px;
-    padding: 3px;
-    margin-left: 10px;
+    padding: 2px;
+    margin-left: 7px;
 }
 
 .katab-provider-status-box.katab-provider-status-online {
-    border-color: rgba(166, 227, 161, 0.24);
+    border-color: rgba(166, 227, 161, 0.28);
     background-color: rgba(166, 227, 161, 0.10);
 }
 
 .katab-provider-status-box.katab-provider-status-down {
-    border-color: rgba(243, 139, 168, 0.24);
+    border-color: rgba(243, 139, 168, 0.28);
     background-color: rgba(243, 139, 168, 0.10);
 }
 
 .katab-provider-status-box.katab-provider-status-needs-setup {
-    border-color: rgba(249, 226, 175, 0.26);
+    border-color: rgba(249, 226, 175, 0.30);
     background-color: rgba(249, 226, 175, 0.12);
 }
 
-/* Provider chip is clickable — it opens the engine picker. */
-.katab-provider-status-box:hover {
-    border-color: rgba(255, 255, 255, 0.22);
-    background-color: rgba(72, 72, 72, 0.62);
+.katab-provider-status-box.katab-provider-status-online:hover {
+    border-color: rgba(166, 227, 161, 0.44);
+    background-color: rgba(166, 227, 161, 0.16);
+}
+
+.katab-provider-status-box.katab-provider-status-down:hover {
+    border-color: rgba(243, 139, 168, 0.44);
+    background-color: rgba(243, 139, 168, 0.16);
+}
+
+.katab-provider-status-box.katab-provider-status-needs-setup:hover {
+    border-color: rgba(249, 226, 175, 0.46);
+    background-color: rgba(249, 226, 175, 0.18);
 }
 
 .katab-provider-status-arrow {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.55);
-    margin-left: 2px;
+    color: rgba(255, 255, 255, 0.48);
+    margin-left: 1px;
 }
 
 .katab-provider-status-label {
@@ -215,17 +395,17 @@
     color: #f6e6bc;
 }
 
-/* DeepSeek balance badge — compact currency + total shown next to the provider name */
+/* DeepSeek balance badge — compact currency next to provider name */
 .katab-provider-balance-label {
     font-size: 8.5pt;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.55);
-    margin-left: 6px;
+    color: rgba(255, 255, 255, 0.48);
+    margin-left: 5px;
     font-family: monospace;
 }
 
 .katab-provider-balance-label.katab-provider-status-online {
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.48);
 }
 
 .katab-provider-balance-label.katab-provider-status-down {
@@ -233,7 +413,7 @@
 }
 
 .katab-provider-menu-status-dot {
-    margin-left: 8px;
+    margin-left: 6px;
 }
 
 .katab-current-chat-text-col {
@@ -299,29 +479,31 @@
     color: #a6e3a1;
 }
 
+/* ── Unified header icon buttons ────────────────────────────────────────── */
 .katab-close-btn,
 .katab-settings-btn,
 .katab-new-chat-btn,
 .katab-history-btn {
-    padding: 7px;
-    border-radius: 8px;
-    background-color: rgba(255, 255, 255, 0.05);
+    padding: 6px;
+    border-radius: 9px;
+    background-color: transparent;
+    width: 36px;
+    height: 36px;
 }
 
 .katab-close-btn:hover,
 .katab-settings-btn:hover,
 .katab-new-chat-btn:hover,
 .katab-history-btn:hover {
-    background-color: rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.10);
 }
 
 .katab-close-icon,
 .katab-settings-icon,
 .katab-new-chat-icon,
 .katab-history-icon {
-    icon-size: 18px;
-    color: rgba(255, 255, 255, 0.72);
-    icon-shadow: 0 1px 3px rgba(0, 0, 0, 0.50);
+    icon-size: 17px;
+    color: rgba(255, 255, 255, 0.68);
 }
 
 .katab-history-btn:focus,
@@ -403,6 +585,15 @@
     color: #f38ba8;
 }
 
+.katab-menu-section-header {
+    margin: 12px 8px 0px 8px;
+    padding: 10px 12px 2px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.48);
+}
+
 .katab-history-empty {
     font-size: 9.5pt;
     color: rgba(255, 255, 255, 0.42);
@@ -454,12 +645,218 @@
 }
 
 /* ════════════════════════════════════════════
+   KNOWLEDGE BASE SEARCH (Phase 2)
+   ════════════════════════════════════════════ */
+
+.katab-kb-search-box {
+    padding: 0 6px 8px 6px;
+    spacing: 6px;
+    border-bottom: 1px solid rgba(148, 226, 213, 0.15);
+    margin-bottom: 8px;
+}
+
+.katab-kb-search-icon {
+    icon-size: 15px;
+    color: #94e2d5;
+}
+
+.katab-kb-search-entry {
+    background-color: rgba(56, 56, 56, 0.65);
+    color: #ffffff;
+    border: 1px solid rgba(148, 226, 213, 0.18);
+    border-radius: 7px;
+    padding: 5px 10px;
+    font-size: 9pt;
+    caret-color: #94e2d5;
+    selection-background-color: rgba(148, 226, 213, 0.22);
+}
+
+.katab-kb-search-entry:focus {
+    border-color: rgba(148, 226, 213, 0.35);
+    background-color: rgba(72, 72, 72, 0.72);
+}
+
+.katab-kb-search-entry StEntryHint {
+    color: rgba(255, 255, 255, 0.32);
+    font-size: 9pt;
+}
+
+.katab-kb-search-btn {
+    background-color: rgba(148, 226, 213, 0.18);
+    color: #94e2d5;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 226, 213, 0.25);
+    padding: 5px 14px;
+    font-size: 9pt;
+    font-weight: bold;
+}
+
+.katab-kb-search-btn:hover {
+    background-color: rgba(148, 226, 213, 0.28);
+}
+
+/* KB search results */
+
+.katab-kb-back-row {
+    padding: 4px 0 10px 0;
+}
+
+.katab-kb-back-btn {
+    background-color: transparent;
+    color: #94e2d5;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 226, 213, 0.18);
+    padding: 4px 12px;
+    font-size: 9pt;
+    font-weight: bold;
+}
+
+.katab-kb-back-btn:hover {
+    background-color: rgba(148, 226, 213, 0.12);
+}
+
+.katab-kb-result-count {
+    font-size: 8pt;
+    color: rgba(255, 255, 255, 0.42);
+    padding: 4px 6px 8px 6px;
+}
+
+.katab-kb-result-row {
+    padding: 10px 12px;
+    border-radius: 7px;
+    background-color: rgba(56, 56, 56, 0.60);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    spacing: 10px;
+    margin-bottom: 4px;
+}
+
+.katab-kb-result-row:hover {
+    background-color: rgba(56, 56, 56, 0.82);
+    border-color: rgba(148, 226, 213, 0.22);
+}
+
+.katab-kb-score-badge {
+    font-size: 8pt;
+    font-weight: bold;
+    border-radius: 5px;
+    padding: 2px 6px;
+    min-width: 40px;
+    text-align: center;
+}
+
+.katab-kb-score-high {
+    background-color: rgba(166, 227, 161, 0.18);
+    color: #a6e3a1;
+    border: 1px solid rgba(166, 227, 161, 0.30);
+}
+
+.katab-kb-score-mid {
+    background-color: rgba(249, 226, 175, 0.18);
+    color: #f9e2af;
+    border: 1px solid rgba(249, 226, 175, 0.30);
+}
+
+.katab-kb-score-low {
+    background-color: rgba(243, 139, 168, 0.18);
+    color: #f38ba8;
+    border: 1px solid rgba(243, 139, 168, 0.30);
+}
+
+.katab-kb-result-text-col {
+    spacing: 2px;
+}
+
+.katab-kb-result-title {
+    font-size: 10pt;
+    color: #ffffff;
+    font-weight: bold;
+}
+
+.katab-kb-result-source {
+    font-size: 7.5pt;
+    color: #94e2d5;
+}
+
+.katab-kb-result-snippet {
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.62);
+    padding-top: 4px;
+}
+
+/* Knowledge Base update confirmation widget (Phase 2) */
+
+.katab-kb-update-confirm {
+    background-color: rgba(148, 226, 213, 0.08);
+    border: 1px solid rgba(148, 226, 213, 0.20);
+    border-radius: 8px;
+    padding: 10px 12px;
+    spacing: 6px;
+    margin: 6px 0;
+}
+
+.katab-kb-update-header-row {
+    spacing: 6px;
+}
+
+.katab-kb-update-icon {
+    color: #94e2d5;
+}
+
+.katab-kb-update-header {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #94e2d5;
+}
+
+.katab-kb-update-topic {
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.katab-kb-update-fact {
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.72);
+    padding: 4px 0;
+}
+
+.katab-kb-update-btn-row {
+    spacing: 6px;
+    padding-top: 4px;
+}
+
+.katab-kb-update-accept-btn {
+    background-color: rgba(148, 226, 213, 0.18);
+    color: #94e2d5;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 226, 213, 0.25);
+    padding: 4px 14px;
+    font-size: 9pt;
+    font-weight: bold;
+}
+
+.katab-kb-update-accept-btn:hover {
+    background-color: rgba(148, 226, 213, 0.30);
+}
+
+.katab-kb-update-dismiss-btn {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.55);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 4px 14px;
+    font-size: 9pt;
+}
+
+.katab-kb-update-dismiss-btn:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ════════════════════════════════════════════
    CHAT AREA
    ════════════════════════════════════════════ */
 
 .katab-chat-scroll {
     background-color: rgba(26, 26, 26, 0.50);
-    border-radius: 8px;
     padding: 8px;
     margin-bottom: 12px;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -575,7 +972,6 @@
    ════════════════════════════════════════════ */
 
 .katab-chat-bubble {
-    border-radius: 8px;
     padding: 12px 16px;
 }
 
@@ -583,15 +979,12 @@
     background-color: rgba(36, 36, 36, 0.95);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.10);
-    border-bottom-right-radius: 2px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.60);
 }
 
 .katab-chat-bubble.assistant {
     background-color: rgba(56, 56, 56, 0.90);
     color: #ffffff;
-    border-bottom-left-radius: 2px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.60);
 }
@@ -617,11 +1010,12 @@
 
 .katab-think-wrapper {
     margin: 8px 0 12px;
-    border-radius: 8px;
+    /* border-radius removed — combined with background-color + overflow:hidden
+       on potentially tall thinking content triggers Clutter offscreen
+       framebuffer errors on large responses */
     border: 1px solid rgba(251, 191, 36, 0.20);
     background-color: rgba(28, 28, 28, 0.62);
     overflow: hidden;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
 }
 
 .katab-think-wrapper-expanded {
@@ -688,7 +1082,6 @@
 .katab-theme-light .katab-think-wrapper {
     border-color: rgba(180, 83, 9, 0.22);
     background-color: rgba(255, 252, 242, 0.86);
-    box-shadow: 0 6px 18px rgba(120, 80, 20, 0.08);
 }
 
 .katab-theme-light .katab-think-wrapper-expanded {
@@ -738,10 +1131,9 @@
     margin: 8px 0 14px;
     padding: 4px;
     spacing: 2px;
-    border-radius: 10px;
+    /* border-radius removed — same offscreen framebuffer risk */
     background-color: rgba(20, 24, 24, 0.45);
     border: 1px solid rgba(148, 226, 213, 0.18);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 .katab-tool-call-entry {
@@ -843,11 +1235,47 @@
     color: rgba(255, 255, 255, 0.78);
 }
 
+/* ── Tool call group (Unsloth-style) ───── */
+.katab-tool-call-group {
+    border-radius: 8px;
+    margin-bottom: 4px;
+}
+
+.katab-tool-call-group-header {
+    spacing: 6px;
+    padding: 5px 8px;
+    border-radius: 8px;
+    background-color: rgba(148, 226, 213, 0.06);
+}
+
+.katab-tool-call-group-header:hover {
+    background-color: rgba(148, 226, 213, 0.12);
+}
+
+.katab-tool-call-group-label {
+    font-size: 7.6pt;
+    font-weight: bold;
+    color: rgba(148, 226, 213, 0.65);
+}
+
+.katab-tool-call-group-chevron {
+    icon-size: 10px;
+    color: rgba(148, 226, 213, 0.5);
+}
+
+.katab-tool-call-group-body {
+    padding: 2px 0 2px 0;
+}
+
+.katab-tool-call-group-collapsed .katab-tool-call-group-header {
+    border-radius: 8px;
+    border-bottom: none;
+}
+
 /* ── Light theme overrides ─────────────── */
 .katab-theme-light .katab-tool-call-log {
     background-color: rgba(225, 242, 239, 0.62);
     border-color: rgba(30, 140, 125, 0.22);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .katab-theme-light .katab-tool-call-header:hover {
@@ -902,6 +1330,23 @@
 
 .katab-theme-light .katab-tool-call-expand-value {
     color: rgba(0, 0, 0, 0.75);
+}
+
+/* Light theme: tool call groups */
+.katab-theme-light .katab-tool-call-group-header {
+    background-color: rgba(30, 140, 125, 0.08);
+}
+
+.katab-theme-light .katab-tool-call-group-header:hover {
+    background-color: rgba(30, 140, 125, 0.15);
+}
+
+.katab-theme-light .katab-tool-call-group-label {
+    color: rgba(20, 130, 115, 0.75);
+}
+
+.katab-theme-light .katab-tool-call-group-chevron {
+    color: rgba(20, 130, 115, 0.55);
 }
 
 /* ── DeepSeek prompt-cache savings: per-reply pill + explanation drawer ──
@@ -983,22 +1428,22 @@
 
 .katab-cache-session-chip {
     spacing: 4px;
-    margin-right: 8px;
-    padding: 2px 9px;
+    margin-right: 4px;
+    padding: 4px 9px;
     border-radius: 10px;
-    background-color: rgba(166, 227, 161, 0.12);
-    border: 1px solid rgba(166, 227, 161, 0.20);
+    background-color: rgba(166, 227, 161, 0.10);
+    border: 1px solid rgba(166, 227, 161, 0.18);
 }
 
 .katab-cache-session-chip-icon {
-    icon-size: 11px;
+    icon-size: 10px;
     color: #a6e3a1;
 }
 
 .katab-cache-session-chip-label {
-    font-size: 7.8pt;
+    font-size: 7.5pt;
     font-weight: 600;
-    color: rgba(166, 227, 161, 0.92);
+    color: rgba(166, 227, 161, 0.88);
 }
 
 /* Light-theme overrides — deeper green so text stays legible on light bg. */
@@ -1072,7 +1517,8 @@
 
 .katab-markdown-table {
     margin: 2px 0 4px;
-    border-radius: 10px;
+    /* border-radius removed — same offscreen framebuffer risk as
+       code windows when tables contain many rows */
     border: 1px solid rgba(255, 255, 255, 0.10);
     background-color: rgba(26, 26, 26, 0.28);
     overflow: hidden;
@@ -1119,12 +1565,14 @@
    ════════════════════════════════════════════ */
 
 .katab-code-window {
-    border-radius: 10px;
+    /* border-radius removed — large code blocks with rounded corners +
+       background gradients trigger Clutter offscreen framebuffers that
+       exceed GPU texture limits, flooding logs with:
+       "Failed to create offscreen effect framebuffer: Failed to create
+        texture 2d due to size/format constraints".
+       Flat background-color also avoids ClutterCanvas texture limits. */
     border: 1px solid rgba(255, 255, 255, 0.12);
-    background-gradient-direction: vertical;
-    background-gradient-start: rgba(26, 26, 26, 0.98);
-    background-gradient-end: rgba(16, 16, 26, 0.98);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+    background-color: rgba(18, 18, 24, 0.98);
 }
 
 .katab-code-window-header {
@@ -1170,9 +1618,10 @@
    ════════════════════════════════════════════ */
 
 .katab-message-footer-row {
-    margin-top: 28px;
-    padding: 0;
-    spacing: 8px;
+    margin-top: 12px;
+    padding: 8px 0 0 0;
+    spacing: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .katab-copy-btn {
@@ -1197,15 +1646,67 @@
 }
 
 .katab-chat-link-list {
-    spacing: 6px;
-    margin-top: 6px;
+    spacing: 3px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+
+.katab-chat-link-section-label {
+    font-size: 7.8pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.32);
+    margin-bottom: 2px;
+}
+
+.katab-chat-link-chip-row {
+    spacing: 5px;
+}
+
+.katab-chat-link-chip {
+    background-color: rgba(56, 56, 56, 0.50);
+    color: rgba(255, 255, 255, 0.78);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    padding: 3px 10px;
+    font-size: 8.2pt;
+}
+
+.katab-chat-link-chip:hover,
+.katab-chat-link-chip:focus {
+    background-color: rgba(56, 56, 56, 0.78);
+    border-color: rgba(255, 255, 255, 0.20);
+    color: #ffffff;
+}
+
+.katab-chat-link-more-toggle {
+    background-color: rgba(56, 56, 56, 0.42);
+    color: rgba(255, 255, 255, 0.58);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 3px 10px;
+    font-size: 8.2pt;
+    font-weight: 600;
+}
+
+.katab-chat-link-more-toggle:hover,
+.katab-chat-link-more-toggle:focus {
+    background-color: rgba(56, 56, 56, 0.72);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.katab-chat-link-overflow {
+    spacing: 4px;
+    margin-top: 4px;
+    padding: 6px 0 0 8px;
+    border-left: 2px solid rgba(255, 255, 255, 0.08);
 }
 
 /* ── Web Sources Section ───────────────────────────────── */
 
 .katab-chat-sources-box {
     spacing: 0px;
-    margin-top: 6px;
+    margin-top: 14px;
     border-radius: 7px;
     background-color: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.07);
@@ -1234,6 +1735,31 @@
     font-size: 8.5pt;
     font-weight: bold;
     color: rgba(255, 255, 255, 0.55);
+}
+
+.katab-chat-sources-subtitle {
+    font-size: 7.8pt;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.28);
+    margin-left: 2px;
+}
+
+/* Knowledge Base indicator (Phase 2) — shown when personal memory was used */
+.katab-chat-kb-icon {
+    color: #94e2d5;
+}
+
+.katab-chat-kb-label {
+    font-size: 8.5pt;
+    font-weight: bold;
+    color: #94e2d5;
+}
+
+.katab-chat-kb-subtitle {
+    font-size: 7.8pt;
+    font-weight: 400;
+    color: rgba(148, 226, 213, 0.42);
+    margin-left: 2px;
 }
 
 .katab-chat-sources-list {
@@ -1282,20 +1808,7 @@
     font-family: monospace;
 }
 
-.katab-chat-link-button {
-    background-color: rgba(56, 56, 56, 0.58);
-    color: #ffffff;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    padding: 6px 10px;
-    font-size: 9pt;
-}
 
-.katab-chat-link-button:hover,
-.katab-chat-link-button:focus {
-    background-color: rgba(56, 56, 56, 0.85);
-    border-color: rgba(255, 255, 255, 0.20);
-}
 
 /* ════════════════════════════════════════════
    SYSTEM MESSAGES & TYPING INDICATOR
@@ -1485,28 +1998,28 @@
 
 .katab-footer-box {
     background-color: rgba(26, 26, 26, 0.88);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 8px;
-    padding: 6px 8px 6px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 5px 8px 5px 10px;
     spacing: 5px;
 }
 
 .katab-prompt-scroll {
-    background-color: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 9px;
     min-height: 84px;
     max-height: 320px;
 }
 
 .katab-prompt-editor {
-    padding: 0 12px;
+    padding: 0 10px;
     min-height: 84px;
 }
 
 .katab-prompt-hint {
-    color: rgba(255, 255, 255, 0.38);
-    font-size: 11.2pt;
+    color: rgba(255, 255, 255, 0.32);
+    font-size: 11pt;
 }
 
 .katab-prompt-column {
@@ -1514,9 +2027,9 @@
 }
 
 .katab-prompt-char-counter {
-    font-size: 9pt;
-    color: rgba(255, 255, 255, 0.45);
-    padding: 2px 6px 0 0;
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.40);
+    padding: 1px 6px 0 0;
 }
 
 .katab-prompt-char-counter.warn {
@@ -1556,30 +2069,32 @@
 }
 
 .katab-send-btn {
-    background-color: rgba(56, 56, 56, 0.80);
-    border-radius: 7px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     width: 44px;
     height: 44px;
     padding: 0;
 }
 
 .katab-send-btn:hover {
-    background-color: rgba(56, 56, 56, 0.95);
+    background-color: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.14);
 }
 
 .katab-send-btn-stop {
     background-color: rgba(243, 139, 168, 0.20);
+    border-color: rgba(243, 139, 168, 0.32);
 }
 
 .katab-send-btn-stop:hover {
-    background-color: rgba(243, 139, 168, 0.32);
+    background-color: rgba(243, 139, 168, 0.34);
+    border-color: rgba(243, 139, 168, 0.48);
 }
 
 .katab-send-icon {
     icon-size: 16px;
-    color: #ffffff;
-    icon-shadow: 0 1px 3px rgba(0, 0, 0, 0.50);
+    color: rgba(255, 255, 255, 0.80);
 }
 
 /* ════════════════════════════════════════════
@@ -1587,21 +2102,21 @@
    ════════════════════════════════════════════ */
 
 .katab-tools-box {
-    spacing: 3px;
+    spacing: 4px;
 }
 
 .katab-tool-btn {
-    padding: 4px 5px;
-    border-radius: 7px;
-    background-color: rgba(56, 56, 56, 0.40);
+    padding: 3px 7px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.68);
-    width: 58px;
+    color: rgba(255, 255, 255, 0.60);
+    width: 72px;
     height: 44px;
 }
 
 .katab-tool-mode-btn {
-    width: 70px;
+    width: 78px;
     height: 44px;
 }
 
@@ -1610,64 +2125,67 @@
 }
 
 .katab-tool-text-col {
-    spacing: 0;
+    spacing: 1px;
 }
 
 .katab-tool-name-label {
-    font-size: 8.2pt;
-    font-weight: 700;
+    font-size: 8.5pt;
+    font-weight: 600;
     color: inherit;
 }
 
 .katab-tool-mode-label {
-    font-size: 6.5pt;
-    font-weight: 700;
+    font-size: 6pt;
+    font-weight: 600;
     color: inherit;
+    opacity: 0.70;
 }
 
 .katab-tool-mode-auto {
-    background-color: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.60);
 }
 
 .katab-tool-mode-on {
-    background-color: rgba(148, 226, 213, 0.16);
-    border-color: rgba(148, 226, 213, 0.42);
+    background-color: rgba(148, 226, 213, 0.14);
+    border-color: rgba(148, 226, 213, 0.36);
     color: #94e2d5;
 }
 
 .katab-tool-mode-off {
-    background-color: rgba(243, 139, 168, 0.11);
-    border-color: rgba(243, 139, 168, 0.32);
+    background-color: rgba(243, 139, 168, 0.09);
+    border-color: rgba(243, 139, 168, 0.24);
     color: #f38ba8;
 }
 
 .katab-tool-btn:hover {
-    background-color: rgba(56, 56, 56, 0.75);
-    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.88);
 }
 
 .katab-tool-mode-on:hover {
-    background-color: rgba(148, 226, 213, 0.24);
-    border-color: rgba(148, 226, 213, 0.54);
+    background-color: rgba(148, 226, 213, 0.20);
+    border-color: rgba(148, 226, 213, 0.48);
     color: #c8fff7;
 }
 
 .katab-tool-mode-off:hover {
-    background-color: rgba(243, 139, 168, 0.18);
-    border-color: rgba(243, 139, 168, 0.46);
+    background-color: rgba(243, 139, 168, 0.14);
+    border-color: rgba(243, 139, 168, 0.36);
     color: #ffd0dc;
 }
 
 .katab-tool-btn-disabled {
-    background-color: rgba(56, 56, 56, 0.18);
-    border-color: rgba(249, 226, 175, 0.16);
-    color: rgba(255, 255, 255, 0.38);
+    background-color: rgba(255, 255, 255, 0.03);
+    border-color: rgba(249, 226, 175, 0.14);
+    color: rgba(255, 255, 255, 0.28);
 }
 
 .katab-tool-btn-disabled:hover {
-    background-color: rgba(56, 56, 56, 0.28);
-    color: rgba(255, 255, 255, 0.65);
+    background-color: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.48);
 }
 
 .katab-tool-icon {
@@ -1684,33 +2202,120 @@
 }
 
 .katab-theme-light .katab-token-box {
-    background-color: rgba(0, 0, 0, 0.03);
-    border-color: rgba(0, 0, 0, 0.10);
-    border-radius: 7px;
+    background-color: transparent;
+    border: none;
 }
 
 .katab-theme-light .katab-token-label {
-    color: rgba(0, 0, 0, 0.55);
+    color: rgba(0, 0, 0, 0.42);
+}
+
+.katab-theme-light .katab-token-progress {
+    background-color: rgba(0, 0, 0, 0.06);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-token-progress-fill {
+    box-shadow: 0 0 6px rgba(166, 227, 161, 0.30);
+}
+
+.katab-theme-light .katab-token-progress-fill.medium {
+    box-shadow: 0 0 6px rgba(166, 227, 161, 0.30);
+}
+
+.katab-theme-light .katab-token-progress-fill.warn {
+    box-shadow: 0 0 8px rgba(249, 226, 175, 0.40);
+}
+
+.katab-theme-light .katab-token-progress-fill.high {
+    box-shadow: 0 0 8px rgba(250, 179, 135, 0.40);
+}
+
+.katab-theme-light .katab-token-progress-fill.danger {
+    box-shadow: 0 0 10px rgba(243, 139, 168, 0.50);
 }
 
 .katab-theme-light .katab-message-token-label {
     color: rgba(0, 0, 0, 0.38);
 }
 
+.katab-theme-light .katab-token-box:hover {
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
+.katab-theme-light .katab-token-box:active {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-token-info-icon {
+    color: rgba(0, 0, 0, 0.30);
+}
+
+.katab-theme-light .katab-session-info-popup {
+    background-color: rgba(250, 250, 250, 0.97);
+    border: 1px solid rgba(0, 0, 0, 0.10);
+}
+
+.katab-theme-light .katab-session-info-title {
+    color: rgba(0, 0, 0, 0.75);
+}
+
+.katab-theme-light .katab-session-info-close-icon {
+    color: rgba(0, 0, 0, 0.35);
+}
+
+.katab-theme-light .katab-session-info-close-btn:hover .katab-session-info-close-icon {
+    color: rgba(0, 0, 0, 0.70);
+}
+
+.katab-theme-light .katab-session-info-section-title {
+    color: rgba(0, 0, 0, 0.30);
+}
+
+.katab-theme-light .katab-session-info-row-label {
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.katab-theme-light .katab-session-info-row-value {
+    color: rgba(0, 0, 0, 0.80);
+}
+
+.katab-theme-light .katab-session-info-progress {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.katab-theme-light .katab-session-info-reserved-label {
+    color: rgba(0, 0, 0, 0.25);
+}
+
+.katab-theme-light .katab-session-info-action-btn {
+    border: 1px solid rgba(0, 0, 0, 0.10);
+    background-color: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.65);
+}
+
+.katab-theme-light .katab-session-info-action-btn:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+    border-color: rgba(0, 0, 0, 0.18);
+}
+
+.katab-theme-light .katab-session-info-action-btn:active {
+    background-color: rgba(0, 0, 0, 0.12);
+}
+
 .katab-theme-light .katab-dialog-container {
     background-color: rgba(250, 250, 250, 0.82);
     border: 1px solid rgba(0, 0, 0, 0.06);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
     color: rgba(0, 0, 0, 0.82);
 }
 
 .katab-theme-light .katab-header-box {
-    border-bottom-color: rgba(0, 0, 0, 0.08);
+    border-bottom-color: rgba(0, 0, 0, 0.06);
 }
 
 .katab-theme-light .katab-title-label {
     color: rgba(0, 0, 0, 0.82);
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .katab-theme-light .katab-provider-status-box {
@@ -1723,8 +2328,39 @@
     background-color: rgba(0, 0, 0, 0.08);
 }
 
+.katab-theme-light .katab-provider-status-box.katab-provider-status-online {
+    border-color: rgba(45, 125, 47, 0.22);
+    background-color: rgba(45, 125, 47, 0.07);
+}
+
+.katab-theme-light .katab-provider-status-box.katab-provider-status-down {
+    border-color: rgba(190, 24, 93, 0.22);
+    background-color: rgba(190, 24, 93, 0.07);
+}
+
 .katab-theme-light .katab-provider-status-arrow {
-    color: rgba(0, 0, 0, 0.45);
+    color: rgba(0, 0, 0, 0.38);
+}
+
+.katab-theme-light .katab-close-btn,
+.katab-theme-light .katab-settings-btn,
+.katab-theme-light .katab-new-chat-btn,
+.katab-theme-light .katab-history-btn {
+    background-color: transparent;
+}
+
+.katab-theme-light .katab-close-btn:hover,
+.katab-theme-light .katab-settings-btn:hover,
+.katab-theme-light .katab-new-chat-btn:hover,
+.katab-theme-light .katab-history-btn:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-close-icon,
+.katab-theme-light .katab-settings-icon,
+.katab-theme-light .katab-new-chat-icon,
+.katab-theme-light .katab-history-icon {
+    color: rgba(0, 0, 0, 0.58);
 }
 
 .katab-theme-light .katab-selection-row-badge {
@@ -1807,6 +2443,11 @@
     color: rgba(0, 0, 0, 0.40);
 }
 
+.katab-theme-light .katab-menu-section-header {
+    border-top-color: rgba(0, 0, 0, 0.10);
+    color: rgba(0, 0, 0, 0.38);
+}
+
 .katab-theme-light .katab-history-search-box {
     border-bottom-color: rgba(0, 0, 0, 0.08);
 }
@@ -1832,6 +2473,121 @@
     color: rgba(0, 0, 0, 0.32);
 }
 
+/* Light-theme KB search (Phase 2) */
+
+.katab-theme-light .katab-kb-search-box {
+    border-bottom-color: rgba(137, 180, 250, 0.22);
+}
+
+.katab-theme-light .katab-kb-search-icon {
+    color: #1e66f5;
+}
+
+.katab-theme-light .katab-kb-search-entry {
+    background-color: rgba(255, 255, 255, 0.78);
+    color: rgba(0, 0, 0, 0.82);
+    border-color: rgba(30, 102, 245, 0.20);
+    caret-color: rgba(0, 0, 0, 0.82);
+    selection-background-color: rgba(30, 102, 245, 0.14);
+}
+
+.katab-theme-light .katab-kb-search-entry:focus {
+    border-color: rgba(30, 102, 245, 0.35);
+    background-color: rgba(255, 255, 255, 0.92);
+}
+
+.katab-theme-light .katab-kb-search-entry StEntryHint {
+    color: rgba(0, 0, 0, 0.32);
+}
+
+.katab-theme-light .katab-kb-search-btn {
+    background-color: rgba(30, 102, 245, 0.12);
+    color: #1e66f5;
+    border-color: rgba(30, 102, 245, 0.25);
+}
+
+.katab-theme-light .katab-kb-search-btn:hover {
+    background-color: rgba(30, 102, 245, 0.20);
+}
+
+.katab-theme-light .katab-kb-back-btn {
+    color: #1e66f5;
+    border-color: rgba(30, 102, 245, 0.20);
+}
+
+.katab-theme-light .katab-kb-back-btn:hover {
+    background-color: rgba(30, 102, 245, 0.10);
+}
+
+.katab-theme-light .katab-kb-result-count {
+    color: rgba(0, 0, 0, 0.40);
+}
+
+.katab-theme-light .katab-kb-result-row {
+    background-color: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-kb-result-row:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+    border-color: rgba(30, 102, 245, 0.18);
+}
+
+.katab-theme-light .katab-kb-result-title {
+    color: rgba(0, 0, 0, 0.82);
+}
+
+.katab-theme-light .katab-kb-result-source {
+    color: #1e66f5;
+}
+
+.katab-theme-light .katab-kb-result-snippet {
+    color: rgba(0, 0, 0, 0.52);
+}
+
+/* Light-theme KB update confirmation */
+
+.katab-theme-light .katab-kb-update-confirm {
+    background-color: rgba(30, 102, 245, 0.06);
+    border-color: rgba(30, 102, 245, 0.18);
+}
+
+.katab-theme-light .katab-kb-update-icon {
+    color: #1e66f5;
+}
+
+.katab-theme-light .katab-kb-update-header {
+    color: #1e66f5;
+}
+
+.katab-theme-light .katab-kb-update-topic {
+    color: rgba(0, 0, 0, 0.48);
+}
+
+.katab-theme-light .katab-kb-update-fact {
+    color: rgba(0, 0, 0, 0.68);
+}
+
+.katab-theme-light .katab-kb-update-accept-btn {
+    background-color: rgba(30, 102, 245, 0.12);
+    color: #1e66f5;
+    border-color: rgba(30, 102, 245, 0.22);
+}
+
+.katab-theme-light .katab-kb-update-accept-btn:hover {
+    background-color: rgba(30, 102, 245, 0.20);
+}
+
+.katab-theme-light .katab-kb-update-dismiss-btn {
+    background-color: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.48);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-kb-update-dismiss-btn:hover {
+    background-color: rgba(0, 0, 0, 0.10);
+}
+
 .katab-theme-light .katab-chat-scroll {
     background-color: rgba(0, 0, 0, 0.03);
     border-color: rgba(0, 0, 0, 0.08);
@@ -1846,7 +2602,6 @@
     background-color: rgba(255, 255, 255, 0.96);
     color: rgba(0, 0, 0, 0.82);
     border-color: rgba(0, 0, 0, 0.08);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     text-shadow: none;
 }
 
@@ -1905,16 +2660,38 @@
     color: rgba(0, 0, 0, 0.82);
 }
 
-.katab-theme-light .katab-chat-link-button {
+.katab-theme-light .katab-chat-link-chip {
     background-color: rgba(0, 0, 0, 0.04);
     color: rgba(0, 0, 0, 0.70);
     border-color: rgba(0, 0, 0, 0.10);
 }
 
-.katab-theme-light .katab-chat-link-button:hover,
-.katab-theme-light .katab-chat-link-button:focus {
+.katab-theme-light .katab-chat-link-chip:hover,
+.katab-theme-light .katab-chat-link-chip:focus {
     background-color: rgba(0, 0, 0, 0.09);
     border-color: rgba(0, 0, 0, 0.16);
+    color: rgba(0, 0, 0, 0.85);
+}
+
+.katab-theme-light .katab-chat-link-more-toggle {
+    background-color: rgba(0, 0, 0, 0.03);
+    color: rgba(0, 0, 0, 0.48);
+    border-color: rgba(0, 0, 0, 0.07);
+}
+
+.katab-theme-light .katab-chat-link-more-toggle:hover,
+.katab-theme-light .katab-chat-link-more-toggle:focus {
+    background-color: rgba(0, 0, 0, 0.08);
+    border-color: rgba(0, 0, 0, 0.14);
+    color: rgba(0, 0, 0, 0.72);
+}
+
+.katab-theme-light .katab-chat-link-overflow {
+    border-left-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-chat-link-section-label {
+    color: rgba(0, 0, 0, 0.32);
 }
 
 .katab-theme-light .katab-chat-sources-box {
@@ -1932,6 +2709,22 @@
 
 .katab-theme-light .katab-chat-sources-header {
     color: rgba(0, 0, 0, 0.55);
+}
+
+.katab-theme-light .katab-chat-sources-subtitle {
+    color: rgba(0, 0, 0, 0.28);
+}
+
+.katab-theme-light .katab-chat-kb-icon {
+    color: #1e66f5;
+}
+
+.katab-theme-light .katab-chat-kb-label {
+    color: #1e66f5;
+}
+
+.katab-theme-light .katab-chat-kb-subtitle {
+    color: rgba(30, 102, 245, 0.42);
 }
 
 .katab-theme-light .katab-chat-source-button {
@@ -2081,20 +2874,20 @@
 
 .katab-theme-light .katab-footer-box {
     background-color: rgba(255, 255, 255, 0.92);
-    border-color: rgba(0, 0, 0, 0.10);
+    border-color: rgba(0, 0, 0, 0.08);
 }
 
 .katab-theme-light .katab-prompt-scroll {
-    background-color: rgba(0, 0, 0, 0.03);
-    border-color: rgba(0, 0, 0, 0.10);
+    background-color: rgba(0, 0, 0, 0.025);
+    border-color: rgba(0, 0, 0, 0.08);
 }
 
 .katab-theme-light .katab-prompt-hint {
-    color: rgba(0, 0, 0, 0.34);
+    color: rgba(0, 0, 0, 0.30);
 }
 
 .katab-theme-light .katab-prompt-char-counter {
-    color: rgba(0, 0, 0, 0.45);
+    color: rgba(0, 0, 0, 0.38);
 }
 
 .katab-theme-light .katab-prompt-scroll StScrollBar StButton#vhandle {
@@ -2110,84 +2903,76 @@
 }
 
 .katab-theme-light .katab-send-btn {
-    background-color: rgba(0, 0, 0, 0.07);
-    border-color: rgba(0, 0, 0, 0.10);
+    background-color: rgba(0, 0, 0, 0.035);
+    border-color: rgba(0, 0, 0, 0.05);
 }
 
 .katab-theme-light .katab-send-btn:hover {
-    background-color: rgba(0, 0, 0, 0.13);
+    background-color: rgba(0, 0, 0, 0.07);
 }
 
 .katab-theme-light .katab-send-icon {
-    color: rgba(0, 0, 0, 0.70);
-    icon-shadow: none;
+    color: rgba(0, 0, 0, 0.62);
 }
 
 .katab-theme-light .katab-tool-btn {
-    background-color: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.06);
-    color: rgba(0, 0, 0, 0.52);
+    background-color: rgba(0, 0, 0, 0.035);
+    border-color: rgba(0, 0, 0, 0.05);
+    color: rgba(0, 0, 0, 0.48);
 }
 
 .katab-theme-light .katab-tool-btn:hover {
-    background-color: rgba(0, 0, 0, 0.09);
-    color: rgba(0, 0, 0, 0.75);
+    background-color: rgba(0, 0, 0, 0.07);
+    color: rgba(0, 0, 0, 0.72);
 }
 
 .katab-theme-light .katab-tool-mode-auto {
-    background-color: rgba(0, 0, 0, 0.035);
-    border-color: rgba(0, 0, 0, 0.08);
+    background-color: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.48);
 }
 
 .katab-theme-light .katab-tool-mode-on {
-    background-color: rgba(15, 118, 110, 0.11);
-    border-color: rgba(15, 118, 110, 0.28);
+    background-color: rgba(15, 118, 110, 0.10);
+    border-color: rgba(15, 118, 110, 0.26);
     color: #0f766e;
 }
 
 .katab-theme-light .katab-tool-mode-on:hover {
-    background-color: rgba(15, 118, 110, 0.17);
-    border-color: rgba(15, 118, 110, 0.38);
+    background-color: rgba(15, 118, 110, 0.15);
+    border-color: rgba(15, 118, 110, 0.36);
     color: #0b5f59;
 }
 
 .katab-theme-light .katab-tool-mode-off {
-    background-color: rgba(190, 24, 93, 0.09);
-    border-color: rgba(190, 24, 93, 0.24);
+    background-color: rgba(190, 24, 93, 0.08);
+    border-color: rgba(190, 24, 93, 0.20);
     color: #be185d;
 }
 
 .katab-theme-light .katab-tool-mode-off:hover {
-    background-color: rgba(190, 24, 93, 0.14);
-    border-color: rgba(190, 24, 93, 0.34);
+    background-color: rgba(190, 24, 93, 0.12);
+    border-color: rgba(190, 24, 93, 0.30);
     color: #9f1239;
 }
 
-/* ── Preset Button (header) ─────────────────────────────────────────────── */
+/* ── Preset / Model Button (header chips) ────────────────────────────────── */
 .katab-preset-btn {
-    background-color: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.13);
-    border-radius: 9px;
-    padding: 5px 11px;
-    margin: 0 4px;
-    color: rgba(255, 255, 255, 0.82);
-}
-
-.katab-preset-btn:hover {
-    background-color: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.22);
+    color: rgba(255, 255, 255, 0.78);
+    margin: 0;
 }
 
 .katab-preset-btn-label {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.82);
+    font-size: 9pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.78);
     max-width: 140px;
 }
 
 .katab-preset-btn-arrow {
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.52);
-    margin-left: 4px;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.48);
+    margin-left: 3px;
 }
 
 /* ── Preset Picker Panel ────────────────────────────────────────────────── */
@@ -2197,13 +2982,13 @@
 }
 
 .katab-preset-picker-header {
-    padding: 10px 14px;
+    padding: 7px 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     background-color: rgba(255, 255, 255, 0.04);
 }
 
 .katab-preset-picker-title {
-    font-size: 13px;
+    font-size: 11px;
     font-weight: bold;
     color: rgba(255, 255, 255, 0.88);
 }
@@ -2211,8 +2996,8 @@
 .katab-preset-picker-close-btn {
     background-color: transparent;
     border: none;
-    padding: 4px;
-    border-radius: 6px;
+    padding: 3px;
+    border-radius: 5px;
     color: rgba(255, 255, 255, 0.52);
 }
 
@@ -2222,7 +3007,7 @@
 }
 
 .katab-preset-picker-close-icon {
-    icon-size: 16px;
+    icon-size: 14px;
 }
 
 .katab-preset-picker-scroll {
@@ -2330,25 +3115,24 @@
 
 /* ── Light-theme overrides ──────────────────────────────────────────────── */
 .katab-theme-light .katab-preset-btn {
-    padding: 5px 11px;
-    border-radius: 9px;
-    background-color: rgba(0, 0, 0, 0.06);
-    border-color: rgba(0, 0, 0, 0.12);
-    color: rgba(0, 0, 0, 0.72);
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+    color: rgba(0, 0, 0, 0.68);
 }
 
 .katab-theme-light .katab-preset-btn:hover {
-    background-color: rgba(0, 0, 0, 0.11);
+    background-color: rgba(0, 0, 0, 0.09);
+    border-color: rgba(0, 0, 0, 0.16);
 }
 
 .katab-theme-light .katab-preset-btn-label {
-    font-size: 13px;
-    color: rgba(0, 0, 0, 0.72);
+    font-size: 9pt;
+    color: rgba(0, 0, 0, 0.68);
 }
 
 .katab-theme-light .katab-preset-btn-arrow {
-    font-size: 11px;
-    color: rgba(0, 0, 0, 0.40);
+    font-size: 10px;
+    color: rgba(0, 0, 0, 0.36);
 }
 
 .katab-theme-light .katab-preset-picker {
@@ -2430,29 +3214,72 @@
    AI TOKEN BREAKDOWN
    ════════════════════════════════════════════ */
 
-/* Centered header button */
+/* Centered header button — compact pet indicator + usage label */
 .katab-usage-btn {
-    padding: 6px 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(148, 226, 213, 0.22);
+    padding: 6px 13px;
+    border-radius: 11px;
+    border: 1px solid rgba(148, 226, 213, 0.24);
     background-color: rgba(148, 226, 213, 0.08);
+    spacing: 8px;
 }
 
 .katab-usage-btn:hover {
-    border-color: rgba(148, 226, 213, 0.40);
+    border-color: rgba(148, 226, 213, 0.44);
     background-color: rgba(148, 226, 213, 0.14);
 }
 
-.katab-usage-btn-icon {
-    icon-size: 15px;
-    color: #94e2d5;
-    margin-right: 7px;
+/* Small pet indicator dot */
+.katab-usage-btn-pet-box {
+    width: 18px;
+    height: 18px;
+    border-radius: 9px;
+    background-color: rgba(148, 226, 213, 0.20);
+    border: 1.5px solid rgba(148, 226, 213, 0.50);
+    margin: 0;
+}
+
+.katab-usage-btn-pet-fallback {
+    font-size: 9pt;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* Stage-based pet avatar tints */
+.katab-usage-btn-pet-egg {
+    border-color: rgba(255, 255, 255, 0.35);
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+.katab-usage-btn-pet-hatchling {
+    border-color: rgba(249, 226, 175, 0.70);
+    background-color: rgba(249, 226, 175, 0.22);
+}
+
+.katab-usage-btn-pet-sprout {
+    border-color: rgba(166, 227, 161, 0.70);
+    background-color: rgba(166, 227, 161, 0.22);
+}
+
+.katab-usage-btn-pet-scholar {
+    border-color: rgba(137, 180, 250, 0.70);
+    background-color: rgba(137, 180, 250, 0.22);
+}
+
+.katab-usage-btn-pet-sage {
+    border-color: rgba(180, 190, 254, 0.70);
+    background-color: rgba(180, 190, 254, 0.24);
+}
+
+.katab-usage-btn-pet-archmage {
+    border-color: rgba(250, 179, 135, 0.75);
+    background-color: rgba(250, 179, 135, 0.26);
+    box-shadow: 0 0 10px rgba(250, 179, 135, 0.28);
 }
 
 .katab-usage-btn-label {
-    font-size: 9.5pt;
+    font-size: 9pt;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.82);
+    color: #94e2d5;
 }
 
 /* Panel body — cards inside the picker-shell list */
@@ -2464,83 +3291,147 @@
 .katab-usage-card {
     padding: 12px 14px;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background-color: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background-color: rgba(255, 255, 255, 0.03);
     spacing: 6px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .katab-usage-card-title {
-    font-size: 8.6pt;
+    font-size: 7.2pt;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.48);
+    color: rgba(255, 255, 255, 0.44);
+    letter-spacing: 0.3px;
 }
 
 .katab-usage-hero-value {
-    font-size: 19pt;
-    font-weight: bold;
+    font-size: 22pt;
+    font-weight: 800;
     color: #ffffff;
+    letter-spacing: -0.5px;
+}
+
+.katab-usage-hero-range {
+    font-size: 9pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.42);
+    margin-top: 1px;
 }
 
 .katab-usage-note {
-    font-size: 9pt;
-    color: rgba(255, 255, 255, 0.62);
+    font-size: 9.5pt;
+    color: rgba(255, 255, 255, 0.58);
 }
 
 .katab-usage-meta {
-    font-size: 8.2pt;
-    color: rgba(255, 255, 255, 0.42);
+    font-size: 8.5pt;
+    color: rgba(255, 255, 255, 0.38);
 }
 
 .katab-usage-nudge {
-    font-size: 8.8pt;
+    font-size: 9pt;
     color: #a6e3a1;
-    margin-top: 2px;
+    margin-top: 4px;
 }
 
 .katab-usage-privacy-note {
-    font-size: 8pt;
+    font-size: 8.5pt;
     color: rgba(255, 255, 255, 0.35);
     padding: 2px 4px 10px 4px;
 }
 
-/* Range selector */
-.katab-usage-range-row {
-    spacing: 6px;
-    margin-bottom: 10px;
+/* Compact range dropdown chip */
+.katab-usage-range-chip {
+    padding: 4px 8px;
+    border-radius: 5px;
+    border: 1px solid rgba(148, 226, 213, 0.36);
+    background-color: rgba(148, 226, 213, 0.11);
+    color: #94e2d5;
+    font-size: 7.5pt;
+    font-weight: 700;
+    margin-bottom: 6px;
 }
 
-.katab-usage-range-btn {
-    padding: 5px 10px;
-    border-radius: 7px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    background-color: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.62);
-    font-size: 8.8pt;
+.katab-usage-range-chip:hover {
+    background-color: rgba(148, 226, 213, 0.18);
+}
+
+/* Dropdown popover */
+.katab-usage-range-dropdown {
+    padding: 2px 0;
+    margin-bottom: 5px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 226, 213, 0.22);
+    background-color: rgba(28, 28, 36, 0.96);
+    spacing: 0;
+}
+
+.katab-usage-range-dropdown-item {
+    padding: 5px 9px;
+    border-radius: 0;
+    border: none;
+    background-color: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 7.8pt;
     font-weight: 600;
 }
 
-.katab-usage-range-btn:hover {
-    background-color: rgba(255, 255, 255, 0.09);
+.katab-usage-range-dropdown-item:hover {
+    background-color: rgba(148, 226, 213, 0.10);
 }
 
-.katab-usage-range-btn-active {
-    border-color: rgba(148, 226, 213, 0.42);
-    background-color: rgba(148, 226, 213, 0.14);
+.katab-usage-range-dropdown-item-active {
+    color: #94e2d5;
+    background-color: rgba(148, 226, 213, 0.12);
+}
+
+.katab-usage-range-dropdown-content {
+    spacing: 10px;
+}
+
+.katab-usage-range-dropdown-label {
+    font-size: 8.6pt;
+    font-weight: 600;
+}
+
+.katab-usage-range-dropdown-check {
+    icon-size: 14px;
     color: #94e2d5;
 }
 
 /* Companion — the cute desktop pet */
 .katab-usage-companion-card {
     spacing: 14px;
+    min-height: 112px;
+}
+
+.katab-usage-companion-card-collection {
+    margin-bottom: 12px;
+    border-color: rgba(148, 226, 213, 0.16);
+    background-color: rgba(148, 226, 213, 0.05);
 }
 
 .katab-usage-companion-body {
-    width: 64px;
-    height: 64px;
-    border-radius: 99px;
+    width: 112px;
+    height: 112px;
+    border-radius: 8px;
     border: 2px solid rgba(255, 255, 255, 0.14);
     background-color: rgba(255, 255, 255, 0.06);
+}
+
+.katab-pet-sprite-image,
+.katab-pet-sprite-accent {
+    icon-shadow: 0 2px 7px rgba(0, 0, 0, 0.30);
+}
+
+.katab-pet-sprite-accent-provider {
+    opacity: 0.88;
+}
+
+.katab-pet-sprite-fallback {
+    font-size: 13pt;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.88);
 }
 
 .katab-usage-companion-body-egg {
@@ -2596,6 +3487,12 @@
     color: #94e2d5;
 }
 
+.katab-usage-companion-progress {
+    font-size: 8.2pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.68);
+}
+
 .katab-usage-companion-flavor {
     font-size: 8.6pt;
     color: rgba(255, 255, 255, 0.55);
@@ -2645,6 +3542,212 @@
 
 .katab-usage-companion-provider-deepseek {
     background-color: rgba(180, 190, 254, 0.14);
+}
+
+.katab-usage-companion-provider-mixie {
+    border-color: rgba(232, 163, 23, 0.58);
+    background-color: rgba(232, 163, 23, 0.12);
+}
+
+.katab-usage-collection-btn {
+    margin-top: 7px;
+    padding: 4px 9px;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 226, 213, 0.26);
+    background-color: rgba(148, 226, 213, 0.08);
+    color: #94e2d5;
+    font-size: 8.2pt;
+    font-weight: 700;
+}
+
+.katab-usage-collection-btn:hover {
+    background-color: rgba(148, 226, 213, 0.16);
+}
+
+.katab-usage-subview-header {
+    spacing: 9px;
+    margin-bottom: 4px;
+}
+
+.katab-usage-back-btn {
+    width: 32px;
+    height: 32px;
+    padding: 7px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.76);
+}
+
+.katab-usage-back-btn:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+.katab-usage-subview-title {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.90);
+}
+
+.katab-usage-follow-btn {
+    padding: 7px 11px;
+    margin-bottom: 5px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 8.6pt;
+    font-weight: 700;
+}
+
+.katab-usage-follow-btn:hover,
+.katab-usage-follow-btn-active {
+    border-color: rgba(148, 226, 213, 0.42);
+    background-color: rgba(148, 226, 213, 0.13);
+    color: #94e2d5;
+}
+
+.katab-pet-collection-grid {
+    spacing: 8px;
+}
+
+.katab-pet-collection-row {
+    spacing: 8px;
+}
+
+.katab-pet-collection-item {
+    min-height: 142px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.90);
+}
+
+.katab-pet-collection-item:hover {
+    border-color: rgba(255, 255, 255, 0.20);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.katab-pet-collection-item-active {
+    border-color: rgba(148, 226, 213, 0.52);
+    background-color: rgba(148, 226, 213, 0.11);
+}
+
+.katab-pet-collection-item-locked {
+    opacity: 0.62;
+}
+
+.katab-pet-collection-item-content {
+    padding: 10px;
+    spacing: 3px;
+}
+
+.katab-pet-collection-name {
+    font-size: 9.5pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.94);
+}
+
+.katab-pet-collection-status {
+    font-size: 7.8pt;
+    color: rgba(255, 255, 255, 0.58);
+}
+
+.katab-pet-collection-active-label {
+    margin-top: 3px;
+    color: #94e2d5;
+    font-size: 7.6pt;
+    font-weight: 800;
+}
+
+.katab-pet-detail-preview {
+    spacing: 16px;
+    min-height: 142px;
+}
+
+.katab-pet-detail-info {
+    spacing: 5px;
+}
+
+.katab-pet-detail-name {
+    font-size: 14pt;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+.katab-pet-detail-stage {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #94e2d5;
+}
+
+.katab-pet-detail-progress-track {
+    margin-top: 4px;
+    margin-bottom: 3px;
+    border-radius: 4px;
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+.katab-pet-detail-progress-fill {
+    border-radius: 4px;
+    background-color: #94e2d5;
+}
+
+.katab-pet-detail-meta {
+    font-size: 8pt;
+    color: rgba(255, 255, 255, 0.56);
+}
+
+.katab-usage-action-btn-active {
+    border-color: rgba(148, 226, 213, 0.38);
+    background-color: rgba(148, 226, 213, 0.12);
+    color: #94e2d5;
+}
+
+.katab-pet-form-row {
+    padding: 8px 10px;
+    margin-top: 5px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.katab-pet-form-row:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.katab-pet-form-row-active {
+    border-color: rgba(148, 226, 213, 0.42);
+    background-color: rgba(148, 226, 213, 0.11);
+}
+
+.katab-pet-form-row-locked {
+    opacity: 0.55;
+}
+
+.katab-pet-form-row-content {
+    spacing: 9px;
+}
+
+.katab-pet-form-provider-icon {
+    icon-size: 26px;
+}
+
+.katab-pet-form-name {
+    font-size: 8.8pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.90);
+}
+
+.katab-pet-form-status {
+    font-size: 7.6pt;
+    color: rgba(255, 255, 255, 0.54);
+}
+
+.katab-pet-form-state-icon {
+    icon-size: 15px;
+    color: rgba(255, 255, 255, 0.48);
 }
 
 /* Accuracy pills, milestones, and local action */
@@ -2707,14 +3810,39 @@
     color: #94e2d5;
 }
 
-/* Share bars (local vs cloud + stacked provider mix) */
-.katab-usage-share-bar {
-    margin-top: 4px;
-    margin-bottom: 4px;
+/* ── Sleek ratio bars ────────────────────────────────────────────────── */
+
+/* Label-bar-label row (hero card) */
+.katab-usage-ratio-row {
+    margin-top: 10px;
+    margin-bottom: 2px;
+    spacing: 8px;
 }
 
-.katab-usage-share-seg {
-    border-radius: 2px;
+.katab-usage-ratio-label {
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.44);
+    y-align: center;
+}
+
+/* The bar itself — clean rounded pill */
+.katab-usage-ratio-bar {
+    border-radius: 5px;
+    overflow: hidden;
+    margin: 6px 0 4px 0;
+}
+
+.katab-usage-ratio-seg {
+    border-radius: 0;
+}
+
+.katab-usage-ratio-seg:first-child {
+    border-radius: 5px 0 0 5px;
+}
+
+.katab-usage-ratio-seg:last-child {
+    border-radius: 0 5px 5px 0;
 }
 
 .katab-usage-local-fill {
@@ -2757,18 +3885,18 @@
 }
 
 .katab-usage-provider-name {
-    font-size: 9.4pt;
+    font-size: 10pt;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.88);
 }
 
 .katab-usage-provider-meta {
-    font-size: 8pt;
+    font-size: 8.5pt;
     color: rgba(255, 255, 255, 0.40);
 }
 
 .katab-usage-provider-value {
-    font-size: 9pt;
+    font-size: 9.5pt;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.72);
     font-family: monospace;
@@ -2780,33 +3908,21 @@
 }
 
 .katab-usage-model-name {
-    font-size: 9pt;
+    font-size: 9.5pt;
     color: rgba(255, 255, 255, 0.78);
     font-family: monospace;
 }
 
-/* 14-day activity strip */
-.katab-usage-timeline {
-    spacing: 5px;
-    height: 48px;
-    margin-top: 4px;
-}
-
-.katab-usage-day-bar {
-    background-color: #94e2d5;
-    border-radius: 2px;
-}
-
-.katab-usage-day-bar-empty {
-    background-color: rgba(255, 255, 255, 0.12);
-}
-
-/* Top-panel dropdown snapshot */
+/* ── Tab bar ──────────────────────────────────────────────────────────── */
 .katab-usage-menu-face {
     font-size: 10pt;
     font-weight: bold;
     color: #94e2d5;
     width: 46px;
+}
+
+.katab-usage-menu-sprite {
+    margin-right: 6px;
 }
 
 .katab-usage-menu-text-col {
@@ -2843,23 +3959,286 @@
     margin-left: 8px;
 }
 
+/* ── Tab bar ──────────────────────────────────────────────────────────── */
+.katab-usage-tab-bar {
+    spacing: 4px;
+    margin-bottom: 5px;
+    padding: 1px 0;
+}
+
+.katab-usage-tab-btn {
+    padding: 4px 9px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.54);
+    font-size: 7.5pt;
+    font-weight: 700;
+}
+
+.katab-usage-tab-btn:hover {
+    background-color: rgba(255, 255, 255, 0.09);
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.katab-usage-tab-btn-active {
+    border-color: rgba(148, 226, 213, 0.44);
+    background-color: rgba(148, 226, 213, 0.14);
+    color: #94e2d5;
+}
+
+/* ── Unified activity card ────────────────────────────────────────────── */
+.katab-usage-activity-top {
+    spacing: 14px;
+}
+
+.katab-usage-activity-hero {
+    spacing: 2px;
+}
+
+.katab-usage-activity-trends {
+    spacing: 3px;
+    margin-top: 6px;
+}
+
+.katab-usage-activity-divider {
+    background-color: rgba(255, 255, 255, 0.06);
+    margin: 8px 0;
+}
+
+.katab-usage-local-badge {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(166, 227, 161, 0.24);
+    background-color: rgba(166, 227, 161, 0.08);
+    spacing: 0;
+    min-width: 52px;
+}
+
+.katab-usage-local-pct {
+    font-size: 14pt;
+    font-weight: 800;
+    color: #a6e3a1;
+    x-align: center;
+}
+
+.katab-usage-local-label {
+    font-size: 7.2pt;
+    font-weight: 700;
+    color: rgba(166, 227, 161, 0.65);
+    x-align: center;
+}
+
+.katab-usage-trend-line {
+    font-size: 9pt;
+    font-weight: 600;
+}
+
+.katab-usage-trend-up {
+    color: #a6e3a1;
+}
+
+.katab-usage-trend-down {
+    color: #f38ba8;
+}
+
+.katab-usage-trend-flat {
+    color: rgba(255, 255, 255, 0.42);
+}
+
+/* ── 14-day bar chart (inside activity card) ─────────────────────────── */
+.katab-usage-activity-chart {
+    spacing: 3px;
+    height: 60px;
+}
+
+.katab-usage-activity-col {
+    spacing: 3px;
+}
+
+.katab-usage-activity-bar {
+    background-color: rgba(148, 226, 213, 0.55);
+    border-radius: 3px;
+    min-width: 14px;
+}
+
+.katab-usage-activity-bar-empty {
+    background-color: rgba(255, 255, 255, 0.08);
+    min-width: 14px;
+}
+
+.katab-usage-activity-bar-today {
+    background-color: #94e2d5;
+    box-shadow: 0 0 8px rgba(148, 226, 213, 0.44);
+    min-width: 14px;
+}
+
+.katab-usage-activity-label {
+    font-size: 7.8pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.30);
+    x-align: center;
+}
+
+.katab-usage-activity-label-today {
+    color: #94e2d5;
+}
+
+.katab-usage-activity-stats {
+    spacing: 12px;
+    margin-top: 6px;
+}
+
+/* ── Trend indicators ─────────────────────────────────────────────────── */
+.katab-usage-subtab-bar {
+    spacing: 3px;
+    margin-bottom: 4px;
+}
+
+.katab-usage-subtab-btn {
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 7pt;
+    font-weight: 700;
+}
+
+.katab-usage-subtab-btn:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+    color: rgba(255, 255, 255, 0.68);
+}
+
+.katab-usage-subtab-btn-active {
+    border-color: rgba(148, 226, 213, 0.38);
+    background-color: rgba(148, 226, 213, 0.12);
+    color: #94e2d5;
+}
+
+/* ── Provider row compact variant ─────────────────────────────────────── */
+.katab-usage-provider-row-compact {
+    spacing: 8px;
+    padding: 2px 0;
+}
+
+.katab-usage-provider-row-icon-sm {
+    icon-size: 18px;
+}
+
+.katab-usage-model-row-compact {
+    spacing: 8px;
+    padding: 2px 0;
+}
+
+/* ── Cost card ────────────────────────────────────────────────────────── */
+.katab-usage-cost-hero {
+    font-size: 24pt;
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: -0.5px;
+}
+
+.katab-usage-cost-value {
+    font-size: 9.5pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.82);
+    font-family: monospace;
+}
+
+/* ── Budget bar ───────────────────────────────────────────────────────── */
+.katab-usage-budget-fill {
+    background-color: #a6e3a1;
+    border-radius: 4px;
+}
+
+.katab-usage-budget-fill-warn {
+    background-color: #f9e2af;
+    border-radius: 4px;
+}
+
+.katab-usage-budget-fill-danger {
+    background-color: #f38ba8;
+    border-radius: 4px;
+}
+
+.katab-usage-budget-remain {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+}
+
+.katab-usage-budget-remain {
+    background-color: rgba(255, 255, 255, 0.10);
+    border-radius: 3px;
+}
+
+/* ── Tip row ──────────────────────────────────────────────────────────── */
+.katab-usage-tip-row {
+    padding: 8px 12px;
+    margin-top: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 226, 213, 0.14);
+    background-color: rgba(148, 226, 213, 0.06);
+}
+
+.katab-usage-tip-text {
+    font-size: 9pt;
+    color: rgba(255, 255, 255, 0.72);
+}
+
 /* ── Token breakdown light-theme overrides ──────────────────────────────── */
 .katab-theme-light .katab-usage-btn {
-    border-color: rgba(23, 146, 130, 0.30);
-    background-color: rgba(23, 146, 130, 0.08);
+    border-color: rgba(23, 146, 130, 0.32);
+    background-color: rgba(23, 146, 130, 0.09);
 }
 
 .katab-theme-light .katab-usage-btn:hover {
-    border-color: rgba(23, 146, 130, 0.48);
-    background-color: rgba(23, 146, 130, 0.14);
+    border-color: rgba(23, 146, 130, 0.52);
+    background-color: rgba(23, 146, 130, 0.16);
 }
 
-.katab-theme-light .katab-usage-btn-icon {
-    color: #179282;
+.katab-theme-light .katab-usage-btn-pet-box {
+    background-color: rgba(23, 146, 130, 0.16);
+    border-color: rgba(23, 146, 130, 0.40);
+}
+
+.katab-theme-light .katab-usage-btn-pet-fallback {
+    color: rgba(0, 0, 0, 0.82);
+}
+
+.katab-theme-light .katab-usage-btn-pet-egg {
+    border-color: rgba(0, 0, 0, 0.18);
+}
+
+.katab-theme-light .katab-usage-btn-pet-hatchling {
+    border-color: rgba(200, 165, 50, 0.55);
+    background-color: rgba(200, 165, 50, 0.14);
+}
+
+.katab-theme-light .katab-usage-btn-pet-sprout {
+    border-color: rgba(60, 140, 60, 0.55);
+    background-color: rgba(60, 140, 60, 0.14);
+}
+
+.katab-theme-light .katab-usage-btn-pet-scholar {
+    border-color: rgba(50, 100, 200, 0.55);
+    background-color: rgba(50, 100, 200, 0.14);
+}
+
+.katab-theme-light .katab-usage-btn-pet-sage {
+    border-color: rgba(100, 80, 180, 0.55);
+    background-color: rgba(100, 80, 180, 0.16);
+}
+
+.katab-theme-light .katab-usage-btn-pet-archmage {
+    border-color: rgba(200, 120, 50, 0.60);
+    background-color: rgba(200, 120, 50, 0.18);
+    box-shadow: 0 0 10px rgba(200, 120, 50, 0.30);
 }
 
 .katab-theme-light .katab-usage-btn-label {
-    color: rgba(0, 0, 0, 0.78);
+    color: #116b5e;
+    font-size: 9pt;
 }
 
 .katab-theme-light .katab-usage-card {
@@ -2873,6 +4252,10 @@
 
 .katab-theme-light .katab-usage-hero-value {
     color: rgba(0, 0, 0, 0.88);
+}
+
+.katab-theme-light .katab-usage-hero-range {
+    color: rgba(0, 0, 0, 0.42);
 }
 
 .katab-theme-light .katab-usage-note {
@@ -2891,19 +4274,35 @@
     color: rgba(0, 0, 0, 0.34);
 }
 
-.katab-theme-light .katab-usage-range-btn {
-    border-color: rgba(0, 0, 0, 0.10);
-    background-color: rgba(0, 0, 0, 0.04);
-    color: rgba(0, 0, 0, 0.60);
+.katab-theme-light .katab-usage-range-chip {
+    border-color: rgba(23, 146, 130, 0.38);
+    background-color: rgba(23, 146, 130, 0.10);
+    color: #0f6e61;
 }
 
-.katab-theme-light .katab-usage-range-btn:hover {
-    background-color: rgba(0, 0, 0, 0.08);
+.katab-theme-light .katab-usage-range-chip:hover {
+    background-color: rgba(23, 146, 130, 0.16);
 }
 
-.katab-theme-light .katab-usage-range-btn-active {
-    border-color: rgba(23, 146, 130, 0.45);
-    background-color: rgba(23, 146, 130, 0.12);
+.katab-theme-light .katab-usage-range-dropdown {
+    border-color: rgba(23, 146, 130, 0.20);
+    background-color: rgba(255, 255, 255, 0.97);
+}
+
+.katab-theme-light .katab-usage-range-dropdown-item {
+    color: rgba(0, 0, 0, 0.68);
+}
+
+.katab-theme-light .katab-usage-range-dropdown-item:hover {
+    background-color: rgba(23, 146, 130, 0.08);
+}
+
+.katab-theme-light .katab-usage-range-dropdown-item-active {
+    color: #0f6e61;
+    background-color: rgba(23, 146, 130, 0.10);
+}
+
+.katab-theme-light .katab-usage-range-dropdown-check {
     color: #0f6e61;
 }
 
@@ -2926,6 +4325,50 @@
 
 .katab-theme-light .katab-usage-companion-flavor {
     color: rgba(0, 0, 0, 0.52);
+}
+
+.katab-theme-light .katab-pet-sprite-fallback,
+.katab-theme-light .katab-usage-subview-title,
+.katab-theme-light .katab-pet-collection-name,
+.katab-theme-light .katab-pet-form-name,
+.katab-theme-light .katab-pet-detail-name {
+    color: rgba(0, 0, 0, 0.88);
+}
+
+.katab-theme-light .katab-usage-companion-progress,
+.katab-theme-light .katab-pet-collection-status,
+.katab-theme-light .katab-pet-form-status,
+.katab-theme-light .katab-pet-detail-meta {
+    color: rgba(0, 0, 0, 0.56);
+}
+
+.katab-theme-light .katab-usage-back-btn,
+.katab-theme-light .katab-usage-follow-btn,
+.katab-theme-light .katab-pet-collection-item,
+.katab-theme-light .katab-pet-form-row {
+    border-color: rgba(0, 0, 0, 0.12);
+    background-color: rgba(0, 0, 0, 0.035);
+    color: rgba(0, 0, 0, 0.76);
+}
+
+.katab-theme-light .katab-usage-back-btn:hover,
+.katab-theme-light .katab-pet-collection-item:hover,
+.katab-theme-light .katab-pet-form-row:hover {
+    background-color: rgba(0, 0, 0, 0.075);
+}
+
+.katab-theme-light .katab-usage-follow-btn-active,
+.katab-theme-light .katab-pet-collection-item-active,
+.katab-theme-light .katab-pet-form-row-active {
+    border-color: rgba(26, 127, 114, 0.42);
+    background-color: rgba(26, 127, 114, 0.10);
+    color: #126b60;
+}
+
+.katab-theme-light .katab-usage-collection-btn,
+.katab-theme-light .katab-pet-collection-active-label,
+.katab-theme-light .katab-pet-detail-stage {
+    color: #126b60;
 }
 
 .katab-theme-light .katab-usage-companion-home-icon {
@@ -2992,13 +4435,61 @@
     color: rgba(0, 0, 0, 0.72);
 }
 
-.katab-theme-light .katab-usage-day-bar {
-    background-color: #179282;
+.katab-theme-light .katab-usage-activity-divider {
+    background-color: rgba(0, 0, 0, 0.06);
 }
 
-.katab-theme-light .katab-usage-day-bar-empty {
-    background-color: rgba(0, 0, 0, 0.10);
+.katab-theme-light .katab-usage-activity-bar {
+    background-color: rgba(23, 146, 130, 0.48);
 }
+
+.katab-theme-light .katab-usage-activity-bar-empty {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-usage-activity-bar-today {
+    background-color: #179282;
+    box-shadow: 0 0 8px rgba(23, 146, 130, 0.32);
+}
+
+.katab-theme-light .katab-usage-activity-label {
+    color: rgba(0, 0, 0, 0.28);
+}
+
+.katab-theme-light .katab-usage-activity-label-today {
+    color: #0f6e61;
+}
+
+.katab-theme-light .katab-usage-subtab-btn {
+    border-color: rgba(0, 0, 0, 0.08);
+    background-color: rgba(0, 0, 0, 0.03);
+    color: rgba(0, 0, 0, 0.44);
+}
+
+.katab-theme-light .katab-usage-subtab-btn:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.62);
+}
+
+.katab-theme-light .katab-usage-subtab-btn-active {
+    border-color: rgba(23, 146, 130, 0.40);
+    background-color: rgba(23, 146, 130, 0.10);
+    color: #0f6e61;
+}
+
+.katab-theme-light .katab-usage-local-badge,
+.katab-theme-light .katab-usage-local-label,
+.katab-theme-light .katab-usage-local-pct,
+.katab-theme-light .katab-usage-trend-line,
+.katab-theme-light .katab-usage-activity-chart,
+.katab-theme-light .katab-usage-activity-col,
+.katab-theme-light .katab-usage-activity-stats,
+.katab-theme-light .katab-usage-activity-top,
+.katab-theme-light .katab-usage-activity-hero,
+.katab-theme-light .katab-usage-activity-trends,
+.katab-theme-light .katab-usage-provider-row-compact,
+.katab-theme-light .katab-usage-provider-row-icon-sm,
+.katab-theme-light .katab-usage-model-row-compact {}
 
 .katab-theme-light .katab-usage-menu-face {
     color: #0f6e61;
@@ -3014,4 +4505,375 @@
 
 .katab-theme-light .katab-usage-menu-value {
     color: #0f6e61;
+}
+
+/* ── New tab/spending/tip light-theme overrides ──────────────────────────── */
+.katab-theme-light .katab-usage-tab-btn {
+    border-color: rgba(0, 0, 0, 0.10);
+    background-color: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.katab-theme-light .katab-usage-tab-btn:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.72);
+}
+
+.katab-theme-light .katab-usage-tab-btn-active {
+    border-color: rgba(23, 146, 130, 0.45);
+    background-color: rgba(23, 146, 130, 0.12);
+    color: #0f6e61;
+}
+
+.katab-theme-light .katab-usage-trend-up {
+    color: #2d7d2f;
+}
+
+.katab-theme-light .katab-usage-trend-down {
+    color: #c04040;
+}
+
+.katab-theme-light .katab-usage-trend-flat {
+    color: rgba(0, 0, 0, 0.40);
+}
+
+.katab-theme-light .katab-usage-ratio-label {
+    color: rgba(0, 0, 0, 0.44);
+}
+
+.katab-theme-light .katab-usage-cost-hero {
+    color: rgba(0, 0, 0, 0.88);
+}
+
+.katab-theme-light .katab-usage-cost-value {
+    color: rgba(0, 0, 0, 0.75);
+}
+
+.katab-theme-light .katab-usage-budget-fill {
+    background-color: #2d7d2f;
+}
+
+.katab-theme-light .katab-usage-budget-fill-warn {
+    background-color: #b08800;
+}
+
+.katab-theme-light .katab-usage-budget-fill-danger {
+    background-color: #c04040;
+}
+
+.katab-theme-light .katab-usage-budget-remain {
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-usage-tip-row {
+    border-color: rgba(23, 146, 130, 0.20);
+    background-color: rgba(23, 146, 130, 0.06);
+}
+
+.katab-theme-light .katab-usage-tip-text {
+    color: rgba(0, 0, 0, 0.62);
+}
+
+/* ════════════════════════════════════════════
+   RESEARCH PLAN CARD (Deep Research Planner)
+   ════════════════════════════════════════════ */
+
+.katab-research-plan-card {
+    padding: 16px 18px;
+    margin: 8px 0;
+    background-color: rgba(20, 28, 36, 0.55);
+    border: 1px solid rgba(148, 226, 213, 0.18);
+    spacing: 12px;
+}
+
+.katab-research-plan-header {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: #94e2d5;
+    margin-bottom: 4px;
+}
+
+.katab-research-plan-task {
+    padding: 8px 10px;
+    margin: 2px 0;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+}
+
+.katab-research-plan-task:hover {
+    background-color: rgba(148, 226, 213, 0.06);
+    border-color: rgba(148, 226, 213, 0.18);
+}
+
+.katab-research-plan-task-header {
+    spacing: 10px;
+}
+
+.katab-research-plan-task-num {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #94e2d5;
+    min-width: 20px;
+}
+
+.katab-research-plan-task-label {
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.katab-research-plan-task-query {
+    font-size: 8pt;
+    color: rgba(255, 255, 255, 0.48);
+    font-family: monospace;
+    margin-top: 2px;
+}
+
+.katab-research-plan-actions {
+    spacing: 10px;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.katab-research-plan-btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 9pt;
+    font-weight: 600;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.katab-research-plan-btn:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.20);
+    color: #ffffff;
+}
+
+.katab-research-plan-btn-primary {
+    background-color: rgba(148, 226, 213, 0.15);
+    border-color: rgba(148, 226, 213, 0.35);
+    color: #94e2d5;
+}
+
+.katab-research-plan-btn-primary:hover {
+    background-color: rgba(148, 226, 213, 0.24);
+    border-color: rgba(148, 226, 213, 0.50);
+    color: #c8fff7;
+}
+
+.katab-research-plan-approved {
+    opacity: 0.6;
+}
+
+/* ════════════════════════════════════════════
+   RESEARCH PROGRESS CARD (Live execution status)
+   ════════════════════════════════════════════ */
+
+.katab-research-progress-card {
+    padding: 12px 16px;
+    margin: 6px 0;
+    background-color: rgba(20, 28, 36, 0.48);
+    border: 1px solid rgba(148, 226, 213, 0.14);
+    spacing: 8px;
+}
+
+.katab-research-progress-header {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #94e2d5;
+    margin-bottom: 2px;
+}
+
+.katab-research-progress-branch {
+    spacing: 10px;
+    padding: 5px 6px;
+}
+
+.katab-research-progress-status {
+    icon-size: 14px;
+    min-width: 16px;
+}
+
+.katab-research-progress-status.pending {
+    color: rgba(255, 255, 255, 0.32);
+}
+
+.katab-research-progress-status.searching {
+    color: #89b4fa;
+}
+
+.katab-research-progress-status.scraping {
+    color: #f9e2af;
+}
+
+.katab-research-progress-status.compressing {
+    color: #cba6f7;
+}
+
+.katab-research-progress-status.done {
+    color: #a6e3a1;
+}
+
+.katab-research-progress-status.error {
+    color: #f38ba8;
+}
+
+.katab-research-progress-status.analyzing {
+    color: #cba6f7;
+}
+
+.katab-research-progress-status.refining {
+    color: #f9e2af;
+}
+
+.katab-research-progress-status.outlining {
+    color: #89b4fa;
+}
+
+.katab-research-progress-status.writing {
+    color: #a6e3a1;
+}
+
+.katab-research-progress-phase {
+    font-size: 7.8pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.38);
+    margin-top: 4px;
+    margin-bottom: 2px;
+    padding: 0 6px;
+}
+
+.katab-research-progress-label {
+    font-size: 8.8pt;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+/* ── Light theme overrides ─────────────────────────────── */
+
+.katab-theme-light .katab-research-plan-card {
+    background-color: rgba(225, 242, 239, 0.55);
+    border-color: rgba(15, 118, 110, 0.22);
+}
+
+.katab-theme-light .katab-research-plan-header {
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-research-plan-task {
+    background-color: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.04);
+}
+
+.katab-theme-light .katab-research-plan-task:hover {
+    background-color: rgba(15, 118, 110, 0.06);
+    border-color: rgba(15, 118, 110, 0.16);
+}
+
+.katab-theme-light .katab-research-plan-task-num {
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-research-plan-task-label {
+    color: rgba(0, 0, 0, 0.78);
+}
+
+.katab-theme-light .katab-research-plan-task-query {
+    color: rgba(0, 0, 0, 0.42);
+}
+
+.katab-theme-light .katab-research-plan-actions {
+    border-top-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-research-plan-btn {
+    background-color: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.62);
+}
+
+.katab-theme-light .katab-research-plan-btn:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.82);
+}
+
+.katab-theme-light .katab-research-plan-btn-primary {
+    background-color: rgba(15, 118, 110, 0.12);
+    border-color: rgba(15, 118, 110, 0.30);
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-research-plan-btn-primary:hover {
+    background-color: rgba(15, 118, 110, 0.20);
+    border-color: rgba(15, 118, 110, 0.44);
+    color: #0b5f59;
+}
+
+.katab-theme-light .katab-research-progress-card {
+    background-color: rgba(225, 242, 239, 0.48);
+    border-color: rgba(15, 118, 110, 0.18);
+}
+
+.katab-theme-light .katab-research-progress-header {
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-research-progress-label {
+    color: rgba(0, 0, 0, 0.62);
+}
+
+.katab-theme-light .katab-research-progress-phase {
+    color: rgba(0, 0, 0, 0.35);
+}
+
+/* ════════════════════════════════════════════
+   INLINE CITATION BUTTONS
+   ════════════════════════════════════════════ */
+
+.katab-citation-inline-row {
+    spacing: 0;
+}
+
+.katab-citation-inline-btn {
+    padding: 1px 3px;
+    /* no border-radius — St + non-opaque bg triggers offscreen framebuffer */
+    border: 1px solid rgba(148, 226, 213, 0.30);
+    background-color: rgba(148, 226, 213, 0.14);
+    color: #94e2d5;
+    font-size: 8pt;
+    font-weight: 700;
+    font-family: monospace;
+}
+
+.katab-citation-inline-btn:hover {
+    background-color: rgba(148, 226, 213, 0.24);
+    border-color: rgba(148, 226, 213, 0.50);
+    color: #c8fff7;
+}
+
+.katab-citation-inline-btn:active {
+    background-color: rgba(148, 226, 213, 0.30);
+    color: #ffffff;
+}
+
+/* ── Light theme overrides ─────────────────────────────── */
+
+.katab-theme-light .katab-citation-inline-btn {
+    border-color: rgba(15, 118, 110, 0.32);
+    background-color: rgba(15, 118, 110, 0.10);
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-citation-inline-btn:hover {
+    background-color: rgba(15, 118, 110, 0.18);
+    border-color: rgba(15, 118, 110, 0.44);
+    color: #0b5f59;
+}
+
+.katab-theme-light .katab-citation-inline-btn:active {
+    background-color: rgba(15, 118, 110, 0.24);
+    color: #09423b;
 }

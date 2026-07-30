@@ -38,6 +38,16 @@
       <summary>Enable Token Milestone Celebrations</summary>
       <description>Show a small in-chat message when the token companion reaches a new growth stage.</description>
     </key>
+    <key name="pet-selection-mode" type="s">
+      <default>'follow-provider'</default>
+      <summary>Pet Companion Selection Mode</summary>
+      <description>Choose whether the active pet follows the current provider or remains pinned to a selected collection form.</description>
+    </key>
+    <key name="pet-pinned-form" type="s">
+      <default>''</default>
+      <summary>Pinned Pet Companion Form</summary>
+      <description>Stable provider, crossbreed, or Mixie form identifier selected as the active companion.</description>
+    </key>
     <key name="token-budget-enabled" type="b">
       <default>false</default>
       <summary>Enable Monthly Token Budget</summary>
@@ -192,7 +202,11 @@
       <summary>Async Job Polling Interval</summary>
       <description>Milliseconds between status checks when polling Crawl4AI's async /crawl/job endpoint (500–10000).</description>
     </key>
-
+    <key name="crawl4ai-capture-network" type="b">
+      <default>false</default>
+      <summary>Capture Background API Calls</summary>
+      <description>When enabled, Crawl4AI records XHR/Fetch network responses made by the page and includes them alongside the scraped content. Useful for modern web apps that load data via background API calls.</description>
+    </key>
     <!-- Ollama Settings -->
     <key name="ollama-url" type="s">
       <default>'http://localhost:11434'</default>
@@ -455,6 +469,124 @@
       <default>0</default>
       <summary>DeepSeek Balance Last Checked</summary>
       <description>Unix timestamp (milliseconds) of the last successful balance check via the /user/balance endpoint.</description>
+    </key>
+
+    <!-- Local RAG / Knowledge Base Settings -->
+    <key name="rag-enabled" type="b">
+      <default>false</default>
+      <summary>Enable Knowledge Base</summary>
+      <description>Enable local RAG semantic search across documents, conversations, and research cache using Ollama embeddings and ChromaDB.</description>
+    </key>
+    <key name="rag-memory-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Memory Indexing</summary>
+      <description>When enabled, Katab automatically indexes documents, conversations, and research results into the knowledge base. When disabled, no new content is indexed but existing knowledge remains searchable. This is the master switch for memory — individual content-type toggles (rag-index-documents, rag-index-conversations, rag-index-research-cache) further refine what gets indexed.</description>
+    </key>
+    <key name="rag-service-url" type="s">
+      <default>'http://localhost:11435'</default>
+      <summary>RAG Service URL</summary>
+      <description>The base URL of the local Katabai RAG Python service (FastAPI + ChromaDB).</description>
+    </key>
+    <key name="rag-ollama-url" type="s">
+      <default>'http://localhost:11434'</default>
+      <summary>Ollama URL for Embeddings</summary>
+      <description>The Ollama instance used for generating text embeddings. This can be the same as your chat Ollama instance, or a different one. Set this to your remote AI PC's address if Ollama runs on a separate machine (e.g. http://192.168.1.100:11434).</description>
+    </key>
+    <key name="rag-embedding-model" type="s">
+      <default>'nomic-embed-text'</default>
+      <summary>Embedding Model</summary>
+      <description>The Ollama model used for generating text embeddings. Must be pulled locally (ollama pull nomic-embed-text).</description>
+    </key>
+    <key name="rag-chunk-size" type="i">
+      <default>800</default>
+      <summary>Chunk Size</summary>
+      <description>Character count per text chunk for indexing. Larger chunks preserve more context but reduce retrieval precision. (200–4000)</description>
+    </key>
+    <key name="rag-chunk-overlap" type="i">
+      <default>120</default>
+      <summary>Chunk Overlap</summary>
+      <description>Character overlap between consecutive chunks. Prevents information loss at chunk boundaries. (0–500)</description>
+    </key>
+    <key name="rag-top-k" type="i">
+      <default>5</default>
+      <summary>Result Count</summary>
+      <description>Number of top semantic matches to retrieve per query. (1–20)</description>
+    </key>
+    <key name="rag-max-chunks-per-collection" type="i">
+      <default>10000</default>
+      <summary>Max Chunks Per Collection</summary>
+      <description>Hard cap on the number of text chunks stored in any single ChromaDB collection. When a collection reaches this limit, new indexing requests are rejected until old chunks are cleared. Set to 0 to disable the cap. (0–100000)</description>
+    </key>
+    <key name="rag-max-total-size-mb" type="i">
+      <default>500</default>
+      <summary>Max Total Storage (MB)</summary>
+      <description>Estimated maximum total size of the ChromaDB storage directory on disk, in megabytes. When the estimated size exceeds this limit, new indexing is rejected. This is a soft estimate — actual disk usage may vary. Set to 0 to disable the cap. (0–10000)</description>
+    </key>
+    <key name="rag-auto-prune" type="b">
+      <default>true</default>
+      <summary>Auto-Prune Oldest Chunks</summary>
+      <description>When enabled and a collection hits its size cap, the oldest chunks are automatically removed to make room for new ones (LRU-style eviction). When disabled, new indexing is hard-rejected at the cap. This only applies when rag-max-chunks-per-collection is set to a non-zero value.</description>
+    </key>
+    <key name="rag-index-documents" type="b">
+      <default>true</default>
+      <summary>Index Document Attachments</summary>
+      <description>Automatically index attached documents (txt, md, pdf, docx) into the knowledge base.</description>
+    </key>
+    <key name="rag-index-conversations" type="b">
+      <default>true</default>
+      <summary>Index Conversations</summary>
+      <description>Automatically index past conversation turns into the knowledge base for cross-session retrieval.</description>
+    </key>
+    <key name="rag-index-research-cache" type="b">
+      <default>true</default>
+      <summary>Index Research Cache</summary>
+      <description>Automatically index web search and web scraping results into the knowledge base.</description>
+    </key>
+    <key name="rag-autonomous-enabled" type="b">
+      <default>true</default>
+      <summary>Allow Model-Triggered Knowledge Search</summary>
+      <description>Advertise the knowledge_search tool to capable models so they can query the knowledge base on their own. When disabled, only the manual /kb command works.</description>
+    </key>
+    <key name="rag-auto-update-enabled" type="b">
+      <default>false</default>
+      <summary>Auto-Update Knowledge Base</summary>
+      <description>When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you'll be asked to confirm each update.</description>
+    </key>
+
+    <!-- Phase 3: Coverage Scoring & Web Search Fallback -->
+    <key name="rag-fallback-enabled" type="b">
+      <default>true</default>
+      <summary>Auto-Fallback to Web Search</summary>
+      <description>When knowledge base results are low-quality, automatically trigger a web search as a supplement. This is the reverse direction of the existing KB→web suppression for high-confidence results.</description>
+    </key>
+    <key name="rag-fallback-threshold" type="d">
+      <default>0.6</default>
+      <summary>Fallback Threshold</summary>
+      <description>Minimum best-result score (0.0–1.0) before auto-triggering a web search. Lower values = stricter (only fallback when KB is very poor). Higher values = more aggressive. 0.6 is the recommended moderate setting.</description>
+    </key>
+
+    <!-- Phase 3: Cross-Encoder Reranking -->
+    <key name="rag-rerank-enabled" type="b">
+      <default>false</default>
+      <summary>Enable Cross-Encoder Reranking</summary>
+      <description>Apply a cross-encoder model (bge-reranker-v2-m3 via Ollama) to re-rank top candidate chunks for improved precision. Adds ~200ms latency per search. Requires ollama pull bge-reranker-v2-m3.</description>
+    </key>
+    <key name="rag-rerank-model" type="s">
+      <default>'bge-reranker-v2-m3'</default>
+      <summary>Reranker Model</summary>
+      <description>Ollama model used for cross-encoder reranking. Must be pulled first with: ollama pull bge-reranker-v2-m3.</description>
+    </key>
+    <key name="rag-rerank-candidate-multiplier" type="i">
+      <default>4</default>
+      <summary>Rerank Candidate Pool Multiplier</summary>
+      <description>How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)</description>
+    </key>
+
+    <!-- Phase 3: Hybrid BM25 + Dense Retrieval -->
+    <key name="rag-hybrid-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Hybrid BM25 + Dense Retrieval</summary>
+      <description>Combine keyword matching (BM25) with semantic search (dense embeddings) via reciprocal rank fusion for better recall. Enabled by default — the service gracefully falls back to dense-only if rank-bm25 is not installed.</description>
     </key>
   </schema>
 </schemalist>
