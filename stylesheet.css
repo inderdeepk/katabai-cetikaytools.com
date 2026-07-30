@@ -2193,6 +2193,150 @@
 }
 
 /* ════════════════════════════════════════════
+   CONSOLIDATED TOOLS GEAR BUTTON
+   ════════════════════════════════════════════ */
+
+.katab-tools-gear-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    padding: 0;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.60);
+}
+
+.katab-tools-gear-btn:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.katab-tools-gear-icon {
+    color: inherit;
+}
+
+/* Badge — small notification dot with count, pinned top-right */
+.katab-tools-gear-badge {
+    background-color: #f38ba8;
+    border: 2px solid rgba(30, 30, 30, 0.90);
+    border-radius: 99px;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+}
+
+.katab-tools-gear-badge-label {
+    font-size: 8pt;
+    font-weight: 700;
+    color: #1e1e2e;
+}
+
+/* ════════════════════════════════════════════
+   TOOLS POPUP
+   ════════════════════════════════════════════ */
+
+.katab-tools-popup {
+    background-color: rgba(30, 30, 30, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 0;
+    min-width: 240px;
+    max-width: 300px;
+}
+
+.katab-tools-popup-header {
+    padding: 10px 12px 8px 14px;
+}
+
+.katab-tools-popup-title {
+    font-size: 10pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.80);
+}
+
+.katab-tools-popup-close-btn {
+    padding: 2px;
+    border: none;
+    background: transparent;
+}
+
+.katab-tools-popup-close-icon {
+    icon-size: 14px;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.katab-tools-popup-close-btn:hover .katab-tools-popup-close-icon {
+    color: rgba(255, 255, 255, 0.80);
+}
+
+.katab-tools-popup-rows {
+    padding: 0 10px 8px 10px;
+    spacing: 2px;
+}
+
+.katab-tools-popup-row {
+    border-radius: 6px;
+    padding: 6px 8px;
+    background-color: transparent;
+    border: none;
+}
+
+.katab-tools-popup-row:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.katab-tools-popup-row-disabled {
+    opacity: 0.30;
+}
+
+.katab-tools-popup-row-disabled:hover {
+    background-color: transparent;
+}
+
+.katab-tools-popup-row-content {
+    spacing: 9px;
+}
+
+.katab-tools-popup-row-icon {
+    icon-size: 14px;
+    color: rgba(255, 255, 255, 0.50);
+}
+
+.katab-tools-popup-row-label {
+    font-size: 8.6pt;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.katab-tools-popup-row-mode {
+    padding: 2px 8px;
+    border-radius: 99px;
+    min-width: 32px;
+}
+
+.katab-tools-popup-row-mode-label {
+    font-size: 7.2pt;
+    font-weight: 700;
+    color: inherit;
+}
+
+.katab-tools-mode-auto {
+    background-color: rgba(255, 255, 255, 0.07);
+    color: rgba(255, 255, 255, 0.48);
+}
+
+.katab-tools-mode-on {
+    background-color: rgba(148, 226, 213, 0.16);
+    color: #94e2d5;
+}
+
+.katab-tools-mode-off {
+    background-color: rgba(243, 139, 168, 0.14);
+    color: #f38ba8;
+}
+
+/* ════════════════════════════════════════════
    LIGHT THEME OVERRIDES
    Applied when .katab-theme-light is on the overlay actor
    ════════════════════════════════════════════ */
@@ -2954,6 +3098,70 @@
     background-color: rgba(190, 24, 93, 0.12);
     border-color: rgba(190, 24, 93, 0.30);
     color: #9f1239;
+}
+
+.katab-theme-light .katab-tools-gear-btn {
+    background-color: rgba(0, 0, 0, 0.035);
+    border-color: rgba(0, 0, 0, 0.05);
+    color: rgba(0, 0, 0, 0.48);
+}
+
+.katab-theme-light .katab-tools-gear-btn:hover {
+    background-color: rgba(0, 0, 0, 0.07);
+    color: rgba(0, 0, 0, 0.72);
+}
+
+.katab-theme-light .katab-tools-gear-badge {
+    background-color: #be185d;
+    border-color: rgba(255, 255, 255, 0.90);
+}
+
+.katab-theme-light .katab-tools-gear-badge-label {
+    color: #ffffff;
+}
+
+.katab-theme-light .katab-tools-popup {
+    background-color: rgba(255, 255, 255, 0.96);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+.katab-theme-light .katab-tools-popup-title {
+    color: rgba(0, 0, 0, 0.72);
+}
+
+.katab-theme-light .katab-tools-popup-close-icon {
+    color: rgba(0, 0, 0, 0.36);
+}
+
+.katab-theme-light .katab-tools-popup-close-btn:hover .katab-tools-popup-close-icon {
+    color: rgba(0, 0, 0, 0.68);
+}
+
+.katab-theme-light .katab-tools-popup-row:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.katab-theme-light .katab-tools-popup-row-icon {
+    color: rgba(0, 0, 0, 0.42);
+}
+
+.katab-theme-light .katab-tools-popup-row-label {
+    color: rgba(0, 0, 0, 0.68);
+}
+
+.katab-theme-light .katab-tools-mode-auto {
+    background-color: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.40);
+}
+
+.katab-theme-light .katab-tools-mode-on {
+    background-color: rgba(15, 118, 110, 0.10);
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-tools-mode-off {
+    background-color: rgba(190, 24, 93, 0.08);
+    color: #be185d;
 }
 
 /* ── Preset / Model Button (header chips) ────────────────────────────────── */

@@ -114,6 +114,7 @@ import {
     RAG_TOOL_NAME,
     RAG_TOOL_COMMAND,
     RAG_TOOL_ICON,
+    createRagGicon,
 } from './ragTools.js';
 import {
     cacheSearchResults,
@@ -142,9 +143,6 @@ import {
     WEB_SEARCH_TOOL_COMMAND,
     CRAWL4AI_TOOL_COMMAND,
     DEEP_RESEARCH_TOOL_COMMAND,
-    KNOWLEDGE_SEARCH_TOOL_NAME,
-    KNOWLEDGE_SEARCH_TOOL_COMMAND,
-    KNOWLEDGE_SEARCH_TOOL_ICON,
     UPDATE_KNOWLEDGE_TOOL_NAME,
     WEB_SEARCH_TOOL_ICON,
     CRAWL4AI_TOOL_ICON,
@@ -186,6 +184,7 @@ const RAG_LOCAL_TOOL = {
     label: 'Knowledge',
     command: RAG_TOOL_COMMAND,
     icon: RAG_TOOL_ICON,
+    gicon: null, // Set dynamically in KatabDialog constructor
     toolName: RAG_TOOL_NAME,
 };
 
@@ -1236,6 +1235,7 @@ class HistoryManager {
 class KatabDialog {
     constructor(extension) {
         this._extension = extension;
+        RAG_LOCAL_TOOL.gicon = createRagGicon(extension.path);
         this._settings = extension.getSettings('org.gnome.shell.extensions.katabai');
         this._currentProvider = this._settings.get_string('provider');
         this._currentConversationId = null;
@@ -1310,7 +1310,7 @@ class KatabDialog {
                 }
                 this._helpMessageBox = null;
             }
-            if (this._toolsBox) this._updateToolButtons();
+            this._updateToolsUI();
             setProviderIcon(this._providerStatusIcon, this._currentProvider, this._extension.path);
             if (this._providerStatusLabel) {
                 this._providerStatusLabel.set_text(getProviderLabel(this._currentProvider));
@@ -1337,24 +1337,16 @@ class KatabDialog {
                 this._updatePendingDocumentUI();
             }
 
-            if (this._toolsBox) {
-                this._updateToolButtons();
-            }
+            this._updateToolsUI();
         });
         this._settings.connect('changed::web-search-enabled', () => {
-            if (this._toolsBox) {
-                this._updateToolButtons();
-            }
+            this._updateToolsUI();
         });
         this._settings.connect('changed::crawl4ai-enabled', () => {
-            if (this._toolsBox) {
-                this._updateToolButtons();
-            }
+            this._updateToolsUI();
         });
         this._settings.connect('changed::rag-enabled', () => {
-            if (this._toolsBox) {
-                this._updateToolButtons();
-            }
+            this._updateToolsUI();
             // Phase 2: when RAG is newly enabled, reconcile un-indexed conversations
             try {
                 const ragConfig = readRagConfig(this._settings);
@@ -1507,7 +1499,11 @@ class KatabDialog {
         this._onStageCapture = (_actor, event) => {
             if (event.type() === Clutter.EventType.KEY_PRESS) {
                 if (event.get_key_symbol() === Clutter.KEY_Escape) {
-                    // Close popup first (if open), otherwise close dialog
+                    // Close popups first (if open), then dialog
+                    if (this._toolsPopup?.visible) {
+                        this._hideToolsPopup();
+                        return Clutter.EVENT_STOP;
+                    }
                     if (this._sessionInfoPopup?.visible) {
                         this._hideSessionInfoPopup();
                         return Clutter.EVENT_STOP;
@@ -1517,6 +1513,20 @@ class KatabDialog {
                 }
             } else if (event.type() === Clutter.EventType.BUTTON_PRESS) {
                 const [cx, cy] = event.get_coords();
+                // Close the Tools popup when clicking outside both the popup
+                // and the gear button.
+                if (this._toolsPopup?.visible) {
+                    const [popX, popY] = this._toolsPopup.get_transformed_position();
+                    const [popW, popH] = this._toolsPopup.get_transformed_size();
+                    const [gbX, gbY] = this._toolsGearWrap.get_transformed_position();
+                    const [gbW, gbH] = this._toolsGearWrap.get_transformed_size();
+                    const inPopup = cx >= popX && cx <= popX + popW && cy >= popY && cy <= popY + popH;
+                    const inGearBtn = cx >= gbX && cx <= gbX + gbW && cy >= gbY && cy <= gbY + gbH;
+                    if (!inPopup && !inGearBtn) {
+                        this._hideToolsPopup();
+                        return Clutter.EVENT_STOP;
+                    }
+                }
                 // Close the Session Info popup when clicking outside both
                 // the popup and the token box.
                 if (this._sessionInfoPopup?.visible) {
@@ -2478,9 +2488,7 @@ class KatabDialog {
             return;
         }
 
-        if (this._toolsBox) {
-            this._updateToolButtons();
-        }
+        this._updateToolsUI();
     }
 
     _cycleToolMode(toolName) {
@@ -2503,8 +2511,8 @@ class KatabDialog {
         // NOTE: Deep Research is NOT reset here — it must persist for the
         // entire user turn (all tool-call iterations).  It is reset at the
         // start of the next _sendMessage via the _toolIterations=0 block.
-        if (changed && this._toolsBox) {
-            this._updateToolButtons();
+        if (changed) {
+            this._updateToolsUI();
         }
     }
 
@@ -2823,7 +2831,7 @@ class KatabDialog {
             x_expand: true,
         });
         const headerIcon = new St.Icon({
-            icon_name: RAG_TOOL_ICON,
+            gicon: createRagGicon(this._extension.path),
             style_class: 'katab-kb-update-icon',
             icon_size: 16,
         });
@@ -3510,100 +3518,25 @@ class KatabDialog {
         }
     }
 
-    _updateToolButtons() {
-        if (!this._toolsBox) return;
-        this._toolsBox.destroy_all_children();
+    _updateToolsUI() {
+        this._updateToolsBadge();
+        if (this._toolsPopup?.visible) {
+            this._refreshToolsPopup();
+        }
+    }
 
-        const tools = this._getAvailableTools();
-        for (const tool of tools) {
-            const isModeControlled = this._isModeControlledTool(tool.toolName);
-            const mode = this._getToolMode(tool.toolName);
-            const documentToolDisabled = tool.toolName === DOCUMENT_TOOL_NAME && !this._isDocumentToolEnabled();
-            const modeToolDisabled = isModeControlled
-                && mode === TOOL_MODE_AUTO
-                && !this._toolModeAvailable(tool, mode);
-            const icon = new St.Icon({
-                icon_name: tool.icon,
-                style_class: 'katab-tool-icon',
-                x_align: Clutter.ActorAlign.CENTER,
-            });
-            const toolLabel = new St.Label({
-                text: this._getToolButtonLabel(tool),
-                style_class: 'katab-tool-name-label',
-                x_align: Clutter.ActorAlign.CENTER,
-            });
-
-            const child = new St.BoxLayout({
-                vertical: false,
-                style_class: 'katab-tool-btn-content',
-                x_align: Clutter.ActorAlign.CENTER,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            child.add_child(icon);
-
-            if (isModeControlled) {
-                const textCol = new St.BoxLayout({
-                    vertical: true,
-                    style_class: 'katab-tool-text-col',
-                    x_align: Clutter.ActorAlign.CENTER,
-                });
-                textCol.add_child(toolLabel);
-                textCol.add_child(new St.Label({
-                    text: TOOL_MODE_LABELS[mode] || TOOL_MODE_LABELS[TOOL_MODE_AUTO],
-                    style_class: 'katab-tool-mode-label',
-                    x_align: Clutter.ActorAlign.CENTER,
-                }));
-                child.add_child(textCol);
-            } else {
-                child.add_child(toolLabel);
-            }
-
-            let btn = new St.Button({
-                child,
-                style_class: isModeControlled
-                    ? `katab-tool-btn katab-tool-mode-btn katab-tool-mode-${mode}`
-                    : 'katab-tool-btn',
-                can_focus: true,
-                x_expand: false,
-                y_expand: false,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-
-            if (documentToolDisabled || modeToolDisabled) {
-                btn.add_style_class_name('katab-tool-btn-disabled');
-            }
-
-            btn.connect('clicked', async () => {
-                if (isModeControlled) {
-                    this._cycleToolMode(tool.toolName);
-                    return;
-                }
-
-                if (tool.toolName === DOCUMENT_TOOL_NAME) {
-                    if (!this._isDocumentToolEnabled()) {
-                        this._addSystemMessage('Document tool is available, but it is currently off. Enable it in Settings > Tools to use the chat button or /doc command.');
-                        return;
-                    }
-
-                    await this._pickDocumentForAttachment();
-                    return;
-                }
-
-                let currentText = this._entry.get_text().trim();
-                const startsWithCommand = currentText === tool.command || currentText.startsWith(`${tool.command} `);
-                const endsWithCommand = currentText.endsWith(` ${tool.command}`);
-                if (!currentText) {
-                    this._entry.set_text(`${tool.command} `);
-                } else if (startsWithCommand || endsWithCommand) {
-                    this._entry.set_text(currentText);
-                } else {
-                    this._entry.set_text(`${tool.command} ${currentText}`);
-                }
-                this.focusPrompt();
-                // move cursor to end
-                this._entry.set_cursor_position(-1);
-            });
-            this._toolsBox.add_child(btn);
+    _updateToolsBadge() {
+        if (!this._toolsGearBadge || !this._toolsGearBadgeLabel) return;
+        let count = 0;
+        if (this._webSearchMode && this._webSearchMode !== TOOL_MODE_AUTO) count++;
+        if (this._crawl4aiMode && this._crawl4aiMode !== TOOL_MODE_AUTO) count++;
+        if (this._deepResearchMode && this._deepResearchMode !== TOOL_MODE_AUTO) count++;
+        if (this._knowledgeSearchMode && this._knowledgeSearchMode !== TOOL_MODE_AUTO) count++;
+        if (count > 0) {
+            this._toolsGearBadgeLabel.set_text(String(count));
+            this._toolsGearBadge.visible = true;
+        } else {
+            this._toolsGearBadge.visible = false;
         }
     }
 
@@ -6136,7 +6069,7 @@ class KatabDialog {
         this._historyView.add_child(this._kbSearchBox);
 
         let kbSearchIcon = new St.Icon({
-            icon_name: RAG_TOOL_ICON,
+            gicon: createRagGicon(this._extension.path),
             style_class: 'katab-kb-search-icon',
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -6418,12 +6351,82 @@ class KatabDialog {
         this._applyPromptTextColor();
         this._syncPromptHintVisibility();
 
-        this._toolsBox = new St.BoxLayout({
-            style_class: 'katab-tools-box',
-            vertical: false,
+        // ══ Consolidated Tools Gear Button ════════════════════════════
+        // Single gear icon that opens a popup listing all tools with
+        // mode toggles (Auto/On/Off). A red badge shows how many tools
+        // have been manually tuned away from Auto.
+        this._toolsGearBtn = new St.Button({
+            style_class: 'katab-tools-gear-btn',
+            can_focus: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        footerBox.add_child(this._toolsBox);
+
+        // Wrap the button + badge overlay in a container with BinLayout
+        this._toolsGearWrap = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const gearIcon = new St.Icon({
+            icon_name: 'emblem-system-symbolic',
+            style_class: 'katab-tools-gear-icon',
+            icon_size: 18,
+        });
+        this._toolsGearBtn.set_child(gearIcon);
+        this._toolsGearWrap.add_child(this._toolsGearBtn);
+
+        // Badge — small notification dot pinned top-right via BinLayout.
+        // Uses its own BinLayout so the number label is truly centred.
+        this._toolsGearBadge = new St.Widget({
+            style_class: 'katab-tools-gear-badge',
+            layout_manager: new Clutter.BinLayout(),
+            x_align: Clutter.ActorAlign.END,
+            y_align: Clutter.ActorAlign.START,
+            visible: false,
+        });
+        this._toolsGearBadgeLabel = new St.Label({
+            text: '0',
+            style_class: 'katab-tools-gear-badge-label',
+        });
+        // BinLayout centres the child; no x_align/y_align needed on the label.
+        this._toolsGearBadge.add_child(this._toolsGearBadgeLabel);
+        this._toolsGearWrap.add_child(this._toolsGearBadge);
+
+        // Click toggles the Tools popup; hover shows a preview
+        this._toolsGearBtn.connect('button-press-event', (_actor, _event) => {
+            this._toggleToolsPopup();
+            return Clutter.EVENT_STOP;
+        });
+        this._toolsGearWrap.connect('enter-event', () => {
+            if (this._toolsLeaveTimeout) {
+                GLib.source_remove(this._toolsLeaveTimeout);
+                this._toolsLeaveTimeout = 0;
+            }
+            if (!this._toolsClickLocked && !this._toolsPopup?.visible) {
+                this._toolsHoverTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+                    this._toolsHoverTimeout = 0;
+                    this._showToolsPopup();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._toolsGearWrap.connect('leave-event', () => {
+            if (this._toolsHoverTimeout) {
+                GLib.source_remove(this._toolsHoverTimeout);
+                this._toolsHoverTimeout = 0;
+            }
+            if (!this._toolsClickLocked) {
+                this._toolsLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                    this._toolsLeaveTimeout = 0;
+                    this._hideToolsPopup();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
+        footerBox.add_child(this._toolsGearWrap);
 
         this._entry.connect('text-changed', () => {
             // Safety-net character cap. If the draft is over the limit (typed,
@@ -6648,7 +6651,7 @@ class KatabDialog {
         this._updateSendButton();
 
         this._addWelcomeMessage();
-        this._updateToolButtons();
+        this._updateToolsUI();
         this._updatePendingDocumentUI();
         this._updatePresetButton();
         this._updateDeepseekModelButton();
@@ -7194,6 +7197,10 @@ class KatabDialog {
         // Clean up Session Info popup timeouts
         this._clearSessionInfoTimeouts();
         this._sessionInfoPopup = null;
+
+        // Clean up Tools popup timeouts
+        this._clearToolsTimeouts();
+        this._toolsPopup = null;
 
         if (this._notifyIdleId) {
             GLib.source_remove(this._notifyIdleId);
@@ -7918,6 +7925,314 @@ class KatabDialog {
         } else {
             this._siResearchSection.visible = false;
         }
+    }
+
+    // ── Tools Popup ──────────────────────────────────────────────────
+    // Floating panel that lists all available tools with their mode
+    // toggles (Auto/On/Off).  Pattern mirrors _sessionInfoPopup.
+
+    _buildToolsPopup() {
+        const popup = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-tools-popup',
+            visible: false,
+            reactive: true,
+            can_focus: true,
+        });
+
+        // Header
+        const header = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-tools-popup-header',
+        });
+        const title = new St.Label({
+            text: 'Tools',
+            style_class: 'katab-tools-popup-title',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        header.add_child(title);
+        const closeBtn = new St.Button({
+            child: new St.Icon({
+                icon_name: 'window-close-symbolic',
+                style_class: 'katab-tools-popup-close-icon',
+            }),
+            style_class: 'katab-tools-popup-close-btn',
+            can_focus: true,
+        });
+        closeBtn.connect('clicked', () => this._hideToolsPopup());
+        header.add_child(closeBtn);
+        popup.add_child(header);
+
+        // Tool rows container — rebuilt by _refreshToolsPopup
+        this._toolsPopupRows = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-tools-popup-rows',
+        });
+        popup.add_child(this._toolsPopupRows);
+
+        // Hover on the popup cancels pending leave timeout
+        popup.connect('enter-event', () => {
+            if (this._toolsLeaveTimeout) {
+                GLib.source_remove(this._toolsLeaveTimeout);
+                this._toolsLeaveTimeout = 0;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+        popup.connect('leave-event', () => {
+            if (!this._toolsClickLocked) {
+                this._toolsLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                    this._toolsLeaveTimeout = 0;
+                    this._hideToolsPopup();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
+        return popup;
+    }
+
+    _showToolsPopup() {
+        if (!this._toolsPopup) {
+            this._toolsPopup = this._buildToolsPopup();
+            this.actor.add_child(this._toolsPopup);
+        }
+        this._toolsPopup.visible = true;
+        const parent = this._toolsPopup.get_parent();
+        if (parent) parent.set_child_above_sibling(this._toolsPopup, null);
+        this._refreshToolsPopup();
+        this._positionToolsPopup();
+        if (this._toolsRepositionId) GLib.source_remove(this._toolsRepositionId);
+        this._toolsRepositionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._toolsRepositionId = 0;
+            this._positionToolsPopup();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _hideToolsPopup() {
+        if (this._toolsPopup) {
+            this._toolsPopup.visible = false;
+        }
+        this._toolsClickLocked = false;
+        this._clearToolsTimeouts();
+    }
+
+    _toggleToolsPopup() {
+        this._clearToolsTimeouts();
+
+        if (this._toolsPopup?.visible && this._toolsClickLocked) {
+            this._hideToolsPopup();
+            return;
+        }
+
+        if (this._toolsPopup?.visible) {
+            this._toolsClickLocked = true;
+            return;
+        }
+
+        this._toolsClickLocked = true;
+        this._showToolsPopup();
+    }
+
+    _clearToolsTimeouts() {
+        if (this._toolsHoverTimeout) {
+            GLib.source_remove(this._toolsHoverTimeout);
+            this._toolsHoverTimeout = 0;
+        }
+        if (this._toolsLeaveTimeout) {
+            GLib.source_remove(this._toolsLeaveTimeout);
+            this._toolsLeaveTimeout = 0;
+        }
+        if (this._toolsRepositionId) {
+            GLib.source_remove(this._toolsRepositionId);
+            this._toolsRepositionId = 0;
+        }
+    }
+
+    _positionToolsPopup() {
+        if (!this._toolsPopup || !this._toolsGearWrap) return;
+
+        let [, popupWidth] = this._toolsPopup.get_preferred_width(-1);
+        let [, popupHeight] = this._toolsPopup.get_preferred_height(popupWidth);
+
+        let [gbX, gbY] = this._toolsGearWrap.get_transformed_position();
+        let [gbW, gbH] = this._toolsGearWrap.get_transformed_size();
+
+        // Position above the gear button, right-aligned
+        let popupX = gbX + gbW - popupWidth;
+        let popupY = gbY - popupHeight - 8;
+
+        const monitor = global.display.get_current_monitor();
+        const geom = global.display.get_monitor_geometry(monitor);
+        const margin = 12;
+
+        if (popupX + popupWidth > geom.x + geom.width - margin) {
+            popupX = geom.x + geom.width - popupWidth - margin;
+        }
+        if (popupX < geom.x + margin) {
+            popupX = geom.x + margin;
+        }
+        if (popupY < geom.y + margin) {
+            popupY = gbY + gbH + 8;
+            if (popupY + popupHeight > geom.y + geom.height - margin) {
+                popupY = geom.y + geom.height - popupHeight - margin;
+            }
+        }
+
+        this._toolsPopup.set_position(popupX, popupY);
+    }
+
+    _refreshToolsPopup() {
+        if (!this._toolsPopupRows) return;
+
+        const existingChildren = this._toolsPopupRows.get_n_children();
+        const tools = this._getAvailableTools();
+
+        // Full rebuild only when the tool list changes (count differs)
+        // or on first render.  Otherwise patch mode labels in-place.
+        if (existingChildren !== tools.length) {
+            this._toolsPopupRows.destroy_all_children();
+            this._toolsPopupModeLabels = {};
+
+            for (const tool of tools) {
+                const isModeControlled = this._isModeControlledTool(tool.toolName);
+                const mode = this._getToolMode(tool.toolName);
+                const documentToolDisabled = tool.toolName === DOCUMENT_TOOL_NAME && !this._isDocumentToolEnabled();
+                const modeToolDisabled = isModeControlled
+                    && mode === TOOL_MODE_AUTO
+                    && !this._toolModeAvailable(tool, mode);
+
+                const row = new St.Button({
+                    style_class: 'katab-tools-popup-row',
+                    can_focus: true,
+                    x_expand: true,
+                });
+
+                const iconProps = {};
+                if (tool.gicon) {
+                    iconProps.gicon = tool.gicon;
+                } else {
+                    iconProps.icon_name = tool.icon;
+                }
+                const icon = new St.Icon({
+                    ...iconProps,
+                    style_class: 'katab-tools-popup-row-icon',
+                    x_align: Clutter.ActorAlign.CENTER,
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+
+                const nameLabel = new St.Label({
+                    text: this._getToolButtonLabel(tool),
+                    style_class: 'katab-tools-popup-row-label',
+                    x_expand: true,
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+
+                const modeWrap = new St.Widget({
+                    style_class: isModeControlled
+                        ? `katab-tools-popup-row-mode katab-tools-mode-${mode}`
+                        : 'katab-tools-popup-row-mode',
+                    layout_manager: new Clutter.BinLayout(),
+                });
+                const modeLabel = new St.Label({
+                    text: isModeControlled
+                        ? (TOOL_MODE_LABELS[mode] || TOOL_MODE_LABELS[TOOL_MODE_AUTO])
+                        : '',
+                    style_class: 'katab-tools-popup-row-mode-label',
+                });
+                modeWrap.add_child(modeLabel);
+
+                // Store references for in-place updates
+                if (isModeControlled) {
+                    this._toolsPopupModeLabels[tool.toolName] = { wrap: modeWrap, label: modeLabel };
+                }
+
+                const rowContent = new St.BoxLayout({
+                    vertical: false,
+                    style_class: 'katab-tools-popup-row-content',
+                    x_expand: true,
+                    y_align: Clutter.ActorAlign.CENTER,
+                });
+                rowContent.add_child(icon);
+                rowContent.add_child(nameLabel);
+                rowContent.add_child(modeWrap);
+
+                if (documentToolDisabled || modeToolDisabled) {
+                    row.add_style_class_name('katab-tools-popup-row-disabled');
+                }
+
+                row.set_child(rowContent);
+
+                row.connect('clicked', async () => {
+                    if (isModeControlled) {
+                        this._cycleToolMode(tool.toolName);
+                        this._patchToolsPopupMode(tool.toolName);
+                        this._updateToolsBadge();
+                        return;
+                    }
+
+                    if (tool.toolName === DOCUMENT_TOOL_NAME) {
+                        if (!this._isDocumentToolEnabled()) {
+                            this._addSystemMessage('Document tool is available, but it is currently off. Enable it in Settings > Tools to use the /doc command.');
+                            return;
+                        }
+                        this._hideToolsPopup();
+                        await this._pickDocumentForAttachment();
+                        return;
+                    }
+
+                    let currentText = this._entry.get_text().trim();
+                    if (!currentText) {
+                        this._entry.set_text(`${tool.command} `);
+                    } else if (currentText === tool.command || currentText.startsWith(`${tool.command} `) || currentText.endsWith(` ${tool.command}`)) {
+                        this._entry.set_text(currentText);
+                    } else {
+                        this._entry.set_text(`${tool.command} ${currentText}`);
+                    }
+                    this._hideToolsPopup();
+                    this.focusPrompt();
+                    this._entry.set_cursor_position(-1);
+                });
+
+                this._toolsPopupRows.add_child(row);
+            }
+
+            // Full rebuild may change popup dimensions — reposition.
+            if (this._toolsPopup?.visible) {
+                if (this._toolsRepositionId) GLib.source_remove(this._toolsRepositionId);
+                this._toolsRepositionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    this._toolsRepositionId = 0;
+                    this._positionToolsPopup();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+        } else {
+            // In-place patch: update mode labels without destroying rows
+            for (const tool of tools) {
+                if (this._isModeControlledTool(tool.toolName)) {
+                    this._patchToolsPopupMode(tool.toolName);
+                }
+            }
+        }
+    }
+
+    // Update a single tool's mode label and styling in-place.
+    _patchToolsPopupMode(toolName) {
+        const refs = this._toolsPopupModeLabels?.[toolName];
+        if (!refs) return;
+
+        const mode = this._getToolMode(toolName);
+        const text = TOOL_MODE_LABELS[mode] || TOOL_MODE_LABELS[TOOL_MODE_AUTO];
+
+        refs.label.set_text(text);
+
+        // Swap style classes on the wrapper
+        ['katab-tools-mode-auto', 'katab-tools-mode-on', 'katab-tools-mode-off'].forEach(c => {
+            refs.wrap.remove_style_class_name(c);
+        });
+        refs.wrap.add_style_class_name(`katab-tools-mode-${mode}`);
     }
 
     // Trim message history to keep the first system message + the most
@@ -10456,7 +10771,7 @@ class KatabDialog {
                 y_align: Clutter.ActorAlign.CENTER,
             });
             const kbIcon = new St.Icon({
-                icon_name: RAG_TOOL_ICON,
+                gicon: createRagGicon(this._extension.path),
                 style_class: 'katab-chat-kb-icon',
                 icon_size: 14,
             });
@@ -13279,15 +13594,15 @@ class KatabDialog {
             } else {
                 // Exact /research — toggle on for the next typed prompt
                 this._addSystemMessage('Deep Research mode activated for the next prompt. Type your research query.', { variant: 'info' });
-                if (this._toolsBox) this._updateToolButtons();
+                this._updateToolsUI();
                 return;
             }
             if (!promptText) {
                 this._addSystemMessage('Deep Research mode activated. Type your research query.', { variant: 'info' });
-                if (this._toolsBox) this._updateToolButtons();
+                this._updateToolsUI();
                 return;
             }
-            if (this._toolsBox) this._updateToolButtons();
+            this._updateToolsUI();
         }
 
         // ── Knowledge Base search (/kb) ────────────────────────────────────

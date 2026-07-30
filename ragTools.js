@@ -22,7 +22,17 @@ import { getCachedSearchResults, cacheSearchResults } from './researchCache.js';
 
 export const RAG_TOOL_NAME = 'knowledge_search';
 export const RAG_TOOL_COMMAND = '/kb';
-export const RAG_TOOL_ICON = 'brain-augmented-symbolic';
+export const RAG_TOOL_ICON = 'folder-documents-symbolic';
+
+/**
+ * Create a Gio.Icon for the knowledge base from the custom brain SVG.
+ * Use this instead of icon_name when you need the custom brain graphic.
+ * @param {string} extensionPath - path to the extension directory
+ * @returns {Gio.Icon}
+ */
+export function createRagGicon(extensionPath) {
+    return Gio.icon_new_for_string(`${extensionPath}/icons/katab-knowledge-symbolic.svg`);
+}
 
 const RAG_DEFAULT_TIMEOUT_SECONDS = 30;
 const RAG_DEFAULT_CHUNK_SIZE = 800;

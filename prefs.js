@@ -1893,17 +1893,22 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         // Build a navigable index row that opens a tool's detail subpage when activated.
-        const createToolIndexRow = (group, { title, subtitle, iconName, enabledKey, navPage }) => {
+        const createToolIndexRow = (group, { title, subtitle, iconName, enabledKey, navPage, gicon }) => {
             const row = stylePreferenceRow(new Adw.ActionRow({
                 title,
                 subtitle,
                 activatable: true,
             }), 'katab-prefs-tool-row');
 
-            row.add_prefix(addCssClasses(new Gtk.Image({
-                icon_name: iconName,
+            const iconImage = new Gtk.Image({
                 valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-tool-icon'));
+            });
+            if (gicon) {
+                iconImage.gicon = gicon;
+            } else {
+                iconImage.icon_name = iconName;
+            }
+            row.add_prefix(addCssClasses(iconImage, 'katab-prefs-tool-icon'));
 
             if (enabledKey) {
                 const toggle = addCssClasses(new Gtk.Switch({
@@ -2477,7 +2482,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 noticeGroup
             );
             noticeRow.add_prefix(addCssClasses(new Gtk.Image({
-                icon_name: 'drive-harddisk-symbolic',
+                gicon: Gio.icon_new_for_string(`${extensionPath}/icons/katab-knowledge-symbolic.svg`),
                 valign: Gtk.Align.CENTER,
             }), 'katab-prefs-tool-icon'));
 
@@ -3144,6 +3149,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             title: 'Knowledge Base',
             subtitle: 'Semantically search across documents, conversations, and research using local RAG.',
             iconName: 'drive-harddisk-symbolic',
+            gicon: Gio.icon_new_for_string(`${extensionPath}/icons/katab-knowledge-symbolic.svg`),
             enabledKey: 'rag-enabled',
             navPage: ragSubpage.navPage,
         });
