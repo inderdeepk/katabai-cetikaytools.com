@@ -162,6 +162,11 @@
       <summary>Content Filter Mode</summary>
       <description>Algorithm used to strip boilerplate. 'pruning' removes low-density DOM nodes by heuristic; 'bm25' scores content chunks against the user query.</description>
     </key>
+    <key name="crawl4ai-bm25-threshold" type="d">
+      <default>0.5</default>
+      <summary>BM25 Relevance Threshold</summary>
+      <description>Minimum BM25 score (0.3–0.8) for content blocks to be included in fit_markdown. Higher values filter more aggressively. Only applies when Content Filter Mode is 'bm25'.</description>
+    </key>
     <key name="crawl4ai-cache-mode" type="s">
       <default>'bypass'</default>
       <summary>Cache Mode</summary>

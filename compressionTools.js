@@ -168,6 +168,86 @@ function _truncateToSentences(text, maxChars) {
 }
 
 /**
+ * Split long text into overlapping sliding-window chunks so critical
+ * sentences spanning chunk boundaries are not fragmented.
+ *
+ * Each chunk is `windowChars` long and overlaps the previous chunk by
+ * `overlapChars`.  Chunks are split at the nearest sentence boundary
+ * within the window rather than at exact character positions.
+ *
+ * @param {string} text - The text to chunk
+ * @param {number} windowChars - Nominal chunk size (default 2000)
+ * @param {number} overlapChars - Overlap between adjacent chunks (default 500)
+ * @returns {string[]} Array of overlapping text chunks
+ */
+export function _slidingWindowChunk(text, windowChars = 2000, overlapChars = 500) {
+    if (!text || text.length <= windowChars) return [text || ''];
+
+    // Guard against degenerate overlap — if overlap >= window, the loop
+    // degrades to 1-character steps, producing O(n) chunks for long text.
+    if (overlapChars >= windowChars) {
+        overlapChars = Math.floor(windowChars / 4);
+    }
+
+    // Split into sentences
+    const rawParts = text.split(/(?<=[.!?])\s+/);
+    const sentences = rawParts.length > 1 ? rawParts : [text];
+
+    if (sentences.length <= 1) {
+        // Single block — use simple character-based windowing
+        const chunks = [];
+        let pos = 0;
+        while (pos < text.length) {
+            const end = Math.min(pos + windowChars, text.length);
+            chunks.push(text.slice(pos, end));
+            pos = Math.max(pos + windowChars - overlapChars, pos + 1);
+            if (pos >= text.length) break;
+        }
+        return chunks.length > 0 ? chunks : [text];
+    }
+
+    // Sentence-aware chunking
+    const chunks = [];
+    let startIdx = 0;
+
+    while (startIdx < sentences.length) {
+        let charCount = 0;
+        let endIdx = startIdx;
+
+        // Accumulate sentences until we reach windowChars
+        for (let i = startIdx; i < sentences.length; i++) {
+            const next = charCount + sentences[i].length + (endIdx > startIdx ? 1 : 0);
+            if (next > windowChars && endIdx > startIdx) break;
+            charCount = next;
+            endIdx = i + 1;
+        }
+
+        // Guard: if a single sentence exceeds windowChars, force at least one sentence
+        if (endIdx <= startIdx) {
+            endIdx = startIdx + 1;
+        }
+
+        // Build chunk (skip if empty slice somehow produced)
+        const chunk = sentences.slice(startIdx, endIdx).join(' ');
+        if (chunk) chunks.push(chunk);
+
+        // Advance start: step back by `overlapChars` worth of sentences
+        if (endIdx >= sentences.length) break;
+
+        let overlapCharsSoFar = 0;
+        let newStart = endIdx;
+        for (let i = endIdx - 1; i > startIdx; i--) {
+            overlapCharsSoFar += sentences[i].length + 1;
+            newStart = i;
+            if (overlapCharsSoFar >= overlapChars) break;
+        }
+        startIdx = Math.max(newStart, startIdx + 1);
+    }
+
+    return chunks.length > 0 ? chunks : [text];
+}
+
+/**
  * Truncate text for LLM prompt using structure-aware chunking.
  *
  * Strategy (inspired by page-level + semantic chunking):

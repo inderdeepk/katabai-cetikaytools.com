@@ -70,11 +70,16 @@ export function readCrawl4AIConfig(settings) {
         try { return settings.get_int(key); } catch (_error) { return 0; }
     };
 
+    const getDouble = key => {
+        try { return settings.get_double(key); } catch (_error) { return 0.5; }
+    };
+
     return {
         enabled: getBoolean('crawl4ai-enabled'),
         url: getString('crawl4ai-url'),
         apiToken: getString('crawl4ai-api-token'),
         fitMarkdownMode: getString('crawl4ai-fit-markdown-mode') || 'pruning',
+        bm25Threshold: getDouble('crawl4ai-bm25-threshold'),
         cacheMode: getString('crawl4ai-cache-mode') || 'bypass',
         wordCountThreshold: getInt('crawl4ai-word-count-threshold') || CRAWL4AI_DEFAULT_WORD_COUNT,
         pageTimeout: getInt('crawl4ai-page-timeout') || CRAWL4AI_DEFAULT_PAGE_TIMEOUT,
@@ -419,7 +424,7 @@ export class Crawl4AIRuntime {
             : 'PruningContentFilter';
 
         const filterParams = config.fitMarkdownMode === 'bm25'
-            ? { user_query: config.query || '', threshold: 0.5 }
+            ? { user_query: config.query || '', threshold: config.bm25Threshold || 0.5 }
             : { threshold: 0.48, threshold_type: 'fixed' };
 
         // Crawl4AI v0.9.x expects flat browser_config / crawler_config objects

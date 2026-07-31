@@ -85,7 +85,7 @@
 
 .katab-message-token-label {
     margin-left: 8px;
-    font-size: 7.8pt;
+    font-size: 8pt;
     color: rgba(255, 255, 255, 0.45);
 }
 
@@ -180,7 +180,7 @@
 }
 
 .katab-session-info-section-title {
-    font-size: 7.2pt;
+    font-size: 8pt;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.35);
     text-transform: uppercase;
@@ -239,7 +239,7 @@
 }
 
 .katab-session-info-reserved-label {
-    font-size: 6.8pt;
+    font-size: 8pt;
     font-style: italic;
     color: rgba(255, 255, 255, 0.30);
     text-align: center;
@@ -482,8 +482,7 @@
 /* ── Unified header icon buttons ────────────────────────────────────────── */
 .katab-close-btn,
 .katab-settings-btn,
-.katab-new-chat-btn,
-.katab-history-btn {
+.katab-new-chat-btn {
     padding: 6px;
     border-radius: 9px;
     background-color: transparent;
@@ -493,8 +492,7 @@
 
 .katab-close-btn:hover,
 .katab-settings-btn:hover,
-.katab-new-chat-btn:hover,
-.katab-history-btn:hover {
+.katab-new-chat-btn:hover {
     background-color: rgba(255, 255, 255, 0.10);
 }
 
@@ -506,9 +504,83 @@
     color: rgba(255, 255, 255, 0.68);
 }
 
-.katab-history-btn:focus,
 .katab-new-chat-btn:focus {
     background-color: rgba(255, 255, 255, 0.14);
+}
+
+/* ── History Button + Hover Dropdown ───── */
+.katab-history-dropdown-btn {
+    spacing: 4px;
+    padding: 4px 8px;
+    border-radius: 9px;
+    margin-left: 2px;
+    margin-right: 2px;
+}
+
+.katab-history-dropdown-btn:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+.katab-history-dropdown-arrow {
+    font-size: 7pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.38);
+    margin-top: 1px;
+}
+
+.katab-recent-chats-popup {
+    background-color: rgba(30, 30, 30, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 260px;
+    max-width: 340px;
+}
+
+.katab-recent-chats-row {
+    padding: 7px 10px;
+    border-radius: 6px;
+    spacing: 2px;
+}
+
+.katab-recent-chats-row:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.katab-recent-chats-row-title {
+    font-size: 9pt;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.katab-recent-chats-row-date {
+    font-size: 8pt;
+    color: rgba(255, 255, 255, 0.38);
+}
+
+.katab-theme-light .katab-history-dropdown-btn:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-history-dropdown-arrow {
+    color: rgba(0, 0, 0, 0.32);
+}
+
+.katab-theme-light .katab-recent-chats-popup {
+    background-color: rgba(255, 255, 255, 0.97);
+    border-color: rgba(0, 0, 0, 0.12);
+}
+
+.katab-theme-light .katab-recent-chats-row:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.katab-theme-light .katab-recent-chats-row-title {
+    color: rgba(0, 0, 0, 0.82);
+}
+
+.katab-theme-light .katab-recent-chats-row-date {
+    color: rgba(0, 0, 0, 0.38);
 }
 
 /* ════════════════════════════════════════════
@@ -976,9 +1048,9 @@
 }
 
 .katab-chat-bubble.user {
-    background-color: rgba(36, 36, 36, 0.95);
+    background-color: rgba(58, 58, 64, 0.93);
     color: #ffffff;
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.60);
 }
 
@@ -997,7 +1069,7 @@
 }
 
 .katab-chat-content-label {
-    font-size: 10.5pt;
+    font-size: 11pt;
 }
 
 .katab-chat-content-box {
@@ -1224,7 +1296,7 @@
 }
 
 .katab-tool-call-expand-label {
-    font-size: 7pt;
+    font-size: 8pt;
     font-weight: 700;
     color: rgba(148, 226, 213, 0.75);
 }
@@ -1253,7 +1325,7 @@
 }
 
 .katab-tool-call-group-label {
-    font-size: 7.6pt;
+    font-size: 8pt;
     font-weight: bold;
     color: rgba(148, 226, 213, 0.65);
 }
@@ -1377,7 +1449,7 @@
 }
 
 .katab-cache-pill-label {
-    font-size: 7.6pt;
+    font-size: 8pt;
     font-weight: 700;
     color: rgba(166, 227, 161, 0.95);
 }
@@ -1422,7 +1494,7 @@
 }
 
 .katab-cache-drawer-meta {
-    font-size: 7.4pt;
+    font-size: 8pt;
     color: rgba(255, 255, 255, 0.42);
 }
 
@@ -1441,7 +1513,7 @@
 }
 
 .katab-cache-session-chip-label {
-    font-size: 7.5pt;
+    font-size: 8pt;
     font-weight: 600;
     color: rgba(166, 227, 161, 0.88);
 }
@@ -1705,15 +1777,16 @@
 /* ── Web Sources Section ───────────────────────────────── */
 
 .katab-chat-sources-box {
-    spacing: 0px;
+    spacing: 8px;
     margin-top: 14px;
-    border-radius: 7px;
+    padding: 10px 10px 10px 10px;
+    border-radius: 8px;
     background-color: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .katab-chat-sources-toggle {
-    padding: 8px 10px;
+    padding: 9px 10px;
     border-radius: 7px;
     border: none;
     background-color: transparent;
@@ -1725,6 +1798,7 @@
 
 .katab-chat-sources-header-row {
     spacing: 6px;
+    padding: 2px 0;
 }
 
 .katab-chat-sources-arrow {
@@ -1738,7 +1812,7 @@
 }
 
 .katab-chat-sources-subtitle {
-    font-size: 7.8pt;
+    font-size: 8pt;
     font-weight: 400;
     color: rgba(255, 255, 255, 0.28);
     margin-left: 2px;
@@ -1763,8 +1837,8 @@
 }
 
 .katab-chat-sources-list {
-    spacing: 5px;
-    padding: 0px 10px 8px 10px;
+    spacing: 6px;
+    padding: 0px 4px 4px 4px;
 }
 
 .katab-chat-source-button {
@@ -2135,7 +2209,7 @@
 }
 
 .katab-tool-mode-label {
-    font-size: 6pt;
+    font-size: 8pt;
     font-weight: 600;
     color: inherit;
     opacity: 0.70;
@@ -2275,6 +2349,15 @@
     spacing: 2px;
 }
 
+.katab-tools-popup-section-header {
+    font-size: 7.6pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.40);
+    padding: 8px 8px 4px 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
 .katab-tools-popup-row {
     border-radius: 6px;
     padding: 6px 8px;
@@ -2316,7 +2399,7 @@
 }
 
 .katab-tools-popup-row-mode-label {
-    font-size: 7.2pt;
+    font-size: 8pt;
     font-weight: 700;
     color: inherit;
 }
@@ -2488,15 +2571,13 @@
 
 .katab-theme-light .katab-close-btn,
 .katab-theme-light .katab-settings-btn,
-.katab-theme-light .katab-new-chat-btn,
-.katab-theme-light .katab-history-btn {
+.katab-theme-light .katab-new-chat-btn {
     background-color: transparent;
 }
 
 .katab-theme-light .katab-close-btn:hover,
 .katab-theme-light .katab-settings-btn:hover,
-.katab-theme-light .katab-new-chat-btn:hover,
-.katab-theme-light .katab-history-btn:hover {
+.katab-theme-light .katab-new-chat-btn:hover {
     background-color: rgba(0, 0, 0, 0.08);
 }
 
@@ -2519,8 +2600,7 @@
 
 .katab-theme-light .katab-close-btn,
 .katab-theme-light .katab-settings-btn,
-.katab-theme-light .katab-new-chat-btn,
-.katab-theme-light .katab-history-btn {
+.katab-theme-light .katab-new-chat-btn {
     padding: 7px;
     border-radius: 8px;
     background-color: rgba(0, 0, 0, 0.04);
@@ -2528,8 +2608,7 @@
 
 .katab-theme-light .katab-close-btn:hover,
 .katab-theme-light .katab-settings-btn:hover,
-.katab-theme-light .katab-new-chat-btn:hover,
-.katab-theme-light .katab-history-btn:hover {
+.katab-theme-light .katab-new-chat-btn:hover {
     background-color: rgba(0, 0, 0, 0.10);
 }
 
@@ -2743,9 +2822,9 @@
 }
 
 .katab-theme-light .katab-chat-bubble.user {
-    background-color: rgba(255, 255, 255, 0.96);
+    background-color: rgba(252, 252, 252, 0.97);
     color: rgba(0, 0, 0, 0.82);
-    border-color: rgba(0, 0, 0, 0.08);
+    border-color: rgba(0, 0, 0, 0.10);
     text-shadow: none;
 }
 
@@ -3127,6 +3206,10 @@
 
 .katab-theme-light .katab-tools-popup-title {
     color: rgba(0, 0, 0, 0.72);
+}
+
+.katab-theme-light .katab-tools-popup-section-header {
+    color: rgba(0, 0, 0, 0.32);
 }
 
 .katab-theme-light .katab-tools-popup-close-icon {
@@ -4783,70 +4866,103 @@
 }
 
 /* ════════════════════════════════════════════
-   RESEARCH PLAN CARD (Deep Research Planner)
+   RESEARCH PLAN CARD (Simplified — chat bubble aesthetic)
    ════════════════════════════════════════════ */
 
 .katab-research-plan-card {
-    padding: 16px 18px;
-    margin: 8px 0;
-    background-color: rgba(20, 28, 36, 0.55);
-    border: 1px solid rgba(148, 226, 213, 0.18);
-    spacing: 12px;
+    padding: 12px 16px;
+    margin: 6px 0;
+    background-color: rgba(56, 56, 56, 0.90);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    spacing: 10px;
 }
 
-.katab-research-plan-header {
-    font-size: 10.5pt;
+/* ── Title row ──────────────────────────────────────────── */
+
+.katab-research-plan-title-row {
+    spacing: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.katab-research-plan-title-icon {
+    icon-size: 16px;
+    color: #94e2d5;
+}
+
+.katab-research-plan-title {
+    font-size: 10pt;
     font-weight: 700;
     color: #94e2d5;
-    margin-bottom: 4px;
 }
 
-.katab-research-plan-task {
-    padding: 8px 10px;
-    margin: 2px 0;
-    background-color: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 6px;
+/* ── Tasks list ─────────────────────────────────────────── */
+
+.katab-research-plan-tasks {
+    spacing: 6px;
 }
 
-.katab-research-plan-task:hover {
-    background-color: rgba(148, 226, 213, 0.06);
-    border-color: rgba(148, 226, 213, 0.18);
+.katab-research-plan-task-row {
+    spacing: 2px;
+    padding: 4px 0;
 }
 
 .katab-research-plan-task-header {
-    spacing: 10px;
+    spacing: 6px;
 }
+
+/* ── Task number badge ──────────────────────────────────── */
 
 .katab-research-plan-task-num {
-    font-size: 9pt;
+    font-size: 8.5pt;
     font-weight: 700;
     color: #94e2d5;
-    min-width: 20px;
+    min-width: 16px;
 }
+
+/* ── Task label (read-only) ─────────────────────────────── */
 
 .katab-research-plan-task-label {
-    font-size: 9.5pt;
+    font-size: 9pt;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.88);
+    color: rgba(255, 255, 255, 0.82);
 }
+
+/* ── Task done (checkmark applied) ──────────────────────── */
+
+.katab-research-plan-task-label.katab-research-plan-task-done {
+    color: #a6e3a1;
+}
+
+/* ── Task search query (read-only) ──────────────────────── */
 
 .katab-research-plan-task-query {
-    font-size: 8pt;
-    color: rgba(255, 255, 255, 0.48);
+    font-size: 7.6pt;
+    color: rgba(255, 255, 255, 0.38);
     font-family: monospace;
-    margin-top: 2px;
+    padding-left: 22px;
 }
 
-.katab-research-plan-actions {
-    spacing: 10px;
-    margin-top: 8px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+/* ── What-happens-next hint ──────────────────────────────── */
+
+.katab-research-plan-hint {
+    font-size: 7.8pt;
+    color: rgba(255, 255, 255, 0.38);
+    padding: 6px 0 2px 0;
 }
+
+/* ── Footer ─────────────────────────────────────────────── */
+
+.katab-research-plan-footer {
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    spacing: 10px;
+}
+
+/* ── Primary button (Start research / Save Edits) ────────── */
 
 .katab-research-plan-btn {
-    padding: 8px 16px;
+    padding: 7px 16px;
     border-radius: 8px;
     font-size: 9pt;
     font-weight: 600;
@@ -4873,112 +4989,88 @@
     color: #c8fff7;
 }
 
-.katab-research-plan-approved {
-    opacity: 0.6;
-}
+/* ── Text link button (Edit plan / Cancel) ───────────────── */
 
-/* ════════════════════════════════════════════
-   RESEARCH PROGRESS CARD (Live execution status)
-   ════════════════════════════════════════════ */
-
-.katab-research-progress-card {
-    padding: 12px 16px;
-    margin: 6px 0;
-    background-color: rgba(20, 28, 36, 0.48);
-    border: 1px solid rgba(148, 226, 213, 0.14);
-    spacing: 8px;
-}
-
-.katab-research-progress-header {
+.katab-research-plan-link-btn {
+    padding: 4px 8px;
     font-size: 9pt;
-    font-weight: 700;
+    font-weight: 500;
+    color: rgba(148, 226, 213, 0.60);
+    background-color: transparent;
+    border: none;
+}
+
+.katab-research-plan-link-btn:hover {
     color: #94e2d5;
-    margin-bottom: 2px;
+    text-decoration: underline;
 }
 
-.katab-research-progress-branch {
-    spacing: 10px;
-    padding: 5px 6px;
+/* ── Approved state (kept visible, subtly dimmed) ────────── */
+
+.katab-research-plan-approved {
+    opacity: 0.78;
 }
 
-.katab-research-progress-status {
-    icon-size: 14px;
-    min-width: 16px;
-}
+/* ── Edit mode: St.Entry widgets ────────────────────────── */
 
-.katab-research-progress-status.pending {
-    color: rgba(255, 255, 255, 0.32);
-}
-
-.katab-research-progress-status.searching {
-    color: #89b4fa;
-}
-
-.katab-research-progress-status.scraping {
-    color: #f9e2af;
-}
-
-.katab-research-progress-status.compressing {
-    color: #cba6f7;
-}
-
-.katab-research-progress-status.done {
-    color: #a6e3a1;
-}
-
-.katab-research-progress-status.error {
-    color: #f38ba8;
-}
-
-.katab-research-progress-status.analyzing {
-    color: #cba6f7;
-}
-
-.katab-research-progress-status.refining {
-    color: #f9e2af;
-}
-
-.katab-research-progress-status.outlining {
-    color: #89b4fa;
-}
-
-.katab-research-progress-status.writing {
-    color: #a6e3a1;
-}
-
-.katab-research-progress-phase {
-    font-size: 7.8pt;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.38);
-    margin-top: 4px;
-    margin-bottom: 2px;
-    padding: 0 6px;
-}
-
-.katab-research-progress-label {
+.katab-research-plan-task-entry {
+    padding: 5px 7px;
+    border: 1px solid rgba(148, 226, 213, 0.22);
+    border-radius: 5px;
+    background-color: rgba(20, 28, 36, 0.60);
     font-size: 8.8pt;
-    color: rgba(255, 255, 255, 0.72);
+    color: rgba(255, 255, 255, 0.82);
+    caret-color: #94e2d5;
+    selection-background-color: rgba(148, 226, 213, 0.30);
+    selection-color: #ffffff;
 }
 
-/* ── Light theme overrides ─────────────────────────────── */
+.katab-research-plan-task-label-entry {
+    font-weight: 600;
+    font-size: 9pt;
+}
+
+.katab-research-plan-task-query-entry {
+    font-family: monospace;
+    font-size: 7.8pt;
+    color: rgba(255, 255, 255, 0.60);
+    margin-left: 22px;
+    margin-top: 2px;
+}
+
+.katab-research-plan-task-entry:focus {
+    border-color: rgba(148, 226, 213, 0.50);
+    background-color: rgba(25, 35, 45, 0.78);
+    color: #ffffff;
+}
+
+.katab-research-plan-task-entry-invalid {
+    border-color: rgba(243, 139, 168, 0.50);
+    background-color: rgba(243, 139, 168, 0.05);
+}
+
+.katab-research-plan-task-entry-invalid:focus {
+    border-color: rgba(243, 139, 168, 0.70);
+    background-color: rgba(243, 139, 168, 0.10);
+}
+
+/* ── Light theme: plan card ─────────────────────────────── */
 
 .katab-theme-light .katab-research-plan-card {
-    background-color: rgba(225, 242, 239, 0.55);
-    border-color: rgba(15, 118, 110, 0.22);
+    background-color: rgba(245, 245, 245, 0.92);
+    border-color: rgba(0, 0, 0, 0.06);
 }
 
-.katab-theme-light .katab-research-plan-header {
+.katab-theme-light .katab-research-plan-title-row {
+    border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+
+.katab-theme-light .katab-research-plan-title-icon {
     color: #0f766e;
 }
 
-.katab-theme-light .katab-research-plan-task {
-    background-color: rgba(0, 0, 0, 0.02);
-    border-color: rgba(0, 0, 0, 0.04);
-}
-
-.katab-theme-light .katab-research-plan-task:hover {
-    background-color: rgba(15, 118, 110, 0.06);
-    border-color: rgba(15, 118, 110, 0.16);
+.katab-theme-light .katab-research-plan-title {
+    color: #0f766e;
 }
 
 .katab-theme-light .katab-research-plan-task-num {
@@ -4986,15 +5078,23 @@
 }
 
 .katab-theme-light .katab-research-plan-task-label {
-    color: rgba(0, 0, 0, 0.78);
+    color: rgba(0, 0, 0, 0.72);
+}
+
+.katab-theme-light .katab-research-plan-task-label.katab-research-plan-task-done {
+    color: #2d8a4e;
 }
 
 .katab-theme-light .katab-research-plan-task-query {
-    color: rgba(0, 0, 0, 0.42);
+    color: rgba(0, 0, 0, 0.36);
 }
 
-.katab-theme-light .katab-research-plan-actions {
-    border-top-color: rgba(0, 0, 0, 0.06);
+.katab-theme-light .katab-research-plan-hint {
+    color: rgba(0, 0, 0, 0.34);
+}
+
+.katab-theme-light .katab-research-plan-footer {
+    border-top-color: rgba(0, 0, 0, 0.05);
 }
 
 .katab-theme-light .katab-research-plan-btn {
@@ -5020,26 +5120,370 @@
     color: #0b5f59;
 }
 
-.katab-theme-light .katab-research-progress-card {
-    background-color: rgba(225, 242, 239, 0.48);
-    border-color: rgba(15, 118, 110, 0.18);
+.katab-theme-light .katab-research-plan-link-btn {
+    color: rgba(15, 118, 110, 0.52);
 }
 
-.katab-theme-light .katab-research-progress-header {
+.katab-theme-light .katab-research-plan-link-btn:hover {
     color: #0f766e;
 }
 
-.katab-theme-light .katab-research-progress-label {
-    color: rgba(0, 0, 0, 0.62);
+/* ── Light theme: edit mode entries ─────────────────────── */
+
+.katab-theme-light .katab-research-plan-task-entry {
+    border-color: rgba(15, 118, 110, 0.24);
+    background-color: rgba(245, 250, 248, 0.75);
+    color: rgba(0, 0, 0, 0.74);
+    caret-color: #0f766e;
+    selection-background-color: rgba(15, 118, 110, 0.18);
+    selection-color: rgba(0, 0, 0, 0.88);
 }
 
-.katab-theme-light .katab-research-progress-phase {
-    color: rgba(0, 0, 0, 0.35);
+.katab-theme-light .katab-research-plan-task-query-entry {
+    color: rgba(0, 0, 0, 0.48);
+}
+
+.katab-theme-light .katab-research-plan-task-entry:focus {
+    border-color: rgba(15, 118, 110, 0.50);
+    background-color: rgba(235, 245, 240, 0.92);
+    color: rgba(0, 0, 0, 0.85);
+}
+
+.katab-theme-light .katab-research-plan-task-entry-invalid {
+    border-color: rgba(220, 60, 80, 0.45);
+    background-color: rgba(220, 60, 80, 0.05);
+}
+
+.katab-theme-light .katab-research-plan-task-entry-invalid:focus {
+    border-color: rgba(220, 60, 80, 0.65);
+    background-color: rgba(220, 60, 80, 0.10);
 }
 
 /* ════════════════════════════════════════════
-   INLINE CITATION BUTTONS
+   RESEARCH TIMELINE (Progressive Narrative UI)
    ════════════════════════════════════════════ */
+
+.katab-research-timeline {
+    padding: 10px 14px;
+    margin: 6px 0;
+    background-color: rgba(56, 56, 56, 0.50);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    spacing: 0;
+}
+
+/* ── Timeline header ────────────────────── */
+
+.katab-research-timeline-header {
+    spacing: 8px;
+    padding: 4px 0 8px 0;
+}
+
+.katab-research-timeline-header-icon {
+    icon-size: 15px;
+    color: #94e2d5;
+}
+
+.katab-research-timeline-header-label {
+    font-size: 9.2pt;
+    font-weight: 700;
+    color: #94e2d5;
+}
+
+/* ── Phase section header ────────────────── */
+
+.katab-research-timeline-phase {
+    spacing: 6px;
+    padding: 10px 0 4px 0;
+}
+
+.katab-research-timeline-phase-label {
+    font-size: 7.8pt;
+    font-weight: 700;
+    color: rgba(148, 226, 213, 0.55);
+    letter-spacing: 0.5px;
+}
+
+/* ── Timeline entry (icon + content row) ─── */
+
+.katab-research-timeline-entry {
+    spacing: 10px;
+    padding: 6px 4px 6px 2px;
+}
+
+.katab-research-timeline-entry:hover {
+    background-color: rgba(148, 226, 213, 0.05);
+}
+
+/* ── Completed entry (collapsed one-liner) ── */
+
+.katab-research-timeline-entry-done {
+    padding: 4px 4px 4px 2px;
+}
+
+.katab-research-timeline-entry-done:hover {
+    background-color: rgba(166, 227, 161, 0.06);
+}
+
+/* ── Left icon column ───────────────────── */
+
+.katab-research-timeline-icon-col {
+    width: 22px;
+    min-width: 22px;
+    padding-top: 2px;
+}
+
+.katab-research-timeline-icon {
+    icon-size: 14px;
+}
+
+.katab-research-timeline-icon.planning {
+    color: #cba6f7;
+}
+
+.katab-research-timeline-icon.searching {
+    color: #89b4fa;
+}
+
+.katab-research-timeline-icon.scraping {
+    color: #f9e2af;
+}
+
+.katab-research-timeline-icon.compressing {
+    color: #cba6f7;
+}
+
+.katab-research-timeline-icon.done {
+    color: #a6e3a1;
+}
+
+.katab-research-timeline-icon.error {
+    color: #f38ba8;
+}
+
+.katab-research-timeline-icon.analyzing {
+    color: #cba6f7;
+}
+
+.katab-research-timeline-icon.refining {
+    color: #f9e2af;
+}
+
+.katab-research-timeline-icon.outlining {
+    color: #89b4fa;
+}
+
+.katab-research-timeline-icon.writing {
+    color: #a6e3a1;
+}
+
+/* ── Content column ─────────────────────── */
+
+.katab-research-timeline-content {
+    x_expand: true;
+    spacing: 2px;
+}
+
+.katab-research-timeline-title {
+    font-size: 9pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.katab-research-timeline-desc {
+    font-size: 8pt;
+    color: rgba(255, 255, 255, 0.48);
+}
+
+/* ── Sub-items container (search results, page reads) ── */
+
+.katab-research-timeline-subitems {
+    spacing: 4px;
+    margin: 6px 0 2px 0;
+}
+
+/* ── Timeline complete (dimmed) ──────────── */
+
+.katab-research-timeline-complete {
+    opacity: 0.62;
+}
+
+/* ════════════════════════════════════════════
+   SEARCH RESULT CARDS (Inline Research Snippets)
+   ════════════════════════════════════════════ */
+
+.katab-search-result-card {
+    spacing: 8px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    background-color: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(148, 226, 213, 0.10);
+    border-left: 2px solid rgba(148, 226, 213, 0.18);
+    reactive: true;
+    track_hover: true;
+}
+
+.katab-search-result-card:hover {
+    background-color: rgba(148, 226, 213, 0.07);
+    border-color: rgba(148, 226, 213, 0.20);
+    border-left-color: rgba(148, 226, 213, 0.35);
+}
+
+.katab-search-result-icon {
+    icon-size: 14px;
+    min-width: 16px;
+    margin-top: 1px;
+}
+
+.katab-search-result-icon.google {
+    color: #89b4fa;
+}
+
+.katab-search-result-icon.arxiv {
+    color: #f38ba8;
+}
+
+.katab-search-result-icon.github {
+    color: #a6e3a1;
+}
+
+.katab-search-result-icon.wikipedia {
+    color: #f9e2af;
+}
+
+.katab-search-result-icon.generic {
+    color: rgba(148, 226, 213, 0.55);
+}
+
+.katab-search-result-text {
+    spacing: 1px;
+    x_expand: true;
+}
+
+.katab-search-result-title {
+    font-size: 8.2pt;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.katab-search-result-host {
+    font-size: 7.2pt;
+    color: rgba(255, 255, 255, 0.36);
+}
+
+.katab-search-result-snippet {
+    font-size: 7.8pt;
+    color: rgba(255, 255, 255, 0.52);
+    line-height: 1.4;
+}
+
+/* ── Page read status row ───────────────── */
+.katab-page-read-row {
+    spacing: 8px;
+    padding: 2px 0 2px 2px;
+}
+
+.katab-page-read-icon {
+    icon-size: 12px;
+    min-width: 14px;
+}
+
+.katab-page-read-icon.success {
+    color: #a6e3a1;
+}
+
+.katab-page-read-icon.reading {
+    color: #89b4fa;
+}
+
+.katab-page-read-icon.error {
+    color: #f38ba8;
+}
+
+.katab-page-read-url {
+    font-size: 7.6pt;
+    color: rgba(255, 255, 255, 0.45);
+    font-family: monospace;
+}
+
+.katab-page-read-size {
+    font-size: 7.6pt;
+    color: rgba(255, 255, 255, 0.32);
+    font-family: monospace;
+}
+
+/* ════════════════════════════════════════════
+/* ── Light theme: Research Timeline ─────── */
+
+.katab-theme-light .katab-research-timeline {
+    background-color: rgba(245, 245, 245, 0.58);
+    border-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-research-timeline-header-icon {
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-research-timeline-header-label {
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-research-timeline-entry:hover {
+    background-color: rgba(15, 118, 110, 0.06);
+}
+
+.katab-theme-light .katab-research-timeline-entry-done:hover {
+    background-color: rgba(45, 138, 78, 0.08);
+}
+
+.katab-theme-light .katab-research-timeline-title {
+    color: rgba(0, 0, 0, 0.78);
+}
+
+.katab-theme-light .katab-research-timeline-desc {
+    color: rgba(0, 0, 0, 0.42);
+}
+
+.katab-theme-light .katab-research-timeline-phase-label {
+    color: rgba(15, 118, 110, 0.55);
+}
+
+.katab-theme-light .katab-research-timeline-complete {
+    opacity: 0.60;
+}
+
+/* ── Light theme: Search Result Cards ────── */
+.katab-theme-light .katab-search-result-card {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-color: rgba(15, 118, 110, 0.12);
+    border-left-color: rgba(15, 118, 110, 0.18);
+}
+
+.katab-theme-light .katab-search-result-card:hover {
+    background-color: rgba(15, 118, 110, 0.08);
+    border-color: rgba(15, 118, 110, 0.22);
+    border-left-color: rgba(15, 118, 110, 0.36);
+}
+
+.katab-theme-light .katab-search-result-title {
+    color: rgba(0, 0, 0, 0.75);
+}
+
+.katab-theme-light .katab-search-result-host {
+    color: rgba(0, 0, 0, 0.38);
+}
+
+.katab-theme-light .katab-search-result-snippet {
+    color: rgba(0, 0, 0, 0.50);
+}
+
+/* ── Light theme: Page Read Rows ─────────── */
+.katab-theme-light .katab-page-read-url {
+    color: rgba(0, 0, 0, 0.42);
+}
+
+.katab-theme-light .katab-page-read-size {
+    color: rgba(0, 0, 0, 0.30);
+}
 
 .katab-citation-inline-row {
     spacing: 0;
@@ -5084,4 +5528,78 @@
 .katab-theme-light .katab-citation-inline-btn:active {
     background-color: rgba(15, 118, 110, 0.24);
     color: #09423b;
+}
+
+/* ── Quality check notice ──────────────────────────────── */
+/* Post-synthesis notice shown when research quality falls below threshold. */
+
+.katab-quality-notice {
+    spacing: 8px;
+    padding: 12px 14px;
+    margin: 8px 0;
+    background-color: rgba(245, 194, 68, 0.08);
+    border: 1px solid rgba(245, 194, 68, 0.25);
+    border-radius: 6px;
+}
+
+.katab-quality-notice-header {
+    font-size: 8.8pt;
+    font-weight: 700;
+    color: #f5c244;
+}
+
+.katab-quality-notice-item {
+    font-size: 8.2pt;
+    color: rgba(255, 255, 255, 0.65);
+    line-height: 1.4;
+}
+
+.katab-quality-notice-btn {
+    padding: 6px 14px;
+    margin-top: 4px;
+    background-color: rgba(245, 194, 68, 0.15);
+    border: 1px solid rgba(245, 194, 68, 0.3);
+    border-radius: 4px;
+    font-size: 8.4pt;
+    font-weight: 600;
+    color: #f5c244;
+}
+
+.katab-quality-notice-btn:hover {
+    background-color: rgba(245, 194, 68, 0.22);
+    border-color: rgba(245, 194, 68, 0.45);
+}
+
+.katab-quality-notice-btn:active {
+    background-color: rgba(245, 194, 68, 0.28);
+}
+
+/* ── Light theme overrides ─────────────────────────────── */
+
+.katab-theme-light .katab-quality-notice {
+    background-color: rgba(180, 140, 30, 0.08);
+    border-color: rgba(180, 140, 30, 0.25);
+}
+
+.katab-theme-light .katab-quality-notice-header {
+    color: #b88a20;
+}
+
+.katab-theme-light .katab-quality-notice-item {
+    color: rgba(0, 0, 0, 0.65);
+}
+
+.katab-theme-light .katab-quality-notice-btn {
+    background-color: rgba(180, 140, 30, 0.12);
+    border-color: rgba(180, 140, 30, 0.3);
+    color: #b88a20;
+}
+
+.katab-theme-light .katab-quality-notice-btn:hover {
+    background-color: rgba(180, 140, 30, 0.2);
+    border-color: rgba(180, 140, 30, 0.45);
+}
+
+.katab-theme-light .katab-quality-notice-btn:active {
+    background-color: rgba(180, 140, 30, 0.26);
 }

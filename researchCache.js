@@ -357,3 +357,173 @@ export function invalidateCacheEntry(type, key) {
     if (idx >= 0) _cache.order.splice(idx, 1);
     _scheduleFlush();
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Research Checkpoint Persistence
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Saves the active deep research state to disk so it survives extension
+// reloads, shell restarts, or crashes.  Only ONE checkpoint file exists at
+// any time — each save overwrites the previous.
+
+const CHECKPOINT_FILE = 'research-checkpoint.json';
+const MAX_CHECKPOINT_FINDINGS_CHARS = 8000;
+const MAX_CHECKPOINT_FACTS_PER_BRANCH = 20;
+const MAX_CHECKPOINT_FILE_BYTES = 2 * 1024 * 1024;
+const CHECKPOINT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function _checkpointFilePath() {
+    const dataDir = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'share', 'katabai']);
+    const dir = Gio.File.new_for_path(dataDir);
+    if (!dir.query_exists(null)) {
+        dir.make_directory_with_parents(null);
+    }
+    return GLib.build_filenamev([dataDir, CHECKPOINT_FILE]);
+}
+
+/**
+ * Serialize the current deep research state for crash recovery.
+ *
+ * The checkpoint is aggressively trimmed so it never exceeds 2 MB.
+ * UI-only state (timeline entries, DOM refs) is excluded.
+ *
+ * @param {Object} state — flat object:
+ *   plan, originalQuery, branchResults, refinementResults,
+ *   gapRationale, synthesisOutline, citationEntries, urlToNumber,
+ *   globalContext, messageHistoryLength, conversationId
+ */
+export function saveResearchCheckpoint(state) {
+    try {
+        const trimBranch = (r) => {
+            if (!r) return null;
+            const findings = String(r.findings || '');
+            const trimmed = findings.length > MAX_CHECKPOINT_FINDINGS_CHARS
+                ? findings.slice(0, MAX_CHECKPOINT_FINDINGS_CHARS) + '\n[...checkpoint truncated...]'
+                : findings;
+            const facts = Array.isArray(r.facts)
+                ? r.facts.slice(0, MAX_CHECKPOINT_FACTS_PER_BRANCH)
+                : [];
+            const sources = Array.isArray(r.sources) ? r.sources.slice(0, 50) : [];
+            return {
+                topic: String(r.topic || ''),
+                findings: trimmed,
+                facts,
+                sources,
+                pageCount: typeof r.pageCount === 'number' ? r.pageCount : 0,
+            };
+        };
+
+        let cleanedContext = null;
+        if (state.globalContext) {
+            cleanedContext = {
+                summaries: (state.globalContext.summaries || []).map(s => ({
+                    topic: String(s.topic || ''),
+                    gist: String(s.gist || '').slice(0, 500),
+                    sourceCount: s.sourceCount || 0,
+                })),
+                coveredUrls: Array.isArray(state.globalContext.coveredUrls)
+                    ? state.globalContext.coveredUrls.slice(0, 200)
+                    : [],
+                keyFacts: (state.globalContext.keyFacts || []).slice(0, 20),
+            };
+        }
+
+        let payload = {
+            version: 1,
+            savedAt: Date.now(),
+            plan: state.plan || [],
+            originalQuery: String(state.originalQuery || ''),
+            branchResults: (state.branchResults || []).map(trimBranch).filter(Boolean),
+            refinementResults: (state.refinementResults || []).map(trimBranch).filter(Boolean),
+            gapRationale: String(state.gapRationale || '').slice(0, 2000),
+            synthesisOutline: state.synthesisOutline || null,
+            citationEntries: (state.citationEntries || []).slice(0, 200),
+            urlToNumber: (state.urlToNumber || []).slice(0, 200),
+            globalContext: cleanedContext,
+            messageHistoryLength: state.messageHistoryLength || 0,
+            conversationId: String(state.conversationId || ''),
+        };
+
+        const encoder = new TextEncoder();
+        let data = encoder.encode(JSON.stringify(payload));
+        if (data.length > MAX_CHECKPOINT_FILE_BYTES) {
+            log(`[Katab:checkpoint] Payload ${data.length} bytes exceeds cap — aggressively trimming.`);
+            for (const br of (payload.branchResults || [])) {
+                const half = Math.floor(br.findings.length / 2);
+                br.findings = br.findings.slice(0, half) + '\n[...aggressively trimmed...]';
+                br.facts = br.facts.slice(0, Math.floor(MAX_CHECKPOINT_FACTS_PER_BRANCH / 2));
+                br.sources = br.sources.slice(0, 25);
+            }
+            for (const rr of (payload.refinementResults || [])) {
+                const half = Math.floor(rr.findings.length / 2);
+                rr.findings = rr.findings.slice(0, half) + '\n[...aggressively trimmed...]';
+                rr.facts = rr.facts.slice(0, Math.floor(MAX_CHECKPOINT_FACTS_PER_BRANCH / 2));
+                rr.sources = rr.sources.slice(0, 25);
+            }
+            payload.citationEntries = payload.citationEntries.slice(0, 100);
+            payload.urlToNumber = payload.urlToNumber.slice(0, 100);
+            data = encoder.encode(JSON.stringify(payload));
+            log(`[Katab:checkpoint] After aggressive trim: ${data.length} bytes.`);
+        }
+
+        const file = Gio.File.new_for_path(_checkpointFilePath());
+        file.replace_contents(data, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        log(`[Katab:checkpoint] Checkpoint saved — ${data.length} bytes, ${(payload.branchResults || []).length + (payload.refinementResults || []).length} branches.`);
+    } catch (e) {
+        log(`[Katab:checkpoint] Failed to write checkpoint: ${e.message}`);
+    }
+}
+
+/**
+ * Load a previously saved research checkpoint (if any and not stale).
+ * Returns null if no checkpoint exists, it's >24h old, or parsing fails.
+ */
+export function loadResearchCheckpoint() {
+    try {
+        const file = Gio.File.new_for_path(_checkpointFilePath());
+        if (!file.query_exists(null)) return null;
+
+        const info = file.query_info('time::modified', Gio.FileQueryInfoFlags.NONE, null);
+        const mtimeSec = info.get_modification_date_time()?.to_unix() || 0;
+        const age = Date.now() - (mtimeSec * 1000);
+        if (age > CHECKPOINT_MAX_AGE_MS) {
+            log(`[Katab:checkpoint] Stale checkpoint (${Math.round(age / 3600000)}h old) — deleting.`);
+            file.delete(null);
+            return null;
+        }
+
+        const [ok, contents] = file.load_contents(null);
+        if (!ok) return null;
+
+        const decoder = new TextDecoder('utf-8');
+        const payload = JSON.parse(decoder.decode(contents));
+
+        if (!payload || payload.version !== 1 || !Array.isArray(payload.plan)) {
+            log('[Katab:checkpoint] Invalid checkpoint format — deleting.');
+            file.delete(null);
+            return null;
+        }
+
+        log(`[Katab:checkpoint] Valid checkpoint found — ${payload.plan.length} plan items, ${(payload.branchResults || []).length} branches.`);
+        return payload;
+    } catch (e) {
+        log(`[Katab:checkpoint] Failed to load checkpoint: ${e.message}`);
+        return null;
+    }
+}
+
+/**
+ * Remove the checkpoint file.  Call on research completion, cancellation,
+ * new chat, or after successfully restoring state from a checkpoint.
+ */
+export function clearResearchCheckpoint() {
+    try {
+        const file = Gio.File.new_for_path(_checkpointFilePath());
+        if (file.query_exists(null)) {
+            file.delete(null);
+            log('[Katab:checkpoint] Checkpoint deleted.');
+        }
+    } catch (e) {
+        log(`[Katab:checkpoint] Failed to delete checkpoint: ${e.message}`);
+    }
+}
