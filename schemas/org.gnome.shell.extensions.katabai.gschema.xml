@@ -444,6 +444,44 @@
       <description>Forces the model to return a valid JSON object. Katab automatically injects a JSON reminder into the system prompt if needed.</description>
     </key>
 
+    <!-- DeepSeek Vision Model (Image Support) -->
+    <!-- DeepSeek V4 models are text-only. When images are attached while
+         DeepSeek is the active provider, Katab routes them through a
+         separately-configured vision model (Ollama or any OpenAI-compatible
+         endpoint). In 'preprocess' mode the vision model produces a text
+         analysis that is fed to DeepSeek, which writes the final answer; in
+         'direct' mode the whole request is routed to the vision model. -->
+    <key name="deepseek-vision-backend" type="s">
+      <default>''</default>
+      <summary>Vision Model Backend</summary>
+      <description>Which backend serves image analysis for DeepSeek requests. Empty disables image support; 'ollama' reuses the local Ollama instance and its installed models; 'openai' uses any OpenAI-compatible vision endpoint.</description>
+    </key>
+    <key name="deepseek-vision-mode" type="s">
+      <default>'preprocess'</default>
+      <summary>Vision Routing Mode</summary>
+      <description>'preprocess' sends attached images to the vision model for a text analysis, then passes that analysis to DeepSeek which writes the final answer. 'direct' routes the whole request to the vision model, which replies directly.</description>
+    </key>
+    <key name="deepseek-vision-model" type="s">
+      <default>''</default>
+      <summary>Vision Model</summary>
+      <description>The model that analyzes images. For Ollama, use a vision-capable model (e.g. llama3.2-vision, qwen2.5vl, llava, janus-pro, deepseek-vl2). For OpenAI-compatible endpoints, use any vision-capable model. DeepSeek text models cannot be used here.</description>
+    </key>
+    <key name="deepseek-vision-fallback-model" type="s">
+      <default>''</default>
+      <summary>Vision Fallback Model</summary>
+      <description>Optional secondary model tried if the primary vision model is unavailable or times out. Uses the same backend as the primary vision model.</description>
+    </key>
+    <key name="deepseek-vision-url" type="s">
+      <default>''</default>
+      <summary>Vision Base URL</summary>
+      <description>The base URL of the OpenAI-compatible vision endpoint. Only used when Vision Model Backend is 'openai'. Leave empty to fall back to the DeepSeek base URL (only useful behind a compatible proxy).</description>
+    </key>
+    <key name="deepseek-vision-api-key" type="s">
+      <default>''</default>
+      <summary>Vision API Key</summary>
+      <description>Optional bearer token for the OpenAI-compatible vision endpoint. Only used when Vision Model Backend is 'openai'.</description>
+    </key>
+
     <!-- DeepSeek Account Balance -->
     <key name="deepseek-balance-available" type="b">
       <default>true</default>

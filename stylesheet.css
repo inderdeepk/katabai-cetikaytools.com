@@ -1421,6 +1421,31 @@
     color: rgba(20, 130, 115, 0.55);
 }
 
+/* ── DeepSeek Vision Model (Image Support): assistant "analyzing" status ──
+   Teal accent matches the tool-call log. No border-radius (same offscreen
+   framebuffer risk in the chat content area). */
+.katab-vision-status {
+    spacing: 8px;
+    padding: 8px 10px;
+    margin: 2px 0 8px 0;
+    background-color: rgba(148, 226, 213, 0.08);
+    border: 1px solid rgba(148, 226, 213, 0.32);
+}
+
+.katab-vision-status-label {
+    font-size: 10.5pt;
+    color: #94e2d5;
+}
+
+.katab-theme-light .katab-vision-status {
+    background-color: rgba(30, 140, 125, 0.08);
+    border-color: rgba(30, 140, 125, 0.32);
+}
+
+.katab-theme-light .katab-vision-status-label {
+    color: #0e7a6b;
+}
+
 /* ── DeepSeek prompt-cache savings: per-reply pill + explanation drawer ──
    Uses a mint/money-green accent (#a6e3a1) to read as "savings" and to stay
    visually distinct from the teal tool-call log. */

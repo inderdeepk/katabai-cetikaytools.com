@@ -1669,6 +1669,212 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         deepseekPage.add(deepseekReasoningGroup);
 
+        // --- DeepSeek Image Support (Vision Model) ---
+        // DeepSeek V4 models are text-only. When images are attached while
+        // DeepSeek is the active provider, Katab routes them through a
+        // separately-configured vision model (local Ollama or any
+        // OpenAI-compatible endpoint).
+        const deepseekVisionGroup = createPreferencesGroup({
+            title: 'Image Support (Vision Model)',
+            description: 'DeepSeek V4 models cannot see images. When you attach an image while DeepSeek is active, Katab analyzes it with the vision model below, then passes the analysis to DeepSeek which writes the reply. DeepSeek text models (flash/pro) cannot be used here.',
+        });
+
+        // Routing mode: preprocess (default) vs direct.
+        const visionModeValues = ['preprocess', 'direct'];
+        const visionModeLabels = [
+            'Describe images, then DeepSeek writes the answer',
+            'Route the whole request to the vision model',
+        ];
+        const visionModeRow = createChoiceRow(
+            'Routing Mode',
+            'In the default mode the vision model describes the image(s) and DeepSeek writes the final answer. In direct mode the whole request is sent to the vision model, which replies directly (no tools or thinking).',
+            deepseekVisionGroup
+        );
+        setStringList(visionModeRow, visionModeLabels);
+        visionModeRow._choiceValues = visionModeValues;
+        const syncVisionModeRow = () => {
+            const current = settings.get_string('deepseek-vision-mode') || 'preprocess';
+            const idx = visionModeValues.indexOf(current);
+            visionModeRow.selected = idx >= 0 ? idx : 0;
+        };
+        syncVisionModeRow();
+        settings.connect('changed::deepseek-vision-mode', syncVisionModeRow);
+        visionModeRow.connect('notify::selected', () => {
+            const value = visionModeRow._choiceValues?.[visionModeRow.selected] || 'preprocess';
+            if (settings.get_string('deepseek-vision-mode') !== value) {
+                settings.set_string('deepseek-vision-mode', value);
+            }
+        });
+
+        // Backend selector: off / ollama / openai.
+        const visionBackendValues = ['', 'ollama', 'openai'];
+        const visionBackendLabels = ['Disabled', 'Ollama (local)', 'OpenAI-compatible'];
+        const visionBackendRow = createChoiceRow(
+            'Vision Backend',
+            'Ollama reuses your existing Ollama URL, sampling settings (including loaded presets), and installed models. OpenAI-compatible uses any vision-capable endpoint with a URL and optional API key.',
+            deepseekVisionGroup
+        );
+        setStringList(visionBackendRow, visionBackendLabels);
+        visionBackendRow._choiceValues = visionBackendValues;
+        const syncVisionBackendRow = () => {
+            const current = settings.get_string('deepseek-vision-backend') || '';
+            const idx = visionBackendValues.indexOf(current);
+            visionBackendRow.selected = idx >= 0 ? idx : 0;
+        };
+        syncVisionBackendRow();
+        settings.connect('changed::deepseek-vision-backend', syncVisionBackendRow);
+        visionBackendRow.connect('notify::selected', () => {
+            const value = visionBackendRow._choiceValues?.[visionBackendRow.selected] || '';
+            if (settings.get_string('deepseek-vision-backend') !== value) {
+                settings.set_string('deepseek-vision-backend', value);
+            }
+        });
+
+        // "Pick installed Ollama model" helper (Ollama backend only).
+        const visionOllamaPickerRow = createButtonRow(
+            'Installed Ollama Models',
+            'Query your Ollama instance for locally installed models and pick a vision-capable one.',
+            'Pick Model\u2026',
+            () => {
+                const ollamaUrl = (settings.get_string('ollama-url') || '').replace(/\/+$/, '');
+                if (!ollamaUrl) {
+                    const dlg = new Gtk.MessageDialog({
+                        transient_for: window,
+                        modal: true,
+                        message_type: Gtk.MessageType.ERROR,
+                        buttons: Gtk.ButtonsType.CLOSE,
+                        text: 'No Ollama URL configured',
+                        secondary_text: 'Set the Ollama Base URL on the Ollama settings tab first.',
+                    });
+                    dlg.connect('response', () => dlg.destroy());
+                    dlg.present();
+                    return;
+                }
+
+                const session = new Soup.Session();
+                session.timeout = 8;
+                const message = Soup.Message.new('GET', `${ollamaUrl}/api/tags`);
+                message.request_headers.append('Accept', 'application/json');
+                const btn = visionOllamaPickerRow.activatable_widget;
+                if (btn) {
+                    btn.set_label('Loading\u2026');
+                    btn.sensitive = false;
+                }
+                session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                    if (btn) {
+                        btn.set_label('Pick Model\u2026');
+                        btn.sensitive = true;
+                    }
+                    let models = [];
+                    try {
+                        const bytes = s.send_and_read_finish(result);
+                        const body = JSON.parse(new TextDecoder('utf-8').decode(bytes.get_data() || new Uint8Array()));
+                        models = Array.isArray(body?.models) ? body.models.map(m => m.name).filter(Boolean) : [];
+                    } catch (_e) {
+                        models = [];
+                    }
+                    if (!models.length) {
+                        const dlg = new Gtk.MessageDialog({
+                            transient_for: window,
+                            modal: true,
+                            message_type: Gtk.MessageType.ERROR,
+                            buttons: Gtk.ButtonsType.CLOSE,
+                            text: 'No models found',
+                            secondary_text: 'Could not list models from the Ollama instance. Is it running and reachable at the configured URL?',
+                        });
+                        dlg.connect('response', () => dlg.destroy());
+                        dlg.present();
+                        return;
+                    }
+
+                    const list = new Gtk.StringList();
+                    for (const name of models) list.append(name);
+                    const dropdown = new Gtk.DropDown({ model: list, selected: 0 });
+                    const current = settings.get_string('deepseek-vision-model') || '';
+                    const currentIdx = models.indexOf(current);
+                    if (currentIdx >= 0) dropdown.selected = currentIdx;
+
+                    const dialog = new Gtk.MessageDialog({
+                        transient_for: window,
+                        modal: true,
+                        message_type: Gtk.MessageType.QUESTION,
+                        buttons: Gtk.ButtonsType.OK_CANCEL,
+                        text: 'Pick a vision model',
+                        secondary_text: `Select one of ${models.length} installed Ollama models. Vision-capable models include llava, llama3.2-vision, qwen2.5vl, janus-pro, deepseek-vl2.`,
+                    });
+                    dialog.get_content_area().append(dropdown);
+                    dialog.connect('response', (dlg, responseId) => {
+                        if (responseId === Gtk.ResponseType.OK) {
+                            const selectedStr = list.get_string(dropdown.selected);
+                            const selectedName = (typeof selectedStr === 'object' && selectedStr !== null) ? selectedStr.string : selectedStr;
+                            if (selectedName && settings.get_string('deepseek-vision-model') !== selectedName) {
+                                settings.set_string('deepseek-vision-model', selectedName);
+                            }
+                        }
+                        dlg.destroy();
+                    });
+                    dialog.present();
+                });
+            },
+            deepseekVisionGroup
+        );
+
+        // Vision model name (shared by both backends).
+        const visionModelRow = createStringRow(
+            'Vision Model',
+            'A vision-capable model. For Ollama: llama3.2-vision, qwen2.5vl, llava, janus-pro, deepseek-vl2, minicpm-v. For OpenAI-compatible: any vision model. DeepSeek text models are rejected.',
+            'deepseek-vision-model',
+            deepseekVisionGroup
+        );
+
+        // Optional fallback model (same backend).
+        const visionFallbackRow = createStringRow(
+            'Vision Fallback Model',
+            'Optional. Tried if the primary vision model is unavailable or times out. Uses the same backend.',
+            'deepseek-vision-fallback-model',
+            deepseekVisionGroup
+        );
+
+        // DeepSeek text-model guard notice.
+        const visionGuardRow = createInstructionRow(
+            'DeepSeek text models cannot see images',
+            'The Vision Model is set to a DeepSeek V4 model, which cannot analyze images. Choose a vision-capable model instead.',
+            deepseekVisionGroup
+        );
+
+        // OpenAI-compatible: URL + API key (only when backend=openai).
+        const visionUrlRow = createStringRow(
+            'Vision Base URL',
+            'OpenAI-compatible endpoint root. Leave empty to fall back to the DeepSeek base URL (useful behind a compatible proxy).',
+            'deepseek-vision-url',
+            deepseekVisionGroup
+        );
+        const visionKeyRow = createStringRow(
+            'Vision API Key',
+            'Optional bearer token for the vision endpoint.',
+            'deepseek-vision-api-key',
+            deepseekVisionGroup,
+            true
+        );
+
+        // Visibility: only show the rows relevant to the selected backend.
+        const syncVisionVisibility = () => {
+            const backend = settings.get_string('deepseek-vision-backend') || '';
+            const enabled = backend !== '';
+            const model = settings.get_string('deepseek-vision-model') || '';
+            visionModelRow.visible = enabled;
+            visionFallbackRow.visible = enabled;
+            visionGuardRow.visible = enabled && model.toLowerCase().startsWith('deepseek-');
+            visionOllamaPickerRow.visible = backend === 'ollama';
+            visionUrlRow.visible = backend === 'openai';
+            visionKeyRow.visible = backend === 'openai';
+        };
+        syncVisionVisibility();
+        settings.connect('changed::deepseek-vision-backend', syncVisionVisibility);
+        settings.connect('changed::deepseek-vision-model', syncVisionVisibility);
+
+        deepseekPage.add(deepseekVisionGroup);
+
         const deepseekOutputGroup = createPreferencesGroup({
             title: 'Output',
             description: 'Control structured output mode. When JSON mode is on, Katab automatically injects a JSON reminder into the system prompt if needed to satisfy the DeepSeek API requirement.',
