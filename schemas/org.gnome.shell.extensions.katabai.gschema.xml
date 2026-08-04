@@ -46,7 +46,7 @@
     <key name="pet-pinned-form" type="s">
       <default>''</default>
       <summary>Pinned Pet Companion Form</summary>
-      <description>Stable provider, crossbreed, or Mixie form identifier selected as the active companion.</description>
+      <description>Stable provider form identifier selected as the active companion.</description>
     </key>
     <key name="token-budget-enabled" type="b">
       <default>false</default>

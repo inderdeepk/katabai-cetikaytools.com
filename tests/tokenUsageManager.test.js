@@ -1,15 +1,15 @@
-import { getQualifyingPairKeys, makePairKey, PET_PROVIDERS } from '../src/pets/petCollection.js';
-import { TokenUsageManager } from '../src/usage/tokenUsageManager.js';
+import { PET_PROVIDERS } from '../src/pets/petCollection.js';
+import {
+    TokenUsageManager,
+    formatTokenCount,
+    formatCost,
+    estimateCost,
+    estimateSummaryCost,
+    isLocalModelEndpoint,
+} from '../src/usage/tokenUsageManager.js';
+import { assert, assertEqual, runTests } from './testUtils.js';
 
 TokenUsageManager._scheduleFlush = () => { TokenUsageManager._dirty = true; };
-
-function assert(condition, message) {
-    if (!condition) throw new Error(message);
-}
-
-function assertEqual(actual, expected, message) {
-    if (actual !== expected) throw new Error(`${message}: expected ${expected}, got ${actual}`);
-}
 
 function providerBucket(total, { completed = 0, stopped = 0, toolCalls = 0 } = {}) {
     return {
@@ -46,7 +46,6 @@ const tests = [
         assertEqual(store.version, 3, 'store version');
         assertEqual(Object.keys(store.collection.pets).length, 5, 'five provider pets');
         assertEqual(store.collection.pets.openai.xp, 0, 'fresh pet XP');
-        assertEqual(Object.keys(store.collection.unlockedPairs).length, 0, 'fresh pair unlocks');
     }],
     ['version 2 provider migration', () => {
         const store = versionTwoStore({
@@ -75,10 +74,8 @@ const tests = [
         assert(migrated.collection.pets.openai.hatchedAt > 0, 'hatch timestamp derived');
         assert(migrated.collection.pets.openai.lastFedAt > migrated.collection.pets.openai.hatchedAt, 'last-fed timestamp derived');
         assert(migrated.collection.pets.openai.celebratedStages.includes('sprout'), 'migrated stage acknowledged');
-        assert(migrated.collection.unlockedPairs[makePairKey('ollama', 'openai')], 'qualifying pair unlocked');
-        assertEqual(migrated.collection.mixie.unlockedAt, 0, 'Mixie remains locked');
     }],
-    ['all-provider migration unlocks Mixie silently', () => {
+    ['all-provider migration sums XP correctly', () => {
         const providers = {};
         for (const provider of PET_PROVIDERS) providers[provider] = providerBucket(10_000, { completed: 1 });
         const migrated = TokenUsageManager._migrateStore(versionTwoStore({
@@ -89,10 +86,10 @@ const tests = [
             },
         }));
 
-        assertEqual(Object.keys(migrated.collection.unlockedPairs).length, 10, 'all ten pairs unlock');
-        assert(migrated.collection.mixie.unlockedAt > 0, 'Mixie unlock timestamp');
-        assert(migrated.collection.mixie.celebrated, 'migrated Mixie is acknowledged');
-        assert(migrated.collection.mixie.celebratedStages.includes('sprout'), 'Mixie stage acknowledged');
+        assertEqual(Object.keys(migrated.collection.pets).length, 5, 'all five pets exist');
+        for (const provider of PET_PROVIDERS) {
+            assertEqual(migrated.collection.pets[provider].xp, 10_000, `${provider} XP migrated`);
+        }
     }],
     ['version 3 partial collection normalizes', () => {
         const store = versionTwoStore({});
@@ -160,64 +157,86 @@ const tests = [
         assertEqual(pet.xp, 500, 'tool turn XP');
         assertEqual(pet.replyCount, 0, 'tool turn excluded from reply count');
     }],
-    ['pair unlock emits once', () => {
-        TokenUsageManager._cache = TokenUsageManager._freshStore();
-        TokenUsageManager._cache.collection.pets.openai.xp = 10_000;
-        TokenUsageManager._cache.collection.pets.ollama.xp = 9_999;
-        const result = TokenUsageManager.recordUsageEvent({
-            eventId: 'pair-unlock',
-            provider: 'ollama',
-            promptTokens: 1,
-            status: 'completed',
-        });
-        const unlocks = result.events.filter(event => event.type === 'crossbreed-unlocked');
-        assertEqual(unlocks.length, 1, 'one pair event');
-        assertEqual(unlocks[0].pairKey, makePairKey('ollama', 'openai'), 'correct pair key');
-        assertEqual(TokenUsageManager.getUnlockedCrossbreeds().length, 1, 'pair query API');
-
-        const followUp = TokenUsageManager.recordUsageEvent({
-            eventId: 'pair-follow-up',
-            provider: 'ollama',
-            promptTokens: 1,
-            status: 'completed',
-        });
-        assertEqual(followUp.events.filter(event => event.type === 'crossbreed-unlocked').length, 0, 'pair does not repeat');
-    }],
-    ['Mixie unlock and shared stage advancement', () => {
-        TokenUsageManager._cache = TokenUsageManager._freshStore();
-        const collection = TokenUsageManager._cache.collection;
-        for (const provider of PET_PROVIDERS) collection.pets[provider].xp = 10_000;
-        collection.pets.deepseek.xp = 9_999;
-        for (const pairKey of getQualifyingPairKeys(collection)) {
-            collection.unlockedPairs[pairKey] = { unlockedAt: 1 };
-        }
-
-        const unlock = TokenUsageManager.recordUsageEvent({
-            eventId: 'mixie-unlock',
-            provider: 'deepseek',
-            promptTokens: 1,
-            status: 'completed',
-        });
-        assert(unlock.events.some(event => event.type === 'mixie-unlocked'), 'Mixie unlock event');
-        assert(TokenUsageManager._cache.collection.mixie.unlockedAt > 0, 'Mixie persisted');
-        assertEqual(TokenUsageManager.getCollectionState().mixie.stageKey, 'sprout', 'Mixie snapshot stage');
-
-        for (const provider of PET_PROVIDERS) collection.pets[provider].xp = 100_000;
-        collection.pets.deepseek.xp = 99_999;
-        const stageUp = TokenUsageManager.recordUsageEvent({
-            eventId: 'mixie-scholar',
-            provider: 'deepseek',
-            promptTokens: 1,
-            status: 'completed',
-        });
-        assert(stageUp.events.some(event => event.type === 'mixie-stage-up' && event.stageKey === 'scholar'), 'Mixie stage-up event');
-        assert(TokenUsageManager._cache.collection.mixie.celebratedStages.includes('scholar'), 'Mixie stage acknowledged');
-    }],
 ];
 
-for (const [name, run] of tests) {
-    run();
-    console.log(`PASS ${name}`);
-}
+// ── Pure function tests ────────────────────────────────────────────────────
 
-console.log(`PASS ${tests.length} token usage migration tests`);
+tests.push(
+    ['formatTokenCount: edge cases', () => {
+        assertEqual(formatTokenCount(0), '0', 'zero');
+        assertEqual(formatTokenCount(500), '500', 'sub-1k');
+        assertEqual(formatTokenCount(1_000), '1k', 'exactly 1k');
+        assertEqual(formatTokenCount(5_500), '5.5k', 'with decimal');
+        assertEqual(formatTokenCount(10_000), '10k', '10k');
+        assertEqual(formatTokenCount(999_999), '1000k', 'just under 1M rounds to k');
+        assertEqual(formatTokenCount(1_000_000), '1M', 'exactly 1M');
+        assertEqual(formatTokenCount(1_500_000), '1.5M', '1.5M');
+        assertEqual(formatTokenCount(1_000_000_000), '1B', 'exactly 1B');
+        assertEqual(formatTokenCount(2_500_000_000), '2.5B', '2.5B');
+    }],
+
+    ['formatCost: edge cases', () => {
+        assertEqual(formatCost(undefined), '—', 'undefined');
+        assertEqual(formatCost(null), '—', 'null');
+        assertEqual(formatCost(0), '<$0.01', 'zero');
+        assertEqual(formatCost(0.005), '<$0.01', 'sub-cent');
+        assertEqual(formatCost(0.50), '$0.50', 'cents');
+        assertEqual(formatCost(10), '$10.00', 'dollars');
+        assertEqual(formatCost(10.256), '$10.26', 'rounding');
+    }],
+
+    ['estimateCost: known model pricing', () => {
+        // gpt-4o: $2.50/M input, $10.00/M output
+        const cost = estimateCost('gpt-4o', 'openai', 1_000_000, 1_000_000);
+        assertEqual(cost, 12.50, 'gpt-4o 1M/1M = $12.50');
+    }],
+
+    ['estimateCost: local providers return zero', () => {
+        assertEqual(estimateCost('llama3', 'ollama', 1_000_000, 1_000_000), 0, 'ollama free');
+        assertEqual(estimateCost('mistral', 'unsloth', 1_000_000, 1_000_000), 0, 'unsloth free');
+    }],
+
+    ['estimateCost: partial matching model names', () => {
+        const cost = estimateCost('gpt-4o-2024-08-06', 'openai', 1_000_000, 0);
+        assertEqual(cost, 2.50, 'gpt-4o variant matches base pricing');
+    }],
+
+    ['estimateSummaryCost: proportional distribution', () => {
+        const summary = {
+            totalTokens: 10_000,
+            promptTokens: 6_000,
+            completionTokens: 4_000,
+            localTokens: 5_000,
+            providers: [
+                { provider: 'openai', total: 5_000 },
+                { provider: 'ollama', total: 5_000 },
+            ],
+            models: [
+                { provider: 'openai', model: 'gpt-4o', total: 5_000 },
+                { provider: 'ollama', model: 'llama3', total: 5_000 },
+            ],
+        };
+        const result = estimateSummaryCost(summary);
+        assert(result.total >= 0, 'total is non-negative');
+        assert(result.perProvider.openai.cost >= 0, 'per-provider openai cost');
+        assert(result.localSavings >= 0, 'local savings calculated');
+    }],
+
+    ['isLocalModelEndpoint: Ollama and Unsloth defaults', () => {
+        assertEqual(isLocalModelEndpoint('ollama', ''), true, 'ollama default local');
+        assertEqual(isLocalModelEndpoint('unsloth', ''), true, 'unsloth default local');
+    }],
+
+    ['isLocalModelEndpoint: localhost URLs', () => {
+        assertEqual(isLocalModelEndpoint('openai', 'http://localhost:11434'), true, 'localhost is local');
+        assertEqual(isLocalModelEndpoint('openai', 'http://127.0.0.1:8080'), true, 'loopback is local');
+    }],
+
+    ['isLocalModelEndpoint: public cloud URLs', () => {
+        assertEqual(isLocalModelEndpoint('openai', 'https://api.openai.com/v1'), false, 'api.openai.com');
+        assertEqual(isLocalModelEndpoint('deepseek', 'https://api.deepseek.com'), false, 'api.deepseek.com');
+        assertEqual(isLocalModelEndpoint('anthropic', 'https://api.anthropic.com'), false, 'api.anthropic.com');
+    }],
+);
+
+runTests(tests);

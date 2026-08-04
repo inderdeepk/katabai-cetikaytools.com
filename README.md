@@ -1,10 +1,41 @@
-# Katab (ਕਿਤਾਬ) - AI Assistant
+# Katab (ਕਿਤਾਬ) — Desktop AI Assistant for GNOME
 
-Katab (ਕਿਤਾਬ) is a beautiful GNOME desktop AI assistant, offering quick access to local Ollama endpoints and OpenAI tools right from your status bar.
+**Katab** (Punjabi for "book", ਕਿਤਾਬ) is a full-featured AI assistant embedded directly into the GNOME desktop. Access multiple LLM providers, search the web, scrape pages, run deep multi-source research, query a local knowledge base, attach documents, and collect evolving pet companions — all from a chat overlay in your top panel.
 
-## Goals
+**Supports GNOME Shell 46, 47, and 48.**
 
-The vision for Katab is to provide a seamless, integrated AI assistant directly into the GNOME desktop environment, enabling quick local and remote AI access without disrupting your workflow.
+## Features at a Glance
+
+- **5 AI Providers** — Ollama (local), Unsloth Studio (local), DeepSeek, OpenAI, and Anthropic (Claude)
+- **Streaming Chat** with markdown rendering, code highlighting, thinking/reasoning blocks, and inline citations
+- **Document Attachments** — `.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`
+- **Web Search** via self-hosted SearxNG — manual `/search` or autonomous model-driven lookups
+- **Web Scraping** via Crawl4AI — deep browser rendering with `/crawl`
+- **Deep Research** — multi-phase pipeline: planning → parallel research → gap analysis → synthesis with citations
+- **Knowledge Base** — local RAG semantic search on your indexed documents (`/kb`)
+- **Pet Collection** — 5 provider pets with 6 evolution stages, crossbreeds, and achievements
+- **Token Tracking** — local-only ledger with cost estimates, monthly budgets, and export formats
+- **Ollama Presets** — save, load, and share model configuration profiles
+- **Dark/Light Theme** — automatic detection with live switching
+- **Keyboard Shortcut** — `Ctrl+Super+C` to toggle chat
+
+---
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Documentation](#documentation)
+- [Configuration & Security](#configuration--security)
+- [Optional Tools](#optional-tools)
+  - [Document Tool](#optional-document-tool)
+  - [Web Search Tool](#optional-web-search-tool)
+- [Chat Formatting](#chat-formatting)
+- [AI Token Breakdown & Pets](#ai-token-breakdown)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
 
 ## Installation
 
@@ -34,6 +65,30 @@ The vision for Katab is to provide a seamless, integrated AI assistant directly 
    ```bash
    gnome-extensions enable katabai@cetikaytools.com
    ```
+
+## Quick Start
+
+1. **Click the Katab icon** (📖) in your GNOME top panel, or press `Ctrl+Super+C`.
+2. **Choose a provider** in the preferences: open the Extensions app → Katab → Settings → General → Model Provider.
+3. **For local AI**: install [Ollama](https://ollama.com) (`ollama serve`), pull a model (`ollama pull llama3.2`), and select Ollama as your provider.
+4. **For cloud AI**: enter your API key for DeepSeek, OpenAI, or Anthropic in their respective settings pages.
+5. **Type a message** and press Enter to send. Press `Shift+Enter` for a new line.
+
+For detailed setup and all features, see the [User Guide](Documentation/Help/UserGuide.md).
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [User Guide](Documentation/Help/UserGuide.md) | Getting started, provider setup, slash commands, tools, token breakdown, pets, troubleshooting |
+| [Architecture](Documentation/Technical/ARCHITECTURE.md) | Codebase structure, design patterns, dependencies, data flow |
+| [Security](Documentation/Technical/SECURITY.md) | Vulnerability reporting, API key practices, tool safety notes |
+| [Development Guide](Documentation/Technical/DEVELOPMENT.md) | Environment setup, coding conventions, adding providers/tools, debugging |
+| [API Reference](Documentation/Technical/API_REFERENCE.md) | Full GSettings schema reference, tool schemas, external service APIs |
+| [Deep Research](Documentation/Technical/DEEP_RESEARCH.md) | Pipeline architecture: planning, compression, gap analysis, synthesis |
+| [Testing](Documentation/Technical/TESTING.md) | Test commands, syntax validation, in-shell testing, known baseline noise |
+| [Changelog](CHANGELOG.md) | Release history and notable changes |
+| [Contributing](CONTRIBUTING.md) | Branching strategy, coding conventions, PR process |
 
 ## Configuration & Security
 
@@ -184,4 +239,4 @@ Katab keeps a private, local-only ledger of your AI token usage and turns it int
 
 ## License
 
-*(Add your license information here)*
+Katab is free software licensed under the [GNU General Public License v2.0 or later](LICENSE).

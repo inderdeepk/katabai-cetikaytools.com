@@ -24,11 +24,52 @@ check:
 
 ## test           : Run all unit tests
 test:
+	@echo "=== Phase 1: Foundation ==="
+	@echo "--- Running network guard tests ---"
+	@gjs -m tests/networkGuard.test.js
+	@echo "--- Running citation tracker tests ---"
+	@gjs -m tests/citationTracker.test.js
+	@echo "--- Running tool registry tests ---"
+	@gjs -m tests/toolRegistry.test.js
+	@echo "=== Phase 2: Research Pipeline ==="
+	@echo "--- Running compression tools tests ---"
+	@gjs -m tests/compressionTools.test.js
+	@echo "--- Running research cache tests ---"
+	@gjs -m tests/researchCache.test.js
+	@echo "=== Phase 3: Tool Implementations ==="
+	@echo "--- Running web search tools tests ---"
+	@gjs -m tests/webSearchTools.test.js
+	@echo "--- Running tool definitions tests ---"
+	@gjs -m tests/toolDefinitions.test.js
+	@echo "--- Running crawl4ai tools tests ---"
+	@gjs -m tests/crawl4aiTools.test.js
+	@echo "--- Running document tools tests ---"
+	@gjs -m tests/documentTools.test.js
+	@echo "=== Phase 4: Usage & State ==="
 	@echo "--- Running pet collection tests ---"
 	@gjs -m tests/petCollection.test.js
 	@echo "--- Running token usage manager tests ---"
 	@gjs -m tests/tokenUsageManager.test.js
+	@echo "--- Running preset manager tests ---"
+	@gjs -m tests/presetManager.test.js
 	@echo "[OK] All tests passed"
+
+## test-verbose   : Run all unit tests with per-test output
+test-verbose:
+	@echo "=== Full Test Suite (verbose) ==="
+	@gjs -m tests/networkGuard.test.js || true
+	@gjs -m tests/citationTracker.test.js || true
+	@gjs -m tests/toolRegistry.test.js || true
+	@gjs -m tests/compressionTools.test.js || true
+	@gjs -m tests/researchCache.test.js || true
+	@gjs -m tests/webSearchTools.test.js || true
+	@gjs -m tests/toolDefinitions.test.js || true
+	@gjs -m tests/crawl4aiTools.test.js || true
+	@gjs -m tests/documentTools.test.js || true
+	@gjs -m tests/petCollection.test.js || true
+	@gjs -m tests/tokenUsageManager.test.js || true
+	@gjs -m tests/presetManager.test.js || true
+	@echo "=== Done ==="
 
 ## package        : Create a distributable .zip for extensions.gnome.org
 package:

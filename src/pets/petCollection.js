@@ -31,7 +31,6 @@ export const PET_SELECTION_MODES = Object.freeze({
 });
 
 const PET_STAGE_BY_KEY = new Map(PET_STAGES.map(stage => [stage.key, stage]));
-const SPROUT_RANK = PET_STAGE_BY_KEY.get('sprout').rank;
 
 export function isPetProvider(provider) {
     return PET_PROVIDERS.includes(String(provider || ''));
@@ -90,11 +89,7 @@ export function createEmptyPetState() {
 export function createEmptyCollectionState() {
     const pets = {};
     for (const provider of PET_PROVIDERS) pets[provider] = createEmptyPetState();
-    return {
-        pets,
-        unlockedPairs: {},
-        mixie: { unlockedAt: 0, celebrated: false, celebratedStages: [] },
-    };
+    return { pets };
 }
 
 export function normalizePetState(rawPet) {
@@ -116,117 +111,23 @@ export function normalizeCollectionState(rawCollection) {
     const source = rawCollection && typeof rawCollection === 'object' ? rawCollection : {};
     const pets = {};
     for (const provider of PET_PROVIDERS) pets[provider] = normalizePetState(source.pets?.[provider]);
-
-    const unlockedPairs = {};
-    if (source.unlockedPairs && typeof source.unlockedPairs === 'object') {
-        for (const [rawKey, rawValue] of Object.entries(source.unlockedPairs)) {
-            const providers = parsePairKey(rawKey);
-            if (!providers) continue;
-            const key = makePairKey(providers[0], providers[1]);
-            unlockedPairs[key] = { unlockedAt: normalizeTimestamp(rawValue?.unlockedAt) };
-        }
-    }
-
-    const rawMixie = source.mixie && typeof source.mixie === 'object' ? source.mixie : {};
-    const mixieStage = getMixieStage({ pets });
-    const celebratedStages = Array.isArray(rawMixie.celebratedStages)
-        ? rawMixie.celebratedStages.filter((key, index, keys) => PET_STAGE_BY_KEY.has(key)
-            && getPetStageByKey(key).rank <= mixieStage.rank
-            && keys.indexOf(key) === index)
-        : [];
-
-    return {
-        pets,
-        unlockedPairs,
-        mixie: {
-            unlockedAt: normalizeTimestamp(rawMixie.unlockedAt),
-            celebrated: Boolean(rawMixie.celebrated),
-            celebratedStages,
-        },
-    };
-}
-
-export function makePairKey(firstProvider, secondProvider) {
-    if (!isPetProvider(firstProvider) || !isPetProvider(secondProvider) || firstProvider === secondProvider) return null;
-    return [firstProvider, secondProvider].sort().join('|');
-}
-
-export function parsePairKey(pairKey) {
-    const parts = String(pairKey || '').split('|');
-    if (parts.length !== 2) return null;
-    const canonical = makePairKey(parts[0], parts[1]);
-    if (!canonical || canonical !== pairKey) return null;
-    return parts;
-}
-
-export function getQualifyingPairKeys(collection) {
-    const normalized = normalizeCollectionState(collection);
-    const keys = [];
-    for (let first = 0; first < PET_PROVIDERS.length; first++) {
-        for (let second = first + 1; second < PET_PROVIDERS.length; second++) {
-            const firstProvider = PET_PROVIDERS[first];
-            const secondProvider = PET_PROVIDERS[second];
-            if (getPetStage(normalized.pets[firstProvider].xp).rank < SPROUT_RANK
-                || getPetStage(normalized.pets[secondProvider].xp).rank < SPROUT_RANK) {
-                continue;
-            }
-            keys.push(makePairKey(firstProvider, secondProvider));
-        }
-    }
-    return keys;
-}
-
-export function canUnlockMixie(collection) {
-    const normalized = normalizeCollectionState(collection);
-    return PET_PROVIDERS.every(provider => getPetStage(normalized.pets[provider].xp).rank >= SPROUT_RANK);
-}
-
-export function getMixieStage(collection) {
-    const pets = collection?.pets || {};
-    let stage = PET_STAGES.at(-1);
-    for (const provider of PET_PROVIDERS) {
-        const providerStage = getPetStage(pets[provider]?.xp);
-        if (providerStage.rank < stage.rank) stage = providerStage;
-    }
-    return stage;
+    return { pets };
 }
 
 export function providerFormId(provider) {
     return isPetProvider(provider) ? `provider:${provider}` : null;
 }
 
-export function crossbreedFormId(baseProvider, accentProvider) {
-    return makePairKey(baseProvider, accentProvider)
-        ? `crossbreed:${baseProvider}:${accentProvider}`
-        : null;
-}
-
 export function parsePetForm(formId) {
     const parts = String(formId || '').split(':');
     if (parts[0] === 'provider' && parts.length === 2 && isPetProvider(parts[1])) {
-        return { id: providerFormId(parts[1]), type: 'provider', provider: parts[1], baseProvider: parts[1], accentProvider: null };
-    }
-    if (parts[0] === 'crossbreed' && parts.length === 3 && makePairKey(parts[1], parts[2])) {
-        return { id: crossbreedFormId(parts[1], parts[2]), type: 'crossbreed', provider: parts[1], baseProvider: parts[1], accentProvider: parts[2] };
-    }
-    if (parts.length === 1 && parts[0] === 'mixie') {
-        return { id: 'mixie', type: 'mixie', provider: null, baseProvider: null, accentProvider: null };
+        return { id: providerFormId(parts[1]), type: 'provider', provider: parts[1], baseProvider: parts[1] };
     }
     return null;
 }
 
-export function isPetFormAvailable(formId, collection) {
-    const form = parsePetForm(formId);
-    if (!form) return false;
-    if (form.type === 'provider') return true;
-
-    const normalized = normalizeCollectionState(collection);
-    if (form.type === 'mixie') return normalized.mixie.unlockedAt > 0;
-    return Boolean(normalized.unlockedPairs[makePairKey(form.baseProvider, form.accentProvider)]);
-}
-
 export function resolveActivePetForm({ collection, currentProvider, selectionMode, pinnedForm }) {
-    if (selectionMode === PET_SELECTION_MODES.PINNED && isPetFormAvailable(pinnedForm, collection)) {
+    if (selectionMode === PET_SELECTION_MODES.PINNED && parsePetForm(pinnedForm)) {
         return parsePetForm(pinnedForm);
     }
     const provider = isPetProvider(currentProvider) ? currentProvider : PET_PROVIDERS[0];
@@ -238,9 +139,7 @@ export function getPetSpriteCandidates({ form, stageKey, pose = 'idle', frame = 
     if (!parsedForm) return [];
 
     const stage = getPetStageByKey(stageKey);
-    const slug = parsedForm.type === 'mixie'
-        ? 'mixie'
-        : getPetDefinition(parsedForm.baseProvider)?.directory;
+    const slug = getPetDefinition(parsedForm.baseProvider)?.directory;
     if (!slug) return [];
 
     const eggPath = `sprites/eggs/egg_${slug}.png`;
@@ -257,13 +156,6 @@ export function getPetSpriteCandidates({ form, stageKey, pose = 'idle', frame = 
     }
     candidates.push(`${prefix}_idle_01.png`, eggPath);
     return candidates.filter((path, index, paths) => paths.indexOf(path) === index);
-}
-
-export function getPetAccentPath(form) {
-    const parsedForm = typeof form === 'string' ? parsePetForm(form) : form;
-    if (!parsedForm || parsedForm.type !== 'crossbreed') return null;
-    const accentSlug = getPetDefinition(parsedForm.accentProvider)?.directory;
-    return accentSlug ? `sprites/accents/accent_${accentSlug}.png` : null;
 }
 
 export function getPetDisplayScale(stageKey) {

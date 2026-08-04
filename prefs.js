@@ -951,7 +951,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createBooleanRow(
             'Companion Celebrations',
-            'Show in-chat messages for pet hatches, growth stages, crossbreed unlocks, and Mixie milestones.',
+            'Show in-chat messages for pet hatches and growth stages.',
             'token-usage-celebrations-enabled',
             tokenUsageGroup
         );
@@ -1043,7 +1043,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createButtonRow(
             'Reset Usage Ledger',
-            'Delete local token analytics, all pet XP, crossbreed unlocks, and Mixie progress. Chat history is not affected.',
+            'Delete local token analytics and all pet XP. Chat history is not affected.',,
             'Reset',
             () => {
                 TokenUsageManager.reset();
@@ -2484,6 +2484,155 @@ export default class KatabPreferences extends ExtensionPreferences {
                 valign: Gtk.Align.CENTER,
             }), 'katab-prefs-tool-icon'));
 
+            // ---- Setup (collapsible) ----
+            const crawlSetupExpander = createExpanderRow({});
+            crawlSetupExpander.add_prefix(addCssClasses(new Gtk.Label({
+                label: 'Setup \u2014 Deploy Crawl4AI with Docker',
+                xalign: 0,
+                halign: Gtk.Align.START,
+            }), 'katab-prefs-expander-title'));
+            crawlSetupExpander.subtitle = 'Crawl4AI must be running in Docker for Katab to deep-scrape web pages.';
+            noticeGroup.add(crawlSetupExpander);
+
+            createInstructionRow('Docker Compose (Recommended)', [
+                'The official docker-compose.yml is the simplest way to deploy Crawl4AI.',
+                '',
+                '1. Clone the repository',
+                '',
+                '   git clone https://github.com/unclecode/crawl4ai.git',
+                '   cd crawl4ai',
+                '',
+                '2. Create the environment file with all required variables',
+                '',
+                '   cp deploy/docker/.llm.env.example .llm.env',
+                '   nano .llm.env',
+                '',
+                '   Add these lines (the compose file reads from .llm.env):',
+                '',
+                '   # Required — Crawl4AI API authentication token',
+                '   # Generate one with: openssl rand -hex 32',
+                '   CRAWL4AI_API_TOKEN=your-secret-token-here',
+                '',
+                '   # Recommended — prevents issued tokens from',
+                '   # being invalidated on container restart',
+                '   SECRET_KEY=another-strong-random-string',
+                '',
+                '   # Optional — Redis password for the internal cache',
+                '   # (auto-generated if left unset)',
+                '   REDIS_PASSWORD=your-redis-password',
+                '',
+                '   # Optional — LLM provider keys for AI extraction',
+                '   # Skip these if you only need basic crawling',
+                '   OPENAI_API_KEY=sk-...',
+                '   ANTHROPIC_API_KEY=...',
+                '',
+                '   The docker-compose.yml reads ALL environment',
+                '   variables from .llm.env via the env_file directive.',
+                '   Enter the same CRAWL4AI_API_TOKEN value in the',
+                '   API Token field in the Connection section below.',
+                '',
+                '3. Fix a known docker-compose.yml conflict (if needed)',
+                '',
+                '   The official docker-compose.yml may define pids_limit',
+                '   in two places, causing a Compose error:',
+                '',
+                '   "can\'t set distinct values on pids_limit and',
+                '    deploy.resources.limits.pids"',
+                '',
+                '   Fix: open docker-compose.yml and remove the line',
+                '   "pids_limit: 512" from the x-base-config section.',
+                '   (The deploy.resources.limits.pids setting is sufficient.)',
+                '',
+                '   The "version is obsolete" warning is harmless',
+                '   and can be ignored.',
+                '',
+                '4. Start Crawl4AI',
+                '',
+                '   docker compose up -d',
+                '',
+                '   The server will be available at http://localhost:11235.',
+                '',
+                '5. Verify it\'s running',
+                '',
+                '   curl http://localhost:11235/health',
+                '',
+                '   Check the logs to confirm the token was picked up:',
+                '',
+                '   docker logs crawl4ai-crawl4ai-1',
+                '',
+                '   Look for: "CRAWL4AI_API_TOKEN is set"',
+                '   If you see "CRAWL4AI_API_TOKEN is not set"',
+                '   double-check your .llm.env file.',
+                '',
+                '   You can also visit http://localhost:11235/playground',
+                '   for an interactive testing interface.',
+                '',
+                '6. Stop when done',
+                '',
+                '   docker compose down',
+            ].join('\n'), crawlSetupExpander);
+
+            createInstructionRow('Minimal Setup (Single Container)', [
+                'If you prefer not to clone the repository, you can run',
+                'the official Docker image directly:',
+                '',
+                '   docker run -d \\',
+                '     --name crawl4ai \\',
+                '     -p 11235:11235 \\',
+                '     -e CRAWL4AI_API_TOKEN=your-secret-token \\',
+                '     -e SECRET_KEY=another-strong-random-string \\',
+                '     --shm-size=1g \\',
+                '     unclecode/crawl4ai:latest',
+                '',
+                'Generate secure tokens with: openssl rand -hex 32',
+                'The --shm-size=1g flag is required for Chromium to work.',
+                'Plan for at least 4 GB RAM dedicated to this container,',
+                'especially when crawling JavaScript-heavy pages.',
+                '',
+                'Check logs to confirm the token was picked up:',
+                '',
+                '   docker logs crawl4ai',
+                '',
+                'Look for: "CRAWL4AI_API_TOKEN is set"',
+            ].join('\n'), crawlSetupExpander);
+
+            createInstructionRow('API Token Authentication', [
+                'Crawl4AI v0.9.x requires an API token for all requests.',
+                '',
+                'For Docker Compose: add CRAWL4AI_API_TOKEN to the',
+                '.llm.env file — the compose file reads all variables',
+                'from there via the env_file directive.',
+                '',
+                'For single-container: pass it with -e as shown above.',
+                '',
+                'Generate a secure token:',
+                '',
+                '   openssl rand -hex 32',
+                '',
+                'Enter the same token in the API Token field in the',
+                'Connection section below. Katab sends it as a Bearer',
+                'token in the Authorization header.',
+                '',
+                'If your instance was started without a token, Crawl4AI',
+                'auto-generates an ephemeral one and prints it in the logs.',
+                'Leave the API Token field empty for unauthenticated instances',
+                '(older versions or local dev mode).',
+            ].join('\n'), crawlSetupExpander);
+
+            createInstructionRow('Security Notes', [
+                'The Docker Compose setup is security-hardened:',
+                '\u2022 Runs as non-root user (appuser)',
+                '\u2022 Drops all Linux capabilities',
+                '\u2022 Read-only root filesystem',
+                '\u2022 No privilege escalation',
+                '\u2022 PID limit of 512',
+                '\u2022 Health check with auto-restart',
+                '',
+                'Katab connects to Crawl4AI over HTTP by default.',
+                'For remote deployments, place a reverse proxy',
+                '(nginx / Caddy) with TLS in front, or use a VPN tunnel.',
+            ].join('\n'), crawlSetupExpander);
+
             // ---- Connection ----
             const connectionGroup = createPreferencesGroup({
                 title: 'Connection',
@@ -2655,24 +2804,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                 500
             );
 
-            // ---- Setup ----
-            const setupGroup = createPreferencesGroup({
-                title: 'Crawl4AI Setup',
-                description: 'Katab does not bundle a web scraper. Deploy Crawl4AI with Docker on any machine with at least 2 GB RAM for Chromium.',
-            });
-            detailPage.add(setupGroup);
-
-            createInstructionRow(
-                'Run Crawl4AI with Docker',
-                'docker run -d --name crawl4ai -p 11235:11235 \\\n  -e CRAWL4AI_API_TOKEN=your-secret-token \\\n  --shm-size=1g unclecode/crawl4ai:0.9.0',
-                setupGroup
-            );
-
-            createInstructionRow(
-                'Security Note',
-                'Katab connects to Crawl4AI over HTTP by default. For remote deployments, place a reverse proxy (nginx / Caddy) with TLS in front, or use a VPN tunnel.',
-                setupGroup
-            );
         }
 
         // ── Knowledge Base (Local RAG) ───────────────────────────────────────

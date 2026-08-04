@@ -1,16 +1,13 @@
 import {
-    canUnlockMixie,
     createEmptyCollectionState,
-    crossbreedFormId,
-    getMixieStage,
-    getPetAccentPath,
+    getPetDefinition,
     getPetDisplayScale,
     getPetSpriteCandidates,
     getPetStage,
+    getPetStageByKey,
     getPetStageProgress,
-    getQualifyingPairKeys,
-    isPetFormAvailable,
-    makePairKey,
+    getStageKeysThrough,
+    isPetProvider,
     normalizeCollectionState,
     parsePetForm,
     PET_PROVIDERS,
@@ -18,14 +15,7 @@ import {
     providerFormId,
     resolveActivePetForm,
 } from '../src/pets/petCollection.js';
-
-function assert(condition, message) {
-    if (!condition) throw new Error(message);
-}
-
-function assertEqual(actual, expected, message) {
-    if (actual !== expected) throw new Error(`${message}: expected ${expected}, got ${actual}`);
-}
+import { assert, assertEqual, runTests } from './testUtils.js';
 
 const tests = [
     ['stage boundaries', () => {
@@ -49,58 +39,45 @@ const tests = [
             pets: {
                 openai: { xp: 10_000, replyCount: -2, celebratedStages: ['egg', 'sprout', 'unknown', 'sprout'] },
             },
-            unlockedPairs: {
-                'openai|ollama': { unlockedAt: 15 },
-                'openai|openai': { unlockedAt: 20 },
-            },
         });
         assertEqual(Object.keys(collection.pets).length, PET_PROVIDERS.length, 'all provider pets exist');
         assertEqual(collection.pets.openai.xp, 10_000, 'XP preserved');
         assertEqual(collection.pets.openai.replyCount, 0, 'reply count clamps');
         assertEqual(collection.pets.openai.celebratedStages.join(','), 'egg,sprout', 'stages normalize');
-        assertEqual(Object.keys(collection.unlockedPairs).length, 0, 'noncanonical and invalid pairs drop');
     }],
-    ['pair qualification', () => {
-        const collection = createEmptyCollectionState();
-        for (const provider of PET_PROVIDERS) collection.pets[provider].xp = 10_000;
-        const pairs = getQualifyingPairKeys(collection);
-        assertEqual(pairs.length, 10, 'five providers produce ten pairs');
-        assert(pairs.includes(makePairKey('openai', 'ollama')), 'OpenAI and Ollama pair exists');
-        collection.pets.deepseek.xp = 9_999;
-        assertEqual(getQualifyingPairKeys(collection).length, 6, 'four Sprout pets produce six pairs');
+    ['stage lookups', () => {
+        assertEqual(getPetStageByKey('sprout').rank, 2, 'sprout rank');
+        assertEqual(getPetStageByKey('archmage').rank, 5, 'archmage rank');
+        const keys = getStageKeysThrough('sprout');
+        assertEqual(keys.length, 3, 'three stages');
+        assert(keys.includes('egg'), 'egg');
+        assert(keys.includes('hatchling'), 'hatchling');
+        assert(keys.includes('sprout'), 'sprout');
     }],
-    ['Mixie progression', () => {
-        const collection = createEmptyCollectionState();
-        for (const provider of PET_PROVIDERS) collection.pets[provider].xp = 100_000;
-        assert(canUnlockMixie(collection), 'all Sprout-or-higher pets unlock Mixie');
-        assertEqual(getMixieStage(collection).key, 'scholar', 'Mixie uses shared minimum stage');
-        collection.pets.anthropic.xp = 10_000;
-        assertEqual(getMixieStage(collection).key, 'sprout', 'weakest pet controls Mixie stage');
-        collection.pets.anthropic.xp = 9_999;
-        assert(!canUnlockMixie(collection), 'Mixie remains locked below all-five Sprout');
+    ['provider lookups', () => {
+        assert(isPetProvider('openai'), 'openai');
+        assert(isPetProvider('ollama'), 'ollama');
+        assert(!isPetProvider('unknown'), 'unknown');
+        assertEqual(getPetDefinition('openai').name, 'Sparky', 'Sparky');
+        assertEqual(getPetDefinition('ollama').name, 'Ollie', 'Ollie');
     }],
-    ['form validation and active resolution', () => {
-        const collection = createEmptyCollectionState();
-        const pairKey = makePairKey('openai', 'ollama');
-        collection.unlockedPairs[pairKey] = { unlockedAt: 10 };
-        collection.mixie.unlockedAt = 11;
-
-        const crossbreedId = crossbreedFormId('openai', 'ollama');
-        assertEqual(parsePetForm(crossbreedId).baseProvider, 'openai', 'crossbreed keeps direction');
-        assert(isPetFormAvailable(crossbreedId, collection), 'unlocked pair form is available');
-        assert(isPetFormAvailable('mixie', collection), 'unlocked Mixie is available');
-        assert(!parsePetForm('crossbreed:openai:openai'), 'same-provider crossbreed is invalid');
+    ['form validation', () => {
+        const providerId = providerFormId('openai');
+        assertEqual(parsePetForm(providerId).type, 'provider', 'provider form');
+        assertEqual(parsePetForm(providerId).baseProvider, 'openai', 'base provider');
+        assertEqual(parsePetForm('not:valid'), null, 'invalid returns null');
+        assertEqual(parsePetForm('crossbreed:openai:openai'), null, 'same-provider crossbreed invalid');
 
         const pinned = resolveActivePetForm({
-            collection,
+            collection: createEmptyCollectionState(),
             currentProvider: 'anthropic',
             selectionMode: PET_SELECTION_MODES.PINNED,
-            pinnedForm: crossbreedId,
+            pinnedForm: providerId,
         });
-        assertEqual(pinned.id, crossbreedId, 'valid pin wins');
+        assertEqual(pinned.id, providerId, 'valid pin wins');
 
         const fallback = resolveActivePetForm({
-            collection,
+            collection: createEmptyCollectionState(),
             currentProvider: 'deepseek',
             selectionMode: PET_SELECTION_MODES.PINNED,
             pinnedForm: 'crossbreed:deepseek:anthropic',
@@ -118,24 +95,9 @@ const tests = [
             'sprites/ollie/ollie_baby_sleep.png,sprites/ollie/ollie_baby_idle_01.png,sprites/eggs/egg_ollie.png',
             'baby pose fallback chain'
         );
-        assertEqual(
-            getPetSpriteCandidates({ form: 'mixie', stageKey: 'sage', frame: 2 })[0],
-            'sprites/mixie/mixie_adult_idle_02.png',
-            'Mixie adult path'
-        );
-        assertEqual(
-            getPetAccentPath('crossbreed:openai:ollama'),
-            'sprites/accents/accent_ollie.png',
-            'directional accent path'
-        );
         assertEqual(getPetDisplayScale('hatchling'), 0.85, 'Hatchling scale');
         assertEqual(getPetDisplayScale('sage'), 1, 'Sage scale');
     }],
 ];
 
-for (const [name, run] of tests) {
-    run();
-    console.log(`PASS ${name}`);
-}
-
-console.log(`PASS ${tests.length} pet collection tests`);
+runTests(tests);

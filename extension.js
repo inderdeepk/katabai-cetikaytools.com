@@ -84,9 +84,7 @@ import {
 } from './src/usage/tokenUsageManager.js';
 import { PetSpriteActor } from './src/pets/petSpriteActor.js';
 import {
-    crossbreedFormId,
     getPetDefinition,
-    makePairKey,
     parsePetForm,
     PET_PROVIDERS,
     PET_SELECTION_MODES,
@@ -2014,24 +2012,12 @@ class KatabDialog {
         if (!showInChat && !showDesktop) return;
 
         const messages = [];
-        const crossbreedEvents = result.events.filter(event => event.type === 'crossbreed-unlocked');
         for (const event of result.events) {
-            if (event.type === 'crossbreed-unlocked') continue;
             if (event.type === 'pet-hatched') {
                 messages.push(`${event.petName} hatched and joined your collection!`);
             } else if (event.type === 'pet-stage-up') {
                 messages.push(`${event.petName} reached ${event.stageLabel} at ${formatTokenCount(event.xp)} XP.`);
-            } else if (event.type === 'mixie-unlocked') {
-                messages.push('Mixie unlocked! All five provider pets have reached Sprout.');
-            } else if (event.type === 'mixie-stage-up') {
-                messages.push(`Mixie reached ${event.stageLabel} as every provider pet advanced together.`);
             }
-        }
-
-        if (crossbreedEvents.length === 1) {
-            messages.push(`Crossbreed unlocked: ${crossbreedEvents[0].petNames.join(' + ')}.`);
-        } else if (crossbreedEvents.length > 1) {
-            messages.push(`${crossbreedEvents.length} new crossbreed pairs unlocked.`);
         }
 
         if (messages.length === 0) return;
@@ -4785,22 +4771,6 @@ class KatabDialog {
             };
         });
 
-        const sproutCount = PET_PROVIDERS.filter(provider => collection.pets[provider].stageRank >= 2).length;
-        const mixieUnlocked = collection.mixie.unlockedAt > 0;
-        entries.push({
-            formId: 'mixie',
-            companion: {
-                id: 'mixie',
-                ...collection.mixie,
-                stageKey: mixieUnlocked ? collection.mixie.stageKey : 'egg',
-                stageLabel: mixieUnlocked ? collection.mixie.stageLabel : 'Locked',
-            },
-            status: mixieUnlocked
-                ? `${collection.mixie.stageLabel} · Shared collection stage`
-                : `${sproutCount}/5 pets at Sprout`,
-            locked: !mixieUnlocked,
-        });
-
         const grid = new St.BoxLayout({
             vertical: true,
             x_expand: true,
@@ -4952,56 +4922,6 @@ class KatabDialog {
         info.add_child(makeActiveButton);
         preview.add_child(info);
         box.add_child(preview);
-
-        if (form.baseProvider) {
-            box.add_child(this._buildCrossbreedFormList(form.baseProvider, collection, selection.companion.id));
-        }
-    }
-
-    _buildCrossbreedFormList(baseProvider, collection, activeFormId) {
-        const section = this._createUsageCard('Crossbreed Forms');
-        for (const accentProvider of PET_PROVIDERS.filter(provider => provider !== baseProvider)) {
-            const pairKey = makePairKey(baseProvider, accentProvider);
-            const unlocked = Boolean(collection.unlockedPairs[pairKey]);
-            const formId = crossbreedFormId(baseProvider, accentProvider);
-            const row = new St.Button({
-                style_class: `katab-pet-form-row${activeFormId === formId ? ' katab-pet-form-row-active' : ''}${unlocked ? '' : ' katab-pet-form-row-locked'}`,
-                can_focus: unlocked,
-                reactive: unlocked,
-                x_expand: true,
-            });
-            const content = new St.BoxLayout({
-                vertical: false,
-                x_expand: true,
-                style_class: 'katab-pet-form-row-content',
-            });
-            content.add_child(createProviderIcon(
-                accentProvider,
-                this._extension.path,
-                'katab-pet-form-provider-icon'
-            ));
-            const text = new St.BoxLayout({ vertical: true, x_expand: true });
-            text.add_child(new St.Label({
-                text: `With ${getPetDefinition(accentProvider).name}`,
-                style_class: 'katab-pet-form-name',
-            }));
-            text.add_child(new St.Label({
-                text: unlocked
-                    ? 'Unlocked'
-                    : `Raise ${getPetDefinition(baseProvider).name} and ${getPetDefinition(accentProvider).name} to Sprout`,
-                style_class: 'katab-pet-form-status',
-            }));
-            content.add_child(text);
-            content.add_child(new St.Icon({
-                icon_name: unlocked ? 'go-next-symbolic' : 'changes-prevent-symbolic',
-                style_class: 'katab-pet-form-state-icon',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            row.set_child(content);
-            if (unlocked) row.connect('clicked', () => this._showUsagePetDetail(formId));
-            section.add_child(row);
-        }
-        return section;
     }
 
     _createUsageCard(titleText = null) {

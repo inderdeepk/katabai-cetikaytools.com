@@ -5,7 +5,6 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
 import {
-    getPetAccentPath,
     getPetDefinition,
     getPetDisplayScale,
     getPetSpriteCandidates,
@@ -23,14 +22,6 @@ const PET_STAGE_CLASSES = [
     'katab-pet-sprite-stage-sage',
     'katab-pet-sprite-stage-archmage',
 ];
-
-const PET_ACCENT_ANCHORS = {
-    ollama: { baby: { x: 0.70, y: 0.18, scale: 0.72 }, adult: { x: 0.72, y: 0.20, scale: 1 } },
-    unsloth: { baby: { x: 0.68, y: 0.24, scale: 0.72 }, adult: { x: 0.70, y: 0.28, scale: 1 } },
-    openai: { baby: { x: 0.70, y: 0.20, scale: 0.72 }, adult: { x: 0.73, y: 0.22, scale: 1 } },
-    anthropic: { baby: { x: 0.68, y: 0.22, scale: 0.72 }, adult: { x: 0.72, y: 0.24, scale: 1 } },
-    deepseek: { baby: { x: 0.68, y: 0.18, scale: 0.72 }, adult: { x: 0.72, y: 0.20, scale: 1 } },
-};
 
 const ASSET_PATH_CACHE = new Map();
 const GICON_CACHE = new Map();
@@ -65,14 +56,6 @@ class PetSpriteActor extends St.Widget {
             y_align: Clutter.ActorAlign.CENTER,
         });
         this.add_child(this._image);
-
-        this._accent = new St.Icon({
-            style_class: 'katab-pet-sprite-accent',
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-        });
-        this.add_child(this._accent);
 
         this._fallback = new St.Label({
             text: fallbackText,
@@ -147,43 +130,6 @@ class PetSpriteActor extends St.Widget {
             this._image.hide();
             this._fallback.show();
         }
-
-        this._renderAccent(stage.spriteFamily);
-    }
-
-    _renderAccent(spriteFamily) {
-        const relativePath = getPetAccentPath(this._form);
-        if (!relativePath) {
-            this._accent.hide();
-            return;
-        }
-
-        let assetPath = resolveAssetPath(this._extensionPath, [relativePath]);
-        let usesProviderFallback = false;
-        if (!assetPath) {
-            const iconFile = getPetDefinition(this._form.accentProvider)?.iconFile;
-            assetPath = iconFile ? resolveAssetPath(this._extensionPath, [`icons/${iconFile}`]) : null;
-            usesProviderFallback = Boolean(assetPath);
-        }
-        if (!assetPath) {
-            this._accent.hide();
-            return;
-        }
-
-        const family = spriteFamily === 'adult' ? 'adult' : 'baby';
-        const anchor = PET_ACCENT_ANCHORS[this._form.baseProvider]?.[family];
-        if (!anchor) {
-            this._accent.hide();
-            return;
-        }
-
-        this._accent.gicon = getFileIcon(assetPath);
-        this._accent.icon_size = Math.round((usesProviderFallback ? 22 : 32) * anchor.scale);
-        this._accent.remove_style_class_name('katab-pet-sprite-accent-provider');
-        if (usesProviderFallback) this._accent.add_style_class_name('katab-pet-sprite-accent-provider');
-        this._accent.translation_x = Math.round((anchor.x - 0.5) * this._slotSize);
-        this._accent.translation_y = Math.round((anchor.y - 0.5) * this._slotSize);
-        this._accent.show();
     }
 
     _syncAnimation() {

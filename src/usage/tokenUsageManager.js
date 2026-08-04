@@ -12,17 +12,13 @@ import Gio from 'gi://Gio';
 
 import { isBlockedHost } from '../shared/networkGuard.js';
 import {
-    canUnlockMixie,
     createEmptyCollectionState,
-    getMixieStage,
     getPetDefinition,
     getPetStage,
     getPetStageProgress,
-    getQualifyingPairKeys,
     getStageKeysThrough,
     isPetProvider,
     normalizeCollectionState,
-    parsePairKey,
     PET_PROVIDERS,
     resolveActivePetForm,
 } from '../pets/petCollection.js';
@@ -187,10 +183,9 @@ export function buildCompanionState(allSummary, recentSummary = null) {
     const stage = companionStageForTokens(total);
     const providers = allSummary?.providers || [];
     const top = providers[0] || null;
-    const isBlend = top && top.share < 0.45 && providers.length > 1;
 
     let name = 'Byte';
-    if (total > 0 && top) name = isBlend ? 'Mixie' : (COMPANION_NAMES[top.provider] || 'Byte');
+    if (total > 0 && top) name = COMPANION_NAMES[top.provider] || 'Byte';
 
     const localShare = allSummary?.localShare || 0;
     const recentLocalShare = recentSummary?.totalTokens > 0 ? (recentSummary.localShare || 0) : localShare;
@@ -354,32 +349,16 @@ export class TokenUsageManager {
         return this.getCollectionState().pets[provider];
     }
 
-    static getUnlockedCrossbreeds() {
-        const collection = normalizeCollectionState(this.load().collection);
-        return Object.entries(collection.unlockedPairs).map(([pairKey, unlock]) => ({
-            pairKey,
-            providers: parsePairKey(pairKey),
-            unlockedAt: unlock.unlockedAt,
-        }));
-    }
-
     static getActiveCompanion({ currentProvider, selectionMode, pinnedForm } = {}) {
         const collection = normalizeCollectionState(this.load().collection);
         const form = resolveActivePetForm({ collection, currentProvider, selectionMode, pinnedForm });
         const baseDefinition = form.baseProvider ? getPetDefinition(form.baseProvider) : null;
-        const accentDefinition = form.accentProvider ? getPetDefinition(form.accentProvider) : null;
-        const xp = form.type === 'mixie'
-            ? minimumPetXp(collection)
-            : collection.pets[form.baseProvider].xp;
+        const xp = collection.pets[form.baseProvider].xp;
         const progress = getPetStageProgress(xp);
 
         return {
             ...form,
-            name: form.type === 'mixie'
-                ? 'Mixie'
-                : form.type === 'crossbreed'
-                    ? `${baseDefinition.name} + ${accentDefinition.name}`
-                    : baseDefinition.name,
+            name: baseDefinition.name,
             xp,
             stageKey: progress.stage.key,
             stageLabel: progress.stage.label,
@@ -434,8 +413,6 @@ export class TokenUsageManager {
         const pet = isPetProvider(provider) ? store.collection.pets[provider] : null;
         const beforePetStage = pet ? getPetStage(pet.xp) : null;
         const wasHatched = Boolean(pet && pet.xp > 0);
-        const wasMixieUnlocked = store.collection.mixie.unlockedAt > 0;
-        const beforeMixieStage = getMixieStage(store.collection);
         const dayKey = GLib.DateTime.new_now_local().format('%Y-%m-%d');
 
         if (!store.days[dayKey]) store.days[dayKey] = { total: 0, statuses: emptyStatusCounts(), providers: {} };
@@ -507,41 +484,6 @@ export class TokenUsageManager {
                     stageKey: afterPetStage.key,
                     stageLabel: afterPetStage.label,
                     xp: pet.xp,
-                });
-            }
-
-            for (const pairKey of getQualifyingPairKeys(store.collection)) {
-                if (store.collection.unlockedPairs[pairKey]) continue;
-                store.collection.unlockedPairs[pairKey] = { unlockedAt: now };
-                const providers = parsePairKey(pairKey);
-                collectionEvents.push({
-                    type: 'crossbreed-unlocked',
-                    pairKey,
-                    providers,
-                    petNames: providers.map(key => getPetDefinition(key).name),
-                });
-            }
-
-            const mixieCanUnlock = canUnlockMixie(store.collection);
-            const afterMixieStage = getMixieStage(store.collection);
-            if (!wasMixieUnlocked && mixieCanUnlock) {
-                store.collection.mixie.unlockedAt = now;
-                store.collection.mixie.celebrated = true;
-                store.collection.mixie.celebratedStages = mergeStageKeys([], afterMixieStage.key);
-                collectionEvents.push({
-                    type: 'mixie-unlocked',
-                    stageKey: afterMixieStage.key,
-                    stageLabel: afterMixieStage.label,
-                });
-            } else if (wasMixieUnlocked && afterMixieStage.rank > beforeMixieStage.rank) {
-                store.collection.mixie.celebratedStages = mergeStageKeys(
-                    store.collection.mixie.celebratedStages,
-                    afterMixieStage.key
-                );
-                collectionEvents.push({
-                    type: 'mixie-stage-up',
-                    stageKey: afterMixieStage.key,
-                    stageLabel: afterMixieStage.label,
                 });
             }
         }
@@ -731,31 +673,7 @@ function buildCollectionSnapshot(rawCollection) {
         };
     }
 
-    const mixieXp = minimumPetXp(collection);
-    const mixieProgress = getPetStageProgress(mixieXp);
-    return {
-        pets,
-        unlockedPairs: Object.fromEntries(
-            Object.entries(collection.unlockedPairs).map(([key, value]) => [key, { ...value }])
-        ),
-        mixie: {
-            ...collection.mixie,
-            name: 'Mixie',
-            xp: mixieXp,
-            stageKey: mixieProgress.stage.key,
-            stageLabel: mixieProgress.stage.label,
-            stageRank: mixieProgress.stage.rank,
-            spriteFamily: mixieProgress.stage.spriteFamily,
-            progress: mixieProgress.progress,
-            nextStageKey: mixieProgress.nextStage?.key || null,
-            nextStageLabel: mixieProgress.nextStage?.label || null,
-            nextStageXp: mixieProgress.nextStage?.minXp || null,
-        },
-    };
-}
-
-function minimumPetXp(collection) {
-    return Math.min(...PET_PROVIDERS.map(provider => clampCount(collection.pets[provider]?.xp)));
+    return { pets };
 }
 
 function mergeStageKeys(existingKeys, stageKey) {
@@ -786,17 +704,6 @@ function buildMigratedCollection(store) {
     for (const provider of PET_PROVIDERS) {
         const pet = collection.pets[provider];
         pet.celebratedStages = getStageKeysThrough(getPetStage(pet.xp).key);
-    }
-
-    const acknowledgedAt = Math.max(1, Math.floor(Number(store.lastUpdatedAt) || Date.now() / 1000));
-    for (const pairKey of getQualifyingPairKeys(collection)) {
-        collection.unlockedPairs[pairKey] = { unlockedAt: acknowledgedAt };
-    }
-
-    if (canUnlockMixie(collection)) {
-        collection.mixie.unlockedAt = acknowledgedAt;
-        collection.mixie.celebrated = true;
-        collection.mixie.celebratedStages = getStageKeysThrough(getMixieStage(collection).key);
     }
 
     return normalizeCollectionState(collection);

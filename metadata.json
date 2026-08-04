@@ -1,6 +1,6 @@
 {
   "name": "Katab - AI Assistant",
-  "description": "Katab (ਕਿਤਾਬ) is a beautiful desktop AI assistant, offering quick access to local Ollama endpoints and OpenAI tools right from your status bar.",
+  "description": "Katab (ਕਿਤਾਬ) — Multi-provider desktop AI assistant with web search, document tools, deep research, knowledge base, and pet companions. Supports Ollama, Unsloth, DeepSeek, OpenAI, and Anthropic.",
   "uuid": "katabai@cetikaytools.com",
   "settings-schema": "org.gnome.shell.extensions.katabai",
   "version": 1,
