@@ -11,11 +11,11 @@ import {
     assertFetchableUrl as _assertFetchableUrlBase,
     getUrlHost,
     lookupHostAddresses,
-} from './networkGuard.js';
+} from '../shared/networkGuard.js';
 import {
     cacheCrawlResult,
     getCachedCrawlResult,
-} from './researchCache.js';
+} from '../research/researchCache.js';
 
 // ── Public constants ──────────────────────────────────────────────────────────
 

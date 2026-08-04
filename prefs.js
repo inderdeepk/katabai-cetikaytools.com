@@ -16,19 +16,19 @@ import {
     reconcileActivePreset,
     settingsMatchPreset,
     updatePresetFromSettings,
-} from './presetManager.js';
-import { WebSearchRuntime, readWebSearchConfig } from './webSearchTools.js';
-import { Crawl4AIRuntime, readCrawl4AIConfig } from './crawl4aiTools.js';
+} from './src/usage/presetManager.js';
+import { WebSearchRuntime, readWebSearchConfig } from './src/tools/webSearchTools.js';
+import { Crawl4AIRuntime, readCrawl4AIConfig } from './src/tools/crawl4aiTools.js';
 import {
     formatTokenCount,
     TOKEN_USAGE_RANGES,
     TokenUsageManager,
-} from './tokenUsageManager.js';
+} from './src/usage/tokenUsageManager.js';
 import {
     getPetDefinition,
     parsePetForm,
     PET_SELECTION_MODES,
-} from './petCollection.js';
+} from './src/pets/petCollection.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {

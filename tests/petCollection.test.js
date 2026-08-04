@@ -17,7 +17,7 @@ import {
     PET_SELECTION_MODES,
     providerFormId,
     resolveActivePetForm,
-} from '../petCollection.js';
+} from '../src/pets/petCollection.js';
 
 function assert(condition, message) {
     if (!condition) throw new Error(message);

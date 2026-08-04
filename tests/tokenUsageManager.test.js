@@ -1,5 +1,5 @@
-import { getQualifyingPairKeys, makePairKey, PET_PROVIDERS } from '../petCollection.js';
-import { TokenUsageManager } from '../tokenUsageManager.js';
+import { getQualifyingPairKeys, makePairKey, PET_PROVIDERS } from '../src/pets/petCollection.js';
+import { TokenUsageManager } from '../src/usage/tokenUsageManager.js';
 
 TokenUsageManager._scheduleFlush = () => { TokenUsageManager._dirty = true; };
 

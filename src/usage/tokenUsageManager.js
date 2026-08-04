@@ -10,7 +10,7 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
-import { isBlockedHost } from './networkGuard.js';
+import { isBlockedHost } from '../shared/networkGuard.js';
 import {
     canUnlockMixie,
     createEmptyCollectionState,
@@ -25,7 +25,7 @@ import {
     parsePairKey,
     PET_PROVIDERS,
     resolveActivePetForm,
-} from './petCollection.js';
+} from '../pets/petCollection.js';
 
 // ── Ranges ───────────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ export class TokenUsageManager {
 
     static ensureDir() {
         const dir = Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai']));
-        try { dir.make_directory_with_parents(null); } catch (_e) {}
+        try { dir.make_directory_with_parents(null); } catch (_e) { }
     }
 
     static _freshStore() {

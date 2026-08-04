@@ -44,7 +44,7 @@ import {
     getAttachmentInfoForPath,
     parseDocumentCommand,
     resolveDocumentPath,
-} from './documentTools.js';
+} from './src/tools/documentTools.js';
 import {
     buildReadUrlResultBlock,
     buildWebSearchResultBlock,
@@ -56,14 +56,14 @@ import {
     readWebSearchConfig,
     WebSearchRuntime,
     WebSearchToolError,
-} from './webSearchTools.js';
+} from './src/tools/webSearchTools.js';
 import {
     Crawl4AIError,
     Crawl4AIRuntime,
     readCrawl4AIConfig,
     parseCrawl4AICommand,
     buildCrawlResultBlock,
-} from './crawl4aiTools.js';
+} from './src/tools/crawl4aiTools.js';
 import {
     loadPresets,
     deletePreset,
@@ -71,7 +71,7 @@ import {
     updatePresetFromSettings,
     reconcileActivePreset,
     PRESET_SETTINGS,
-} from './presetManager.js';
+} from './src/usage/presetManager.js';
 import {
     buildCompanionState,
     buildUsageMilestones,
@@ -81,8 +81,8 @@ import {
     isLocalModelEndpoint,
     TOKEN_USAGE_RANGES,
     TokenUsageManager,
-} from './tokenUsageManager.js';
-import { PetSpriteActor } from './petSpriteActor.js';
+} from './src/usage/tokenUsageManager.js';
+import { PetSpriteActor } from './src/pets/petSpriteActor.js';
 import {
     crossbreedFormId,
     getPetDefinition,
@@ -91,20 +91,20 @@ import {
     PET_PROVIDERS,
     PET_SELECTION_MODES,
     providerFormId,
-} from './petCollection.js';
+} from './src/pets/petCollection.js';
 import {
     getAllToolNames,
     lookupTool,
     buildToolSchemasFor,
-} from './toolRegistry.js';
-import './toolDefinitions.js'; // side-effect: registers all tool definitions
+} from './src/tools/toolRegistry.js';
+import './src/tools/toolDefinitions.js'; // side-effect: registers all tool definitions
 import {
     compressPage,
     mergePageSummaries,
     clusterThemes,
     buildSectionDraft,
     compressResearchBranch,
-} from './compressionTools.js';
+} from './src/research/compressionTools.js';
 import {
     RagError,
     RagRuntime,
@@ -116,7 +116,7 @@ import {
     RAG_TOOL_COMMAND,
     RAG_TOOL_ICON,
     createRagGicon,
-} from './ragTools.js';
+} from './src/tools/ragTools.js';
 import {
     cacheSearchResults,
     getCachedSearchResults,
@@ -127,7 +127,7 @@ import {
     saveResearchCheckpoint,
     loadResearchCheckpoint,
     clearResearchCheckpoint,
-} from './researchCache.js';
+} from './src/research/researchCache.js';
 import {
     createCitationTracker,
     registerFacts,
@@ -136,7 +136,7 @@ import {
     buildBibliography,
     annotateCitations,
     buildCitationSummary,
-} from './citationTracker.js';
+} from './src/research/citationTracker.js';
 
 // Re-export tool name/command/icon constants from toolDefinitions (canonical source)
 import {
@@ -151,7 +151,7 @@ import {
     WEB_SEARCH_TOOL_ICON,
     CRAWL4AI_TOOL_ICON,
     DEEP_RESEARCH_TOOL_ICON,
-} from './toolDefinitions.js';
+} from './src/tools/toolDefinitions.js';
 
 const PROVIDER_TOOLS = {
     'ollama': [],

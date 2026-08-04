@@ -10,11 +10,11 @@ import {
     getUrlHost,
     resolveRedirectUrl as _resolveRedirectUrlBase,
     lookupHostAddresses,
-} from './networkGuard.js';
+} from '../shared/networkGuard.js';
 import {
     cacheSearchResults,
     getCachedSearchResults,
-} from './researchCache.js';
+} from '../research/researchCache.js';
 
 export const WEB_SEARCH_TOOL_COMMAND = '/search';
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
