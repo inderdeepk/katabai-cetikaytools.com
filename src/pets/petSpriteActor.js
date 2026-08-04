@@ -116,7 +116,7 @@ class PetSpriteActor extends St.Widget {
         });
         const assetPath = resolveAssetPath(this._extensionPath, relativeCandidates);
         const stage = getPetStageByKey(this._stageKey);
-        const nativeSize = stage.spriteFamily === 'adult' ? this._slotSize : Math.min(64, this._slotSize);
+        const nativeSize = this._slotSize;
         this._image.icon_size = Math.round(nativeSize * getPetDisplayScale(this._stageKey));
 
         for (const className of PET_STAGE_CLASSES) this.remove_style_class_name(className);

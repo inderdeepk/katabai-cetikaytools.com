@@ -4808,10 +4808,12 @@ class KatabDialog {
         const content = new St.BoxLayout({
             vertical: true,
             x_expand: true,
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
             style_class: 'katab-pet-collection-item-content',
         });
         const sprite = new PetSpriteActor(this._extension.path, {
-            slotSize: 76,
+            slotSize: 100,
             animate: false,
             fallbackText: entry.locked ? '·' : '?',
         });

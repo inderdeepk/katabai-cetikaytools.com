@@ -215,7 +215,7 @@ export function buildCompanionState(allSummary, recentSummary = null) {
         mood, flavorText,
         primaryProvider: total > 0 && top ? top.provider : null,
         secondaryProvider: total > 0 && providers[1] ? providers[1].provider : null,
-        isBlend: Boolean(isBlend), localShare, recentLocalShare,
+        isBlend: false, localShare, recentLocalShare,
         stageRank: COMPANION_STAGE_RANK[stage.key] || 0,
     };
 }
