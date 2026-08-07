@@ -17,7 +17,7 @@ export function isPrivateIPv4(host) {
         return false;
     }
 
-    const [a, b] = octets;
+    const [a, b, c] = octets;
     if (a === 10 || a === 127 || a === 0) {
         return true;
     }
@@ -33,7 +33,11 @@ export function isPrivateIPv4(host) {
     if (a === 100 && b >= 64 && b <= 127) {
         return true; // carrier-grade NAT
     }
-    if (a === 192 && b === 0) {
+    // 192.0.0.0/16 is NOT private as a whole — only the reserved /24 sub-blocks
+    // 192.0.0.0/24 (IETF protocol assignments) and 192.0.2.0/24 (TEST-NET-1) are.
+    // The rest of the /16 (e.g. Netlify's public edge 192.0.66.x) is routable and
+    // must not be blocked or read_url silently fails on legit CDN-hosted sites.
+    if (a === 192 && b === 0 && (c === 0 || c === 2)) {
         return true;
     }
     if (a === 198 && (b === 18 || b === 19)) {

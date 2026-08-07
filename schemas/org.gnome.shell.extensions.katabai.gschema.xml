@@ -11,6 +11,13 @@
       <summary>Toggle Current Chat</summary>
       <description>Keyboard shortcut to open or hide the current Katab chat while keeping active responses running in the background.</description>
     </key>
+
+    <!-- Chat Completion Notification -->
+    <key name="completion-sound-enabled" type="b">
+      <default>true</default>
+      <summary>Play Completion Sound</summary>
+      <description>Play a short sound when an AI response finishes while the chat window is closed. A different tone is used when the request fails.</description>
+    </key>
     <key name="document-tool-enabled" type="b">
       <default>false</default>
       <summary>Enable Document Tool</summary>
@@ -211,6 +218,36 @@
       <default>false</default>
       <summary>Capture Background API Calls</summary>
       <description>When enabled, Crawl4AI records XHR/Fetch network responses made by the page and includes them alongside the scraped content. Useful for modern web apps that load data via background API calls.</description>
+    </key>
+    <key name="crawl4ai-extraction-mode" type="s">
+      <default>'markdown'</default>
+      <summary>Extraction Mode</summary>
+      <description>How Crawl4AI extracts page content. 'markdown' uses the built-in content filter (default, no LLM). 'llm-schema' asks an LLM to return structured JSON matching a schema. 'llm-block' asks an LLM to answer a freeform instruction. LLM modes require an LLM provider allowed on the Crawl4AI server: set LLM_PROVIDER and the provider's API key in the container's .llm.env, then restart the container (docker compose down &amp;&amp; docker compose up -d).</description>
+    </key>
+    <key name="crawl4ai-llm-provider" type="s">
+      <default>'deepseek/deepseek-v4-flash'</default>
+      <summary>LLM Provider</summary>
+      <description>Model identifier in LiteLLM format (e.g., 'deepseek/deepseek-v4-flash', 'openai/gpt-4o-mini', 'anthropic/claude-3-5-sonnet', 'ollama/llama3.2'). Defaults to DeepSeek V4 Flash. This must match a provider allowed on the Crawl4AI server: set LLM_PROVIDER=&lt;same value&gt; and the provider's API key (e.g. DEEPSEEK_API_KEY) in the container's .llm.env, then restart the container. The API key is never sent to or stored by Katab.</description>
+    </key>
+    <key name="crawl4ai-llm-instruction" type="s">
+      <default>'Extract the key facts, claims, and arguments from this page and summarize them concisely.'</default>
+      <summary>LLM Extraction Instruction</summary>
+      <description>Freeform instruction used in 'llm-block' mode. A sensible default is provided; edit it to suit the page type.</description>
+    </key>
+    <key name="crawl4ai-llm-schema-json" type="s">
+      <default>'{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},"key_points":{"type":"array","items":{"type":"string"}}},"required":["title","summary"]}'</default>
+      <summary>LLM Extraction Schema (JSON)</summary>
+      <description>JSON Schema object used in 'llm-schema' mode to shape the structured data the LLM returns. A general-purpose default is provided; edit it to match the fields you want.</description>
+    </key>
+    <key name="crawl4ai-llm-chunk-token-threshold" type="i">
+      <default>4000</default>
+      <summary>LLM Chunk Token Threshold</summary>
+      <description>Maximum tokens per chunk when Crawl4AI splits large pages for LLM extraction (500–16000).</description>
+    </key>
+    <key name="crawl4ai-llm-overlap-rate" type="d">
+      <default>0.1</default>
+      <summary>LLM Chunk Overlap Rate</summary>
+      <description>Overlap between consecutive chunks (0.0–0.5) to preserve context across chunk boundaries during LLM extraction.</description>
     </key>
     <!-- Ollama Settings -->
     <key name="ollama-url" type="s">
@@ -630,6 +667,28 @@
       <default>true</default>
       <summary>Enable Hybrid BM25 + Dense Retrieval</summary>
       <description>Combine keyword matching (BM25) with semantic search (dense embeddings) via reciprocal rank fusion for better recall. Enabled by default — the service gracefully falls back to dense-only if rank-bm25 is not installed.</description>
+    </key>
+
+    <!-- Deep Research Settings -->
+    <key name="deep-research-depth" type="s">
+      <default>'standard'</default>
+      <summary>Deep Research Depth</summary>
+      <description>Controls how exhaustively deep research works. 'standard' = current behavior; 'deep' = auto quality-retry loop, more gap queries, per-branch re-planning critique; 'max' = deep plus a higher quality bar, more retries and a larger synthesis context budget.</description>
+    </key>
+    <key name="deep-research-compression-model" type="s">
+      <default>''</default>
+      <summary>Deep Research Compression Model</summary>
+      <description>Model used for high-volume page compression (per-page facts, dedup) during deep research. Leave empty to use the active provider's model. A cheaper/faster model here cuts cost significantly since compression is the bulk of research LLM calls.</description>
+    </key>
+    <key name="deep-research-synthesis-model" type="s">
+      <default>''</default>
+      <summary>Deep Research Synthesis Model</summary>
+      <description>Model used for strategic deep-research roles (planning, mid-research critique, gap analysis, outline, quality check). Leave empty to use the active provider's model. A stronger model here improves report quality.</description>
+    </key>
+    <key name="deep-research-charts-enabled" type="b">
+      <default>false</default>
+      <summary>Enable Inline Charts in Research Reports</summary>
+      <description>When enabled and the provider supports it, the synthesis prompt asks for inline SVG charts for quantitative data. Off by default because the chat surface renders Pango text only (SVG is not displayed).</description>
     </key>
   </schema>
 </schemalist>

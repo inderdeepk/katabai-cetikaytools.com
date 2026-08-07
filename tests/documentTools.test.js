@@ -193,4 +193,4 @@ const tests = [
     }],
 ];
 
-runTests(tests);
+await runTests(tests);

@@ -51,11 +51,17 @@ const tests = [
         assert(!isPrivateIPv4('100.128.0.1'), 'just above CGNAT');
     }],
 
-    ['isPrivateIPv4: 192.0.0.0/24', () => {
+    ['isPrivateIPv4: 192.0.0.0/24 + 192.0.2.0/24 (reserved only)', () => {
         assert(isPrivateIPv4('192.0.0.1'), 'IETF protocol assignments');
-        // Source uses b === 0 check which covers 192.0.x.x (/16, not /24)
-        // So 192.0.1.x is also treated as private
-        assert(isPrivateIPv4('192.0.255.1'), '192.0.x range (source uses /16)');
+        assert(isPrivateIPv4('192.0.0.255'), 'IETF protocol assignments end');
+        assert(isPrivateIPv4('192.0.2.1'), 'TEST-NET-1 start');
+        assert(isPrivateIPv4('192.0.2.254'), 'TEST-NET-1 end');
+        // 192.0.0.0/16 is NOT private as a whole — only the /24 sub-blocks are
+        // reserved. Public CDN space (e.g. Netlify 192.0.66.x) must NOT be blocked,
+        // otherwise read_url silently fails on legitimately hosted pages.
+        assert(!isPrivateIPv4('192.0.1.1'), '192.0.1.x is public');
+        assert(!isPrivateIPv4('192.0.66.60'), 'Netlify public CDN must not be blocked');
+        assert(!isPrivateIPv4('192.0.255.1'), '192.0.255.x is public');
         assert(!isPrivateIPv4('192.1.0.1'), 'outside 192.0 range');
     }],
 
@@ -164,4 +170,4 @@ const tests = [
     }],
 ];
 
-runTests(tests);
+await runTests(tests);

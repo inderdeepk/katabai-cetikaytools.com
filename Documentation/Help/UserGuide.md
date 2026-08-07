@@ -351,7 +351,7 @@ curl http://localhost:11235/health
 4. Click **Test Connection**.
 
 ### Step 3 — Scrape
-- **Manual**: `/crawl https://example.com/article` scrapes a URL directly. `/crawl gnome 47` searches via SearxNG then scrapes the top result.
+- **Manual**: `/crawl https://example.com/article` scrapes a URL directly. `/crawl gnome 47` searches via SearxNG then scrapes the top result. You can also embed `/crawl <url>` anywhere in a message — e.g. *"Tell me about X. /crawl https://example.com"* — and the page will be scraped and included alongside your question.
 - **Autonomous**: The model can call `crawl_url` after `web_search` to read promising results in depth.
 - **Footer button**: Cycle the Scrape button to **On** for one-shot scraping.
 
@@ -369,6 +369,71 @@ curl http://localhost:11235/health
 | **Stealth mode** | Simulates user interaction to bypass bot detection |
 | **Autonomous** | Model can call `crawl_url` without `/crawl` (on by default) |
 | **Allow local addresses** | Off by default — only enable for trusted local setups |
+| **Extraction mode** | `markdown` (default) or `llm-schema` / `llm-block` (see below) |
+| **LLM provider** | LiteLLM model identifier for LLM extraction (defaults to DeepSeek V4 Flash, `deepseek/deepseek-v4-flash`) |
+| **Chunk token threshold** | Max tokens per chunk when splitting large pages for the LLM (default 4000) |
+| **Chunk overlap rate** | Overlap between chunks to preserve context (default 0.1) |
+
+### LLM Extraction (Optional)
+
+By default Crawl4AI extracts clean Markdown using its built-in content filter. If your Crawl4AI server has an LLM provider configured, you can also ask it to extract **structured JSON** or a **freeform answer** directly from the page.
+
+> **How it works**: Katab submits the crawl to Crawl4AI's dedicated **`/llm` endpoint**, which constructs the `LLMExtractionStrategy` **server-side** — so it works even on Crawl4AI's secure-by-default build (which blocks client-supplied LLM config on `/crawl`). Katab only sends the URL, the provider name, and the schema/instruction; your API key is never sent to or stored by Katab.
+
+#### Step 1 — Configure the server
+Add an LLM provider to your Crawl4AI container environment. The default provider is **DeepSeek V4 Flash**, so with Docker Compose you set `LLM_PROVIDER` and `DEEPSEEK_API_KEY` in `.llm.env` (see the Setup section in Preferences for the compose file), then restart the container:
+
+```bash
+# .llm.env — add these lines, then: docker compose down && docker compose up -d
+LLM_PROVIDER=deepseek/deepseek-v4-flash
+DEEPSEEK_API_KEY=sk-...
+```
+
+For a single container, pass them with `-e`:
+```bash
+docker run -d \
+  --name crawl4ai \
+  -p 11235:11235 \
+  -e CRAWL4AI_API_TOKEN=your-token \
+  -e SECRET_KEY=another-random-string \
+  -e LLM_PROVIDER=deepseek/deepseek-v4-flash \
+  -e DEEPSEEK_API_KEY=sk-... \
+  --shm-size=1g \
+  unclecode/crawl4ai:latest
+
+# Other providers also work if you change LLM_PROVIDER and add that key:
+#   LLM_PROVIDER=openai/gpt-4o-mini   + OPENAI_API_KEY
+#   LLM_PROVIDER=anthropic/claude-3-5-sonnet + ANTHROPIC_API_KEY
+#   LLM_PROVIDER=ollama/llama3.2       (no key needed)
+```
+
+> **Provider allowlist**: the `LLM_PROVIDER` env var (or `llm.provider` in `config.yml`) is what tells the server which provider family is allowed. On a stock v0.9.x container only the family of `llm.provider` is allowed (default `openai`) unless you set `LLM_PROVIDER` — so if you request `deepseek/...` without it, the `/llm` job is rejected with "LLM provider not allowed".
+
+#### Step 2 — Choose an extraction mode
+Open Katab preferences → **Tools** → **Web Scraper** → **LLM Extraction (Optional)** and pick a mode:
+
+| Mode | Result |
+|---|---|
+| **Markdown Only (Default)** | Current behavior — no LLM involved |
+| **LLM Structured JSON (Schema)** | LLM returns JSON matching your schema |
+| **LLM Freeform Answer (Block)** | LLM answers your instruction in prose |
+
+- **Schema mode**: a general-purpose JSON Schema (title, summary, key points) is prefilled — edit it to match the fields you want, then use **Validate Schema** to check it.
+- **Block mode**: a default summary instruction is prefilled — edit it to suit the page type (e.g. *"Extract the product name, price, and availability from this page."*).
+- **LLM Provider**: defaults to **DeepSeek V4 Flash** (`deepseek/deepseek-v4-flash`). It's sent by name to Crawl4AI's `/llm` endpoint. The provider must be allowed on the server: set `LLM_PROVIDER=<same value>` and the provider's API key (e.g. `DEEPSEEK_API_KEY`) in `.llm.env`, then restart the container (see Step 1). Enter any other LiteLLM identifier to switch, e.g. `openai/gpt-4o-mini`, `anthropic/claude-3-5-sonnet`, or `ollama/llama3.2`.
+- **Chunk Token Threshold / Overlap Rate**: tune how Crawl4AI splits large pages for the LLM (defaults 4000 / 0.1).
+
+> **Cost note**: LLM extraction is slower and costs money per call. It is **off by default**, and results are cached locally for 24 hours (keyed by URL + extraction settings) so repeat crawls don't re-bill.
+
+#### Troubleshooting: "LLM extraction unavailable"
+
+If a crawl returns the **"LLM extraction unavailable"** notice (Katab fell back to Markdown), the Crawl4AI server could not run the `/llm` extraction job. Common causes and fixes:
+
+1. **Server doesn't expose `/llm/job`** — you need Crawl4AI v0.9.x (the endpoint ships with the secure-by-default server). Upgrade the image.
+2. **Provider not allowed** — the server must allow the provider family you requested. Set `LLM_PROVIDER=<the same provider value>` (e.g. `LLM_PROVIDER=deepseek/deepseek-v4-flash`) in `.llm.env` — or `llm.provider` / `llm.allowed_providers` in `config.yml` — then restart the container.
+3. **Missing server LLM key** — set the provider's API key (e.g. `DEEPSEEK_API_KEY`) in `.llm.env` / container environment.
+
+Katab now uses the sanctioned `/llm` endpoint automatically, so **no image patching is required**. (If you previously patched `UNTRUSTED_ALLOWED_TYPES` to allow `LLMExtractionStrategy` on `/crawl`, that still works too — but it's no longer necessary.)
 
 ### Security
 - Scraped content is **untrusted data** — same SSRF and content safety protections as web search.
@@ -428,7 +493,7 @@ Deep Research is a meta-mode that raises tool-call limits and context thresholds
 
 ### Pipeline Phases
 
-1. **Planning** — The AI breaks your query into 3–5 research angles with SEO-optimized search queries. You can review and approve before execution begins.
+1. **Planning** — The AI breaks your query into 3–5 research angles with SEO-optimized search queries. You can review and approve before execution begins. While a plan is pending, you can keep chatting to request changes — follow-up messages are treated as plan revisions (e.g. *"it's 2026, not 2025 — update the plan"*) and edit the existing plan in place rather than replacing it. Use **Edit plan** to adjust angles manually, **Cancel plan** to abandon the research, or **Start research** to begin.
 2. **Branch Execution** — Each angle runs sequentially: search → read → crawl → compress. Cross-branch context is shared so later angles benefit from earlier findings.
 3. **Mid-Research Critique** — After every few branches, the AI evaluates coverage and adjusts remaining angles.
 4. **Gap Analysis** — A lightweight review identifies uncovered aspects and generates 0–2 targeted follow-up queries.

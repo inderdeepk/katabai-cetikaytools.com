@@ -239,4 +239,4 @@ tests.push(
     }],
 );
 
-runTests(tests);
+await runTests(tests);

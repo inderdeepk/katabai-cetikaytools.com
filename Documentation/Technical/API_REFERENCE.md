@@ -202,6 +202,12 @@ Path: `/org/gnome/shell/extensions/katabai/`
 | `crawl4ai-allow-local-addresses` | `b` | `false` | Allow private/loopback URLs |
 | `crawl4ai-job-poll-ms` | `i` | `2000` | Async job polling interval (500–10000ms) |
 | `crawl4ai-capture-network` | `b` | `false` | Capture XHR/Fetch background calls |
+| `crawl4ai-extraction-mode` | `s` | `'markdown'` | Extraction mode: `'markdown'`, `'llm-schema'`, `'llm-block'` |
+| `crawl4ai-llm-provider` | `s` | `'deepseek/deepseek-v4-flash'` | LiteLLM provider string for LLM extraction (defaults to DeepSeek V4 Flash). Must be allowed server-side: set `LLM_PROVIDER` (and the provider's API key) in the container's `.llm.env`, then restart |
+| `crawl4ai-llm-instruction` | `s` | default summary instruction | Freeform instruction for `llm-block` mode (sensible default prefilled) |
+| `crawl4ai-llm-schema-json` | `s` | default schema | JSON Schema object (string) for `llm-schema` mode (general-purpose default prefilled) |
+| `crawl4ai-llm-chunk-token-threshold` | `i` | `4000` | Token threshold per chunk (500–16000) |
+| `crawl4ai-llm-overlap-rate` | `d` | `0.1` | Chunk overlap rate (0.0–0.5) |
 
 ### Knowledge Base Settings (RAG)
 
@@ -349,6 +355,37 @@ Deep-scrapes a page using Crawl4AI's browser rendering.
 ```
 
 **Danger level**: `read_only`
+
+### explore_docs
+
+Crawls a documentation landing page and returns its table of contents (internal-link structure) plus the most query-relevant links, so the agent can then deep-scrape only the pages it selected.
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "explore_docs",
+    "description": "Explore a documentation website and return its table of contents. Crawls the given landing page, extracts the sidebar/internal navigation links, and (when a query is provided) highlights the most relevant pages. Use this when you know the docs site URL and want to navigate it efficiently: explore the structure first, then use crawl_url on the specific pages you selected.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The absolute http(s) URL of the documentation landing page to explore (e.g. https://docs.example.org/)."
+        },
+        "query": {
+          "type": "string",
+          "description": "Optional. The research topic you are looking for — used to highlight the most relevant links in the table of contents."
+        }
+      },
+      "required": ["url"]
+    }
+  }
+}
+```
+
+**Danger level**: `read_only`
+**Agent-only**: No footer button or slash command — advertised to the model alongside `crawl_url` under the same web-scraping autonomy gate.
 
 ### knowledge_search
 
@@ -668,10 +705,21 @@ Synchronous crawl.
         "type": "PruningContentFilter",
         "threshold": 0.5
       }
+    },
+    "extraction_strategy": {
+      "type": "LLMExtractionStrategy",
+      "params": {
+        "provider": "openai/gpt-4o-mini",
+        "schema": { "type": "object", "properties": { "title": { "type": "string" } } },
+        "chunk_token_threshold": 4000,
+        "overlap_rate": 0.1
+      }
     }
   }
 }
 ```
+
+The `extraction_strategy` block is **optional** and only sent when `crawl4ai-extraction-mode` is `llm-schema` or `llm-block`. The REST API uses `extraction_strategy` (not the Python-side `extraction_config` name), wrapped in a `{ type, params }` envelope. The LLM API key is configured server-side on the Docker container — it is never sent through this request. The requested provider must be allowed on the server: set `LLM_PROVIDER=<provider value>` and the provider's API key (e.g. `DEEPSEEK_API_KEY`) in `.llm.env`, then restart the container. Note that on secure-by-default v0.9.x builds this `/crawl` path is blocked for `LLMExtractionStrategy`; Katab routes LLM modes through the sanctioned `/llm/job` endpoint instead, which constructs the strategy server-side.
 
 **Response**:
 ```json
@@ -682,13 +730,36 @@ Synchronous crawl.
     "title": "Article Title",
     "markdown": "Full page markdown...",
     "fit_markdown": "Pruned markdown...",
-    "cleaned_html": "..."
+    "cleaned_html": "...",
+    "json": { "title": "Extracted structured data..." },
+    "llm": "Freeform LLM answer text..."
   }
 }
 ```
 
+When LLM extraction is active, the `json` field carries the schema-mode structured output and `llm` carries the block-mode freeform answer. Katab's `parseCrawlResults` maps these onto `structuredJson` / `llmResponse` and `buildCrawlResultBlock` renders them with a `[Structured JSON extracted by LLM...]` / `[LLM extraction...]` header.
+
 #### POST `/crawl/job` + GET `/crawl/job/{id}`
 Async crawl with polling. Used when synchronous crawl is slow.
+
+#### POST `/llm/job` + GET `/llm/job/{id}` (LLM extraction — sanctioned path)
+Async LLM extraction with polling. This is the **only** supported way to run LLM extraction on Crawl4AI v0.9.x secure-by-default builds — client-supplied `LLMExtractionStrategy` on `/crawl` is rejected as an untrusted request. The strategy is constructed **server-side** from the provider name; credentials come from the container environment, never from the request.
+
+**Request** (JSON body):
+```json
+{
+  "url": "https://example.com/article",
+  "q": "Extract the key facts, claims, and arguments from this page and summarize them concisely.",
+  "provider": "deepseek/deepseek-v4-flash",
+  "cache": true,
+  "schema": { "type": "object", "properties": { "title": { "type": "string" } } }
+}
+```
+- `schema` is optional — only sent when `crawl4ai-extraction-mode` is `llm-schema`. Omit it for `llm-block` (freeform answer).
+- `q` is the freeform instruction (`llm-block`) or a shaping prompt (`llm-schema`).
+- `provider` must be allowed on the server: set `LLM_PROVIDER=<value>` and the provider's API key (e.g. `DEEPSEEK_API_KEY`) in `.llm.env`, then restart the container.
+
+**Response**: `{ "task_id": "..." }` → poll `GET /llm/job/{task_id}` until `{ "status": "completed", "result": ... }` where `result` is the parsed JSON object (schema mode) or a string (block mode). A `status: "failed"` response carries `error`.
 
 #### GET `/health`
 Health check.

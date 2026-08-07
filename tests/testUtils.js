@@ -95,12 +95,18 @@ export function createMockLlmCall(responses = []) {
  *
  * @param {Array<[string, Function]>} tests — [name, () => void] pairs
  */
-export function runTests(tests) {
+export async function runTests(tests) {
     let passed = 0;
     let failed = 0;
     for (const [name, run] of tests) {
         try {
-            run();
+            const result = run();
+            // Await async tests so their assertions actually run. Previously an
+            // async test that threw was counted as PASS because its rejection
+            // was never observed by the synchronous try/catch.
+            if (result && typeof result.then === 'function') {
+                await result;
+            }
             console.log(`PASS ${name}`);
             passed++;
         } catch (e) {

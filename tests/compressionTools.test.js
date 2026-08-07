@@ -57,7 +57,7 @@ const tests = [
     ['compressPage: with valid LLM response', async () => {
         const llmCall = createMockLlmCall([
             JSON.stringify([
-                { claim: 'The sky is blue.', url: 'https://example.com' },
+                { claim: 'The sky is blue.', url: 'https://example.com', anchor: 'The sky is blue on a clear day.' },
                 { claim: 'Water is wet.', url: 'https://example.com' },
             ]),
         ]);
@@ -69,6 +69,78 @@ const tests = [
         assertEqual(facts.length, 2, 'two facts extracted');
         assertEqual(facts[0].claim, 'The sky is blue.', 'first claim');
         assertEqual(facts[1].url, 'https://example.com', 'URL preserved');
+        assertEqual(facts[0].anchor_text, 'The sky is blue on a clear day.', 'anchor_text preserved');
+        assertEqual(facts[1].anchor_text, '', 'missing anchor → empty string');
+    }],
+
+    ['compressPage: anchor_text alias fields (anchor_text/quote)', async () => {
+        const llmCall = createMockLlmCall([
+            JSON.stringify([
+                { claim: 'Fact A', url: 'https://a.com', anchor_text: 'Anchor via snake_case.' },
+                { claim: 'Fact B', url: 'https://b.com', quote: 'Anchor via quote field.' },
+            ]),
+        ]);
+        const facts = await compressPage({
+            rawText: 'Fact A and Fact B are both true.',
+            sourceUrl: 'https://a.com',
+            llmCall,
+        });
+        assertEqual(facts[0].anchor_text, 'Anchor via snake_case.', 'anchor_text field read');
+        assertEqual(facts[1].anchor_text, 'Anchor via quote field.', 'quote field read as fallback');
+    }],
+
+    ['compressPage: researchContext injected into prompt', async () => {
+        let captured = null;
+        const llmCall = async (messages) => {
+            captured = messages[1].content;
+            return JSON.stringify([{ claim: 'Fact', url: 'https://x.com' }]);
+        };
+        await compressPage({
+            rawText: 'Some page content.',
+            sourceUrl: 'https://x.com',
+            llmCall,
+            researchContext: { originalQuery: 'How does X work?', subTask: 'Architecture of X' },
+        });
+        assert(captured.includes('RESEARCH QUESTION: "How does X work?"'), 'originalQuery injected');
+        assert(captured.includes('SUB-TASK THIS PAGE WAS FOUND FOR: "Architecture of X"'), 'subTask injected');
+    }],
+
+    ['compressPage: priorPageFacts injected as carry-forward context', async () => {
+        let captured = null;
+        const llmCall = async (messages) => {
+            captured = messages[1].content;
+            return JSON.stringify([{ claim: 'Fact', url: 'https://x.com' }]);
+        };
+        await compressPage({
+            rawText: 'Content.',
+            sourceUrl: 'https://x.com',
+            llmCall,
+            priorPageFacts: '- Previous claim one\n- Previous claim two',
+        });
+        assert(captured.includes('PREVIOUS PAGES ALREADY COVERED'), 'carry-forward header injected');
+        assert(captured.includes('Previous claim one'), 'prior facts content included');
+    }],
+
+    ['compressResearchBranch: prior-page facts carried into later page prompts', async () => {
+        const prompts = [];
+        const llmCall = async (messages) => {
+            prompts.push(messages[1].content);
+            if (prompts.length === 1) {
+                return JSON.stringify([{ claim: 'Page one claim.', url: 'https://one.com' }]);
+            }
+            return JSON.stringify([{ claim: 'Page two claim.', url: 'https://two.com' }]);
+        };
+        await compressResearchBranch({
+            pages: [
+                { url: 'https://one.com', text: 'Page one text.' },
+                { url: 'https://two.com', text: 'Page two text.' },
+            ],
+            topic: 'Test Topic',
+            llmCall,
+        });
+        // prompts: [0]=page1 compression, [1]=page2 compression (with carry-forward), [2]=merge
+        assert(prompts.length >= 3, 'both pages compressed plus a merge pass');
+        assert(prompts[1].includes('Page one claim'), 'page one facts carried into page two prompt');
     }],
 
     ['compressPage: with LLM wrapped in markdown fence', async () => {
@@ -208,8 +280,8 @@ const tests = [
         const llmCall = createMockLlmCall([
             // Page 1 compression
             JSON.stringify([
-                { claim: 'Python 3.13 released October 2024.', url: 'https://python.org' },
-                { claim: 'New JIT compiler included.', url: 'https://python.org' },
+                { claim: 'Python 3.13 released October 2024.', url: 'https://python.org', anchor: 'Python 3.13 shipped in October 2024.' },
+                { claim: 'New JIT compiler included.', url: 'https://python.org', anchor: 'The release includes a new JIT compiler.' },
             ]),
             // Page 2 compression
             JSON.stringify([
@@ -230,6 +302,8 @@ const tests = [
         assert(result.facts.length === 3, '3 facts extracted');
         assert(result.sources.length === 2, '2 sources tracked');
         assert(result.findings.length > 0, 'findings compiled');
+        const withAnchor = result.facts.find(f => f.claim.includes('JIT'));
+        assert(withAnchor && withAnchor.anchor_text.includes('JIT compiler'), 'anchor_text rides through branch pipeline');
     }],
 
     ['compressResearchBranch: empty pages returns empty', async () => {

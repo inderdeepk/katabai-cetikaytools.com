@@ -9,14 +9,21 @@ import {
     getCachedSearchResults,
     cacheCrawlResult,
     getCachedCrawlResult,
+    cacheLLMExtractionResult,
+    getCachedLLMExtractionResult,
     cacheFetchResult,
     getCachedFetchResult,
     getRecommendedTtlForUrl,
     getCacheStats,
     clearCache,
     invalidateCacheEntry,
+    _setCachePathForTesting,
 } from '../src/research/researchCache.js';
-import { assert, assertEqual, runTests } from './testUtils.js';
+import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
+
+// Redirect the on-disk cache to a throwaway temp file so running the suite
+// never wipes the real ~/.local/share/katabai/research-cache.json.
+_setCachePathForTesting('/tmp/katabai-research-cache-test.json');
 
 // ── In-memory store for test isolation ───────────────────────────────────────
 // We monkey-patch the internal module state between tests.
@@ -27,6 +34,14 @@ import { assert, assertEqual, runTests } from './testUtils.js';
 function resetForTest() {
     clearCache();
 }
+
+// Shared Crawl4AI config used by the LLM extraction cache tests.
+const llmConfig = {
+    extractionMode: 'llm-schema',
+    llmProvider: 'openai/gpt-4o-mini',
+    llmInstruction: '',
+    llmSchemaJson: '{"type":"object"}',
+};
 
 const tests = [
     // ── cacheSearchResults / getCachedSearchResults ────────────────────────
@@ -103,6 +118,49 @@ const tests = [
         resetForTest();
         const cached = getCachedCrawlResult('https://never-cached.com');
         assertEqual(cached, null, 'not found');
+    }],
+
+    // ── cacheLLMExtractionResult / getCachedLLMExtractionResult ──────────
+
+    ['cacheLLMExtractionResult: store and retrieve', () => {
+        resetForTest();
+        cacheLLMExtractionResult('https://example.com', [{ structuredJson: { title: 'Hello' } }], llmConfig);
+
+        const cached = getCachedLLMExtractionResult('https://example.com', llmConfig);
+        assert(cached !== null, 'llm extraction found');
+        assertDeepEqual(cached[0].structuredJson, { title: 'Hello' }, 'content preserved');
+    }],
+
+    ['getCachedLLMExtractionResult: parameter-aware key (different schema misses)', () => {
+        resetForTest();
+        cacheLLMExtractionResult('https://example.com', { structuredJson: { title: 'A' } }, llmConfig);
+
+        const otherSchema = { ...llmConfig, llmSchemaJson: '{"type":"object","properties":{"price":{"type":"string"}}}' };
+        const cached = getCachedLLMExtractionResult('https://example.com', otherSchema);
+        assertEqual(cached, null, 'different schema key misses');
+
+        const original = getCachedLLMExtractionResult('https://example.com', llmConfig);
+        assert(cached === null && original !== null, 'original schema still hits');
+    }],
+
+    ['getCachedLLMExtractionResult: TTL expiration', () => {
+        resetForTest();
+        cacheLLMExtractionResult('https://example.com', { structuredJson: {} }, llmConfig);
+        const cached = getCachedLLMExtractionResult('https://example.com', llmConfig, -1);
+        assertEqual(cached, null, 'expired with maxAgeMs=-1');
+    }],
+
+    ['getCachedLLMExtractionResult: not found', () => {
+        resetForTest();
+        assertEqual(getCachedLLMExtractionResult('https://never.com', llmConfig), null, 'not found');
+    }],
+
+    ['getCacheStats: counts llm-extraction entries', () => {
+        resetForTest();
+        cacheLLMExtractionResult('https://example.com', { structuredJson: {} }, llmConfig);
+        const stats = getCacheStats();
+        assertEqual(stats.llmExtractionCount, 1, 'one llm extraction');
+        assertEqual(stats.entryCount, 1, 'one total');
     }],
 
     // ── cacheFetchResult / getCachedFetchResult ────────────────────────────
@@ -255,4 +313,4 @@ const tests = [
     }],
 ];
 
-runTests(tests);
+await runTests(tests);

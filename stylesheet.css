@@ -124,6 +124,17 @@
     box-shadow: 0 0 10px rgba(243, 139, 168, 0.55);
 }
 
+/* Hatched "reserved for response" segment.  Uses a data-URI stripe image
+   rather than a CSS gradient — gradients on rounded surfaces trigger the
+   Clutter offscreen-framebuffer errors (see .katab-code-window note). */
+.katab-token-progress-reserved {
+    height: 6px;
+    background-color: rgba(255, 255, 255, 0.10);
+    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAYAAABWdVznAAAAP0lEQVR42mP4//9/HhbMgAszkKIYJM9AimJ0DQQVI2sgSjFMA9GKCWnAGnokKcalAW+8kKQYXQNRMU6SYhAGAJ0MyCgNqMhRAAAAAElFTkSuQmCC");
+    background-repeat: repeat;
+    border-radius: 0 3px 3px 0;
+}
+
 .katab-token-box:hover {
     background-color: rgba(255, 255, 255, 0.04);
 }
@@ -236,6 +247,14 @@
 
 .katab-session-info-progress-fill.danger {
     background-color: #f38ba8;
+}
+
+.katab-session-info-progress-reserved {
+    height: 6px;
+    background-color: rgba(255, 255, 255, 0.10);
+    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAYAAABWdVznAAAAP0lEQVR42mP4//9/HhbMgAszkKIYJM9AimJ0DQQVI2sgSjFMA9GKCWnAGnokKcalAW+8kKQYXQNRMU6SYhAGAJ0MyCgNqMhRAAAAAElFTkSuQmCC");
+    background-repeat: repeat;
+    border-radius: 0 3px 3px 0;
 }
 
 .katab-session-info-reserved-label {

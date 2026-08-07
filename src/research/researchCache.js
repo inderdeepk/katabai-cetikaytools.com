@@ -18,7 +18,17 @@ function _hashString(str) {
 
 // ── File paths ───────────────────────────────────────────────────────────────
 
+let _testCachePath = null;
+
+// Test-only override for the on-disk cache path, so unit tests never write to
+// the real ~/.local/share/katabai/research-cache.json. Pass null to restore.
+export function _setCachePathForTesting(path) {
+    _testCachePath = path || null;
+    _cache = null; // force reload from the new path on next access
+}
+
 function _cacheFilePath() {
+    if (_testCachePath) return _testCachePath;
     const dataDir = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'share', 'katabai']);
     const dir = Gio.File.new_for_path(dataDir);
     if (!dir.query_exists(null)) {
@@ -210,6 +220,85 @@ export function getCachedCrawlResult(url, maxAgeMs = DEFAULT_TTL_MS) {
     return entry.result;
 }
 
+// ── LLM extraction cache ─────────────────────────────────────────────────────
+//
+// LLM extractions are expensive (paid per call), so they are cached like
+// plain crawl results but keyed by BOTH the URL and the extraction parameters
+// (mode, provider, instruction, schema).  Changing any of those invalidates
+// the cache implicitly because the derived key no longer matches.
+
+function _llmCacheKey(url, config) {
+    const parts = [
+        String(url || '').trim(),
+        config?.extractionMode || 'markdown',
+        config?.llmProvider || '',
+        config?.llmInstruction || '',
+        config?.llmSchemaJson || '',
+    ];
+    // NOTE: hash the JSON serialization, not parts.join('\u0000').  GLib's
+    // compute_checksum_for_string with length=-1 stops at the first NUL byte,
+    // so a \u0000 separator would truncate the input and collide every entry
+    // sharing a URL.
+    return _hashString(JSON.stringify(parts));
+}
+
+/**
+ * Cache an LLM extraction result for a URL + extraction configuration.
+ * @param {string} url - The URL that was crawled
+ * @param {*} result - The parsed crawl result payload (serializable)
+ * @param {object} config - Crawl4AI config (drives the cache key)
+ */
+export function cacheLLMExtractionResult(url, result, config) {
+    _loadCache();
+    const keyHash = _llmCacheKey(url, config);
+    const entry = {
+        type: 'llm-extraction',
+        url,
+        result,
+        cachedAt: Date.now(),
+    };
+
+    const existingIdx = _cache.order.indexOf(keyHash);
+    if (existingIdx >= 0) {
+        _cache.order.splice(existingIdx, 1);
+    }
+
+    _cache.entries[keyHash] = entry;
+    _cache.order.unshift(keyHash);
+
+    while (_cache.order.length > DEFAULT_MAX_ENTRIES) {
+        const oldest = _cache.order.pop();
+        delete _cache.entries[oldest];
+    }
+
+    _scheduleFlush();
+}
+
+/**
+ * Retrieve a cached LLM extraction result for a URL + extraction config.
+ * @param {string} url - The URL that was crawled
+ * @param {object} config - Crawl4AI config (drives the cache key)
+ * @param {number} [maxAgeMs=86400000] - Max age in ms (default 24h)
+ * @returns {*|null} Cached result, or null if not found / expired
+ */
+export function getCachedLLMExtractionResult(url, config, maxAgeMs = DEFAULT_TTL_MS) {
+    _loadCache();
+    const keyHash = _llmCacheKey(url, config);
+    const entry = _cache.entries[keyHash];
+    if (!entry || entry.type !== 'llm-extraction') return null;
+
+    const age = Date.now() - (entry.cachedAt || 0);
+    if (age > maxAgeMs) {
+        delete _cache.entries[keyHash];
+        const idx = _cache.order.indexOf(keyHash);
+        if (idx >= 0) _cache.order.splice(idx, 1);
+        _scheduleFlush();
+        return null;
+    }
+
+    return entry.result;
+}
+
 /**
  * Cache a page fetch result (read_url / fetchPage) for a URL.
  * @param {string} url - The URL that was fetched
@@ -309,25 +398,28 @@ export function getRecommendedTtlForUrl(url, category = 'static') {
 
 /**
  * Get cache statistics for display.
- * @returns {{ entryCount: number, searchCount: number, crawlCount: number, fetchCount: number }}
+ * @returns {{ entryCount: number, searchCount: number, crawlCount: number, fetchCount: number, llmExtractionCount: number }}
  */
 export function getCacheStats() {
     _loadCache();
     let searchCount = 0;
     let crawlCount = 0;
     let fetchCount = 0;
+    let llmExtractionCount = 0;
     for (const key of _cache.order) {
         const entry = _cache.entries[key];
         if (!entry) continue;
         if (entry.type === 'search') searchCount++;
         else if (entry.type === 'crawl') crawlCount++;
         else if (entry.type === 'fetch') fetchCount++;
+        else if (entry.type === 'llm-extraction') llmExtractionCount++;
     }
     return {
         entryCount: _cache.order.length,
         searchCount,
         crawlCount,
         fetchCount,
+        llmExtractionCount,
     };
 }
 
@@ -367,6 +459,7 @@ export function invalidateCacheEntry(type, key) {
 // any time — each save overwrites the previous.
 
 const CHECKPOINT_FILE = 'research-checkpoint.json';
+const CHECKPOINT_VERSION = 2;  // bump when the checkpoint schema changes; old versions are invalidated (not migrated)
 const MAX_CHECKPOINT_FINDINGS_CHARS = 8000;
 const MAX_CHECKPOINT_FACTS_PER_BRANCH = 20;
 const MAX_CHECKPOINT_FILE_BYTES = 2 * 1024 * 1024;
@@ -429,7 +522,7 @@ export function saveResearchCheckpoint(state) {
         }
 
         let payload = {
-            version: 1,
+            version: CHECKPOINT_VERSION,
             savedAt: Date.now(),
             plan: state.plan || [],
             originalQuery: String(state.originalQuery || ''),
@@ -498,8 +591,8 @@ export function loadResearchCheckpoint() {
         const decoder = new TextDecoder('utf-8');
         const payload = JSON.parse(decoder.decode(contents));
 
-        if (!payload || payload.version !== 1 || !Array.isArray(payload.plan)) {
-            log('[Katab:checkpoint] Invalid checkpoint format — deleting.');
+        if (!payload || payload.version !== CHECKPOINT_VERSION || !Array.isArray(payload.plan)) {
+            log(`[Katab:checkpoint] Invalid/outdated checkpoint format (v${payload?.version ?? 'none'}) — deleting.`);
             file.delete(null);
             return null;
         }

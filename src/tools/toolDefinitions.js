@@ -19,6 +19,9 @@ import {
     RAG_TOOL_ICON,
 } from './ragTools.js';
 
+// ── Explore Docs (agent-directed documentation navigation) ───────────────────
+import { EXPLORE_DOCS_TOOL_NAME } from './exploreDocsTools.js';
+
 // ── Web Search (SearxNG) ──────────────────────────────────────────────────────
 
 const WEB_SEARCH_PARAMS = {
@@ -119,7 +122,9 @@ registerTool({
         'Deep-scrape a single web page and return clean, readable Markdown. ' +
         'Use this after web_search to read a promising result in full depth. ' +
         'The page is rendered in a real browser (JavaScript, SPAs, lazy-loading), ' +
-        'then stripped of navigation, ads, and boilerplate leaving only the core content.',
+        'then stripped of navigation, ads, and boilerplate leaving only the core content. ' +
+        'When LLM extraction is enabled, the result may instead contain structured ' +
+        'JSON or an LLM-guided answer extracted from the page.',
     parameters: CRAWL_URL_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('crawl_url'),
@@ -236,6 +241,46 @@ registerTool({
     providerScoped: false,
 });
 
+// ── Explore Docs (agent-directed documentation navigation) ───────────────────
+// Agent-only tool (no footer button / slash command): the agent crawls a docs
+// landing page, reads the extracted table of contents, then uses crawl_url on
+// the specific pages it selected.  Advertised alongside crawl_url.
+
+const EXPLORE_DOCS_PARAMS = {
+    type: 'object',
+    properties: {
+        url: {
+            type: 'string',
+            description: 'The absolute http(s) URL of the documentation landing page to explore (e.g. https://docs.example.org/).',
+        },
+        query: {
+            type: 'string',
+            description: 'Optional. The research topic you are looking for. Used to highlight the most relevant links in the table of contents.',
+        },
+    },
+    required: ['url'],
+};
+
+registerTool({
+    name: EXPLORE_DOCS_TOOL_NAME,
+    description:
+        'Explore a documentation website and return its table of contents. ' +
+        'Crawls the given landing page, extracts the sidebar/internal navigation links, ' +
+        'and (when a query is provided) highlights the most relevant pages. ' +
+        'Use this when you know the docs site URL (e.g. https://docs.project.org/) and want to ' +
+        'navigate it efficiently: explore the structure first, then use crawl_url on the specific ' +
+        'pages you selected. Prefer this over blindly crawling random URLs when working with documentation.',
+    parameters: EXPLORE_DOCS_PARAMS,
+    dangerLevel: DANGER_READ_ONLY,
+    handler: createNotReadyHandler(EXPLORE_DOCS_TOOL_NAME),
+    uiLabel: null,
+    uiIcon: null,
+    command: null,
+    resultTruncationKey: 'crawl',
+    isMeta: false,
+    providerScoped: false,
+});
+
 // ── Tool name constants (backward-compatible exports) ─────────────────────────
 
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
@@ -243,6 +288,8 @@ export const READ_URL_TOOL_NAME = 'read_url';
 export const CRAWL4AI_TOOL_NAME = 'crawl_url';
 export const DEEP_RESEARCH_TOOL_NAME = 'deep_research';
 export const KNOWLEDGE_SEARCH_TOOL_NAME = RAG_TOOL_NAME;
+// Re-export the explore_docs name (imported from exploreDocsTools.js above).
+export { EXPLORE_DOCS_TOOL_NAME };
 
 // ── Command constants ─────────────────────────────────────────────────────────
 

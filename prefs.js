@@ -278,6 +278,12 @@ export default class KatabPreferences extends ExtensionPreferences {
         });
         page.add(petCompanionGroup);
 
+        const notificationGroup = createPreferencesGroup({
+            title: 'Notifications',
+            description: 'Control desktop alerts and sounds for chat activity that happens while the window is closed.',
+        });
+        page.add(notificationGroup);
+
         const addPreferenceRow = (group, row) => {
             if (typeof group.add_row === 'function') {
                 group.add_row(row);
@@ -911,6 +917,13 @@ export default class KatabPreferences extends ExtensionPreferences {
         );
 
         createBooleanRow(
+            'Completion Sound',
+            'Play a short sound when a response finishes while the chat is closed. Uses a different tone when the request fails.',
+            'completion-sound-enabled',
+            notificationGroup
+        );
+
+        createBooleanRow(
             'Track Token Usage',
             'Record local-only token totals for the Tokens panel. Existing data stays on disk when this is off.',
             'token-usage-enabled',
@@ -1043,7 +1056,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createButtonRow(
             'Reset Usage Ledger',
-            'Delete local token analytics and all pet XP. Chat history is not affected.',,
+            'Delete local token analytics and all pet XP. Chat history is not affected.',
             'Reset',
             () => {
                 TokenUsageManager.reset();
@@ -2521,10 +2534,15 @@ export default class KatabPreferences extends ExtensionPreferences {
                 '   # (auto-generated if left unset)',
                 '   REDIS_PASSWORD=your-redis-password',
                 '',
-                '   # Optional — LLM provider keys for AI extraction',
-                '   # Skip these if you only need basic crawling',
-                '   OPENAI_API_KEY=sk-...',
-                '   ANTHROPIC_API_KEY=...',
+                '   # Optional — LLM provider for AI extraction',
+                '   # Katab defaults to DeepSeek V4 Flash, so set the',
+                '   # provider and its key here (the compose file reads',
+                '   # all variables from .llm.env):',
+                '   LLM_PROVIDER=deepseek/deepseek-v4-flash',
+                '   DEEPSEEK_API_KEY=sk-...',
+                '   # Other providers work too — change LLM_PROVIDER and',
+                '   # add that provider\'s key, e.g. OPENAI_API_KEY,',
+                '   # ANTHROPIC_API_KEY, etc.',
                 '',
                 '   The docker-compose.yml reads ALL environment',
                 '   variables from .llm.env via the env_file directive.',
@@ -2558,7 +2576,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                 '',
                 '   Check the logs to confirm the token was picked up:',
                 '',
-                '   docker logs crawl4ai-crawl4ai-1',
+                '   docker compose logs',
+                '',
+                '   (Compose names the container after the folder you',
+                '   cloned into, e.g. crawl4ai-crawl4ai-1 here. Using',
+                '   "docker compose logs" works no matter the name. To',
+                '   target a container directly, list them first with:',
+                '   docker ps)',
                 '',
                 '   Look for: "CRAWL4AI_API_TOKEN is set"',
                 '   If you see "CRAWL4AI_API_TOKEN is not set"',
@@ -2765,6 +2789,114 @@ export default class KatabPreferences extends ExtensionPreferences {
                 100000,
                 500
             );
+
+            // ---- LLM Extraction (Optional) ----
+            const llmGroup = createPreferencesGroup({
+                title: 'LLM Extraction (Optional)',
+                description: 'Ask an LLM running on your Crawl4AI server to extract structured JSON or a freeform answer instead of raw Markdown. Fully optional \u2014 the default Markdown pipeline is unchanged.',
+            });
+            detailPage.add(llmGroup);
+
+            createInstructionRow(
+                'How to enable AI extraction',
+                'Pick an Extraction Mode below (Schema for structured JSON, Block for a freeform answer). ' +
+                'The LLM Provider defaults to DeepSeek V4 Flash, and both modes ship with a sensible default ' +
+                'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
+                'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
+                'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
+                '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
+                'different fields. Katab never sees or stores your API key.',
+                llmGroup
+            );
+
+            const llmModeRow = createChoiceRow(
+                'Extraction Mode',
+                'How Crawl4AI should format page content.',
+                llmGroup
+            );
+            bindChoiceRow(
+                llmModeRow,
+                'crawl4ai-extraction-mode',
+                [
+                    { value: 'markdown', label: 'Markdown Only (Default)' },
+                    { value: 'llm-schema', label: 'LLM Structured JSON (Schema)' },
+                    { value: 'llm-block', label: 'LLM Freeform Answer (Block)' },
+                ],
+                settings.get_string.bind(settings),
+                settings.set_string.bind(settings)
+            );
+
+            const llmProviderRow = createStringRow(
+                'LLM Provider',
+                'LiteLLM model identifier. Defaults to DeepSeek V4 Flash (deepseek/deepseek-v4-flash). Must match the provider allowed on your Crawl4AI server — set LLM_PROVIDER=<same value> and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
+                'crawl4ai-llm-provider',
+                llmGroup
+            );
+
+            const llmInstructionRow = createMultilineStringRow(
+                'LLM Instruction',
+                'Freeform instruction for Block mode. A default summary instruction is prefilled \u2014 edit it to suit the page type.',
+                'crawl4ai-llm-instruction',
+                llmGroup,
+                100
+            );
+
+            const llmSchemaRow = createMultilineStringRow(
+                'LLM Schema (JSON)',
+                'JSON Schema object for Schema mode. A general-purpose schema is prefilled \u2014 edit it to match the fields you want.',
+                'crawl4ai-llm-schema-json',
+                llmGroup,
+                140
+            );
+
+            const validateSchemaRow = createButtonRow(
+                'Validate Schema',
+                'Check that the JSON Schema text parses as valid JSON.',
+                'Validate',
+                () => {
+                    const raw = settings.get_string('crawl4ai-llm-schema-json') || '';
+                    try {
+                        JSON.parse(raw);
+                        validateSchemaRow.subtitle = 'Schema is valid JSON.';
+                    } catch (error) {
+                        validateSchemaRow.subtitle = `Invalid JSON: ${error?.message || 'parse error'}`;
+                    }
+                },
+                llmGroup
+            );
+
+            createIntRow(
+                'Chunk Token Threshold',
+                'Maximum tokens per chunk when Crawl4AI splits large pages for LLM extraction (500\u201316000).',
+                'crawl4ai-llm-chunk-token-threshold',
+                llmGroup,
+                500,
+                16000,
+                500
+            );
+
+            createDoubleRow(
+                'Chunk Overlap Rate',
+                'Overlap between consecutive chunks (0.0\u20130.5) to preserve context across boundaries.',
+                'crawl4ai-llm-overlap-rate',
+                llmGroup,
+                0.0,
+                0.5,
+                0.05,
+                2
+            );
+
+            // Visibility: only show LLM rows when an LLM mode is selected.
+            const syncLLMVisibility = () => {
+                const mode = settings.get_string('crawl4ai-extraction-mode') || 'markdown';
+                const llmActive = mode === 'llm-schema' || mode === 'llm-block';
+                llmProviderRow.visible = llmActive;
+                llmInstructionRow.visible = mode === 'llm-block';
+                llmSchemaRow.visible = mode === 'llm-schema';
+                validateSchemaRow.visible = mode === 'llm-schema';
+            };
+            syncLLMVisibility();
+            settings.connect('changed::crawl4ai-extraction-mode', syncLLMVisibility);
 
             // ---- Advanced ----
             const advancedGroup = createPreferencesGroup({

@@ -384,6 +384,9 @@ function runCommandAsync(argv, cancellable = null, installLabel = null) {
 
                 resolve(stdout || '');
             } catch (error) {
+                // Cancelling the request must not leave the helper (e.g.
+                // pdftotext/pandoc) running to completion.
+                try { subprocess.force_exit(); } catch (_e) { }
                 reject(error);
             }
         });

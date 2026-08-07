@@ -56,7 +56,9 @@ The user's query is sent to the LLM with a planning prompt that asks it to break
 
 The plan is shown to the user for approval before execution begins. If the planner fails (e.g., timeout), a fallback plan with the original query as a single angle is used.
 
-**Key method**: `_runPlannerAgent(query)` — makes a non-streaming completion call with `_requestNonStreamingCompletion`. Provider timeout is set appropriately (unbounded for Ollama local models).
+While a plan is pending approval, a follow-up prompt is treated as a **plan revision**, not a new research query: the revision planner (`_reviseResearchPlan`) is called with the original query, the current plan, and the user's feedback, and returns an updated plan that applies only the requested changes (dates, versions, scope, angles) while preserving the rest. The pending plan is only replaced if the revision succeeds; on failure the existing plan is left untouched. An explicit `/research` command still starts a fresh plan. Plan revisions do not consume the Deep Research turn (so a one-shot `/research` keeps deep thresholds through the eventual execution), and the phase routes correctly even if the mode was toggled off. The plan card offers **Edit plan**, **Cancel plan** (which exits the phase and turns Deep Research back off), and **Start research**.
+
+**Key methods**: `_runPlannerAgent(query)` — makes a non-streaming completion call with `_requestNonStreamingCompletion` for initial plan generation; `_reviseResearchPlan(originalQuery, currentPlan, feedback)` — same call shape with the revision system prompt. Provider timeout is set appropriately (unbounded for Ollama local models).
 
 ### Phase 2: Branch Execution
 

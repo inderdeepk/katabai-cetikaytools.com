@@ -294,16 +294,15 @@ const tests = [
 
     // ── createNotReadyHandler ──────────────────────────────────────────────
 
-    ['createNotReadyHandler: returns async function with error message', () => {
+    ['createNotReadyHandler: returns async function with error message', async () => {
         const handler = createNotReadyHandler('test_tool');
         assertEqual(typeof handler, 'function', 'returns function');
         // Call it and check the result
-        handler(null, null).then(result => {
-            assert(typeof result === 'string', 'returns string');
-            assert(result.includes('test_tool'), 'contains tool name');
-            assert(result.includes('not yet wired'), 'contains error message');
-        });
+        const result = await handler(null, null);
+        assert(typeof result === 'string', 'returns string');
+        assert(result.includes('test_tool'), 'contains tool name');
+        assert(result.includes('not yet wired'), 'contains error message');
     }],
 ];
 
-runTests(tests);
+await runTests(tests);

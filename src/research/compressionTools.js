@@ -21,9 +21,11 @@ RULES:
 - Focus on substantive, verifiable claims: statistics, dates, names, events, technical details.
 - If the page is mostly ads/navigation/empty, return fewer than 3 claims.
 - Do NOT summarize the page — extract individual factual claims.
+- For each claim, include an "anchor": the exact sentence(s) from the page
+  content that support the claim. Keep it verbatim (no paraphrasing).
 
-Output as a JSON array of objects with "claim" and "url" fields.
-Example: [{"claim": "Company X raised $50M in Series B funding in Q3 2025", "url": "https://example.com/article"}]`;
+Output as a JSON array of objects with "claim", "url", and "anchor" fields.
+Example: [{"claim": "Company X raised $50M in Series B funding in Q3 2025", "url": "https://example.com/article", "anchor": "X announced a $50M Series B round in Q3 2025."}]`;
 
 const MERGE_PAGE_SYSTEM = `You are a research assistant consolidating findings from multiple pages about the same topic.
 You will receive several page summaries (each with 3-5 bullet points). Merge them into a single,
@@ -327,17 +329,38 @@ function _safeParseJson(text) {
  * @param {string} options.sourceUrl - The URL the content came from
  * @param {Function} options.llmCall - async (messages, opts) => string (the LLM completion function)
  * @param {Object} [options.cancellable] - Gio.Cancellable
- * @returns {Promise<Array<{claim: string, url: string}>>}
+ * @param {Object} [options.researchContext] - { originalQuery, subTask } for question-aware extraction
+ * @param {string} [options.priorPageFacts] - Facts already covered by earlier pages (carry-forward context)
+ * @returns {Promise<Array<{claim: string, url: string, anchor_text: string}>>}
  */
-export async function compressPage({ rawText, sourceUrl, llmCall, cancellable = null } = {}) {
+export async function compressPage({ rawText, sourceUrl, llmCall, cancellable = null, researchContext = null, priorPageFacts = null } = {}) {
     if (!rawText || !sourceUrl || !llmCall) return [];
 
     const truncated = _truncateForPrompt(rawText, MAX_PAGE_CHARS);
     if (!truncated) return [];
 
+    // Question-aware extraction (Google's "contextual read"): focus compression
+    // on what matters for the branch sub-task and the user's original question.
+    let userContent = `SOURCE URL: ${sourceUrl}\n\n`;
+    if (researchContext) {
+        if (researchContext.originalQuery) {
+            userContent += `RESEARCH QUESTION: "${researchContext.originalQuery}"\n`;
+        }
+        if (researchContext.subTask) {
+            userContent += `SUB-TASK THIS PAGE WAS FOUND FOR: "${researchContext.subTask}"\n`;
+        }
+        userContent += 'Extract facts RELEVANT to this sub-task and research question.\n\n';
+    }
+    // Contextual augmentation (ACL 2025): tell the model what prior pages already
+    // covered so it extracts NEW facts instead of repeating consolidated ones.
+    if (priorPageFacts) {
+        userContent += `PREVIOUS PAGES ALREADY COVERED (extract NEW facts only — do not repeat these):\n${priorPageFacts}\n\n`;
+    }
+    userContent += `PAGE CONTENT:\n${truncated}`;
+
     const messages = [
         { role: 'system', content: COMPRESS_PAGE_SYSTEM },
-        { role: 'user', content: `SOURCE URL: ${sourceUrl}\n\nPAGE CONTENT:\n${truncated}` },
+        { role: 'user', content: userContent },
     ];
 
     try {
@@ -347,6 +370,9 @@ export async function compressPage({ rawText, sourceUrl, llmCall, cancellable = 
             return parsed.map(item => ({
                 claim: String(item.claim || '').trim(),
                 url: String(item.url || sourceUrl).trim(),
+                // Verbatim supporting sentence from the source page, used by the
+                // groundedness check to verify claims against the actual evidence.
+                anchor_text: String(item.anchor || item.anchor_text || item.quote || '').trim(),
             })).filter(item => item.claim.length > 0);
         }
         // Fallback: treat response as a bullet list
@@ -356,7 +382,7 @@ export async function compressPage({ rawText, sourceUrl, llmCall, cancellable = 
             .map(line => line.replace(/^[-*]\s*/, '').trim())
             .filter(Boolean);
         if (bullets.length > 0) {
-            return bullets.slice(0, 5).map(claim => ({ claim, url: sourceUrl }));
+            return bullets.slice(0, 5).map(claim => ({ claim, url: sourceUrl, anchor_text: '' }));
         }
         return [];
     } catch (_e) {
@@ -468,17 +494,20 @@ export async function buildSectionDraft({ themedParagraphs, sectionTitle, llmCal
  * @param {string} options.topic - The sub-topic / sub-question this branch addresses
  * @param {Function} options.llmCall - async (messages, opts) => string
  * @param {Object} [options.cancellable] - Gio.Cancellable
- * @returns {Promise<{findings: string, facts: Array<{claim: string, url: string}>, sources: string[]}>}
+ * @param {Object} [options.researchContext] - { originalQuery, subTask } for question-aware extraction
+ * @returns {Promise<{findings: string, facts: Array<{claim: string, url: string, anchor_text: string}>, sources: string[]}>}
  */
-export async function compressResearchBranch({ pages, topic, llmCall, cancellable = null } = {}) {
+export async function compressResearchBranch({ pages, topic, llmCall, cancellable = null, researchContext = null } = {}) {
     if (!pages || pages.length === 0 || !llmCall) {
         return { findings: '', facts: [], sources: [] };
     }
 
-    // Level 1: Compress each page
+    // Level 1: Compress each page, carrying the previous pages' facts forward
+    // (contextual augmentation) so each page yields NEW, non-redundant evidence.
     const allFacts = [];
     const pageSummaries = [];
     const sources = new Set();
+    let priorPageFacts = '';
 
     for (const page of pages) {
         const facts = await compressPage({
@@ -486,12 +515,21 @@ export async function compressResearchBranch({ pages, topic, llmCall, cancellabl
             sourceUrl: page.url,
             llmCall,
             cancellable,
+            researchContext,
+            priorPageFacts: priorPageFacts || undefined,
         });
         if (facts.length > 0) {
             allFacts.push(...facts);
             const summaryText = facts.map(f => `- ${f.claim} [source](${f.url})`).join('\n');
             pageSummaries.push(summaryText);
             sources.add(page.url);
+            // Grow the carry-forward context with the newly extracted facts,
+            // bounded so the prompt never explodes for long page sets.
+            const newFacts = facts.slice(0, 3).map(f => `- ${f.claim}`).join('\n');
+            priorPageFacts = (priorPageFacts ? priorPageFacts + '\n' : '') + newFacts;
+            if (priorPageFacts.length > 4000) {
+                priorPageFacts = priorPageFacts.slice(-4000);
+            }
         }
     }
 

@@ -95,13 +95,25 @@ const tests = [
         assertEqual(tool.uiLabel, 'Knowledge', 'ui label');
     }],
 
+    ['toolDefinitions: explore_docs', () => {
+        const tool = lookupTool('explore_docs');
+        assert(tool !== undefined, 'explore_docs exists');
+        assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
+        assertEqual(tool.isMeta, false, 'not meta');
+        assert(tool.parameters !== null, 'has parameters');
+        assert(tool.parameters.required.includes('url'), 'requires url');
+        assertEqual(tool.uiLabel, null, 'agent-only (no footer button)');
+        assertEqual(tool.command, null, 'no slash command');
+    }],
+
     // ── Danger level partitioning ──────────────────────────────────────────
 
     ['toolDefinitions: danger level partitioning', () => {
         const readOnly = getToolsByDanger(DANGER_READ_ONLY);
         const unsafe = getToolsByDanger(DANGER_POTENTIALLY_UNSAFE);
 
-        assertEqual(readOnly.length, 5, '5 read_only tools');
+        // web_search, read_url, crawl_url, deep_research, knowledge_search, explore_docs
+        assertEqual(readOnly.length, 6, '6 read_only tools');
         // document + update_knowledge are potentially_unsafe
         assertEqual(unsafe.length, 2, '2 potentially_unsafe tools');
         const unsafeNames = unsafe.map(t => t.name);
@@ -136,10 +148,12 @@ const tests = [
             const tool = lookupTool(name);
             // update_knowledge intentionally has null uiLabel/uiIcon (not shown in chat footer)
             if (name === 'update_knowledge') continue;
+            // explore_docs is agent-only — no footer button / slash command
+            if (name === 'explore_docs') continue;
             assert(typeof tool.uiLabel === 'string' && tool.uiLabel.length > 0, `${name} has uiLabel`);
             assert(typeof tool.uiIcon === 'string' && tool.uiIcon.length > 0, `${name} has uiIcon`);
         }
     }],
 ];
 
-runTests(tests);
+await runTests(tests);

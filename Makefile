@@ -43,6 +43,8 @@ test:
 	@gjs -m tests/toolDefinitions.test.js
 	@echo "--- Running crawl4ai tools tests ---"
 	@gjs -m tests/crawl4aiTools.test.js
+	@echo "--- Running explore docs tools tests ---"
+	@gjs -m tests/exploreDocsTools.test.js
 	@echo "--- Running document tools tests ---"
 	@gjs -m tests/documentTools.test.js
 	@echo "=== Phase 4: Usage & State ==="

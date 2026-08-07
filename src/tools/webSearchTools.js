@@ -586,11 +586,15 @@ export class WebSearchRuntime {
         this._session = session || new Soup.Session();
         this._session.timeout = timeoutSeconds;
         // Deduplication cache: maps lower-cased query → timestamp (ms).
-        // Prevents sending identical queries to SearxNG within the same
-        // conversation turn, avoiding upstream-engine rate limiting.
+        // Prevents the model re-issuing the SAME query in a rapid tool loop
+        // (which would hammer rate-limited upstream engines). It must NOT
+        // suppress a user legitimately re-asking the same question a few
+        // seconds later, so the window is kept short (aligned with the
+        // empty-result cooldown below). The empty-result cooldown is the real
+        // upstream rate-limit guard.
         this._recentQueries = new Map();
         // Queries older than this (ms) are evicted from the dedup cache.
-        this._QUERY_DEDUP_WINDOW_MS = 30_000; // 30 seconds
+        this._QUERY_DEDUP_WINDOW_MS = 8_000; // 8 seconds
         // Cooldown tracker: when a search returns 0 results (likely
         // upstream-engine rate limiting), record the timestamp so
         // subsequent searches wait before hitting SearxNG again.
@@ -675,7 +679,11 @@ export class WebSearchRuntime {
         // categories in parallel and merge the results.  This improves coverage
         // without the user needing to think about categories.
         const parallelCategories = config.parallelCategories;
-        if (parallelCategories && Array.isArray(parallelCategories) && parallelCategories.length > 1) {
+        // Only fan a SINGLE query out across categories. When query expansion
+        // produced multiple queries (deduped.length > 1), searching only
+        // deduped[0] would silently drop the expanded queries — fall through
+        // to the multi-query path below instead.
+        if (deduped.length === 1 && parallelCategories && Array.isArray(parallelCategories) && parallelCategories.length > 1) {
             const batches = await Promise.all(parallelCategories.map(cat =>
                 this._searchSingle(deduped[0], { ...config, categories: cat, parallelCategories: null, intentRoute: null }, cancellable).catch(error => {
                     if (cancellable && cancellable.is_cancelled()) throw error;
@@ -749,7 +757,19 @@ export class WebSearchRuntime {
 
     async fetchPage(rawUrl, config = {}, cancellable = null) {
         const allowLocal = Boolean(config.allowLocal);
-        const url = await this._assertFetchableUrl(rawUrl, { allowLocal, cancellable });
+        let url;
+        try {
+            url = await this._assertFetchableUrl(rawUrl, { allowLocal, cancellable });
+        } catch (error) {
+            if (cancellable && cancellable.is_cancelled()) {
+                throw error;
+            }
+            if (error instanceof WebSearchToolError) {
+                log(`[Katab:webSearch] read_url BLOCKED ${rawUrl} → ${error.code}: ${error.message}`);
+            }
+            throw error;
+        }
+        log(`[Katab:webSearch] read_url fetch start: ${url}`);
 
         let response;
         try {
@@ -762,18 +782,22 @@ export class WebSearchRuntime {
             if (cancellable && cancellable.is_cancelled()) {
                 throw error;
             }
-            throw new WebSearchToolError(`Could not fetch ${url}.`, {
+            const werr = new WebSearchToolError(`Could not fetch ${url}.`, {
                 code: 'fetch-failed',
                 detail: error?.message,
             });
+            log(`[Katab:webSearch] read_url FAILED ${url} → ${werr.code}: ${werr.message}${werr.detail ? ` (${werr.detail})` : ''}`);
+            throw werr;
         }
 
         if (response.status < 200 || response.status >= 300) {
+            log(`[Katab:webSearch] read_url FAILED ${url} → http-error ${response.status}`);
             throw new WebSearchToolError(`The page returned HTTP ${response.status}.`, { code: 'http-error' });
         }
 
         const data = response.bytes ? response.bytes.get_data() : null;
         if (!data || data.length === 0) {
+            log(`[Katab:webSearch] read_url FAILED ${url} → empty-page`);
             throw new WebSearchToolError('The page returned no content.', { code: 'empty-page' });
         }
 
@@ -788,6 +812,7 @@ export class WebSearchRuntime {
 
         text = (text || '').trim();
         if (!text) {
+            log(`[Katab:webSearch] read_url FAILED ${url} → no-text (content-type: ${response.contentType || 'unknown'})`);
             throw new WebSearchToolError('Could not extract readable text from the page.', { code: 'no-text' });
         }
 
@@ -796,6 +821,7 @@ export class WebSearchRuntime {
             text = `${text.slice(0, WEB_SEARCH_PAGE_MAX_CHARS).trimEnd()}\n\n[Page text truncated by Katab.]`;
         }
 
+        log(`[Katab:webSearch] read_url OK ${url} → ${text.length} chars (${truncated ? 'truncated' : 'full'})`);
         return { url: finalUrl, text, truncated, contentType };
     }
 
@@ -873,13 +899,13 @@ export class WebSearchRuntime {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
                 }
-                if (attempt < attempts) {
-                    const backoffMs = WEB_SEARCH_BACKOFF_MS[attempt - 1] || 2000;
-                    log(`[Katab:webSearch] Connection attempt ${attempt} failed for "${query}", retrying after ${backoffMs}ms…`);
-                    await this._sleepMs(backoffMs);
-                    continue;
-                }
-                log(`[Katab:webSearch] Connection failed for "${query}" after ${attempts} attempts: ${error.message}`);
+                // Fail fast on connection errors: an unreachable SearxNG
+                // instance is a service-down condition, not a transient blip.
+                // Retrying here with backoff just burns seconds before the same
+                // failure; callers (research branch loop / tool loop) have their
+                // own service-down handling.  HTTP-level retries (429
+                // rate-limit, empty results) are still handled below.
+                log(`[Katab:webSearch] Connection to SearxNG failed for "${query}": ${error.message}`);
                 throw new WebSearchToolError(
                     `Could not reach the SearxNG instance at ${config.url}. Make sure it is running and the URL is correct.`,
                     { code: 'connection-failed', detail: error?.message }
@@ -1208,6 +1234,8 @@ export class WebSearchRuntime {
                     const [, stdout] = source.communicate_finish(result);
                     resolve(decodeBytes(stdout));
                 } catch (error) {
+                    // Cancelling the request must not leave pdftotext running.
+                    try { subprocess.force_exit(); } catch (_e) { }
                     reject(error);
                 }
             });
