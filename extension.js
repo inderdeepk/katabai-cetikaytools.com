@@ -295,6 +295,16 @@ const OLLAMA_STREAM_TIMEOUT_SECONDS = 0;
 const RAG_AUTO_SEARCH_TIMEOUT_MS = 3000;
 const RAG_MANUAL_SEARCH_TIMEOUT_MS = 15000;
 const RAG_TOOL_SEARCH_TIMEOUT_MS = 10000;
+// Minimum per-result score before the pre-send auto KB fallback will trigger a
+// web search.  Dense retrieval almost always returns *some* chunks with tiny
+// scores (~0.03) even when the KB has nothing on-topic; without a floor the
+// auto-fallback fires on every chat message, polluting context and making the
+// model's own tool use look spurious.
+const RAG_FALLBACK_MIN_RESULT_SCORE = 0.10;
+// The local RAG service rejects a single indexed document longer than ~100K
+// chars with HTTP 413.  Keep each conversation index document comfortably
+// under that so long chats still get indexed into the knowledge base.
+const RAG_INDEX_MAX_TEXT_CHARS = 60000;
 const DEEPSEEK_MAX_RETRY_ATTEMPTS = 3;
 const DEEPSEEK_BACKOFF_BASE_MS = 1000;
 const DEEPSEEK_BACKOFF_CAP_MS = 15000;
@@ -3016,6 +3026,31 @@ class KatabDialog {
         return parts.join('\n');
     }
 
+    /** Split a conversation's index text into documents that stay under the
+     *  RAG service's per-document character cap (~100K, HTTP 413 if exceeded).
+     *  Splits on newline boundaries so chunks remain readable. */
+    _splitIndexText(id, text) {
+        const maxChars = RAG_INDEX_MAX_TEXT_CHARS;
+        if (!text) return [];
+        if (text.length <= maxChars) {
+            return [{ id, content: text }];
+        }
+        const parts = [];
+        let remaining = text;
+        let part = 0;
+        while (remaining.length > maxChars) {
+            let cut = remaining.lastIndexOf('\n', maxChars);
+            if (cut <= 0) cut = maxChars;
+            parts.push({ id: `${id}#part-${part}`, content: remaining.slice(0, cut).trimEnd() });
+            remaining = remaining.slice(cut).replace(/^\n+/, '');
+            part++;
+        }
+        if (remaining.trim()) {
+            parts.push({ id: `${id}#part-${part}`, content: remaining.trim() });
+        }
+        return parts;
+    }
+
     /** Index a single conversation entry into the RAG vector DB.
      *  Fire-and-forget — failures are logged but never block the UI. */
     async _indexConversationEntry(entry, ragConfig) {
@@ -3028,22 +3063,26 @@ class KatabDialog {
         const text = this._buildConversationIndexText(entry);
         if (!text) return;
 
+        // Split into bounded documents — the RAG service rejects a single text
+        // over ~100K chars with HTTP 413, which long conversations exceed.
+        const docs = this._splitIndexText(entry.id, text);
+
         try {
             const title = String(entry.title || '').substring(0, 120);
             const ts = entry.timestamp
                 ? new Date(entry.timestamp * 1000).toISOString()
                 : new Date().toISOString();
 
-            const result = await this._ragRuntime.index([{
-                id: entry.id,
-                content: text,
+            const result = await this._ragRuntime.index(docs.map(doc => ({
+                id: doc.id,
+                content: doc.content,
                 metadata: {
                     source: 'conversation',
                     sessionId: entry.id,
                     title,
                     timestamp: ts,
                 },
-            }], 'conversations', ragConfig, null);
+            })), 'conversations', ragConfig, null);
 
             if (result.indexed > 0) {
                 this._indexedConversationIds.set(entry.id, msgCount);
@@ -3140,23 +3179,21 @@ class KatabDialog {
     /** Handle an update_knowledge tool call.  In auto mode, indexes the new
      *  fact immediately.  In manual mode, renders an inline confirmation
      *  widget and waits for the user to approve or dismiss. */
-    async _handleKnowledgeUpdate(about, newFact, logEntry) {
+    async _handleKnowledgeUpdate(about, newFact, uiElements, entry) {
         const ragConfig = readRagConfig(this._settings);
         if (!ragConfig.enabled) {
-            this._updateToolCallLogEntry(logEntry, { status: 'error', error: 'Knowledge Base is disabled.' });
+            this._updateKnowledgeUsage(uiElements, entry, { status: 'error', error: 'Knowledge Base is disabled.' });
             return;
         }
 
         if (ragConfig.autoUpdateEnabled) {
             // Auto mode: update immediately, no confirmation needed
             await this._executeKnowledgeUpdate(about, newFact, ragConfig);
-            this._updateToolCallLogEntry(logEntry, {
-                status: 'success',
-                detail: `Updated "${about.substring(0, 40)}"`,
-            });
+            this._updateKnowledgeUsage(uiElements, entry, { status: 'success' });
         } else {
-            // Manual mode: render confirmation widget
-            this._renderKnowledgeUpdateConfirmation(about, newFact, ragConfig, logEntry);
+            // Manual mode: leave the entry pending so the KB drawer renders
+            // Update / Dismiss actions next to the pending memory update.
+            this._updateKnowledgeUsage(uiElements, entry, { status: 'pending' });
         }
     }
 
@@ -3182,94 +3219,6 @@ class KatabDialog {
         } catch (e) {
             log(`[Katab:rag] Knowledge update failed: ${e.message}`);
         }
-    }
-
-    /** Render an inline confirmation widget for a pending knowledge base update.
-     *  Shows the topic, the new information, and Update / Dismiss buttons. */
-    _renderKnowledgeUpdateConfirmation(about, newFact, ragConfig, logEntry) {
-        // Build a system-style message row
-        const row = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-kb-update-confirm',
-            x_expand: true,
-        });
-
-        const headerRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-kb-update-header-row',
-            x_expand: true,
-        });
-        const headerIcon = new St.Icon({
-            gicon: createRagGicon(this._extension.path),
-            style_class: 'katab-kb-update-icon',
-            icon_size: 16,
-        });
-        headerRow.add_child(headerIcon);
-        const headerLabel = new St.Label({
-            text: 'Update memory?',
-            style_class: 'katab-kb-update-header',
-        });
-        headerRow.add_child(headerLabel);
-        row.add_child(headerRow);
-
-        const topicLabel = new St.Label({
-            text: `Topic: ${about}`,
-            style_class: 'katab-kb-update-topic',
-            x_expand: true,
-        });
-        topicLabel.clutter_text.line_wrap = true;
-        row.add_child(topicLabel);
-
-        const factLabel = new St.Label({
-            text: newFact.length > 300 ? newFact.substring(0, 300) + '…' : newFact,
-            style_class: 'katab-kb-update-fact',
-            x_expand: true,
-        });
-        factLabel.clutter_text.line_wrap = true;
-        row.add_child(factLabel);
-
-        const btnRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-kb-update-btn-row',
-            x_expand: true,
-        });
-
-        const dismissBtn = new St.Button({
-            label: 'Dismiss',
-            style_class: 'katab-kb-update-dismiss-btn',
-            can_focus: true,
-        });
-        dismissBtn.connect('clicked', () => {
-            try { row.destroy(); } catch (_) { /* disposed */ }
-            this._updateToolCallLogEntry(logEntry, {
-                status: 'success',
-                detail: `Dismissed update for "${about.substring(0, 40)}"`,
-            });
-        });
-        btnRow.add_child(dismissBtn);
-
-        const updateBtn = new St.Button({
-            label: '✓ Update',
-            style_class: 'katab-kb-update-accept-btn',
-            can_focus: true,
-        });
-        updateBtn.connect('clicked', () => {
-            try { row.destroy(); } catch (_) { /* disposed */ }
-            this._updateToolCallLogEntry(logEntry, {
-                status: 'success',
-                detail: `Updated "${about.substring(0, 40)}"`,
-            });
-            // Fire-and-forget the actual update
-            this._executeKnowledgeUpdate(about, newFact, ragConfig).catch(e =>
-                log(`[Katab:rag] Deferred knowledge update failed: ${e.message}`)
-            );
-        });
-        btnRow.add_child(updateBtn);
-
-        row.add_child(btnRow);
-
-        // Add the widget to the message list as a system message
-        this._messageList.add_child(row);
     }
 
     async _checkRagHealth() {
@@ -3394,7 +3343,7 @@ class KatabDialog {
 
         // Document tool (needs enable)
         if (this._isDocumentToolEnabled()) {
-            lines.push('/doc "path" — Attach a local file (txt, md, pdf, docx, png, jpg)');
+            lines.push('/doc "path" — Attach a local file (txt, md, pdf, docx, png, jpg, eml)');
         } else {
             lines.push('/doc — Attach a local file (disabled — enable in Settings > Tools)');
         }
@@ -9917,6 +9866,142 @@ class KatabDialog {
         addLine(breakdownBits.join(' • '), 'katab-cache-drawer-meta');
     }
 
+    // ── Knowledge Base usage indicator ───────────────────────────────────
+    // A compact, glowing KB pill in the message footer that replaces the old
+    // per-tool rows in the tool-call log. Clicking it reveals an inline drawer
+    // listing what the knowledge base was asked and what came back. Works both
+    // live (uiElements from _addChatMessage) and during history replay (no
+    // _responseUiAlive dependency).
+
+    _recordKnowledgeUsage(uiElements, entry) {
+        if (!uiElements || !uiElements.kbPill || !entry) {
+            return;
+        }
+        if (!Array.isArray(uiElements._katabKnowledgeUsage)) {
+            uiElements._katabKnowledgeUsage = [];
+        }
+        uiElements._katabKnowledgeUsage.push(entry);
+        this._renderKnowledgeIndicator(uiElements);
+    }
+
+    _updateKnowledgeUsage(uiElements, entry, patch = {}) {
+        if (!uiElements || !entry) {
+            return;
+        }
+        Object.assign(entry, patch);
+        this._renderKnowledgeIndicator(uiElements);
+    }
+
+    _renderKnowledgeIndicator(uiElements) {
+        if (!uiElements || !uiElements.kbPill) {
+            return;
+        }
+
+        const pill = uiElements.kbPill;
+        const drawer = uiElements.kbDrawer;
+        const body = uiElements.kbDrawerBody;
+        const chevron = uiElements.kbChevron;
+        const entries = Array.isArray(uiElements._katabKnowledgeUsage)
+            ? uiElements._katabKnowledgeUsage.filter(Boolean)
+            : [];
+
+        if (entries.length === 0) {
+            pill.visible = false;
+            if (drawer) drawer.visible = false;
+            if (chevron) chevron.icon_name = 'pan-end-symbolic';
+            pill.remove_style_class_name('katab-kb-pill-expanded');
+            return;
+        }
+
+        pill.visible = true;
+        if (uiElements.kbPillLabel) {
+            uiElements.kbPillLabel.set_text(entries.length > 1 ? `KB · ${entries.length}` : 'KB');
+        }
+
+        if (!body) return;
+        body.destroy_all_children();
+
+        const addLine = (text, styleClass) => {
+            const lbl = new St.Label({
+                text,
+                style_class: styleClass,
+                x_expand: true,
+            });
+            lbl.clutter_text.line_wrap = true;
+            lbl.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            lbl.clutter_text.single_line_mode = false;
+            body.add_child(lbl);
+            return lbl;
+        };
+
+        for (const entry of entries) {
+            if (entry.kind === 'update') {
+                const topic = String(entry.about || 'memory');
+                const heading = entry.status === 'success'
+                    ? `Knowledge base — updated "${topic}"`
+                    : `Knowledge base — update memory: "${topic}"`;
+                addLine(heading, 'katab-kb-drawer-title');
+
+                if (entry.status === 'pending') {
+                    if (entry.newFact) {
+                        addLine(entry.newFact.length > 300 ? entry.newFact.substring(0, 300) + '…' : entry.newFact, 'katab-kb-drawer-line');
+                    }
+                    const btnRow = new St.BoxLayout({
+                        vertical: false,
+                        style_class: 'katab-kb-drawer-actions',
+                        x_expand: true,
+                    });
+
+                    const dismissBtn = new St.Button({
+                        label: 'Dismiss',
+                        style_class: 'katab-kb-drawer-btn katab-kb-drawer-dismiss',
+                        can_focus: true,
+                    });
+                    dismissBtn.connect('clicked', () => {
+                        this._updateKnowledgeUsage(uiElements, entry, { status: 'dismissed' });
+                    });
+                    btnRow.add_child(dismissBtn);
+
+                    const updateBtn = new St.Button({
+                        label: '✓ Update',
+                        style_class: 'katab-kb-drawer-btn katab-kb-drawer-accept',
+                        can_focus: true,
+                    });
+                    updateBtn.connect('clicked', () => {
+                        this._updateKnowledgeUsage(uiElements, entry, { status: 'success' });
+                        this._executeKnowledgeUpdate(entry.about, entry.newFact, readRagConfig(this._settings)).catch(e =>
+                            log(`[Katab:rag] Deferred knowledge update failed: ${e.message}`)
+                        );
+                    });
+                    btnRow.add_child(updateBtn);
+                    body.add_child(btnRow);
+                } else if (entry.status === 'error') {
+                    addLine(entry.error || 'Knowledge base update failed.', 'katab-kb-drawer-error');
+                } else if (entry.status === 'dismissed') {
+                    addLine(`Dismissed update for "${topic}".`, 'katab-kb-drawer-meta');
+                } else {
+                    addLine('Saved to the knowledge base.', 'katab-kb-drawer-meta');
+                }
+                continue;
+            }
+
+            // Search entry
+            const query = String(entry.query || '').trim();
+            const head = query
+                ? `"${query.length > 80 ? query.substring(0, 80) + '…' : query}"`
+                : 'Knowledge base search';
+            if (entry.status === 'error' || entry.status === 'timeout') {
+                addLine(head, 'katab-kb-drawer-title');
+                addLine(entry.error || 'Knowledge base search failed.', 'katab-kb-drawer-error');
+            } else {
+                const count = Number(entry.resultCount || 0);
+                const mode = entry.mode ? ` · ${entry.mode}` : '';
+                addLine(head, 'katab-kb-drawer-title');
+                addLine(count > 0 ? `Found ${count} result${count !== 1 ? 's' : ''}${mode}` : 'No relevant matches', 'katab-kb-drawer-line');
+            }
+        }
+    }
+
     // Add one reply's cache savings to the running conversation total and
     // refresh the header chip.
     _accumulateSessionCacheSavings(messageMeta) {
@@ -10082,6 +10167,7 @@ class KatabDialog {
         this._loadingConversation = true;
         let hasDetachedAttachments = false;
         let lastAssistantUI = null;
+        let pendingKnowledgeUsage = [];
         try {
             for (let msg of entry.messages) {
                 // Skip internal injection messages (self-healing retry prompts,
@@ -10096,10 +10182,25 @@ class KatabDialog {
                         && msg.content.every(b => b?.type === 'tool_result')) {
                         continue;
                     }
+                    if (Array.isArray(msg.knowledgeUsage)) {
+                        pendingKnowledgeUsage.push(...msg.knowledgeUsage);
+                    }
                     if (this._getMessageAttachments(msg).length > 0) {
                         hasDetachedAttachments = true;
                     }
                     this._addChatMessage('You', String(msg.content ?? '').trim(), 'user', { ...msg, _showMissingAttachmentNotice: true });
+                } else if (msg.role === 'tool') {
+                    // Knowledge-base tool results carry a lightweight usage
+                    // record so the footer pill survives a reload. Older
+                    // conversations without the record fall back to a generic
+                    // entry derived from the tool name.
+                    if (Array.isArray(msg.knowledgeUsage)) {
+                        pendingKnowledgeUsage.push(...msg.knowledgeUsage);
+                    } else if (msg.name === RAG_TOOL_NAME) {
+                        pendingKnowledgeUsage.push({ kind: 'search', query: 'knowledge base search', resultCount: 0, status: 'success' });
+                    } else if (msg.name === UPDATE_KNOWLEDGE_TOOL_NAME) {
+                        pendingKnowledgeUsage.push({ kind: 'update', about: 'memory', status: 'success' });
+                    }
                 } else if (msg.role === 'assistant') {
                     if (this._isToolCallIntermediary(msg)) {
                         continue;
@@ -10113,6 +10214,12 @@ class KatabDialog {
                             ? String(msg.content)
                             : '[No response content was saved for this message.]');
                     lastAssistantUI = this._addChatMessage('Katab AI', displayContent, 'assistant', msg);
+                    if (pendingKnowledgeUsage.length > 0) {
+                        for (const usage of pendingKnowledgeUsage) {
+                            this._recordKnowledgeUsage(lastAssistantUI, usage);
+                        }
+                        pendingKnowledgeUsage = [];
+                    }
                 }
             }
         } finally {
@@ -10978,11 +11085,6 @@ class KatabDialog {
             return `<span size="${headingSizes[headingMatch[1].length]}" weight="bold">${this._formatInlineMarkdown(headingMatch[2].trim())}</span>`;
         }
 
-        let quoteMatch = line.match(/^\s{0,3}>\s?(.*)$/);
-        if (quoteMatch) {
-            return `<span style="italic">| ${this._formatInlineMarkdown(quoteMatch[1])}</span>`;
-        }
-
         let bulletMatch = line.match(/^\s{0,3}[-*]\s+(.*)$/);
         if (bulletMatch) {
             return `• ${this._formatInlineMarkdown(bulletMatch[1])}`;
@@ -11076,6 +11178,13 @@ class KatabDialog {
 
     _appendMarkdownSegmentsFromText(segments, text) {
         let lines = String(text ?? '').split('\n');
+        for (const segment of this._buildMarkdownSegmentsFromLines(lines)) {
+            segments.push(segment);
+        }
+    }
+
+    _buildMarkdownSegmentsFromLines(lines) {
+        let segments = [];
         let bufferedLines = [];
 
         let flushBufferedLines = () => {
@@ -11101,6 +11210,37 @@ class KatabDialog {
 
         let index = 0;
         while (index < lines.length) {
+            let line = lines[index];
+
+            // Blockquote: group consecutive "> ..." lines, strip the markers,
+            // and parse the inner block as full markdown (tables, lists,
+            // headings, bold, etc.) inside a styled quote container. This
+            // replaces the old per-line "| " prefix that rendered as a stray
+            // slash/pipe before every quoted line.
+            if (/^\s{0,3}>\s?(.*)$/.test(line)) {
+                flushBufferedLines();
+
+                let innerLines = [];
+                while (index < lines.length) {
+                    let quoteMatch = lines[index].match(/^\s{0,3}>\s?(.*)$/);
+                    if (!quoteMatch) {
+                        break;
+                    }
+
+                    innerLines.push(quoteMatch[1]);
+                    index++;
+                }
+
+                if (innerLines.length > 0) {
+                    segments.push({
+                        type: 'blockquote',
+                        segments: this._buildMarkdownSegmentsFromLines(innerLines),
+                    });
+                }
+
+                continue;
+            }
+
             let table = this._parseMarkdownTable(lines, index);
             if (table) {
                 flushBufferedLines();
@@ -11114,18 +11254,20 @@ class KatabDialog {
                 continue;
             }
 
-            if (this._isMarkdownDividerLine(lines[index])) {
+            if (this._isMarkdownDividerLine(line)) {
                 flushBufferedLines();
                 segments.push({ type: 'rule' });
                 index++;
                 continue;
             }
 
-            bufferedLines.push(lines[index]);
+            bufferedLines.push(line);
             index++;
         }
 
         flushBufferedLines();
+
+        return segments;
     }
 
     _buildCodeBlockSegment(language, codeText) {
@@ -11392,6 +11534,43 @@ class KatabDialog {
     }
 
     _createMarkdownTableWidget(segment) {
+        let tableWindow = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-markdown-table-window',
+            x_expand: true,
+        });
+
+        let headerRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-markdown-table-header',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        let headerLabel = new St.Label({
+            text: 'Table',
+            style_class: 'katab-markdown-table-language',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        headerRow.add_child(headerLabel);
+        headerRow.add_child(new St.Widget({ x_expand: true }));
+
+        let copyBtn = new St.Button({
+            label: 'Copy table',
+            style_class: 'katab-markdown-table-copy-btn',
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+            accessible_name: 'Copy table to clipboard',
+        });
+        copyBtn.connect('clicked', () => {
+            St.Clipboard.get_default().set_text(
+                St.ClipboardType.CLIPBOARD,
+                String(segment.fallbackText ?? '')
+            );
+        });
+        headerRow.add_child(copyBtn);
+        tableWindow.add_child(headerRow);
+
         let tableBox = new St.BoxLayout({
             vertical: true,
             style_class: 'katab-markdown-table',
@@ -11423,7 +11602,8 @@ class KatabDialog {
             tableBox.add_child(rowBox);
         }
 
-        return tableBox;
+        tableWindow.add_child(tableBox);
+        return tableWindow;
     }
 
     _createCodeBlockWidget(language, codeText) {
@@ -11497,6 +11677,18 @@ class KatabDialog {
         for (let segment of segments) {
             if (segment.type === 'code') {
                 contentBox.add_child(this._createCodeBlockWidget(segment.language, segment.code));
+                hasChildren = true;
+                continue;
+            }
+
+            if (segment.type === 'blockquote') {
+                let quoteBox = new St.BoxLayout({
+                    vertical: true,
+                    style_class: 'katab-markdown-blockquote',
+                    x_expand: true,
+                });
+                this._renderAssistantSegments(quoteBox, segment.segments || []);
+                contentBox.add_child(quoteBox);
                 hasChildren = true;
                 continue;
             }
@@ -11587,8 +11779,8 @@ class KatabDialog {
             }
             // NOTE: knowledgeContext URLs are NOT collected here — they come
             // from past research injected by the KB, not from this conversation's
-            // tool calls.  The "Knowledge base" indicator already tells the user
-            // that personal memory was used.
+            // tool calls.  The compact KB pill in the message footer already
+            // tells the user that personal memory was used.
 
             // Tool-call assistant messages: extract URLs from tool call arguments
             if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
@@ -11851,43 +12043,9 @@ class KatabDialog {
 
         sourcesBox.destroy_all_children();
 
-        // ── Knowledge Base indicator (Phase 2) ────────────────────────────
-        // Show when KB context was injected into the current conversation,
-        // letting the user know the model used their personal knowledge base.
-        const hasKbContext = this._messageHistory.some(
-            msg => msg.role === 'user' && Boolean(msg.knowledgeContext)
-        );
-        if (hasKbContext) {
-            const kbRow = new St.BoxLayout({
-                vertical: false,
-                style_class: 'katab-chat-sources-header-row',
-                x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            const kbIcon = new St.Icon({
-                gicon: createRagGicon(this._extension.path),
-                style_class: 'katab-chat-kb-icon',
-                icon_size: 14,
-            });
-            kbRow.add_child(kbIcon);
-            const kbLabel = new St.Label({
-                text: 'Knowledge base',
-                style_class: 'katab-chat-kb-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            kbRow.add_child(kbLabel);
-            const kbSubtitle = new St.Label({
-                text: 'Personal memory used',
-                style_class: 'katab-chat-kb-subtitle',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            kbRow.add_child(kbSubtitle);
-            sourcesBox.add_child(kbRow);
-        }
-
         const sources = this._collectWebSources();
         if (!sources || sources.length === 0) {
-            sourcesBox.visible = hasKbContext;
+            sourcesBox.visible = false;
             return;
         }
 
@@ -12721,6 +12879,71 @@ class KatabDialog {
             copyBtnRow.add_child(cacheSavingsPill);
         }
 
+        // ── Knowledge Base usage pill (assistant only) ───────────────────
+        // Small glowing teal pill that replaces the KB rows in the tool-call
+        // log. Clicking it reveals the KB drawer built below the footer row.
+        let kbPill = null;
+        let kbPillIcon = null;
+        let kbPillLabel = null;
+        let kbChevron = null;
+        let kbDrawer = null;
+        let kbDrawerBody = null;
+        if (!isUser) {
+            kbPill = new St.BoxLayout({
+                style_class: 'katab-kb-pill',
+                y_align: Clutter.ActorAlign.CENTER,
+                reactive: true,
+                can_focus: true,
+                track_hover: true,
+                visible: false,
+            });
+            kbPillIcon = new St.Icon({
+                gicon: createRagGicon(this._extension.path),
+                style_class: 'katab-kb-pill-icon',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            kbPill.add_child(kbPillIcon);
+            kbPillLabel = new St.Label({
+                text: 'KB',
+                style_class: 'katab-kb-pill-label',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            kbPill.add_child(kbPillLabel);
+            kbChevron = new St.Icon({
+                icon_name: 'pan-end-symbolic',
+                style_class: 'katab-kb-pill-chevron',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            kbPill.add_child(kbChevron);
+            copyBtnRow.add_child(kbPill);
+
+            kbDrawer = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-kb-drawer',
+                x_expand: true,
+                visible: false,
+            });
+            kbDrawerBody = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-kb-drawer-body',
+                x_expand: true,
+            });
+            kbDrawer.add_child(kbDrawerBody);
+
+            kbPill.connect('button-press-event', () => {
+                const show = !kbDrawer.visible;
+                kbDrawer.visible = show;
+                kbChevron.icon_name = show ? 'pan-down-symbolic' : 'pan-end-symbolic';
+                if (show) {
+                    kbPill.add_style_class_name('katab-kb-pill-expanded');
+                } else {
+                    kbPill.remove_style_class_name('katab-kb-pill-expanded');
+                }
+                this._scrollToBottom();
+                return Clutter.EVENT_STOP;
+            });
+        }
+
         if (!isUser) {
             this._applyAssistantMetrics(metricsLabel, messageMeta, copyBtnRow);
         }
@@ -12826,6 +13049,9 @@ class KatabDialog {
             // sources sit between the message body and the action bar.
             bubbleBox.add_child(copyBtnRow);
             bubbleBox.add_child(cacheSavingsDrawer);
+            if (kbDrawer) {
+                bubbleBox.add_child(kbDrawer);
+            }
         }
 
         // User messages: attach the footer row (containing the copy button)
@@ -12915,7 +13141,7 @@ class KatabDialog {
 
         this._scrollToBottom();
 
-        const uiElements = { contentBox, contentLabel, thinkLabel, thinkWrapper, toolCallLogBox, toolLogWrapper, toolLogCountLabel, linkBox, sourcesBox, diagnosticBox, diagnosticLabel, metricsLabel, cacheSavingsPill, cacheSavingsPillLabel, cacheSavingsChevron, cacheSavingsDrawer, cacheSavingsDrawerBody, footerRow: copyBtnRow };
+        const uiElements = { contentBox, contentLabel, thinkLabel, thinkWrapper, toolCallLogBox, toolLogWrapper, toolLogCountLabel, linkBox, sourcesBox, diagnosticBox, diagnosticLabel, metricsLabel, cacheSavingsPill, cacheSavingsPillLabel, cacheSavingsChevron, cacheSavingsDrawer, cacheSavingsDrawerBody, kbPill, kbPillIcon, kbPillLabel, kbChevron, kbDrawer, kbDrawerBody, footerRow: copyBtnRow };
         // Tag the bubble with the chat generation it was created in, so
         // in-flight async renders can detect when the chat was rebuilt and
         // skip touching the disposed widgets.
@@ -16746,8 +16972,14 @@ class KatabDialog {
     _estimateContextSize() {
         try {
             const provider = this._settings.get_string('provider');
-            const msgs = this._messageHistory.map(m =>
-                this._sanitizeHistoryMessage(m, { provider }));
+            // Measure the ACTUAL payload that would be sent — sanitized AND
+            // truncated — not the raw in-memory history.  Truncation keeps the
+            // request at ~200K chars for Ollama / within the input budget for
+            // DeepSeek, so using the raw history here made the force-synthesis
+            // check fire on conversations whose real payload was only a few KB
+            // (symptom: model tool calls suppressed with "Maximum research
+            // depth reached" after a single iteration).
+            const msgs = this._getApiMessageHistory(provider);
             return JSON.stringify(msgs).length;
         } catch (_e) {
             return this._messageHistory.reduce((sum, m) =>
@@ -17493,6 +17725,9 @@ class KatabDialog {
         // It runs before the assistant bubble exists, so we stash it here and
         // surface it in the tool-call log once the bubble is built.
         let autoFallbackWebSearch = null;
+        // Captured KB usage (manual /kb or auto KB search) so the footer pill
+        // can be shown once the assistant bubble exists.
+        let sendKnowledgeUsage = null;
         const kbCommand = parseRagCommand(promptText);
         if (kbCommand?.isCommand) {
             const ragConfig = readRagConfig(this._settings);
@@ -17518,14 +17753,17 @@ class KatabDialog {
                 if (searchOutcome.kind === 'timeout') {
                     log(`[Katab:rag] /kb search timed out after ${RAG_MANUAL_SEARCH_TIMEOUT_MS}ms — continuing without KB context`);
                     this._addSystemMessage('Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context.', { variant: 'warning' });
+                    sendKnowledgeUsage = { kind: 'search', query: kbCommand.query, status: 'error', error: 'Knowledge Base search timed out.' };
                 } else {
                     const searchResult = searchOutcome.value;
                     knowledgeContext = buildRagResultBlock(kbCommand.query, searchResult, { mode: searchResult.mode || '' });
+                    sendKnowledgeUsage = { kind: 'search', query: kbCommand.query, resultCount: searchResult.results?.length || 0, mode: searchResult.mode || '', status: 'success' };
                     log(`[Katab:rag] /kb search for "${kbCommand.query.substring(0, 80)}" returned ${searchResult.results?.length || 0} results (mode=${searchResult.mode || 'dense'})`);
                 }
             } catch (e) {
                 log(`[Katab:rag] /kb search failed: ${e.message}`);
                 this._addSystemMessage(`Knowledge Base search failed: ${e.message}`, { variant: 'warning' });
+                sendKnowledgeUsage = { kind: 'search', query: kbCommand.query, status: 'error', error: e.message };
                 // Continue without knowledge context — don't block the user
             }
         } else if (this._knowledgeSearchMode === TOOL_MODE_AUTO && this._deepResearchMode !== TOOL_MODE_ON && crawl4aiTargetUrl === null) {
@@ -17563,6 +17801,7 @@ class KatabDialog {
                             const hasRelevant = results.some(r => (r.score || 0) >= 0.35);
                             if (hasRelevant) {
                                 knowledgeContext = buildRagResultBlock(effectiveQuery, searchResult, { mode: searchMode });
+                                sendKnowledgeUsage = { kind: 'search', query: effectiveQuery, resultCount: results.length, mode: searchMode, status: 'success' };
                                 log(`[Katab:rag] Auto KB search for "${effectiveQuery.substring(0, 80)}" returned ${results.length} results — injecting context (mode=${searchMode})`);
                                 // Suppress web_search when KB has high-confidence results (≥70%),
                                 // preventing redundant searches for information we already have.
@@ -17573,9 +17812,16 @@ class KatabDialog {
                                 }
                             }
 
-                            // Phase 3: Coverage fallback — when KB results are poor, auto-trigger web search
+                            // Phase 3: Coverage fallback — when KB results are poor, auto-trigger web search.
+                            // Only fallback when the KB returned at least one result with a meaningful
+                            // score.  Dense retrieval returns near-zero-score noise even for a KB with
+                            // nothing on-topic (e.g. 0.03), so without this floor every chat message
+                            // would auto-search the web.  When the KB has nothing useful, leave the
+                            // decision to the model (web_search is still advertised as a tool).
                             const coverageScore = computeRagCoverageScore(results);
+                            const hasAnyMeaningfulResult = results.some(r => (r.score || 0) >= RAG_FALLBACK_MIN_RESULT_SCORE);
                             const shouldFallback = ragConfig.fallbackEnabled
+                                && hasAnyMeaningfulResult
                                 && coverageScore < ragConfig.fallbackThreshold
                                 && this._isWebSearchEnabled()
                                 && this._webSearchMode !== TOOL_MODE_OFF;
@@ -17639,6 +17885,9 @@ class KatabDialog {
         if (knowledgeContext) {
             userMessage.knowledgeContext = knowledgeContext;
         }
+        if (sendKnowledgeUsage) {
+            userMessage.knowledgeUsage = [sendKnowledgeUsage];
+        }
 
         this._recordSentPrompt(rawPromptText);
         this._usageCompanionSprite?.showPose('tip', 1200);
@@ -17673,6 +17922,12 @@ class KatabDialog {
                 expandLabel: 'Search query',
                 expandValue: autoFallbackWebSearch.query,
             });
+        }
+
+        // Surface send-path KB usage (manual /kb or auto KB search) as the
+        // compact footer pill instead of a tool-call row.
+        if (sendKnowledgeUsage) {
+            this._recordKnowledgeUsage(uiElements, sendKnowledgeUsage);
         }
 
         // ── DeepSeek Vision Model (Image Support) ───────────────────────────
@@ -18463,6 +18718,16 @@ class KatabDialog {
                 }
             });
 
+            // Newer Ollama releases (via llama.cpp) reject repeat_last_n = -1 with
+            // HTTP 400: "Value must be between 0 <= value <= 2147483647, but got -1".
+            // -1 historically meant "scan the full active context", so translate it
+            // to num_ctx to preserve that behavior without tripping the validation.
+            if (options.repeat_last_n === -1) {
+                options.repeat_last_n = (typeof options.num_ctx === 'number' && options.num_ctx > 0)
+                    ? options.num_ctx
+                    : 64;
+            }
+
             let keepAlive = this._settings.get_string('ollama-keep-alive');
             // The Ollama API requires keep_alive to be a duration string with a unit (e.g. "5m", "999999h").
             // Bare "-1" is rejected — convert it to the equivalent indefinite duration.
@@ -18772,6 +19037,31 @@ class KatabDialog {
                                     ? 'synthesis forced'
                                     : `tool iteration cap (${maxToolIterations}) reached`;
                                 log(`[Katab] Suppressing ${effectiveToolCalls.length} tool call(s) — ${reason}.`);
+
+                                // Force synthesis is active but the model STILL emitted
+                                // structured tool calls (Ollama thinking mode can do this
+                                // even with tools removed from the payload).  Don't render
+                                // "[Maximum research depth reached…]" as the answer — retry
+                                // the synthesis turn once with the tool-call history
+                                // trimmed, mirroring the text-markup synthesis retry below.
+                                if (synthesising && (this._synthesisRetries || 0) < 1) {
+                                    this._synthesisRetries = (this._synthesisRetries || 0) + 1;
+                                    log(`[Katab:synthesis] Model emitted ${effectiveToolCalls.length} tool call(s) during forced synthesis — retrying with trimmed context.`);
+                                    this._trimToolHistoryForSynthesis();
+                                    const retryMsg = {
+                                        role: 'user',
+                                        content: '[SYNTHESIS RETRY — Answer the user\'s question directly using the information already gathered. '
+                                            + 'Produce ONLY natural-language prose. No XML. No JSON. No tool calls. Just prose.]',
+                                    };
+                                    retryMsg._synthesisRetry = true;
+                                    this._messageHistory.push(retryMsg);
+                                    this._saveCurrentConversation();
+                                    HistoryManager.flushSync();
+                                    this._applyAssistantRender(uiElements, 'Retrying synthesis…', { plain: true });
+                                    this._streamResponse(uiElements);
+                                    return;
+                                }
+
                                 const capMessage = synthesising
                                     ? '\n\n[Maximum research depth reached. Please answer based on the information you already have.]'
                                     : '\n\n[Maximum tool iterations reached. Please answer based on the information you already have.]';
@@ -20628,7 +20918,12 @@ class KatabDialog {
                 }
             }
 
-            const logEntry = this._addToolCallLogEntry(uiElements, {
+            // KB tools no longer add rows to the tool-call log — their activity
+            // is surfaced as a compact glowing pill in the message footer (see
+            // _recordKnowledgeUsage). Other tools keep the VS Code-style rows.
+            const isKbTool = toolName === RAG_TOOL_NAME || toolName === UPDATE_KNOWLEDGE_TOOL_NAME;
+            let knowledgeUsage = null;
+            const logEntry = isKbTool ? null : this._addToolCallLogEntry(uiElements, {
                 toolName: toolName || 'unknown',
                 status: 'pending',
                 detail: argsSummary || 'Executing…',
@@ -20781,7 +21076,8 @@ class KatabDialog {
                     const query = String(args.query ?? '').trim();
                     if (!query) {
                         resultText = 'No search query was provided for knowledge base search.';
-                        this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+                        knowledgeUsage = { kind: 'search', query: '', status: 'error', error: resultText };
+                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
                     } else {
                         this._applyAssistantRender(uiElements, `Searching knowledge base for \u201c${query}\u201d\u2026`, { plain: true });
                         const ragConfig = readRagConfig(this._settings);
@@ -20794,7 +21090,8 @@ class KatabDialog {
                         if (searchOutcome.kind === 'timeout') {
                             log(`[Katab:rag] Autonomous knowledge_search timed out after ${RAG_TOOL_SEARCH_TIMEOUT_MS}ms`);
                             resultText = 'Knowledge base search timed out — the RAG service is unresponsive. Do NOT keep calling knowledge_search; answer from your existing knowledge or use web_search instead.';
-                            this._updateToolCallLogEntry(logEntry, { status: 'error', error: 'RAG service timed out' });
+                            knowledgeUsage = { kind: 'search', query, status: 'error', error: 'RAG service timed out' };
+                            this._recordKnowledgeUsage(uiElements, knowledgeUsage);
                         } else {
                             const searchResult = searchOutcome.value;
                             const searchMode = searchResult?.mode || '';
@@ -20835,10 +21132,8 @@ class KatabDialog {
                                 }
                             }
 
-                            this._updateToolCallLogEntry(logEntry, {
-                                status: 'success',
-                                detail: resultCount > 0 ? `Found ${resultCount} result${resultCount !== 1 ? 's' : ''}` : 'No matches',
-                            });
+                            knowledgeUsage = { kind: 'search', query, resultCount, mode: searchMode, status: 'success' };
+                            this._recordKnowledgeUsage(uiElements, knowledgeUsage);
                         }
                     }
                 } else if (toolName === UPDATE_KNOWLEDGE_TOOL_NAME) {
@@ -20846,16 +21141,15 @@ class KatabDialog {
                     const newFact = String(args.new_fact ?? '').trim();
                     if (!about || !newFact) {
                         resultText = 'Both "about" and "new_fact" are required to update the knowledge base.';
-                        this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+                        knowledgeUsage = { kind: 'update', about: about || 'memory', status: 'error', error: resultText };
+                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
                     } else {
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'pending',
-                            detail: `Updating "${about.substring(0, 40)}"…`,
-                        });
-                        // The actual update may require user confirmation (manual mode)
-                        // or run immediately (auto mode).  Either way, don't block
-                        // the model — fire-and-forget with a placeholder result.
-                        this._handleKnowledgeUpdate(about, newFact, logEntry);
+                        // Record a pending update entry; _handleKnowledgeUpdate will
+                        // either run it immediately (auto mode) or leave it pending
+                        // so the KB drawer renders Update / Dismiss actions.
+                        knowledgeUsage = { kind: 'update', about, newFact, status: 'pending' };
+                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                        this._handleKnowledgeUpdate(about, newFact, uiElements, knowledgeUsage);
                         resultText = `Knowledge base update for "${about}" has been initiated.`;
                     }
                 } else {
@@ -20893,6 +21187,20 @@ class KatabDialog {
 
                 resultText = errorBase;
                 this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+
+                if (isKbTool) {
+                    const kbArg = toolName === RAG_TOOL_NAME
+                        ? String(args?.query ?? '').trim()
+                        : String(args?.about ?? '').trim();
+                    knowledgeUsage = {
+                        kind: toolName === RAG_TOOL_NAME ? 'search' : 'update',
+                        query: toolName === RAG_TOOL_NAME ? kbArg : undefined,
+                        about: toolName === RAG_TOOL_NAME ? undefined : (kbArg || 'memory'),
+                        status: 'error',
+                        error: resultText,
+                    };
+                    this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                }
             }
 
             // Progressive truncation
@@ -20904,7 +21212,7 @@ class KatabDialog {
                 resultText = truncated;
             }
 
-            return { tc, toolName, resultText };
+            return { tc, toolName, resultText, knowledgeUsage };
         };
 
         // ── Execute read_only tools in parallel, then potentially_unsafe sequentially ──
@@ -20937,7 +21245,8 @@ class KatabDialog {
         }
 
         // Push tool results to history
-        for (const { tc, toolName, resultText } of allResults) {
+        for (const result of allResults) {
+            const { tc, toolName, resultText, knowledgeUsage } = result;
             if (activeProvider === 'anthropic') {
                 anthropicResultBlocks.push({
                     type: 'tool_result',
@@ -20945,12 +21254,16 @@ class KatabDialog {
                     content: resultText,
                 });
             } else {
-                pendingMessages.push({
+                const toolMsg = {
                     role: 'tool',
                     tool_call_id: tc.id,
                     name: toolName,
                     content: resultText,
-                });
+                };
+                if (knowledgeUsage) {
+                    toolMsg.knowledgeUsage = knowledgeUsage;
+                }
+                pendingMessages.push(toolMsg);
             }
         }
 

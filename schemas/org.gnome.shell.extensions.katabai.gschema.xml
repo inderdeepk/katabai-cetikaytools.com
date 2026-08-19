@@ -21,7 +21,7 @@
     <key name="document-tool-enabled" type="b">
       <default>false</default>
       <summary>Enable Document Tool</summary>
-      <description>Enable optional local document parsing for supported text, PDF, and DOCX files.</description>
+      <description>Enable optional local document parsing for supported text, PDF, DOCX, and EML files.</description>
     </key>
 
     <!-- AI Token Breakdown Settings -->

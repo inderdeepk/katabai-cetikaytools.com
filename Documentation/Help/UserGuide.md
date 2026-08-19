@@ -158,7 +158,7 @@ Type `/help` at any time to see available commands for your current provider and
 | Command | Description |
 |---|---|
 | `/help` | Show available commands |
-| `/doc "path"` | Attach a local file (`.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`) |
+| `/doc "path"` | Attach a local file (`.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`, `.eml`) |
 | `/search query` | Search the web via SearxNG |
 | `/crawl URL` | Deep-scrape a web page with Crawl4AI |
 | `/crawl query` | Search then scrape the top result |
@@ -228,6 +228,7 @@ Katab includes an optional document tool for attaching local files to chat. It i
 |---|---|---|
 | `.txt` / `.md` | Built in | No extra packages |
 | `.png` / `.jpg` / `.jpeg` | Built in | Only sent for Ollama with vision-capable model |
+| `.eml` | Built in | Email messages; headers, body text, and attachment names parsed locally |
 | `.pdf` | `pdftotext` (poppler-utils) | |
 | `.docx` | `pandoc` | |
 
@@ -258,6 +259,7 @@ Two methods:
    /doc "/absolute/path/to/file.pdf"
    /doc "/absolute/path/to/file.docx" summarize the main points
    /doc "/absolute/path/to/screenshot.png" describe this image
+   /doc "/absolute/path/to/email.eml" summarize this email
    ```
 
 Typing `/doc` without a quoted path opens the file picker.

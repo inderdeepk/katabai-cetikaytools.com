@@ -124,13 +124,14 @@
     box-shadow: 0 0 10px rgba(243, 139, 168, 0.55);
 }
 
-/* Hatched "reserved for response" segment.  Uses a data-URI stripe image
+/* Hatched "reserved for response" segment.  Uses a small stripe image file
    rather than a CSS gradient — gradients on rounded surfaces trigger the
-   Clutter offscreen-framebuffer errors (see .katab-code-window note). */
+   Clutter offscreen-framebuffer errors (see .katab-code-window note), and
+   St does not support data: URIs in url(). */
 .katab-token-progress-reserved {
     height: 6px;
     background-color: rgba(255, 255, 255, 0.10);
-    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAYAAABWdVznAAAAP0lEQVR42mP4//9/HhbMgAszkKIYJM9AimJ0DQQVI2sgSjFMA9GKCWnAGnokKcalAW+8kKQYXQNRMU6SYhAGAJ0MyCgNqMhRAAAAAElFTkSuQmCC");
+    background-image: url("./icons/hatch.png");
     background-repeat: repeat;
     border-radius: 0 3px 3px 0;
 }
@@ -252,7 +253,7 @@
 .katab-session-info-progress-reserved {
     height: 6px;
     background-color: rgba(255, 255, 255, 0.10);
-    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAYAAABWdVznAAAAP0lEQVR42mP4//9/HhbMgAszkKIYJM9AimJ0DQQVI2sgSjFMA9GKCWnAGnokKcalAW+8kKQYXQNRMU6SYhAGAJ0MyCgNqMhRAAAAAElFTkSuQmCC");
+    background-image: url("./icons/hatch.png");
     background-repeat: repeat;
     border-radius: 0 3px 3px 0;
 }
@@ -874,71 +875,110 @@
     padding-top: 4px;
 }
 
-/* Knowledge Base update confirmation widget (Phase 2) */
+/* Knowledge Base usage pill + drawer (footer, replaces tool-call rows) */
 
-.katab-kb-update-confirm {
-    background-color: rgba(148, 226, 213, 0.08);
-    border: 1px solid rgba(148, 226, 213, 0.20);
+.katab-kb-pill {
+    spacing: 4px;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 9px;
+    background-color: rgba(148, 226, 213, 0.14);
+    border: 1px solid rgba(148, 226, 213, 0.50);
+}
+
+.katab-kb-pill:hover {
+    background-color: rgba(148, 226, 213, 0.22);
+    border-color: rgba(148, 226, 213, 0.78);
+}
+
+.katab-kb-pill-expanded {
+    background-color: rgba(148, 226, 213, 0.22);
+    border-color: rgba(148, 226, 213, 0.85);
+}
+
+.katab-kb-pill-icon {
+    icon-size: 12px;
+    color: #94e2d5;
+}
+
+.katab-kb-pill-label {
+    font-size: 8pt;
+    font-weight: 700;
+    color: rgba(148, 226, 213, 0.95);
+}
+
+.katab-kb-pill-chevron {
+    icon-size: 10px;
+    color: rgba(148, 226, 213, 0.6);
+}
+
+.katab-kb-pill:hover .katab-kb-pill-chevron,
+.katab-kb-pill-expanded .katab-kb-pill-chevron {
+    color: rgba(148, 226, 213, 0.95);
+}
+
+.katab-kb-drawer {
+    margin: 4px 6px 6px 8px;
+    padding: 9px 11px;
     border-radius: 8px;
-    padding: 10px 12px;
-    spacing: 6px;
-    margin: 6px 0;
+    background-color: rgba(0, 0, 0, 0.22);
+    border: 1px solid rgba(148, 226, 213, 0.22);
 }
 
-.katab-kb-update-header-row {
-    spacing: 6px;
+.katab-kb-drawer-body {
+    spacing: 4px;
 }
 
-.katab-kb-update-icon {
-    color: #94e2d5;
+.katab-kb-drawer-title {
+    font-size: 8pt;
+    font-weight: 700;
+    color: rgba(148, 226, 213, 0.95);
 }
 
-.katab-kb-update-header {
-    font-size: 10pt;
-    font-weight: bold;
-    color: #94e2d5;
-}
-
-.katab-kb-update-topic {
-    font-size: 8.5pt;
-    color: rgba(255, 255, 255, 0.55);
-}
-
-.katab-kb-update-fact {
-    font-size: 8.5pt;
+.katab-kb-drawer-line {
+    font-size: 8pt;
     color: rgba(255, 255, 255, 0.72);
-    padding: 4px 0;
 }
 
-.katab-kb-update-btn-row {
+.katab-kb-drawer-meta {
+    font-size: 8pt;
+    color: rgba(255, 255, 255, 0.42);
+}
+
+.katab-kb-drawer-error {
+    font-size: 8pt;
+    color: #f38ba8;
+}
+
+.katab-kb-drawer-actions {
     spacing: 6px;
     padding-top: 4px;
 }
 
-.katab-kb-update-accept-btn {
-    background-color: rgba(148, 226, 213, 0.18);
-    color: #94e2d5;
+.katab-kb-drawer-btn {
+    padding: 3px 12px;
     border-radius: 6px;
-    border: 1px solid rgba(148, 226, 213, 0.25);
-    padding: 4px 14px;
-    font-size: 9pt;
+    font-size: 8.5pt;
     font-weight: bold;
 }
 
-.katab-kb-update-accept-btn:hover {
+.katab-kb-drawer-accept {
+    background-color: rgba(148, 226, 213, 0.18);
+    color: #94e2d5;
+    border: 1px solid rgba(148, 226, 213, 0.25);
+}
+
+.katab-kb-drawer-accept:hover {
     background-color: rgba(148, 226, 213, 0.30);
 }
 
-.katab-kb-update-dismiss-btn {
+.katab-kb-drawer-dismiss {
     background-color: rgba(255, 255, 255, 0.06);
     color: rgba(255, 255, 255, 0.55);
-    border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 4px 14px;
-    font-size: 9pt;
 }
 
-.katab-kb-update-dismiss-btn:hover {
+.katab-kb-drawer-dismiss:hover {
     background-color: rgba(255, 255, 255, 0.12);
 }
 
@@ -1631,13 +1671,53 @@
     background-color: rgba(255, 255, 255, 0.12);
 }
 
-.katab-markdown-table {
+.katab-markdown-blockquote {
+    border-left: 3px solid rgba(255, 255, 255, 0.22);
+    padding: 2px 0 2px 10px;
+    margin: 2px 0 4px;
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.katab-markdown-table-window {
     margin: 2px 0 4px;
     /* border-radius removed — same offscreen framebuffer risk as
        code windows when tables contain many rows */
     border: 1px solid rgba(255, 255, 255, 0.10);
     background-color: rgba(26, 26, 26, 0.28);
     overflow: hidden;
+}
+
+.katab-markdown-table-header {
+    padding: 4px 10px 4px;
+    spacing: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.katab-markdown-table-language {
+    font-size: 8pt;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.60);
+}
+
+.katab-markdown-table-copy-btn {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background-color: rgba(56, 56, 56, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    font-size: 8pt;
+}
+
+.katab-markdown-table-copy-btn:hover,
+.katab-markdown-table-copy-btn:focus {
+    background-color: rgba(56, 56, 56, 0.95);
+    border-color: rgba(255, 255, 255, 0.20);
+    color: #ffffff;
+}
+
+.katab-markdown-table {
+    /* grid container only — border, background, and margin live on the
+       .katab-markdown-table-window wrapper so the copy header sits above. */
 }
 
 .katab-markdown-table-row {
@@ -1859,24 +1939,6 @@
     font-size: 8pt;
     font-weight: 400;
     color: rgba(255, 255, 255, 0.28);
-    margin-left: 2px;
-}
-
-/* Knowledge Base indicator (Phase 2) — shown when personal memory was used */
-.katab-chat-kb-icon {
-    color: #94e2d5;
-}
-
-.katab-chat-kb-label {
-    font-size: 8.5pt;
-    font-weight: bold;
-    color: #94e2d5;
-}
-
-.katab-chat-kb-subtitle {
-    font-size: 7.8pt;
-    font-weight: 400;
-    color: rgba(148, 226, 213, 0.42);
     margin-left: 2px;
 }
 
@@ -2812,46 +2874,74 @@
     color: rgba(0, 0, 0, 0.52);
 }
 
-/* Light-theme KB update confirmation */
+/* Light-theme Knowledge Base usage pill + drawer */
 
-.katab-theme-light .katab-kb-update-confirm {
-    background-color: rgba(30, 102, 245, 0.06);
-    border-color: rgba(30, 102, 245, 0.18);
+.katab-theme-light .katab-kb-pill {
+    background-color: rgba(20, 130, 115, 0.12);
+    border-color: rgba(20, 130, 115, 0.45);
 }
 
-.katab-theme-light .katab-kb-update-icon {
-    color: #1e66f5;
+.katab-theme-light .katab-kb-pill:hover,
+.katab-theme-light .katab-kb-pill-expanded {
+    background-color: rgba(20, 130, 115, 0.18);
+    border-color: rgba(20, 130, 115, 0.72);
 }
 
-.katab-theme-light .katab-kb-update-header {
-    color: #1e66f5;
+.katab-theme-light .katab-kb-pill-icon {
+    color: #0e7a6b;
 }
 
-.katab-theme-light .katab-kb-update-topic {
-    color: rgba(0, 0, 0, 0.48);
+.katab-theme-light .katab-kb-pill-label {
+    color: #0e7a6b;
 }
 
-.katab-theme-light .katab-kb-update-fact {
+.katab-theme-light .katab-kb-pill-chevron {
+    color: rgba(20, 130, 115, 0.6);
+}
+
+.katab-theme-light .katab-kb-pill:hover .katab-kb-pill-chevron,
+.katab-theme-light .katab-kb-pill-expanded .katab-kb-pill-chevron {
+    color: #0e7a6b;
+}
+
+.katab-theme-light .katab-kb-drawer {
+    background-color: rgba(30, 140, 125, 0.07);
+    border-color: rgba(30, 140, 125, 0.22);
+}
+
+.katab-theme-light .katab-kb-drawer-title {
+    color: #0e7a6b;
+}
+
+.katab-theme-light .katab-kb-drawer-line {
     color: rgba(0, 0, 0, 0.68);
 }
 
-.katab-theme-light .katab-kb-update-accept-btn {
-    background-color: rgba(30, 102, 245, 0.12);
-    color: #1e66f5;
-    border-color: rgba(30, 102, 245, 0.22);
+.katab-theme-light .katab-kb-drawer-meta {
+    color: rgba(0, 0, 0, 0.42);
 }
 
-.katab-theme-light .katab-kb-update-accept-btn:hover {
-    background-color: rgba(30, 102, 245, 0.20);
+.katab-theme-light .katab-kb-drawer-error {
+    color: #c04040;
 }
 
-.katab-theme-light .katab-kb-update-dismiss-btn {
+.katab-theme-light .katab-kb-drawer-accept {
+    background-color: rgba(20, 130, 115, 0.12);
+    color: #0e7a6b;
+    border-color: rgba(20, 130, 115, 0.22);
+}
+
+.katab-theme-light .katab-kb-drawer-accept:hover {
+    background-color: rgba(20, 130, 115, 0.20);
+}
+
+.katab-theme-light .katab-kb-drawer-dismiss {
     background-color: rgba(0, 0, 0, 0.04);
     color: rgba(0, 0, 0, 0.48);
     border-color: rgba(0, 0, 0, 0.08);
 }
 
-.katab-theme-light .katab-kb-update-dismiss-btn:hover {
+.katab-theme-light .katab-kb-drawer-dismiss:hover {
     background-color: rgba(0, 0, 0, 0.10);
 }
 
@@ -2887,9 +2977,35 @@
     background-color: rgba(0, 0, 0, 0.10);
 }
 
-.katab-theme-light .katab-markdown-table {
+.katab-theme-light .katab-markdown-blockquote {
+    border-left-color: rgba(0, 0, 0, 0.22);
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
+.katab-theme-light .katab-markdown-table-window {
     background-color: rgba(0, 0, 0, 0.03);
     border-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-markdown-table-header {
+    border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-markdown-table-language {
+    color: rgba(0, 0, 0, 0.50);
+}
+
+.katab-theme-light .katab-markdown-table-copy-btn {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.12);
+    color: rgba(0, 0, 0, 0.65);
+}
+
+.katab-theme-light .katab-markdown-table-copy-btn:hover,
+.katab-theme-light .katab-markdown-table-copy-btn:focus {
+    background-color: rgba(0, 0, 0, 0.10);
+    border-color: rgba(0, 0, 0, 0.20);
+    color: rgba(0, 0, 0, 0.80);
 }
 
 .katab-theme-light .katab-markdown-table-row {
@@ -2980,18 +3096,6 @@
 
 .katab-theme-light .katab-chat-sources-subtitle {
     color: rgba(0, 0, 0, 0.28);
-}
-
-.katab-theme-light .katab-chat-kb-icon {
-    color: #1e66f5;
-}
-
-.katab-theme-light .katab-chat-kb-label {
-    color: #1e66f5;
-}
-
-.katab-theme-light .katab-chat-kb-subtitle {
-    color: rgba(30, 102, 245, 0.42);
 }
 
 .katab-theme-light .katab-chat-source-button {

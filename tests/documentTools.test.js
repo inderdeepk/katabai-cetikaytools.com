@@ -7,10 +7,95 @@ import {
     buildMissingImagePromptBlock,
     buildVisionAnalysisPromptBlock,
     getDocumentToolCapabilities,
+    parseEmlText,
+    formatEmlDocument,
     DOCUMENT_TOOL_COMMAND,
     DOCUMENT_TOOL_MAX_CHARS,
 } from '../src/tools/documentTools.js';
 import { assert, assertEqual, assertThrows, runTests } from './testUtils.js';
+
+const PLAIN_EML = `From: Jane Doe <jane@example.com>
+To: John <john@example.com>
+Subject: Weekly Report
+Date: Mon, 17 Aug 2026 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+
+Hello John,
+
+Here is the weekly report. Numbers are up 12%.
+
+Regards,
+Jane
+`;
+
+const ALT_BASE64_EML = `From: =?UTF-8?B?SmFuZSBEb2U=?= <jane@example.com>
+To: John <john@example.com>
+Subject: =?UTF-8?Q?Quarterly=20Update?=
+Date: Tue, 18 Aug 2026 09:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="BOUND123"
+
+--BOUND123
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: base64
+
+SGVsbG8gZnJvbSB0aGUgcGxhaW4gcGFydC4=
+--BOUND123
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><p>Hello from the <b>HTML</b> part.</p></body></html>
+--BOUND123--
+`;
+
+const MIXED_EML = `From: a@b.c
+To: d@e.f
+Subject: With attachment
+Date: Wed, 19 Aug 2026 08:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIX"
+
+This is the preamble.
+--MIX
+Content-Type: text/plain; charset="UTF-8"
+
+The body text goes here.
+--MIX
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEwIDAgb2JqCg==
+--MIX
+Content-Type: image/png; name="logo.png"
+Content-Disposition: inline; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--MIX--
+`;
+
+const HTML_ONLY_EML = `From: html@only.com
+To: me@home.com
+Subject: HTML only
+Date: Thu, 20 Aug 2026 07:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset="UTF-8"
+
+<html><body><h1>Title</h1><p>Some <strong>bold</strong> &amp; text with nbsp&nbsp;here.</p></body></html>
+`;
+
+const QP_UTF8_EML = `From: q@pq.com
+To: r@pq.com
+Subject: QP body
+Date: Fri, 21 Aug 2026 06:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+Line one with =C3=A9 accent and a soft=\nbreak.
+`;
 
 const tests = [
     // ── parseDocumentCommand ───────────────────────────────────────────────
@@ -190,6 +275,93 @@ const tests = [
         assertEqual(DOCUMENT_TOOL_COMMAND, '/doc', 'command constant');
         assertEqual(typeof DOCUMENT_TOOL_MAX_CHARS, 'number', 'max chars is number');
         assert(DOCUMENT_TOOL_MAX_CHARS > 0, 'max chars positive');
+    }],
+
+    // ── EML capability ─────────────────────────────────────────────────────
+
+    ['getDocumentToolCapabilities: eml is built in', () => {
+        const caps = getDocumentToolCapabilities();
+        assert(caps.eml !== undefined, 'eml capability exists');
+        assert(caps.eml.available, 'eml always available (pure JS parser)');
+        assertEqual(caps.eml.status, 'builtin', 'eml is builtin');
+        assertEqual(caps.eml.kind, 'document', 'eml is a document kind');
+    }],
+
+    // ── parseEmlText ───────────────────────────────────────────────────────
+
+    ['parseEmlText: plain text email', () => {
+        const parsed = parseEmlText(PLAIN_EML);
+        assertEqual(parsed.subject, 'Weekly Report', 'subject');
+        assert(parsed.from.includes('jane@example.com'), 'from');
+        assert(parsed.to.includes('john@example.com'), 'to');
+        assert(parsed.body.includes('weekly report'), 'body text');
+        assert(!parsed.hasHtml, 'no html');
+        assertEqual(parsed.attachments.length, 0, 'no attachments');
+    }],
+
+    ['parseEmlText: multipart/alternative prefers plain part', () => {
+        const parsed = parseEmlText(ALT_BASE64_EML);
+        assertEqual(parsed.subject, 'Quarterly Update', 'encoded-word subject decoded');
+        assertEqual(parsed.body, 'Hello from the plain part.', 'plain part chosen over html');
+        assert(!parsed.hasHtml, 'html branch not emitted when plain exists');
+        assertEqual(parsed.attachments.length, 0, 'no attachments');
+    }],
+
+    ['parseEmlText: encoded-word from header (base64)', () => {
+        const parsed = parseEmlText(ALT_BASE64_EML);
+        assert(parsed.from.includes('Jane Doe'), 'base64 encoded-word from header decoded');
+    }],
+
+    ['parseEmlText: multipart/mixed lists attachments', () => {
+        const parsed = parseEmlText(MIXED_EML);
+        assertEqual(parsed.body, 'The body text goes here.', 'body extracted');
+        assertEqual(parsed.attachments.length, 2, 'two attachments found');
+        const pdf = parsed.attachments[0];
+        assertEqual(pdf.filename, 'report.pdf', 'pdf filename');
+        assertEqual(pdf.mimeType, 'application/pdf', 'pdf mime type');
+        assert(pdf.size > 0, 'pdf size estimated');
+        const png = parsed.attachments[1];
+        assertEqual(png.filename, 'logo.png', 'png filename');
+        assertEqual(png.mimeType, 'image/png', 'png mime type');
+    }],
+
+    ['parseEmlText: html-only email converts to text', () => {
+        const parsed = parseEmlText(HTML_ONLY_EML);
+        assert(parsed.hasHtml, 'html flagged');
+        assert(parsed.body.includes('Title'), 'heading text');
+        assert(parsed.body.includes('bold'), 'strong text');
+        assert(parsed.body.includes('&'), 'entity decoded');
+        assert(parsed.body.includes('nbsp here'), 'nbsp decoded to space');
+    }],
+
+    ['parseEmlText: quoted-printable decodes UTF-8 bytes', () => {
+        const parsed = parseEmlText(QP_UTF8_EML);
+        assert(parsed.body.includes('é'), '=C3=A9 decoded as UTF-8 é');
+        assert(parsed.body.includes('softbreak'), 'soft line break removed');
+    }],
+
+    ['parseEmlText: handles empty input', () => {
+        const parsed = parseEmlText('');
+        assertEqual(parsed.subject, '', 'empty subject');
+        assertEqual(parsed.body, '', 'empty body');
+        assertEqual(parsed.attachments.length, 0, 'no attachments');
+    }],
+
+    // ── formatEmlDocument ──────────────────────────────────────────────────
+
+    ['formatEmlDocument: renders headers, body and attachments', () => {
+        const formatted = formatEmlDocument(parseEmlText(MIXED_EML));
+        assert(formatted.includes('Subject: With attachment'), 'subject line');
+        assert(formatted.includes('From: a@b.c'), 'from line');
+        assert(formatted.includes('Date: Wed'), 'date line');
+        assert(formatted.includes('The body text goes here.'), 'body');
+        assert(formatted.includes('[Attachments: report.pdf'), 'attachment list');
+        assert(formatted.includes('logo.png'), 'second attachment');
+    }],
+
+    ['formatEmlDocument: renders missing body gracefully', () => {
+        const formatted = formatEmlDocument(parseEmlText('Subject: No body\n'));
+        assert(formatted.includes('No readable text body'), 'fallback message');
     }],
 ];
 

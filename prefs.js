@@ -2179,7 +2179,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             const capabilityGroup = createPreferencesGroup({
                 title: 'Detected Capabilities',
-                description: 'Katab scans the local system at runtime. PNG and JPG support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
+                description: 'Katab scans the local system at runtime. Text, Markdown, PNG/JPG, and EML support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
             });
             detailPage.add(capabilityGroup);
 
@@ -2203,10 +2203,16 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Install pandoc to convert DOCX files into plain text before sending them to the model.',
                 capabilityGroup
             );
+            const emlStatusRow = createStatusRow(
+                'Email Messages (.eml)',
+                'EML email files are parsed locally with Katab\'s built-in MIME reader — headers, body text, and attachment names are extracted without any external tool.',
+                capabilityGroup
+            );
 
             const refreshDocumentToolStatus = () => {
                 setStatusBadge(textStatusRow.badge, 'Built in', 'katab-prefs-status-builtin');
                 setStatusBadge(imageStatusRow.badge, 'Built in', 'katab-prefs-status-builtin');
+                setStatusBadge(emlStatusRow.badge, 'Built in', 'katab-prefs-status-builtin');
 
                 const pdfPath = GLib.find_program_in_path('pdftotext');
                 if (pdfPath) {

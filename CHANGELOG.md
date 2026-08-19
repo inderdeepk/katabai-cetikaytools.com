@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **EML email attachments**: The document tool (`/doc`) now accepts `.eml` files. Katab parses them locally with a built-in MIME reader (no external tool) — headers (From/To/Subject/Date, RFC 2047 encoded-words), the text/plain branch of multipart/alternative, HTML-only bodies converted to text, quoted-printable/base64 transfer encodings, and attachment names/sizes.
 - **Crawl4AI LLM Extraction (optional)**: Ask the Crawl4AI server's LLM to return structured JSON (schema mode) or a freeform answer (block mode) instead of raw Markdown. New `crawl4ai-extraction-mode`, `crawl4ai-llm-provider`, `crawl4ai-llm-instruction`, `crawl4ai-llm-schema-json`, `crawl4ai-llm-chunk-token-threshold`, and `crawl4ai-llm-overlap-rate` settings. Default stays markdown-only; API keys remain server-side.
 - **DeepSeek as the default Crawl4AI LLM provider**: `crawl4ai-llm-provider` now defaults to `deepseek/deepseek-v4-flash`, and both LLM extraction modes ship prefilled defaults (a general-purpose JSON Schema and a summary block instruction) so enabling a mode works out of the box.
 - **Inline `/crawl <url>` command**: `/crawl <url>` is now recognized anywhere in a message (e.g. *"Tell me about X. /crawl https://example.com"*), not just at the start or end.

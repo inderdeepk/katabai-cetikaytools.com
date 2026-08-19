@@ -8,7 +8,7 @@
 
 - **5 AI Providers** — Ollama (local), Unsloth Studio (local), DeepSeek, OpenAI, and Anthropic (Claude)
 - **Streaming Chat** with markdown rendering, code highlighting, thinking/reasoning blocks, and inline citations
-- **Document Attachments** — `.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`
+- **Document Attachments** — `.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`, `.eml`
 - **Web Search** via self-hosted SearxNG — manual `/search` or autonomous model-driven lookups
 - **Web Scraping** via Crawl4AI — deep browser rendering with `/crawl`
 - **Deep Research** — multi-phase pipeline: planning → parallel research → gap analysis → synthesis with citations
