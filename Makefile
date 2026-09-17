@@ -29,6 +29,8 @@ test:
 	@gjs -m tests/networkGuard.test.js
 	@echo "--- Running citation tracker tests ---"
 	@gjs -m tests/citationTracker.test.js
+	@echo "--- Running session memory tests ---"
+	@gjs -m tests/sessionMemory.test.js
 	@echo "--- Running tool registry tests ---"
 	@gjs -m tests/toolRegistry.test.js
 	@echo "=== Phase 2: Research Pipeline ==="
@@ -39,6 +41,8 @@ test:
 	@echo "=== Phase 3: Tool Implementations ==="
 	@echo "--- Running web search tools tests ---"
 	@gjs -m tests/webSearchTools.test.js
+	@echo "--- Running rag tools tests ---"
+	@gjs -m tests/ragTools.test.js
 	@echo "--- Running tool definitions tests ---"
 	@gjs -m tests/toolDefinitions.test.js
 	@echo "--- Running crawl4ai tools tests ---"
@@ -61,6 +65,7 @@ test-verbose:
 	@echo "=== Full Test Suite (verbose) ==="
 	@gjs -m tests/networkGuard.test.js || true
 	@gjs -m tests/citationTracker.test.js || true
+	@gjs -m tests/sessionMemory.test.js || true
 	@gjs -m tests/toolRegistry.test.js || true
 	@gjs -m tests/compressionTools.test.js || true
 	@gjs -m tests/researchCache.test.js || true

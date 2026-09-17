@@ -234,9 +234,10 @@ export function buildMissingImagePromptBlock(documentMeta) {
     return `Previously attached image: ${label}. Reattach it in the current session to include it in the current request.`;
 }
 
-// Used when DeepSeek (a text-only model) is the active provider and the user
-// attached images.  The vision model's analysis replaces the raw image bytes —
-// DeepSeek never sees the image itself, only this analysis block.
+// Used when deepseek-v4-pro (text-only) is the active provider — or when a
+// Flash image's bytes are no longer cached — and the user attached images.
+// The vision model's analysis replaces the raw image bytes, so the text model
+// never sees the image itself, only this analysis block.
 export function buildVisionAnalysisPromptBlock(analysisText, modelName) {
     const source = modelName || 'the configured vision model';
     const analysis = String(analysisText ?? '').trim();

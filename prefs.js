@@ -135,7 +135,6 @@ export default class KatabPreferences extends ExtensionPreferences {
             'think': 'boolean',
             'top-k': 'int',
             'top-p': 'double',
-            'typical-p': 'double',
         };
 
         const presetDefinitions = {
@@ -151,7 +150,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
-                'typical-p': 1.0,
             },
             code: {
                 'format': '',
@@ -165,7 +163,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
-                'typical-p': 1.0,
             },
             factual: {
                 'format': '',
@@ -179,7 +176,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
-                'typical-p': 1.0,
             },
             creative: {
                 'format': '',
@@ -193,7 +189,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'presence-penalty': 0.2,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
-                'typical-p': 1.0,
             },
             json: {
                 'format': 'json',
@@ -207,7 +202,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
-                'typical-p': 1.0,
             },
         };
 
@@ -283,6 +277,12 @@ export default class KatabPreferences extends ExtensionPreferences {
             description: 'Control desktop alerts and sounds for chat activity that happens while the window is closed.',
         });
         page.add(notificationGroup);
+
+        const appearanceGroup = createPreferencesGroup({
+            title: 'Appearance',
+            description: 'Control how chat text is sized and how the glass dialog renders over your desktop.',
+        });
+        page.add(appearanceGroup);
 
         const addPreferenceRow = (group, row) => {
             if (typeof group.add_row === 'function') {
@@ -914,6 +914,31 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it.',
             'toggle-current-chat',
             accessibilityGroup
+        );
+
+        const chatTextScaleRow = createChoiceRow(
+            'Chat Text Size',
+            'Comfortable is the recommended default for general readability. Compact fits more text on screen; Large is easier to read from a distance.',
+            appearanceGroup
+        );
+        bindChoiceRow(
+            chatTextScaleRow,
+            'chat-text-scale',
+            [
+                { label: 'Compact', value: 'compact' },
+                { label: 'Comfortable (Recommended)', value: 'comfortable' },
+                { label: 'Large', value: 'large' },
+            ],
+            settings.get_string.bind(settings),
+            settings.set_string.bind(settings),
+            value => `Custom (${value})`
+        );
+
+        createBooleanRow(
+            'Glassy Translucent Dialog',
+            'Makes the chat dialog slightly see-through for the glass look. Turn this off for maximum text readability — the dialog then uses a more opaque surface.',
+            'ui-glass-translucent',
+            appearanceGroup
         );
 
         createBooleanRow(
@@ -1588,7 +1613,6 @@ export default class KatabPreferences extends ExtensionPreferences {
             subtitle: 'Extra distribution-shaping controls for power users.',
         });
         createDoubleRow('Tail Free Sampling (tfs_z)', 'Cuts off the low-value tail of the distribution where choices stop being meaningfully distinct. Set 1.0 to disable it.', 'ollama-tfs-z', advancedSamplingExpander, 0.0, 1.0, 0.05, 2);
-        createDoubleRow('Typical-P', 'Biases generation toward tokens with typical information content so output stays natural instead of too flat or too erratic.', 'ollama-typical-p', advancedSamplingExpander, 0.0, 1.0, 0.05, 2);
         generationGroup.add(advancedSamplingExpander);
 
         const loopMitigationExpander = createExpanderRow({
@@ -1617,7 +1641,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         );
         createStringRow(
             'Model',
-            'Use deepseek-v4-flash for general tasks and rapid coding, or deepseek-v4-pro for complex reasoning and multi-step workflows.',
+            'Use deepseek-flash (V4.1) for general tasks, rapid coding, and image input, or deepseek-v4-pro for complex reasoning and multi-step workflows.',
             'deepseek-model',
             deepseekConnectionGroup
         );
@@ -1683,13 +1707,13 @@ export default class KatabPreferences extends ExtensionPreferences {
         deepseekPage.add(deepseekReasoningGroup);
 
         // --- DeepSeek Image Support (Vision Model) ---
-        // DeepSeek V4 models are text-only. When images are attached while
-        // DeepSeek is the active provider, Katab routes them through a
-        // separately-configured vision model (local Ollama or any
-        // OpenAI-compatible endpoint).
+        // deepseek-flash (V4.1) accepts images natively. deepseek-v4-pro is
+        // text-only, so when images are attached while Pro is the active
+        // provider, Katab routes them through a separately-configured vision
+        // model (local Ollama or any OpenAI-compatible endpoint).
         const deepseekVisionGroup = createPreferencesGroup({
             title: 'Image Support (Vision Model)',
-            description: 'DeepSeek V4 models cannot see images. When you attach an image while DeepSeek is active, Katab analyzes it with the vision model below, then passes the analysis to DeepSeek which writes the reply. DeepSeek text models (flash/pro) cannot be used here.',
+            description: 'deepseek-flash (V4.1) handles images natively — no setup needed. This section only applies to deepseek-v4-pro, which cannot see images: Katab analyzes attached images with the vision model below, then passes the analysis to Pro, which writes the reply. Text-only DeepSeek models (pro) cannot be used here as the vision model.',
         });
 
         // Routing mode: preprocess (default) vs direct.
@@ -2541,10 +2565,10 @@ export default class KatabPreferences extends ExtensionPreferences {
                 '   REDIS_PASSWORD=your-redis-password',
                 '',
                 '   # Optional — LLM provider for AI extraction',
-                '   # Katab defaults to DeepSeek V4 Flash, so set the',
+                '   # Katab defaults to DeepSeek V4.1 Flash, so set the',
                 '   # provider and its key here (the compose file reads',
                 '   # all variables from .llm.env):',
-                '   LLM_PROVIDER=deepseek/deepseek-v4-flash',
+                '   LLM_PROVIDER=deepseek/deepseek-flash',
                 '   DEEPSEEK_API_KEY=sk-...',
                 '   # Other providers work too — change LLM_PROVIDER and',
                 '   # add that provider\'s key, e.g. OPENAI_API_KEY,',
@@ -2806,7 +2830,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             createInstructionRow(
                 'How to enable AI extraction',
                 'Pick an Extraction Mode below (Schema for structured JSON, Block for a freeform answer). ' +
-                'The LLM Provider defaults to DeepSeek V4 Flash, and both modes ship with a sensible default ' +
+                'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
                 'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
                 'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
                 'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
@@ -2834,7 +2858,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             const llmProviderRow = createStringRow(
                 'LLM Provider',
-                'LiteLLM model identifier. Defaults to DeepSeek V4 Flash (deepseek/deepseek-v4-flash). Must match the provider allowed on your Crawl4AI server — set LLM_PROVIDER=<same value> and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
+                'LiteLLM model identifier. Defaults to DeepSeek V4.1 Flash (deepseek/deepseek-flash). Must match the provider allowed on your Crawl4AI server — set LLM_PROVIDER=<same value> and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
                 'crawl4ai-llm-provider',
                 llmGroup
             );
@@ -2950,10 +2974,10 @@ export default class KatabPreferences extends ExtensionPreferences {
             const detailPage = ragSubpage.detailPage;
 
             const noticeGroup = createPreferencesGroup({});
-            detailPage.add(noticeGroup);
+            // (added to the page after the Service group — see the Service block)
             const noticeRow = createInfoRow(
                 'How the Knowledge Base works',
-                'Your documents, conversations, and research results are chunked, embedded with Ollama\u2019s nomic-embed-text model, and stored in a local ChromaDB vector database. When you ask a question, Katab finds the most semantically similar chunks and feeds them as context. Everything runs locally \u2014 no data leaves your machine.\n\nPhase 3 adds hybrid BM25 keyword matching, cross-encoder reranking (bge-reranker-v2-m3), and automatic web search fallback when knowledge base results are low-quality. See the Setup section below for installation instructions.',
+                'Your documents, conversations, and research results are chunked, embedded with Ollama\u2019s nomic-embed-text model, and stored in a local ChromaDB vector database. When you ask a question, Katab finds the most semantically similar chunks and feeds them as context. Everything runs locally \u2014 no data leaves your machine.\n\nPhase 3 adds hybrid BM25 keyword matching, cross-encoder reranking (bge-reranker-v2-m3), and automatic web search fallback when knowledge base results are low-quality. Use the Service section above for one-click setup, or see the Setup section below for manual instructions.',
                 noticeGroup
             );
             noticeRow.add_prefix(addCssClasses(new Gtk.Image({
@@ -2968,8 +2992,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                 xalign: 0,
                 halign: Gtk.Align.START,
             }), 'katab-prefs-expander-title'));
-            setupExpander.subtitle = 'The Python service must be running for the Knowledge Base to work.';
+            setupExpander.subtitle = 'Prefer one-click? Use Set Up & Start in the Service section above. The steps below are the manual alternative.';
             noticeGroup.add(setupExpander);
+
+            createInstructionRow('One-Click Setup (Recommended)', [
+                'Use the Service section above to install and start the RAG service automatically.',
+                '',
+                'The steps below are only needed for a manual or custom installation.',
+            ].join('\n'), setupExpander);
 
             createInstructionRow('Installation', [
                 '1. Create a virtual environment for the RAG service',
@@ -3064,7 +3094,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 title: 'Connection',
                 description: 'Point Katab at your local RAG Python service.',
             });
-            detailPage.add(connectionGroup);
+            // (added to the page after the Service group — see the Service block)
 
             createBooleanRow(
                 'Enable Knowledge Base',
@@ -3159,6 +3189,286 @@ export default class KatabPreferences extends ExtensionPreferences {
                 },
                 connectionGroup
             );
+
+            // ---- Service ----
+            const RAG_SERVICE_UNIT = 'katabai-rag.service';
+            const systemctlPath = GLib.find_program_in_path('systemctl') || 'systemctl';
+            const python3Path = GLib.find_program_in_path('python3') || 'python3';
+            const serviceDir = GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai', 'rag-service']);
+            const venvDir = GLib.build_filenamev([serviceDir, '.venv']);
+            const venvPython = GLib.build_filenamev([venvDir, 'bin', 'python3']);
+
+            // Runs an arbitrary command and reports success + output.
+            const runCommand = (argv, onDone) => {
+                let proc;
+                try {
+                    proc = Gio.Subprocess.new(
+                        argv,
+                        Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+                    );
+                } catch (e) {
+                    onDone({ success: false, stdout: '', stderr: e?.message || String(e) });
+                    return;
+                }
+                proc.communicate_utf8_async(null, null, (source, result) => {
+                    try {
+                        const [, stdout, stderr] = source.communicate_utf8_finish(result);
+                        // IMPORTANT: the first tuple element of communicate_utf8_finish
+                        // only means "communication completed" — it is true even when
+                        // the process exits non-zero. Use get_successful() for the
+                        // actual exit status (e.g. `systemctl is-active` exits 3 when
+                        // a unit is stopped).
+                        onDone({ success: source.get_successful(), stdout: stdout || '', stderr: stderr || '' });
+                    } catch (e) {
+                        onDone({ success: false, stdout: '', stderr: e?.message || String(e) });
+                    }
+                });
+            };
+
+            // Runs `systemctl --user <args...>`.
+            const runSystemctlRaw = (args, onDone) => runCommand([systemctlPath, '--user', ...args], onDone);
+
+            // Runs a verb against the katabai-rag.service unit.
+            const runSystemctl = (verb, onDone) => runSystemctlRaw([verb, RAG_SERVICE_UNIT], onDone);
+
+            const serviceGroup = createPreferencesGroup({
+                title: 'Service',
+                description: 'Control the local RAG service (the systemd user unit katabai-rag.service). "Set Up & Start" performs the default install \u2014 create the Python venv, install dependencies, write the unit file, and start the service \u2014 skipping any step already done and leaving an existing (custom) unit file untouched. Start, Restart, and Stop manage an already-installed unit.',
+            });
+            detailPage.add(serviceGroup);
+
+            // The Service group is intentionally first on the page so the one-click
+            // setup is immediately visible. The intro/Setup and Connection groups are
+            // appended after it to keep configuration below the service controls.
+            detailPage.add(noticeGroup);
+            detailPage.add(connectionGroup);
+
+            const { row: ragServiceStatusRow, badge: ragServiceBadge } = createStatusRow(
+                'Service Status',
+                'Checking the systemd unit\u2026',
+                serviceGroup
+            );
+            setStatusBadge(ragServiceBadge, 'Checking', null);
+
+            const showServiceError = (msg) => {
+                setStatusBadge(ragServiceBadge, 'Failed', 'katab-prefs-status-install');
+                ragServiceStatusRow.subtitle = msg;
+            };
+
+            const serviceButtons = new Gtk.Box({
+                orientation: Gtk.Orientation.HORIZONTAL,
+                spacing: 6,
+            });
+
+            const setupBtn = addCssClasses(new Gtk.Button({
+                label: 'Set Up & Start',
+                valign: Gtk.Align.CENTER,
+            }), 'katab-prefs-button', 'suggested-action');
+            const startBtn = addCssClasses(new Gtk.Button({
+                label: 'Start',
+                valign: Gtk.Align.CENTER,
+            }), 'katab-prefs-button');
+            const restartBtn = addCssClasses(new Gtk.Button({
+                label: 'Restart',
+                valign: Gtk.Align.CENTER,
+            }), 'katab-prefs-button');
+            const stopBtn = addCssClasses(new Gtk.Button({
+                label: 'Stop',
+                valign: Gtk.Align.CENTER,
+            }), 'katab-prefs-button', 'destructive-action');
+
+            for (const btn of [setupBtn, startBtn, restartBtn, stopBtn]) {
+                serviceButtons.append(btn);
+            }
+
+            const updateServiceButtons = (installed, active) => {
+                setupBtn.visible = !installed;
+                setupBtn.sensitive = !installed;
+                startBtn.visible = installed;
+                restartBtn.visible = installed;
+                stopBtn.visible = installed;
+                startBtn.sensitive = installed && !active;
+                restartBtn.sensitive = installed;
+                stopBtn.sensitive = installed && active;
+            };
+
+            const refreshServiceStatus = () => {
+                setStatusBadge(ragServiceBadge, 'Checking', null);
+                ragServiceStatusRow.subtitle = 'Checking the systemd unit\u2026';
+                const venvReady = Gio.File.new_for_path(venvPython).query_exists(null);
+                // `cat` succeeds only when the unit is installed anywhere in the
+                // user's systemd search paths; `is-active` succeeds only while it runs.
+                runSystemctl('cat', (catResult) => {
+                    const installed = catResult.success;
+                    runSystemctl('is-active', ({ success: active }) => {
+                        if (!installed) {
+                            setStatusBadge(ragServiceBadge, 'Not installed', 'katab-prefs-status-install');
+                            ragServiceStatusRow.subtitle = venvReady
+                                ? 'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up & Start" to create it and launch the service.'
+                                : 'No service is set up yet. Use "Set Up & Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).';
+                            updateServiceButtons(false, false);
+                        } else if (active) {
+                            setStatusBadge(ragServiceBadge, 'Running', 'katab-prefs-status-detected');
+                            ragServiceStatusRow.subtitle = 'The katabai-rag.service unit is running.';
+                            updateServiceButtons(true, true);
+                        } else {
+                            setStatusBadge(ragServiceBadge, 'Stopped', 'katab-prefs-status-install');
+                            ragServiceStatusRow.subtitle = 'The service is installed but stopped. Use Start to launch it.';
+                            updateServiceButtons(true, false);
+                        }
+                    });
+                });
+            };
+
+            const runServiceAction = (verb, label) => {
+                setStatusBadge(ragServiceBadge, 'Working', null);
+                ragServiceStatusRow.subtitle = label;
+                runSystemctl(verb, (result) => {
+                    if (result.success) {
+                        // Give systemd a moment to settle, then re-check status.
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+                            refreshServiceStatus();
+                            return GLib.SOURCE_REMOVE;
+                        });
+                    } else {
+                        showServiceError(result.stderr?.trim() || `systemctl ${verb} failed.`);
+                    }
+                });
+            };
+
+            const writeDefaultUnitFile = () => {
+                const unitContent = [
+                    '[Unit]',
+                    'Description=Katabai RAG Service',
+                    'After=network.target',
+                    '',
+                    '[Service]',
+                    'Type=simple',
+                    'ExecStart=%h/.local/share/katabai/rag-service/.venv/bin/python3 %h/.local/share/katabai/rag-service/server.py',
+                    'WorkingDirectory=%h/.local/share/katabai/rag-service',
+                    'Restart=on-failure',
+                    'RestartSec=5',
+                    '',
+                    '[Install]',
+                    'WantedBy=default.target',
+                    '',
+                ].join('\n');
+
+                const unitDir = Gio.File.new_for_path(GLib.build_filenamev([
+                    GLib.get_user_config_dir(), 'systemd', 'user',
+                ]));
+                if (!unitDir.query_exists(null)) {
+                    unitDir.make_directory_with_parents(null);
+                }
+                const unitFile = unitDir.get_child(RAG_SERVICE_UNIT);
+                if (unitFile.query_exists(null)) {
+                    return; // already exists — never overwrite a (possibly custom) unit
+                }
+                unitFile.replace_contents(
+                    unitContent,
+                    null,
+                    false,
+                    Gio.FileCreateFlags.REPLACE_DESTINATION,
+                    null
+                );
+            };
+
+            // Adaptive default setup: only run the missing steps, and never
+            // touch an existing unit file (which may be a custom install).
+            const autoSetupService = () => {
+                setStatusBadge(ragServiceBadge, 'Setting up', null);
+                ragServiceStatusRow.subtitle = 'Preparing the RAG service\u2026';
+
+                const venvReady = Gio.File.new_for_path(venvPython).query_exists(null);
+
+                const ensureVenv = (done) => {
+                    if (venvReady) { done(); return; }
+                    ragServiceStatusRow.subtitle = 'Creating the Python virtual environment\u2026';
+                    runCommand([python3Path, '-m', 'venv', venvDir], (res) => {
+                        if (!res.success) {
+                            showServiceError('Could not create the Python venv. Install python3-venv and retry, or follow the Setup section below.');
+                            return;
+                        }
+                        done();
+                    });
+                };
+
+                const ensureDeps = (done) => {
+                    ragServiceStatusRow.subtitle = 'Checking Python dependencies\u2026';
+                    runCommand([venvPython, '-c', 'import chromadb, ollama, uvicorn, fastapi, pydantic, rank_bm25'], (check) => {
+                        if (check.success) { done(); return; }
+                        ragServiceStatusRow.subtitle = 'Installing Python dependencies (this can take a minute)\u2026';
+                        runCommand([venvPython, '-m', 'pip', 'install', 'chromadb', 'ollama', 'fastapi', 'uvicorn[standard]', 'rank-bm25'], (install) => {
+                            if (!install.success) {
+                                showServiceError(install.stderr?.trim() || 'Dependency installation failed \u2014 install them manually from the Setup section below.');
+                                return;
+                            }
+                            done();
+                        });
+                    });
+                };
+
+                const ensureUnit = (done) => {
+                    // Only write a unit when none exists (custom installs are respected).
+                    runSystemctl('cat', (cat) => {
+                        if (cat.success) { done(); return; }
+                        ragServiceStatusRow.subtitle = 'Writing the systemd unit file\u2026';
+                        try {
+                            writeDefaultUnitFile();
+                            done();
+                        } catch (e) {
+                            showServiceError(e?.message || 'Failed to write the unit file.');
+                        }
+                    });
+                };
+
+                const enableAndStart = (done) => {
+                    ragServiceStatusRow.subtitle = 'Enabling and starting the service\u2026';
+                    runSystemctlRaw(['daemon-reload'], (reload) => {
+                        if (!reload.success) {
+                            showServiceError(reload.stderr?.trim() || 'systemctl daemon-reload failed.');
+                            return;
+                        }
+                        runSystemctl('enable', (enable) => {
+                            if (!enable.success) {
+                                showServiceError(enable.stderr?.trim() || 'systemctl enable failed.');
+                                return;
+                            }
+                            runSystemctl('start', (start) => {
+                                if (!start.success) {
+                                    showServiceError(start.stderr?.trim() || 'systemctl start failed.');
+                                    return;
+                                }
+                                done();
+                            });
+                        });
+                    });
+                };
+
+                ensureVenv(() => ensureDeps(() => ensureUnit(() => enableAndStart(() => {
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+                        refreshServiceStatus();
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }))));
+            };
+
+            setupBtn.connect('clicked', autoSetupService);
+            startBtn.connect('clicked', () => runServiceAction('start', 'Starting the service\u2026'));
+            restartBtn.connect('clicked', () => runServiceAction('restart', 'Restarting the service\u2026'));
+            stopBtn.connect('clicked', () => runServiceAction('stop', 'Stopping the service\u2026'));
+
+            createInfoRow(
+                'Service Controls',
+                'Set Up & Start performs the default install (Python venv, dependencies, and unit file) and starts the service, adapting to what is already present. Start, Restart, and Stop manage the installed unit.',
+                serviceGroup,
+                serviceButtons
+            );
+
+            GLib.idle_add(GLib.PRIORITY_LOW, () => {
+                refreshServiceStatus();
+                return GLib.SOURCE_REMOVE;
+            });
 
             // ---- Indexing ----
             const indexingGroup = createPreferencesGroup({

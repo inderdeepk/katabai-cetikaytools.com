@@ -12,7 +12,7 @@ const tests = [
     // ── PRESET_SETTINGS structure ──────────────────────────────────────────
 
     ['PRESET_SETTINGS: all entries have required fields', () => {
-        assert(PRESET_SETTINGS.length >= 27, 'at least 27 preset keys');
+        assert(PRESET_SETTINGS.length >= 26, 'at least 26 preset keys');
         const validTypes = new Set(['string', 'int', 'boolean', 'double']);
         for (const entry of PRESET_SETTINGS) {
             assert(typeof entry.key === 'string' && entry.key.length > 0, `key is string: ${entry.key}`);

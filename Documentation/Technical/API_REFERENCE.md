@@ -110,7 +110,7 @@ Path: `/org/gnome/shell/extensions/katabai/`
 |---|---|---|---|
 | `deepseek-url` | `s` | `'https://api.deepseek.com'` | DeepSeek API base URL |
 | `deepseek-api-key` | `s` | `''` | DeepSeek API key |
-| `deepseek-model` | `s` | `'deepseek-v4-flash'` | Model: `deepseek-v4-flash` or `deepseek-v4-pro` |
+| `deepseek-model` | `s` | `'deepseek-flash'` | Model: `deepseek-flash` (V4.1, image input) or `deepseek-v4-pro` |
 | `deepseek-system-prompt` | `s` | *(see schema)* | System prompt |
 
 #### Output Control
@@ -203,7 +203,7 @@ Path: `/org/gnome/shell/extensions/katabai/`
 | `crawl4ai-job-poll-ms` | `i` | `2000` | Async job polling interval (500–10000ms) |
 | `crawl4ai-capture-network` | `b` | `false` | Capture XHR/Fetch background calls |
 | `crawl4ai-extraction-mode` | `s` | `'markdown'` | Extraction mode: `'markdown'`, `'llm-schema'`, `'llm-block'` |
-| `crawl4ai-llm-provider` | `s` | `'deepseek/deepseek-v4-flash'` | LiteLLM provider string for LLM extraction (defaults to DeepSeek V4 Flash). Must be allowed server-side: set `LLM_PROVIDER` (and the provider's API key) in the container's `.llm.env`, then restart |
+| `crawl4ai-llm-provider` | `s` | `'deepseek/deepseek-flash'` | LiteLLM provider string for LLM extraction (defaults to DeepSeek V4.1 Flash). Must be allowed server-side: set `LLM_PROVIDER` (and the provider's API key) in the container's `.llm.env`, then restart |
 | `crawl4ai-llm-instruction` | `s` | default summary instruction | Freeform instruction for `llm-block` mode (sensible default prefilled) |
 | `crawl4ai-llm-schema-json` | `s` | default schema | JSON Schema object (string) for `llm-schema` mode (general-purpose default prefilled) |
 | `crawl4ai-llm-chunk-token-threshold` | `i` | `4000` | Token threshold per chunk (500–16000) |
@@ -750,7 +750,7 @@ Async LLM extraction with polling. This is the **only** supported way to run LLM
 {
   "url": "https://example.com/article",
   "q": "Extract the key facts, claims, and arguments from this page and summarize them concisely.",
-  "provider": "deepseek/deepseek-v4-flash",
+  "provider": "deepseek/deepseek-flash",
   "cache": true,
   "schema": { "type": "object", "properties": { "title": { "type": "string" } } }
 }
@@ -776,14 +776,20 @@ Python FastAPI + ChromaDB service for local semantic search. Endpoints are expec
 Health check.
 
 #### POST `/search`
-Semantic search.
+Semantic search (dense, optionally hybrid BM25 + dense, and optional cross-encoder reranking).
 
 **Request**:
 ```json
 {
   "query": "key findings from last week",
-  "top_k": 5,
-  "collection": "documents"
+  "collection": null,
+  "k": 5,
+  "embedding_model": "nomic-embed-text",
+  "ollama_url": "http://localhost:11434",
+  "rerank": false,
+  "rerank_model": "bge-reranker-v2-m3",
+  "rerank_k": 20,
+  "hybrid": true
 }
 ```
 
@@ -792,13 +798,21 @@ Semantic search.
 {
   "results": [
     {
+      "id": "doc_abc",
       "content": "Relevant text chunk...",
       "metadata": { "source": "file.pdf", "page": 3 },
       "score": 0.92
     }
-  ]
+  ],
+  "query": "key findings from last week",
+  "model": "nomic-embed-text"
 }
 ```
+
+`score` is normalized to 0–1 in every mode: dense cosine similarity for dense-only
+searches, a comparable 0–1 similarity for hybrid (BM25 + dense) fusion (not the raw
+reciprocal-rank-fusion value), and the cross-encoder relevance score when reranking is
+enabled.
 
 #### POST `/index`
 Index new content.

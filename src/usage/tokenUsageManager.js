@@ -57,9 +57,13 @@ const MODEL_PRICING = {
     'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
     'claude-3-sonnet-20240229': { input: 3.00, output: 15.00 },
     'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
-    // DeepSeek
-    'deepseek-v4-pro': { input: 0.60, output: 2.40 },
-    'deepseek-v4-flash': { input: 0.20, output: 0.80 },
+    // DeepSeek — representative off-peak cache-miss input / off-peak output
+    // rates for the generic flat path.  The DeepSeek-specific cost path in
+    // estimateSummaryCost uses tier-aware (peak/off-peak) + cache-aware
+    // (hit/miss) rates instead; keep these in sync with those helpers.
+    'deepseek-flash': { input: 0.15, output: 0.60 },
+    'deepseek-v4-flash': { input: 0.15, output: 0.60 },
+    'deepseek-v4-pro': { input: 0.66, output: 1.98 },
     'deepseek-chat': { input: 0.27, output: 1.10 },
     'deepseek-reasoner': { input: 0.55, output: 2.19 },
     // Ollama / Unsloth — local, effectively zero cost
@@ -80,8 +84,74 @@ function pricingForModel(model, provider) {
     if (provider === 'ollama' || provider === 'unsloth') return MODEL_PRICING.__local__;
     if (provider === 'openai') return MODEL_PRICING['gpt-4o-mini'];
     if (provider === 'anthropic') return MODEL_PRICING['claude-3-5-haiku-20241022'];
-    if (provider === 'deepseek') return MODEL_PRICING['deepseek-v4-flash'];
+    if (provider === 'deepseek') return MODEL_PRICING['deepseek-flash'];
     return DEFAULT_CLOUD_PRICING;
+}
+
+// ── DeepSeek tier-aware pricing (peak vs off-peak, cache hit vs miss) ────────
+// Peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday through Friday; all
+// other hours are off-peak at half the peak rate.  These numbers must stay in
+// sync with DEEPSEEK_PRICING in extension.js.
+
+const DEEPSEEK_TIER_PRICING = {
+    'deepseek-flash': {
+        offPeak: { hit: 0.003, miss: 0.15, out: 0.60 },
+        peak: { hit: 0.006, miss: 0.30, out: 1.20 },
+    },
+    'deepseek-v4-flash': {
+        offPeak: { hit: 0.003, miss: 0.15, out: 0.60 },
+        peak: { hit: 0.006, miss: 0.30, out: 1.20 },
+    },
+    'deepseek-v4-pro': {
+        offPeak: { hit: 0.022, miss: 0.66, out: 1.98 },
+        peak: { hit: 0.044, miss: 1.32, out: 3.96 },
+    },
+};
+
+const DEEPSEEK_PEAK_WINDOWS_UTC = [
+    { startHour: 1, endHour: 4 },
+    { startHour: 6, endHour: 10 },
+];
+
+export function isDeepSeekPeakHour(epochMs = Date.now()) {
+    const d = new Date(epochMs);
+    const day = d.getUTCDay();
+    if (day === 0 || day === 6) return false;
+    const hour = d.getUTCHours();
+    return DEEPSEEK_PEAK_WINDOWS_UTC.some(w => hour >= w.startHour && hour < w.endHour);
+}
+
+export function deepseekPricingForModel(model) {
+    const key = String(model || '').trim();
+    return DEEPSEEK_TIER_PRICING[key] || DEEPSEEK_TIER_PRICING['deepseek-flash'];
+}
+
+export function deepseekPricingForTimestamp(model, epochMs = Date.now()) {
+    const pricing = deepseekPricingForModel(model);
+    const tier = isDeepSeekPeakHour(epochMs) ? 'peak' : 'offPeak';
+    return { ...pricing[tier], tier };
+}
+
+export function estimateDeepSeekCost(model, promptTokens, completionTokens, { epochMs = Date.now(), cachedHitTokens = 0 } = {}) {
+    const prompt = Math.max(0, Number(promptTokens) || 0);
+    const completion = Math.max(0, Number(completionTokens) || 0);
+    const hit = Math.min(prompt, Math.max(0, Number(cachedHitTokens) || 0));
+    const { hit: hitRate, miss: missRate, out: outRate } = deepseekPricingForTimestamp(model, epochMs);
+    return (hit * hitRate + (prompt - hit) * missRate + completion * outRate) / 1_000_000;
+}
+
+export function estimateDeepSeekCostFromTiers(model, tiers) {
+    const pricing = deepseekPricingForModel(model);
+    let total = 0;
+    for (const tier of ['peak', 'offPeak']) {
+        const t = (tiers && tiers[tier]) || {};
+        const prompt = Math.max(0, Number(t.prompt) || 0);
+        const completion = Math.max(0, Number(t.completion) || 0);
+        const hit = Math.min(prompt, Math.max(0, Number(t.hit) || 0));
+        const rates = pricing[tier];
+        total += (hit * rates.hit + (prompt - hit) * rates.miss + completion * rates.out) / 1_000_000;
+    }
+    return total;
 }
 
 export function formatCost(usd) {
@@ -104,23 +174,46 @@ export function estimateSummaryCost(summary) {
     const perModel = [];
     for (const provider of summary.providers || []) {
         const providerModels = (summary.models || []).filter(m => m.provider === provider.provider);
-        let providerCost = 0;
-        for (const model of providerModels) {
-            // Distribute prompt/completion proportionally
-            const share = summary.totalTokens > 0 ? model.total / summary.totalTokens : 0;
-            const approxPrompt = Math.round((summary.promptTokens || 0) * share);
-            const approxCompletion = Math.round((summary.completionTokens || 0) * share);
-            const cost = estimateCost(model.model, model.provider, approxPrompt, approxCompletion);
-            providerCost += cost;
-            perModel.push({ ...model, cost });
+        const isDeepseekTiered = provider.provider === 'deepseek'
+            && (provider.peakPrompt || provider.peakCompletion || provider.peakHit
+                || provider.offPeakPrompt || provider.offPeakCompletion || provider.offPeakHit);
+
+        let providerCost;
+        if (isDeepseekTiered) {
+            // Accurate DeepSeek cost: cache-aware (hit vs miss) and tier-aware
+            // (peak vs off-peak), using the first model name for rate lookup.
+            const modelName = providerModels[0]?.model || 'deepseek-flash';
+            providerCost = estimateDeepSeekCostFromTiers(modelName, {
+                peak: { prompt: provider.peakPrompt, completion: provider.peakCompletion, hit: provider.peakHit },
+                offPeak: { prompt: provider.offPeakPrompt, completion: provider.offPeakCompletion, hit: provider.offPeakHit },
+            });
+        } else {
+            providerCost = 0;
         }
-        if (providerModels.length === 0) {
-            const share2 = summary.totalTokens > 0 ? provider.total / summary.totalTokens : 0;
-            const approxP = Math.round((summary.promptTokens || 0) * share2);
-            const approxC = Math.round((summary.completionTokens || 0) * share2);
-            const cost2 = estimateCost('', provider.provider, approxP, approxC);
-            providerCost = cost2;
+
+        if (!isDeepseekTiered) {
+            for (const model of providerModels) {
+                // Distribute prompt/completion proportionally
+                const share = summary.totalTokens > 0 ? model.total / summary.totalTokens : 0;
+                const approxPrompt = Math.round((summary.promptTokens || 0) * share);
+                const approxCompletion = Math.round((summary.completionTokens || 0) * share);
+                const cost = estimateCost(model.model, model.provider, approxPrompt, approxCompletion);
+                providerCost += cost;
+                perModel.push({ ...model, cost });
+            }
+            if (providerModels.length === 0) {
+                const share2 = summary.totalTokens > 0 ? provider.total / summary.totalTokens : 0;
+                const approxP = Math.round((summary.promptTokens || 0) * share2);
+                const approxC = Math.round((summary.completionTokens || 0) * share2);
+                providerCost = estimateCost('', provider.provider, approxP, approxC);
+            }
+        } else {
+            for (const model of providerModels) {
+                const cost = provider.total > 0 ? providerCost * (model.total / provider.total) : 0;
+                perModel.push({ ...model, cost });
+            }
         }
+
         total += providerCost;
         perProvider[provider.provider] = { ...provider, cost: providerCost };
     }
@@ -284,6 +377,7 @@ export class TokenUsageManager {
                 if (!bucket.statuses) { bucket.statuses = emptyStatusCounts(); changed = true; }
                 if (!bucket.sources) { bucket.sources = {}; changed = true; }
                 if (!bucket.models || typeof bucket.models !== 'object') { bucket.models = {}; changed = true; }
+                if (!bucket.tiers || typeof bucket.tiers !== 'object') { bucket.tiers = emptyDeepSeekTiers(); changed = true; }
                 for (const mb of Object.values(bucket.models)) {
                     if (!mb || typeof mb !== 'object') continue;
                     if (!Number.isFinite(mb.exact)) { mb.exact = (bucket.estimated || 0) > 0 ? 0 : (mb.total || 0); changed = true; }
@@ -424,6 +518,7 @@ export class TokenUsageManager {
                 prompt: 0, completion: 0, reasoning: 0, cachedHit: 0,
                 total: 0, exact: 0, estimated: 0, local: 0, remote: 0,
                 events: 0, statuses: emptyStatusCounts(), sources: {}, models: {},
+                tiers: emptyDeepSeekTiers(),
             };
         }
         const bucket = day.providers[provider];
@@ -436,6 +531,13 @@ export class TokenUsageManager {
         bucket.prompt += prompt; bucket.completion += completion;
         bucket.reasoning += reasoning; bucket.cachedHit += cachedHit;
         bucket.total += total; bucket.events += 1;
+        if (provider === 'deepseek') {
+            if (!bucket.tiers) bucket.tiers = emptyDeepSeekTiers();
+            const tier = isDeepSeekPeakHour(Date.now()) ? 'peak' : 'offPeak';
+            bucket.tiers[tier].prompt += prompt;
+            bucket.tiers[tier].completion += completion;
+            bucket.tiers[tier].hit += cachedHit;
+        }
         if (event.exact) { bucket.exact += total; } else { bucket.estimated += total; }
         if (event.local) { bucket.local += total; } else { bucket.remote += total; }
 
@@ -541,12 +643,24 @@ export class TokenUsageManager {
                 summary.remoteTokens += bucket.remote || 0;
                 summary.events += bucket.events || 0;
 
-                if (!providerAgg[provider]) providerAgg[provider] = { provider, total: 0, events: 0, localTokens: 0, exact: 0, estimated: 0 };
+                if (!providerAgg[provider]) providerAgg[provider] = {
+                    provider, total: 0, events: 0, localTokens: 0, exact: 0, estimated: 0,
+                    peakPrompt: 0, peakCompletion: 0, peakHit: 0,
+                    offPeakPrompt: 0, offPeakCompletion: 0, offPeakHit: 0,
+                };
                 providerAgg[provider].total += bucket.total || 0;
                 providerAgg[provider].events += bucket.events || 0;
                 providerAgg[provider].localTokens += bucket.local || 0;
                 providerAgg[provider].exact += bucket.exact || 0;
                 providerAgg[provider].estimated += bucket.estimated || 0;
+                if (provider === 'deepseek' && bucket.tiers) {
+                    providerAgg[provider].peakPrompt += bucket.tiers.peak?.prompt || 0;
+                    providerAgg[provider].peakCompletion += bucket.tiers.peak?.completion || 0;
+                    providerAgg[provider].peakHit += bucket.tiers.peak?.hit || 0;
+                    providerAgg[provider].offPeakPrompt += bucket.tiers.offPeak?.prompt || 0;
+                    providerAgg[provider].offPeakCompletion += bucket.tiers.offPeak?.completion || 0;
+                    providerAgg[provider].offPeakHit += bucket.tiers.offPeak?.hit || 0;
+                }
 
                 for (const [model, m] of Object.entries(bucket.models || {})) {
                     const mk = `${provider}\u0000${model}`;
@@ -624,6 +738,7 @@ export class TokenUsageManager {
 
 function clampCount(v) { const n = Math.round(Number(v) || 0); return n > 0 ? n : 0; }
 function emptyStatusCounts() { return Object.fromEntries(STATUS_KEYS.map(k => [k, 0])); }
+function emptyDeepSeekTiers() { return { peak: { prompt: 0, completion: 0, hit: 0 }, offPeak: { prompt: 0, completion: 0, hit: 0 } }; }
 
 function normalizeStatus(s) { const v = String(s || '').trim(); return STATUS_KEYS.includes(v) ? v : 'completed'; }
 

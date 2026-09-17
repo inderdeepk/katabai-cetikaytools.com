@@ -6,6 +6,9 @@ import {
     estimateCost,
     estimateSummaryCost,
     isLocalModelEndpoint,
+    isDeepSeekPeakHour,
+    deepseekPricingForTimestamp,
+    estimateDeepSeekCost,
 } from '../src/usage/tokenUsageManager.js';
 import { assert, assertEqual, runTests } from './testUtils.js';
 
@@ -236,6 +239,34 @@ tests.push(
         assertEqual(isLocalModelEndpoint('openai', 'https://api.openai.com/v1'), false, 'api.openai.com');
         assertEqual(isLocalModelEndpoint('deepseek', 'https://api.deepseek.com'), false, 'api.deepseek.com');
         assertEqual(isLocalModelEndpoint('anthropic', 'https://api.anthropic.com'), false, 'api.anthropic.com');
+    }],
+
+    ['isDeepSeekPeakHour: peak vs off-peak windows', () => {
+        assertEqual(isDeepSeekPeakHour(Date.UTC(2026, 8, 14, 2, 0, 0)), true, 'Mon 02:00 UTC is peak');
+        assertEqual(isDeepSeekPeakHour(Date.UTC(2026, 8, 14, 12, 0, 0)), false, 'Mon 12:00 UTC is off-peak');
+        assertEqual(isDeepSeekPeakHour(Date.UTC(2026, 8, 12, 2, 0, 0)), false, 'Sat 02:00 UTC is off-peak');
+    }],
+
+    ['deepseekPricingForTimestamp: tier rates', () => {
+        const offPeak = deepseekPricingForTimestamp('deepseek-flash', Date.UTC(2026, 8, 14, 12, 0, 0));
+        assertEqual(offPeak.tier, 'offPeak', 'flash off-peak tier');
+        assertEqual(offPeak.hit, 0.003, 'flash off-peak hit');
+        assertEqual(offPeak.miss, 0.15, 'flash off-peak miss');
+        assertEqual(offPeak.out, 0.60, 'flash off-peak out');
+
+        const peak = deepseekPricingForTimestamp('deepseek-v4-pro', Date.UTC(2026, 8, 14, 2, 0, 0));
+        assertEqual(peak.tier, 'peak', 'pro peak tier');
+        assertEqual(peak.hit, 0.044, 'pro peak hit');
+        assertEqual(peak.miss, 1.32, 'pro peak miss');
+        assertEqual(peak.out, 3.96, 'pro peak out');
+    }],
+
+    ['estimateDeepSeekCost: cache-aware + tier-aware', () => {
+        const full = estimateDeepSeekCost('deepseek-flash', 1_000_000, 1_000_000, { epochMs: Date.UTC(2026, 8, 14, 12, 0, 0), cachedHitTokens: 0 });
+        assert(Math.abs(full - 0.75) < 1e-9, `flash off-peak 1M/1M cost ${full}`);
+
+        const cached = estimateDeepSeekCost('deepseek-flash', 1_000_000, 0, { epochMs: Date.UTC(2026, 8, 14, 12, 0, 0), cachedHitTokens: 500_000 });
+        assert(Math.abs(cached - 0.0765) < 1e-9, `flash off-peak cache-aware cost ${cached}`);
     }],
 );
 

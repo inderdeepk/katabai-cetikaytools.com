@@ -31,7 +31,7 @@ const baseConfig = {
     simulateUser: false,
     bm25Threshold: 0.5,
     extractionMode: 'markdown',
-    llmProvider: 'deepseek/deepseek-v4-flash',
+    llmProvider: 'deepseek/deepseek-flash',
     llmInstruction: '',
     llmSchemaJson: '',
     llmChunkTokenThreshold: 4000,
@@ -269,7 +269,7 @@ const tests = [
         const settings = createMockSettings({});
         const cfg = readCrawl4AIConfig(settings);
         assertEqual(cfg.extractionMode, 'markdown', 'extractionMode defaults markdown');
-        assertEqual(cfg.llmProvider, 'deepseek/deepseek-v4-flash', 'llmProvider default');
+        assertEqual(cfg.llmProvider, 'deepseek/deepseek-flash', 'llmProvider default');
         assertEqual(cfg.llmInstruction, 'Extract the key facts, claims, and arguments from this page and summarize them concisely.', 'llmInstruction default');
         assertEqual(cfg.llmSchemaJson, '{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},"key_points":{"type":"array","items":{"type":"string"}}},"required":["title","summary"]}', 'llmSchemaJson default');
         assertEqual(cfg.llmChunkTokenThreshold, 4000, 'chunk threshold default');

@@ -43,7 +43,6 @@ export const PRESET_SETTINGS = [
     { key: 'top-p', type: 'double', settingKey: 'ollama-top-p' },
     { key: 'min-p', type: 'double', settingKey: 'ollama-min-p' },
     { key: 'tfs-z', type: 'double', settingKey: 'ollama-tfs-z' },
-    { key: 'typical-p', type: 'double', settingKey: 'ollama-typical-p' },
     { key: 'mirostat', type: 'int', settingKey: 'ollama-mirostat' },
     { key: 'mirostat-tau', type: 'double', settingKey: 'ollama-mirostat-tau' },
     { key: 'mirostat-eta', type: 'double', settingKey: 'ollama-mirostat-eta' },

@@ -166,8 +166,8 @@ HistoryManager (static)
 - **Auth**: `Authorization: Bearer <api-key>`
 - **Stream format**: `data: {...}` SSE
 - **Special**: `thinking` object, `reasoning_effort`, `response_format` (JSON mode)
-- **Models**: `deepseek-v4-flash` (fast), `deepseek-v4-pro` (reasoning)
-- **Vision**: Text-only — images routed through separately configured vision model
+- **Models**: `deepseek-flash` (fast, V4.1, native image input), `deepseek-v4-pro` (reasoning)
+- **Vision**: `deepseek-flash` accepts images natively; `deepseek-v4-pro` is text-only — images routed through separately configured vision model
 - **Timeout**: `DEEPSEEK_STREAM_TIMEOUT_SECONDS`
 
 ### Unsloth Studio

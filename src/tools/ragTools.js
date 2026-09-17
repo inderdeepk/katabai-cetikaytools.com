@@ -43,6 +43,11 @@ const RAG_DEFAULT_SERVICE_URL = 'http://localhost:11435';
 const RAG_DEFAULT_RERANK_MODEL = 'bge-reranker-v2-m3';
 const RAG_DEFAULT_RERANK_CANDIDATE_MULTIPLIER = 4;
 const RAG_DEFAULT_FALLBACK_THRESHOLD = 0.6;
+// TTL for the in-memory search-result cache.  The send path runs an automatic
+// KB search on every message, so caching a just-asked query avoids re-embedding
+// the same text repeatedly during quick re-asks and multi-turn follow-ups.
+const RAG_SEARCH_CACHE_TTL_MS = 60000;
+const RAG_SEARCH_CACHE_MAX_ENTRIES = 50;
 
 // ── Error type ─────────────────────────────────────────────────────────────────
 
@@ -102,7 +107,7 @@ export function readRagConfig(settings) {
         maxTotalSizeMb: getInt('rag-max-total-size-mb', 500),
         autoPrune: getBool('rag-auto-prune', true),
         indexDocuments: getBool('rag-index-documents', true),
-        indexConversations: getBool('rag-index-conversations', false),
+        indexConversations: getBool('rag-index-conversations', true),
         indexResearchCache: getBool('rag-index-research-cache', true),
         autonomousEnabled: getBool('rag-autonomous-enabled', true),
         autoUpdateEnabled: getBool('rag-auto-update-enabled', false),
@@ -112,7 +117,7 @@ export function readRagConfig(settings) {
         rerankEnabled: getBool('rag-rerank-enabled', false),
         rerankModel: getString('rag-rerank-model', RAG_DEFAULT_RERANK_MODEL),
         rerankCandidateMultiplier: getInt('rag-rerank-candidate-multiplier', RAG_DEFAULT_RERANK_CANDIDATE_MULTIPLIER),
-        hybridEnabled: getBool('rag-hybrid-enabled', false),
+        hybridEnabled: getBool('rag-hybrid-enabled', true),
     };
 }
 
@@ -261,7 +266,8 @@ export function buildRagResultBlock(query, payload, { includeGuard = true, mode 
         const title = meta.title || '';
         const url = meta.url || '';
 
-        let header = `${index + 1}. [Score: ${(result.score * 100).toFixed(0)}%]`;
+        const scorePct = Math.round((Number(result.score) || 0) * 100);
+        let header = `${index + 1}. [Score: ${scorePct}%]`;
         if (title) header += ` "${title}"`;
         if (sourceLabel) header += ` (source: ${sourceLabel})`;
         if (timestamp) header += ` [${timestamp}]`;
@@ -293,6 +299,7 @@ export class RagRuntime {
         this._session = session || new Soup.Session();
         this._session.timeout = Math.max(timeoutSeconds || RAG_DEFAULT_TIMEOUT_SECONDS, 5);
         this._session.user_agent = 'Katab/1.0 (GNOME Shell extension; +https://cetikaytools.com)';
+        this._searchCache = new Map(); // cacheKey → { results, mode, expires }
     }
 
     /**
@@ -435,39 +442,69 @@ export class RagRuntime {
         if (!query || !String(query).trim()) {
             return { results: [] };
         }
+        const q = String(query).trim();
+        const topK = config.topK || RAG_DEFAULT_TOP_K;
+        const rerankEnabled = Boolean(config.rerankEnabled);
+        const hybridEnabled = Boolean(config.hybridEnabled);
+
+        // Cache identical queries briefly so the per-send auto KB search and
+        // quick re-asks don't re-embed the same text over and over.
+        const cacheKey = [
+            q,
+            topK,
+            rerankEnabled ? 1 : 0,
+            hybridEnabled ? 1 : 0,
+            config.embeddingModel || '',
+            config.rerankModel || '',
+        ].join('|');
+        const cached = this._searchCache.get(cacheKey);
+        if (cached && cached.expires > Date.now()) {
+            return { results: cached.results, mode: cached.mode };
+        }
 
         const url = `${config.serviceUrl.replace(/\/+$/, '')}/search`;
-        const topK = config.topK || RAG_DEFAULT_TOP_K;
         const rerankK = topK * (config.rerankCandidateMultiplier || RAG_DEFAULT_RERANK_CANDIDATE_MULTIPLIER);
 
         const payload = {
-            query: String(query).trim(),
+            query: q,
             collection: undefined, // search all collections
             k: topK,
             embedding_model: config.embeddingModel || RAG_DEFAULT_EMBEDDING_MODEL,
             ollama_url: config.ollamaUrl || 'http://localhost:11434',
             // Phase 3: advanced retrieval
-            rerank: Boolean(config.rerankEnabled),
+            rerank: rerankEnabled,
             rerank_model: config.rerankModel || RAG_DEFAULT_RERANK_MODEL,
             rerank_k: Math.max(topK, Math.min(rerankK, 50)),
-            hybrid: Boolean(config.hybridEnabled),
+            hybrid: hybridEnabled,
         };
 
         // Build retrieval mode tag for result block
         let mode = 'dense';
-        if (config.hybridEnabled && config.rerankEnabled) {
+        if (hybridEnabled && rerankEnabled) {
             mode = 'dense+bm25+reranked';
-        } else if (config.hybridEnabled) {
+        } else if (hybridEnabled) {
             mode = 'dense+bm25';
-        } else if (config.rerankEnabled) {
+        } else if (rerankEnabled) {
             mode = 'dense+reranked';
         }
 
         const { body } = await this._request('POST', url, payload, cancellable);
-        return {
+        const outcome = {
             results: Array.isArray(body?.results) ? body.results : [],
             mode,
         };
+
+        this._searchCache.set(cacheKey, {
+            results: outcome.results,
+            mode,
+            expires: Date.now() + RAG_SEARCH_CACHE_TTL_MS,
+        });
+        if (this._searchCache.size > RAG_SEARCH_CACHE_MAX_ENTRIES) {
+            const oldestKey = this._searchCache.keys().next().value;
+            if (oldestKey !== undefined) this._searchCache.delete(oldestKey);
+        }
+
+        return outcome;
     }
 
     /**

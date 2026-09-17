@@ -141,6 +141,17 @@ import {
     annotateCitations,
     buildCitationSummary,
 } from './src/research/citationTracker.js';
+import {
+    SESSION_MEMORY_MAX_TOKENS,
+    SESSION_MEMORY_TIMEOUT_MS,
+    SESSION_MEMORY_KEEP_EXCHANGES,
+    SESSION_MEMORY_MIN_FOLD_COUNT,
+    buildMemoryUpdateMessages,
+    estimateProviderCharBudget,
+    isSessionMemoryMessage,
+    parseMemoryResponse,
+    splitHistoryForBudget,
+} from './src/core/sessionMemory.js';
 
 // Re-export tool name/command/icon constants from toolDefinitions (canonical source)
 import {
@@ -252,14 +263,19 @@ const PROVIDER_META = {
 // Selectable DeepSeek model variants surfaced in the chat header dropdown.
 const DEEPSEEK_MODELS = [
     {
-        id: 'deepseek-v4-flash',
-        label: 'Flash',
-        description: 'Fast, efficient model for everyday tasks and quick replies.',
+        id: 'deepseek-flash',
+        label: 'Flash (V4.1)',
+        description: 'Fast, efficient model for everyday tasks and quick replies. Supports image input.',
     },
     {
         id: 'deepseek-v4-pro',
         label: 'Pro',
         description: 'Stronger reasoning for complex, multi-step problems.',
+    },
+    {
+        id: 'deepseek-v4-flash',
+        label: 'Flash (legacy)',
+        description: 'Retired alias — served by the V4.1 Flash model and billed at Flash rates.',
     },
 ];
 
@@ -279,6 +295,12 @@ const PROVIDER_STATUS = {
 
 const PROVIDER_STATUS_STYLE_CLASSES = Object.values(PROVIDER_STATUS)
     .map(status => `katab-provider-status-${status}`);
+
+// Per-provider brand accents (mirrors the usage-panel fill colors) applied as
+// micro-accents on selection rows — a thin left bar + tinted badge — never as
+// full-surface color, so pickers stay part of the neutral glass theme.
+const PROVIDER_ACCENT_CLASSES = Object.keys(PROVIDER_META)
+    .map(provider => `katab-accent-${provider}`);
 
 const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
@@ -313,22 +335,63 @@ const DEEPSEEK_MAX_OUTPUT_TOKENS = 384000;
 const DEEPSEEK_INPUT_TOKEN_BUDGET = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_MAX_OUTPUT_TOKENS;
 const DEEPSEEK_CONTEXT_PREFIX_MESSAGES = 2;
 // DeepSeek billing rates (USD per 1M tokens) used to estimate how much prompt
-// caching saved on each reply. Cached ("hit") input tokens are billed at a tiny
-// fraction of the normal ("miss") rate. Values mirror DeepSeek's published V4
-// pricing; the flash rates double as the fallback when a saved reply predates
-// per-message model tracking.
+// caching saved on each reply.  DeepSeek bills separate off-peak and peak
+// rates: peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday through
+// Friday; all other hours are off-peak at half the peak rate.  Input tokens
+// split into cache "hit" vs "miss" rates.  The legacy `deepseek-v4-flash`
+// alias is retired and served by V4.1-Flash, so it shares Flash pricing.
 const DEEPSEEK_PRICING = {
-    'deepseek-v4-flash': { miss: 0.14, hit: 0.0028, out: 0.28 },
-    'deepseek-v4-pro': { miss: 0.435, hit: 0.003625, out: 0.87 },
+    'deepseek-flash': {
+        offPeak: { miss: 0.15, hit: 0.003, out: 0.60 },
+        peak: { miss: 0.30, hit: 0.006, out: 1.20 },
+    },
+    'deepseek-v4-flash': {
+        offPeak: { miss: 0.15, hit: 0.003, out: 0.60 },
+        peak: { miss: 0.30, hit: 0.006, out: 1.20 },
+    },
+    'deepseek-v4-pro': {
+        offPeak: { miss: 0.66, hit: 0.022, out: 1.98 },
+        peak: { miss: 1.32, hit: 0.044, out: 3.96 },
+    },
 };
-const DEEPSEEK_DEFAULT_PRICING_MODEL = 'deepseek-v4-flash';
+const DEEPSEEK_DEFAULT_PRICING_MODEL = 'deepseek-flash';
+const DEEPSEEK_PEAK_WINDOWS_UTC = [
+    { startHour: 1, endHour: 4 },
+    { startHour: 6, endHour: 10 },
+];
+
+// Whether a given epoch (ms) falls inside DeepSeek's peak billing window.
+function isDeepSeekPeakHour(epochMs = Date.now()) {
+    const d = new Date(epochMs);
+    const day = d.getUTCDay();
+    if (day === 0 || day === 6) {
+        return false;
+    }
+    const hour = d.getUTCHours();
+    return DEEPSEEK_PEAK_WINDOWS_UTC.some(window => hour >= window.startHour && hour < window.endHour);
+}
+
+// Resolve the effective DeepSeek rate card for a model id, falling back to the
+// default Flash card when the id is unknown.
+function deepseekPricingForModel(model) {
+    return DEEPSEEK_PRICING[model] || DEEPSEEK_PRICING[DEEPSEEK_DEFAULT_PRICING_MODEL];
+}
+
+// Resolve the rate card for the tier that was active at a given epoch (ms).
+function deepseekPricingForTimestamp(model, epochMs = Date.now()) {
+    const pricing = deepseekPricingForModel(model);
+    const tier = isDeepSeekPeakHour(epochMs) ? 'peak' : 'offPeak';
+    return { ...pricing[tier], tier };
+}
 // ── DeepSeek Vision Model (Image Support) ─────────────────────────────────
-// DeepSeek V4 is text-only.  When images are attached while DeepSeek is the
-// active provider, Katab routes them through a separately-configured vision
-// model (local Ollama or any OpenAI-compatible endpoint).  'preprocess' mode
-// analyzes the images and feeds the text analysis to DeepSeek (which writes
-// the final answer); 'direct' mode routes the whole request to the vision
-// model.  Backends: '' (disabled), 'ollama', 'openai'.
+// deepseek-flash (V4.1) accepts images natively, so no external vision model
+// is needed for Flash.  deepseek-v4-pro remains text-only, so when images are
+// attached while Pro is the active provider Katab routes them through a
+// separately-configured vision model (local Ollama or any OpenAI-compatible
+// endpoint).  'preprocess' mode analyzes the images and feeds the text
+// analysis to Pro (which writes the final answer); 'direct' mode routes the
+// whole request to the vision model.  Backends: '' (disabled), 'ollama',
+// 'openai'.
 const DEEPSEEK_VISION_BACKEND_OFF = '';
 const DEEPSEEK_VISION_BACKEND_OLLAMA = 'ollama';
 const DEEPSEEK_VISION_BACKEND_OPENAI = 'openai';
@@ -867,6 +930,22 @@ function syncProviderStatusClasses(actor, status) {
     }
 
     actor.add_style_class_name(`katab-provider-status-${status}`);
+}
+
+// Applies the per-provider brand accent class (katab-accent-<provider>) used
+// for selection-row micro-accents. Pass a falsy provider to clear.
+function syncProviderAccentClasses(actor, provider) {
+    if (!actor) {
+        return;
+    }
+
+    for (let className of PROVIDER_ACCENT_CLASSES) {
+        actor.remove_style_class_name(className);
+    }
+
+    if (provider) {
+        actor.add_style_class_name(`katab-accent-${provider}`);
+    }
 }
 
 function trimTrailingSlash(value) {
@@ -1549,6 +1628,7 @@ class KatabDialog {
         });
         this._initToolRegistry();
         this._sessionDocuments = new Map();
+        this._ragReconcileRunning = false;
         this._ollamaVisionCapabilityCache = new Map();
         this._pendingDocuments = [];
         this._clipboardTempFiles = [];          // clipboard-pasted temp files for cleanup
@@ -1600,6 +1680,7 @@ class KatabDialog {
         this._kbSearchTimeoutId = 0;               // debounce for KB search
         this._kbSearchViewActive = false;          // showing KB results vs history list
         this._kbSuppressWebSearch = false;         // suppress web_search when KB has high-relevance results
+        this._ragHasContent = null;                // null=unknown, true/false cached from /health
         this._focusPromptTimeoutId = 0;         // timeout ID for deferred focusPrompt
 
         // Track settings-handler IDs so destroy() can disconnect them. The
@@ -1740,6 +1821,13 @@ class KatabDialog {
         // branch search/compress, gap analysis, refinement, synthesis).
         // Reset when a new deep research session starts.
         this._deepResearchCumulativeTokens = 0;
+        // Rolling session memory — older turns are folded into a persistent
+        // summary so the model keeps full context without resending the whole
+        // transcript every request.  `_sessionMemoryStatus` drives the Session
+        // Info popup row ('empty' | 'compacting' | 'active' | 'error').
+        this._sessionMemory = '';
+        this._sessionMemoryStatus = 'empty';
+        this._compactionInFlight = false;
         // Running total of DeepSeek prompt-cache savings for the current
         // conversation, surfaced by the subtle header chip.
         this._sessionCacheSavings = { savedUsd: 0, hitTokens: 0 };
@@ -1898,18 +1986,19 @@ class KatabDialog {
         this._updateHeaderPetSprite();
 
         this._providerHealthListener = null;
+        this._providerPickerHealthListener = null;
         if (this._extension.providerHealthMonitor) {
             this._providerHealthListener = state => this._renderProviderStatus(state);
             this._extension.providerHealthMonitor.subscribe(this._providerHealthListener);
+            // While the engine picker is open, keep its per-row health text in
+            // sync with the monitor (probes complete asynchronously after open).
+            this._providerPickerHealthListener = () => {
+                if (this._providerPicker && this._providerPicker.visible) {
+                    this._refreshProviderPicker();
+                }
+            };
+            this._extension.providerHealthMonitor.subscribe(this._providerPickerHealthListener);
         }
-
-        // ── Deferred RAG service probe ───────────────────────────────────
-        // Fire-and-forget: check if the RAG service is reachable and log
-        // a friendly system message if not.  Does NOT block construction.
-        GLib.idle_add(GLib.PRIORITY_LOW, () => {
-            this._checkRagHealth().catch(_ => { /* fire-and-forget */ });
-            return GLib.SOURCE_REMOVE;
-        });
     }
 
     hasCurrentChat() {
@@ -2761,19 +2850,19 @@ class KatabDialog {
 
         this._providerStatusBox.visible = true;
         setProviderIcon(this._providerStatusIcon, state.provider, this._extension.path);
-        this._providerStatusLabel.set_text(`${state.label} ${getProviderStatusText(state.status)}`);
-        syncProviderStatusClasses(this._providerStatusBox, state.status);
-        syncProviderStatusClasses(this._providerStatusLabel, state.status);
+        this._providerStatusLabel.set_text(state.label);
+        if (this._providerStatusText) {
+            this._providerStatusText.set_text(getProviderStatusText(state.status));
+            syncProviderStatusClasses(this._providerStatusText, state.status);
+        }
 
         // DeepSeek balance badge — show compact currency + total when data is
-        // available; apply warning styling when funds are depleted.
+        // available. Kept neutral: the status micro-label is the only element
+        // that carries health color.
         if (this._balanceLabel) {
             if (state.provider === 'deepseek' && state.balance && state.balance.currency && state.balance.total) {
                 this._balanceLabel.set_text(`${state.balance.currency} ${state.balance.total}`);
                 this._balanceLabel.visible = true;
-                syncProviderStatusClasses(this._balanceLabel, state.balance.is_available
-                    ? state.status
-                    : PROVIDER_STATUS.DOWN);
             } else {
                 this._balanceLabel.visible = false;
             }
@@ -2785,6 +2874,10 @@ class KatabDialog {
             this._extension.providerHealthMonitor.unsubscribe(this._providerHealthListener);
         }
         this._providerHealthListener = null;
+        if (this._providerPickerHealthListener && this._extension.providerHealthMonitor) {
+            this._extension.providerHealthMonitor.unsubscribe(this._providerPickerHealthListener);
+        }
+        this._providerPickerHealthListener = null;
     }
 
     _isDocumentToolEnabled() {
@@ -3006,8 +3099,9 @@ class KatabDialog {
         const parts = [];
         for (let i = 0; i < messages.length; i++) {
             const msg = messages[i];
-            // Skip internal injection messages (same filter as _loadConversation)
-            if (msg._healingInjection || msg._planInjection || msg._researchSummary || msg._synthesisRetry) {
+            // Skip internal injection messages (same filter as _loadConversation),
+            // plus the session-memory marker (a derivative, not conversation content).
+            if (msg._healingInjection || msg._planInjection || msg._researchSummary || msg._synthesisRetry || msg._sessionMemory) {
                 continue;
             }
             // Skip tool-call intermediary messages (no content)
@@ -3052,46 +3146,90 @@ class KatabDialog {
     }
 
     /** Index a single conversation entry into the RAG vector DB.
-     *  Fire-and-forget — failures are logged but never block the UI. */
+     *  Fire-and-forget — failures are logged but never block the UI.
+     *
+     *  First index embeds the whole conversation; subsequent indexes embed ONLY
+     *  the messages added since the last index (delta) so long chats don't
+     *  re-embed the entire history on every new message. */
     async _indexConversationEntry(entry, ragConfig) {
         if (!entry || !entry.id) return;
-        const msgCount = Array.isArray(entry.messages) ? entry.messages.length : 0;
+        const messages = Array.isArray(entry.messages) ? entry.messages : [];
+        const msgCount = messages.length;
         const prevCount = this._indexedConversationIds.get(entry.id);
         // Skip if already indexed with the same or higher message count
         if (prevCount !== undefined && prevCount >= msgCount) return;
 
-        const text = this._buildConversationIndexText(entry);
-        if (!text) return;
+        const title = String(entry.title || '').substring(0, 120);
+        const ts = entry.timestamp
+            ? new Date(entry.timestamp * 1000).toISOString()
+            : new Date().toISOString();
+        const metadata = {
+            source: 'conversation',
+            sessionId: entry.id,
+            title,
+            timestamp: ts,
+        };
 
-        // Split into bounded documents — the RAG service rejects a single text
-        // over ~100K chars with HTTP 413, which long conversations exceed.
-        const docs = this._splitIndexText(entry.id, text);
+        let docs = [];
+        if (prevCount === undefined || prevCount < 0) {
+            // First index (or legacy v1 sentinel with unknown count): embed the
+            // full conversation, split into bounded documents so a single text
+            // over ~100K chars can't 413.  replace_ids matches the old chunk
+            // ids, so a v1-migrated conversation is cleanly re-indexed.
+            const text = this._buildConversationIndexText(entry);
+            if (text) docs = this._splitIndexText(entry.id, text);
+        } else {
+            // Incremental index: only the messages added since the last run.
+            docs = this._buildConversationDeltaDocs(entry, prevCount);
+        }
+        if (docs.length === 0) return;
 
         try {
-            const title = String(entry.title || '').substring(0, 120);
-            const ts = entry.timestamp
-                ? new Date(entry.timestamp * 1000).toISOString()
-                : new Date().toISOString();
-
             const result = await this._ragRuntime.index(docs.map(doc => ({
                 id: doc.id,
                 content: doc.content,
-                metadata: {
-                    source: 'conversation',
-                    sessionId: entry.id,
-                    title,
-                    timestamp: ts,
-                },
+                metadata: doc.metadata || metadata,
             })), 'conversations', ragConfig, null);
 
             if (result.indexed > 0) {
                 this._indexedConversationIds.set(entry.id, msgCount);
                 this._saveRagIndexState();
-                log(`[Katab:rag] Indexed conversation "${title}" (${msgCount} msgs) — ${result.chunks || 0} chunks`);
+                log(`[Katab:rag] Indexed conversation "${title}" (${msgCount} msgs, ${docs.length} doc${docs.length !== 1 ? 's' : ''}) — ${result.chunks || 0} chunks`);
             }
         } catch (e) {
             log(`[Katab:rag] Failed to index conversation ${entry.id}: ${e.message}`);
         }
+    }
+
+    /** Build per-message index docs for messages added since `sinceCount`.
+     *  Each message gets a stable id (`<convId>#msg-<i>`) so future delta runs
+     *  never re-embed already-indexed turns. */
+    _buildConversationDeltaDocs(entry, sinceCount) {
+        const messages = Array.isArray(entry.messages) ? entry.messages : [];
+        const docs = [];
+        for (let i = Math.max(0, sinceCount | 0); i < messages.length; i++) {
+            const msg = messages[i];
+            // Skip internal injection messages (same filter as _loadConversation)
+            if (msg._healingInjection || msg._planInjection || msg._researchSummary || msg._synthesisRetry || isSessionMemoryMessage(msg)) {
+                continue;
+            }
+            // Skip tool-call intermediary messages (no content)
+            if (msg.tool_calls && (!msg.content || (typeof msg.content === 'string' && !msg.content.trim()))) {
+                continue;
+            }
+            // Skip tool result messages (role: 'tool')
+            if (msg.role === 'tool') continue;
+
+            const role = msg.role === 'user' ? 'User' : (msg.role === 'assistant' ? 'Assistant' : msg.role);
+            const content = this._extractMessageText(msg);
+            if (content && content.trim()) {
+                const text = `${role}: ${content.trim()}`;
+                for (const part of this._splitIndexText(`${entry.id}#msg-${i}`, text)) {
+                    docs.push(part);
+                }
+            }
+        }
+        return docs;
     }
 
     /** Index the currently-active conversation (called from _saveCurrentConversation).
@@ -3118,26 +3256,46 @@ class KatabDialog {
      *  and index them.  Cap at MAX_STARTUP_INDEX_COUNT to avoid embedding
      *  storms on first enable. */
     async _reconcileRagConversationIndex(ragConfig) {
-        const MAX_STARTUP_INDEX_COUNT = 20;
-        this._loadRagIndexState();
+        // Guard against overlapping runs: _checkRagHealth can be triggered more
+        // than once (startup probe + settings change), and a concurrent second
+        // pass would re-embed the same conversations before the first pass has
+        // recorded them in the in-memory index map.
+        if (this._ragReconcileRunning) return;
+        this._ragReconcileRunning = true;
+        try {
+            const MAX_STARTUP_INDEX_COUNT = 20;
+            this._loadRagIndexState();
 
-        const allEntries = HistoryManager.getCached();
-        let indexed = 0;
-        for (const entry of allEntries) {
-            if (indexed >= MAX_STARTUP_INDEX_COUNT) break;
-            if (!entry.id) continue;
-            const msgCount = Array.isArray(entry.messages) ? entry.messages.length : 0;
-            const prevCount = this._indexedConversationIds.get(entry.id);
-            if (prevCount !== undefined && prevCount >= msgCount) continue;
-            await this._indexConversationEntry(entry, ragConfig);
-            indexed++;
-        }
-        if (indexed > 0) {
-            log(`[Katab:rag] Startup reconciliation indexed ${indexed} conversation(s)`);
+            const allEntries = HistoryManager.getCached();
+            let indexed = 0;
+            for (const entry of allEntries) {
+                if (indexed >= MAX_STARTUP_INDEX_COUNT) break;
+                if (!entry.id) continue;
+                const msgCount = Array.isArray(entry.messages) ? entry.messages.length : 0;
+                const prevCount = this._indexedConversationIds.get(entry.id);
+                if (prevCount !== undefined && prevCount >= msgCount) continue;
+                await this._indexConversationEntry(entry, ragConfig);
+                indexed++;
+            }
+            if (indexed > 0) {
+                log(`[Katab:rag] Startup reconciliation indexed ${indexed} conversation(s)`);
+            }
+        } finally {
+            this._ragReconcileRunning = false;
         }
     }
 
     // ── RAG Phase 2: Research cache indexing ─────────────────────────────
+
+    /** Small deterministic string hash (djb2) for stable RAG document ids.
+     *  Avoids GLib.compute_checksum_for_string, which truncates at NUL bytes. */
+    _stableIdHash(str) {
+        let h = 5381;
+        for (let i = 0; i < str.length; i++) {
+            h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+        }
+        return (h >>> 0).toString(16);
+    }
 
     /** Index tool results into the research_cache collection after
      *  autonomous tool calls complete.  Fire-and-forget. */
@@ -3152,7 +3310,9 @@ class KatabDialog {
 
             const ts = new Date().toISOString();
             texts.push({
-                id: `research_${Date.now()}_${i}`,
+                // Stable id derived from content so re-indexing the same result
+                // REPLACES its chunks instead of duplicating them each turn.
+                id: `research_${this._stableIdHash(`${toolName}|${resultText}`)}`,
                 content: `Tool: ${toolName}\nResult:\n${resultText}`,
                 metadata: {
                     source: 'research_cache',
@@ -3174,6 +3334,53 @@ class KatabDialog {
         }
     }
 
+    /** Fire-and-forget document attachment indexing (gated by settings). */
+    _maybeIndexParsedDocuments(parsedDocs) {
+        if (!Array.isArray(parsedDocs) || parsedDocs.length === 0) return;
+        try {
+            const ragConfig = readRagConfig(this._settings);
+            if (!ragConfig.enabled || !ragConfig.indexDocuments || !ragConfig.memoryEnabled) return;
+            this._indexParsedDocuments(parsedDocs, ragConfig).catch(e =>
+                log(`[Katab:rag] Document indexing failed: ${e.message}`)
+            );
+        } catch (_) { /* settings read may fail during teardown */ }
+    }
+
+    /** Index parsed document attachments into the RAG `documents` collection.
+     *  Fire-and-forget; gated by rag-index-documents + rag-memory-enabled.
+     *  Stable ids (path-based) replace previous chunks for the same file. */
+    async _indexParsedDocuments(parsedDocs, ragConfig) {
+        const texts = [];
+        for (const doc of parsedDocs) {
+            if (!doc || doc.kind === 'image') continue; // images have no text
+            const content = typeof doc.text === 'string' ? doc.text : '';
+            if (!content.trim()) continue;
+            const stableId = `doc_${this._stableIdHash(doc.path || doc.displayName || '')}`;
+            for (const part of this._splitIndexText(stableId, content)) {
+                texts.push({
+                    id: part.id,
+                    content: part.content,
+                    metadata: {
+                        source: 'document',
+                        title: doc.displayName || '',
+                        path: doc.path || '',
+                        mimeType: doc.mimeType || '',
+                        parserName: doc.parserName || '',
+                    },
+                });
+            }
+        }
+        if (texts.length === 0) return;
+        try {
+            const result = await this._ragRuntime.index(texts, 'documents', ragConfig, null);
+            if (result.indexed > 0) {
+                log(`[Katab:rag] Indexed ${result.indexed} document attachment${result.indexed !== 1 ? 's' : ''} — ${result.chunks || 0} chunks`);
+            }
+        } catch (e) {
+            log(`[Katab:rag] Failed to index document attachments: ${e.message}`);
+        }
+    }
+
     // ── Knowledge Base Update (Phase 2: self-maintaining memory) ──────────
 
     /** Handle an update_knowledge tool call.  In auto mode, indexes the new
@@ -3188,8 +3395,10 @@ class KatabDialog {
 
         if (ragConfig.autoUpdateEnabled) {
             // Auto mode: update immediately, no confirmation needed
-            await this._executeKnowledgeUpdate(about, newFact, ragConfig);
-            this._updateKnowledgeUsage(uiElements, entry, { status: 'success' });
+            const outcome = await this._executeKnowledgeUpdate(about, newFact, ragConfig);
+            this._updateKnowledgeUsage(uiElements, entry, outcome.ok
+                ? { status: 'success' }
+                : { status: 'error', error: outcome.error || 'Knowledge base update failed.' });
         } else {
             // Manual mode: leave the entry pending so the KB drawer renders
             // Update / Dismiss actions next to the pending memory update.
@@ -3202,9 +3411,18 @@ class KatabDialog {
     async _executeKnowledgeUpdate(about, newFact, ragConfig) {
         const ts = new Date().toISOString();
         const content = `[KNOWLEDGE UPDATE — ${about}]\n${newFact}\n\nUpdated: ${ts}`;
+        // Stable per-topic id so a re-update REPLACES the previous fact for the
+        // same "about" (the tool promises to supersede old understanding) via
+        // the service's replace_ids prefix matching.
+        const slug = String(about || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .substring(0, 80) || 'memory';
+        const stableId = `update_${slug}`;
         try {
             const result = await this._ragRuntime.index([{
-                id: `update_${Date.now()}`,
+                id: stableId,
                 content,
                 metadata: {
                     source: 'knowledge_update',
@@ -3215,9 +3433,12 @@ class KatabDialog {
             }], 'conversations', ragConfig, null);
             if (result.indexed > 0) {
                 log(`[Katab:rag] Knowledge update indexed: "${about}" — ${result.chunks || 0} chunks`);
+                return { ok: true, chunks: result.chunks || 0 };
             }
+            return { ok: false, error: 'Knowledge base rejected the update (0 chunks indexed).' };
         } catch (e) {
             log(`[Katab:rag] Knowledge update failed: ${e.message}`);
+            return { ok: false, error: e.message };
         }
     }
 
@@ -3235,8 +3456,13 @@ class KatabDialog {
                 );
             }
         } else {
-            const colNames = Object.keys(health.collections || {});
-            log(`[Katab:rag] RAG service healthy at ${ragConfig.serviceUrl} — ${colNames.length} collection(s): ${colNames.join(', ') || '(none)'}`);
+            const collections = health.collections || {};
+            const colNames = Object.keys(collections);
+            const totalChunks = colNames.reduce((sum, name) => sum + (Number(collections[name]) || 0), 0);
+            // Cache whether the KB has any content so the per-send auto KB
+            // search can skip the embedding round-trip on an empty knowledge base.
+            this._ragHasContent = totalChunks > 0;
+            log(`[Katab:rag] RAG service healthy at ${ragConfig.serviceUrl} — ${colNames.length} collection(s): ${colNames.join(', ') || '(none)'} (${totalChunks} chunks)`);
 
             // Phase 2: reconcile any un-indexed conversations
             if (ragConfig.indexConversations && ragConfig.memoryEnabled) {
@@ -3461,9 +3687,10 @@ class KatabDialog {
     }
 
     // ── DeepSeek Vision Model (Image Support) ───────────────────────────────
-    // DeepSeek V4 is text-only. When images are attached while DeepSeek is the
-    // active provider, Katab routes them through a configured vision model
-    // (local Ollama or any OpenAI-compatible endpoint).
+    // deepseek-flash (V4.1) accepts images natively; deepseek-v4-pro is
+    // text-only, so when images are attached while Pro is the active provider
+    // Katab routes them through a configured vision model (local Ollama or any
+    // OpenAI-compatible endpoint).
 
     _getVisionModelConfig() {
         let backend = DEEPSEEK_VISION_BACKEND_OFF;
@@ -3490,8 +3717,24 @@ class KatabDialog {
         };
     }
 
+    // DeepSeek models that accept image input natively (V4.1 Flash and its
+    // legacy aliases).  Pro remains text-only, so it keeps the orchestration
+    // path below.
+    _isDeepSeekNativeVisionModel(modelName = this._settings.get_string('deepseek-model')) {
+        const model = String(modelName || '').trim().toLowerCase();
+        return model === 'deepseek-flash'
+            || model === 'deepseek-v4-flash'
+            || model === 'deepseek-v4-flash-vision-exp';
+    }
+
     _isDeepSeekTextOnlyModel(modelName) {
-        return typeof modelName === 'string' && modelName.toLowerCase().startsWith(DEEPSEEK_TEXT_MODEL_PREFIX);
+        const model = String(modelName || '').trim().toLowerCase();
+        if (!model.startsWith(DEEPSEEK_TEXT_MODEL_PREFIX)) {
+            return false;
+        }
+        // Flash (and its aliases) are vision-capable; everything else in the
+        // deepseek-* family is text-only.
+        return !this._isDeepSeekNativeVisionModel(model);
     }
 
     // Fail-safe (hermes-agent lesson): never allow a DeepSeek text model to act
@@ -3586,7 +3829,8 @@ class KatabDialog {
         const visionConfig = this._getVisionModelConfig();
         return visionConfig.enabled
             && visionConfig.mode === DEEPSEEK_VISION_MODE_DIRECT
-            && this._hasCachedImageAttachmentsInHistory(this._messageHistory);
+            && this._hasCachedImageAttachmentsInHistory(this._messageHistory)
+            && !this._isDeepSeekNativeVisionModel();
     }
 
     // Mode A (direct routing): build an OpenAI-compatible message list where
@@ -3638,9 +3882,10 @@ class KatabDialog {
             uiElements.contentBox.destroy_all_children();
         } catch (_e) { /* bubble may be disposed */ }
 
+        // NOTE: spacing comes from the .katab-vision-status CSS class —
+        // St.BoxLayout rejects a 'spacing' constructor property.
         const statusBox = new St.BoxLayout({
             vertical: false,
-            spacing: 8,
             style_class: 'katab-vision-status',
             x_expand: true,
         });
@@ -3658,7 +3903,7 @@ class KatabDialog {
         } catch (_e) { /* bubble may be disposed */ }
     }
 
-    _buildApiAttachmentPayload(message, { provider = this._currentProvider, visionAnalysis = null, visionModelName = '' } = {}) {
+    _buildApiAttachmentPayload(message, { provider = this._currentProvider, visionAnalysis = null, visionModelName = '', nativeVision = false } = {}) {
         // Structured content (arrays of content blocks, e.g. Anthropic tool_use /
         // tool_result turns) is passed through verbatim.
         if (Array.isArray(message?.content)) {
@@ -3671,6 +3916,7 @@ class KatabDialog {
         }
 
         const attachmentBlocks = [];
+        const imageBlocks = [];
         const images = [];
 
         for (const attachmentMeta of attachments) {
@@ -3680,6 +3926,13 @@ class KatabDialog {
             if (attachmentKind === 'image') {
                 if (provider === 'ollama' && sessionAttachment?.base64Data) {
                     images.push(sessionAttachment.base64Data);
+                } else if (provider === 'deepseek' && nativeVision && sessionAttachment?.base64Data) {
+                    // Native DeepSeek Flash vision: images become OpenAI-style
+                    // image_url content blocks sent straight to the DeepSeek API.
+                    imageBlocks.push({
+                        type: 'image_url',
+                        image_url: { url: `data:${sessionAttachment.mimeType || attachmentMeta.mimeType || 'image/png'};base64,${sessionAttachment.base64Data}` },
+                    });
                 } else if (provider === 'deepseek' && visionAnalysis !== null && visionAnalysis !== undefined) {
                     // DeepSeek is text-only: the vision model's analysis replaces
                     // the raw image. Add the block once (dedupe across images).
@@ -3699,6 +3952,21 @@ class KatabDialog {
             } else {
                 attachmentBlocks.push(buildMissingDocumentPromptBlock(attachmentMeta));
             }
+        }
+
+        if (imageBlocks.length) {
+            const blocks = [];
+            if (content && content.trim()) {
+                blocks.push({ type: 'text', text: content });
+            }
+            blocks.push(...imageBlocks);
+            if (attachmentBlocks.length) {
+                blocks.push({ type: 'text', text: attachmentBlocks.join('\n\n') });
+            }
+            if (!blocks.some(block => block && block.type === 'text')) {
+                blocks.unshift({ type: 'text', text: 'Please analyze the attached image(s).' });
+            }
+            return { content: blocks, images: [] };
         }
 
         if (!attachmentBlocks.length) {
@@ -4215,7 +4483,7 @@ class KatabDialog {
 
             const row = new St.BoxLayout({
                 style_class: isActive
-                    ? 'katab-preset-row katab-preset-row-active'
+                    ? 'katab-preset-row katab-preset-row-active katab-accent-ollama'
                     : 'katab-preset-row',
                 vertical: false,
                 x_expand: true,
@@ -4404,7 +4672,7 @@ class KatabDialog {
         return { picker, listBox, closePickerBtn, pickerTitle };
     }
 
-    _createSelectionRow({ icon, title, meta, isActive, onActivate }) {
+    _createSelectionRow({ icon, title, meta, isActive, accentProvider, status, onActivate }) {
         const row = new St.BoxLayout({
             style_class: isActive
                 ? 'katab-preset-row katab-selection-row katab-preset-row-active'
@@ -4415,6 +4683,12 @@ class KatabDialog {
             can_focus: true,
             track_hover: true,
         });
+
+        // Active rows carry the provider's brand accent as a micro-detail
+        // (thin left bar + tinted badge) instead of a full colored surface.
+        if (isActive && accentProvider) {
+            syncProviderAccentClasses(row, accentProvider);
+        }
 
         if (icon) {
             row.add_child(icon);
@@ -4443,6 +4717,19 @@ class KatabDialog {
             textCol.add_child(metaLabel);
         }
         row.add_child(textCol);
+
+        // Small per-row health text (e.g. "Online") for the engine picker.
+        if (status && status.text) {
+            const statusLabel = new St.Label({
+                text: status.text,
+                style_class: 'katab-selection-row-status',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            if (status.status) {
+                syncProviderStatusClasses(statusLabel, status.status);
+            }
+            row.add_child(statusLabel);
+        }
 
         if (isActive) {
             row.add_child(new St.Label({
@@ -4493,17 +4780,29 @@ class KatabDialog {
         if (!this._providerPickerListBox) return;
         this._providerPickerListBox.destroy_all_children();
 
+        let states = {};
+        try {
+            states = this._extension.providerHealthMonitor?.getAllStates() || {};
+        } catch (e) {
+            states = {};
+        }
+
         for (const [key, label] of Object.entries(PROVIDER_LABELS)) {
             const icon = createProviderIcon(
                 key,
                 this._extension.path,
                 'katab-provider-badge-icon katab-selection-row-icon'
             );
+            const state = states[key];
             const row = this._createSelectionRow({
                 icon,
                 title: label,
                 meta: this._getProviderModelSummary(key),
                 isActive: key === this._currentProvider,
+                accentProvider: key,
+                status: state
+                    ? { text: getProviderStatusText(state.status), status: state.status }
+                    : null,
                 onActivate: () => this._selectProvider(key),
             });
             this._providerPickerListBox.add_child(row);
@@ -4522,6 +4821,13 @@ class KatabDialog {
         if (this._providerPicker.visible) {
             this._showChatView();
             return;
+        }
+        // Probe every provider before rendering so the picker rows show fresh
+        // health text instead of the last polled snapshot.
+        try {
+            this._extension.providerHealthMonitor?.refreshAll({ immediate: true });
+        } catch (e) {
+            logError(e, 'Katab: provider health refresh failed');
         }
         this._refreshProviderPicker();
         this._openAuxPanel(this._providerPicker);
@@ -4546,6 +4852,7 @@ class KatabDialog {
                 title: model.label,
                 meta: model.description,
                 isActive: model.id === activeModel,
+                accentProvider: 'deepseek',
                 onActivate: () => this._selectDeepseekModel(model.id),
             });
             this._deepseekModelListBox.add_child(row);
@@ -4874,7 +5181,6 @@ class KatabDialog {
         const box = this._usagePanelListBox;
         const collection = TokenUsageManager.getCollectionState();
         const selection = this._getPetSelection();
-        box.add_child(this._buildUsageBackRow('All Companions', () => this._showUsageOverview()));
 
         // Companion hero card (moved from Overview tab)
         let allSummary;
@@ -6327,6 +6633,22 @@ class KatabDialog {
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._providerStatusBox.add_child(this._providerStatusLabel);
+
+        // Health is its own micro-label (e.g. "Online") separated from the
+        // provider name — the chip surface itself stays part of the neutral
+        // glass theme and only this text carries the status color.
+        this._providerStatusBox.add_child(new St.Label({
+            text: '·',
+            style_class: 'katab-provider-status-sep',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+
+        this._providerStatusText = new St.Label({
+            text: '',
+            style_class: 'katab-provider-status-text',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._providerStatusBox.add_child(this._providerStatusText);
 
         // DeepSeek balance badge — compact currency + total shown next to the
         // provider name when balance data is available.
@@ -8047,6 +8369,14 @@ class KatabDialog {
         const contextTokens = Math.ceil(contextChars / 4);
         const contextFormatted = this._formatTokenCount(contextTokens);
 
+        // ── Session Memory section ──────────────────────────────────
+        const memoryText = this._sessionMemory || '';
+        const memoryTokens = Math.ceil(memoryText.length / 4);
+        const memoryPct = pctOf(memoryTokens);
+        const memoryStatus = this._sessionMemoryStatus === 'compacting'
+            ? 'compacting'
+            : (memoryText ? 'active' : 'empty');
+
         return {
             contextWindow: {
                 used, max, pct,
@@ -8066,6 +8396,11 @@ class KatabDialog {
                 messagePct: messagePct,
                 toolResultTokens: this._formatTokenCount(toolResultTokens),
                 toolResultPct: toolResultPct,
+            },
+            sessionMemory: {
+                tokens: this._formatTokenCount(memoryTokens),
+                pct: memoryPct,
+                status: memoryStatus,
             },
             research: hasResearch ? {
                 cumulative: researchCumulative,
@@ -8154,6 +8489,7 @@ class KatabDialog {
                 this._currentProvider,
                 this._messageHistory.length,
                 lastLen,
+                (this._sessionMemory || '').length,
                 this._toolIterations || 0,
                 this._forceSynthesisActive ? 1 : 0,
                 this._kbSuppressWebSearch ? 1 : 0,
@@ -8410,6 +8746,33 @@ class KatabDialog {
 
         popup.add_child(ucSection);
 
+        // ── Session Memory section ──────────────────────────────────
+        const memSection = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-session-info-section',
+        });
+        const memTitle = new St.Label({
+            text: 'SESSION MEMORY',
+            style_class: 'katab-session-info-section-title',
+        });
+        memSection.add_child(memTitle);
+
+        const memRow = new St.BoxLayout({ vertical: false, style_class: 'katab-session-info-row' });
+        memRow.add_child(new St.Label({ text: 'Folded summary', style_class: 'katab-session-info-row-label', x_expand: true }));
+        this._siMemValue = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
+        memRow.add_child(this._siMemValue);
+        memSection.add_child(memRow);
+
+        this._siMemStatus = new St.Label({
+            text: 'No session memory yet — grows automatically as the chat gets long.',
+            style_class: 'katab-session-info-mem-status',
+        });
+        this._siMemStatus.clutter_text.line_wrap = true;
+        this._siMemStatus.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        memSection.add_child(this._siMemStatus);
+
+        popup.add_child(memSection);
+
         // ── Research section (built lazily, shown only when active) ──
         this._siResearchSection = new St.BoxLayout({
             vertical: true,
@@ -8448,12 +8811,26 @@ class KatabDialog {
 
         popup.add_child(this._siResearchSection);
 
-        // ── Compact Conversation button ───────────────────────────────
+        // ── Summarize now + Compact Conversation buttons ─────────────
+        // NOTE: St.BoxLayout has no 'spacing' GObject property — passing it
+        // here throws "No property spacing on StBoxLayout" at construction
+        // time, which aborted the whole popup build and made the token-box
+        // hover/click look broken.  Spacing is set via the CSS class.
         const actionRow = new St.BoxLayout({
             vertical: false,
             style_class: 'katab-session-info-action-row',
             x_expand: true,
         });
+        const summarizeBtn = new St.Button({
+            label: 'Summarize Now',
+            style_class: 'katab-session-info-action-btn',
+            can_focus: true,
+            reactive: true,
+            x_expand: true,
+        });
+        summarizeBtn.connect('clicked', () => this._summarizeNow());
+        actionRow.add_child(summarizeBtn);
+
         const compactBtn = new St.Button({
             label: 'Compact Conversation',
             style_class: 'katab-session-info-action-btn',
@@ -8635,6 +9012,19 @@ class KatabDialog {
         const { userContext: uc } = info;
         this._siUcMsgs.set_text(`${uc.messageTokens} · ${uc.messagePct}%`);
         this._siUcTools.set_text(`${uc.toolResultTokens} · ${uc.toolResultPct}%`);
+
+        // ── Session Memory ────────────────────────────────────────────
+        const { sessionMemory: mem } = info;
+        if (mem.status === 'active') {
+            this._siMemValue.set_text(`${mem.tokens} · ${mem.pct}%`);
+            this._siMemStatus.set_text('Session memory active — older turns are summarized automatically so the model keeps full context.');
+        } else if (mem.status === 'compacting') {
+            this._siMemValue.set_text('…');
+            this._siMemStatus.set_text('Summarizing earlier turns…');
+        } else {
+            this._siMemValue.set_text('None');
+            this._siMemStatus.set_text('No session memory yet — it grows automatically as the chat gets long.');
+        }
 
         // ── Research ──────────────────────────────────────────────────
         const { research: res } = info;
@@ -9077,12 +9467,20 @@ class KatabDialog {
 
         const attachments = this._getMessageAttachments(message);
         const visionConfig = provider === 'deepseek' ? this._getVisionModelConfig() : null;
+        // Native DeepSeek Flash vision: user image messages keep their array
+        // content blocks (text + image_url) instead of being flattened to a
+        // string or routed through the orchestration vision model.
+        const nativeVision = provider === 'deepseek'
+            && message.role === 'user'
+            && this._messageHasImageAttachments(message)
+            && this._isDeepSeekNativeVisionModel();
         const attachmentPayload = this._buildApiAttachmentPayload(message, {
             provider,
             // `??` (not `||`) preserves the empty-string sentinel used to mark
             // a failed vision analysis.
             visionAnalysis: provider === 'deepseek' ? (message.visionAnalysis ?? null) : null,
             visionModelName: visionConfig?.model || '',
+            nativeVision,
         });
 
         if (message.content !== undefined || attachments.length) {
@@ -9094,7 +9492,7 @@ class KatabDialog {
         // blocks (e.g. Anthropic tool_use / tool_result turns that survive
         // a provider switch mid-conversation) into the string format that
         // these APIs expect.
-        if (provider !== 'anthropic' && Array.isArray(sanitized.content)) {
+        if (provider !== 'anthropic' && Array.isArray(sanitized.content) && !nativeVision) {
             const blocks = sanitized.content;
             // Assistant tool_use blocks → convert to tool_calls payload.
             if (sanitized.role === 'assistant' && blocks.every(b => b?.type === 'tool_use')) {
@@ -9128,6 +9526,11 @@ class KatabDialog {
             for (const field of ['role', 'content', 'name', 'tool_call_id', 'reasoning_content']) {
                 const val = sanitized[field];
                 if (val !== undefined && val !== null && typeof val !== 'string') {
+                    // Native DeepSeek Flash vision keeps `content` as an array
+                    // of text/image_url blocks — do not stringify it.
+                    if (field === 'content' && nativeVision && Array.isArray(val)) {
+                        continue;
+                    }
                     sanitized[field] = typeof val === 'object'
                         ? this._extractMessageText({ content: val })
                         : String(val);
@@ -9144,6 +9547,10 @@ class KatabDialog {
                     // `tool_calls` is the only array-of-objects field the
                     // API accepts; let it through.
                     if (key === 'tool_calls' && Array.isArray(sanitized[key])) {
+                        continue;
+                    }
+                    // Native DeepSeek Flash vision also keeps array `content`.
+                    if (key === 'content' && nativeVision && Array.isArray(sanitized[key])) {
                         continue;
                     }
                     delete sanitized[key];
@@ -9286,16 +9693,201 @@ class KatabDialog {
     }
 
     _getApiMessageHistory(provider = this._currentProvider, { thinkingEnabled = false } = {}) {
-        let messages = this._messageHistory.map(message =>
-            this._sanitizeHistoryMessage(message, { provider, thinkingEnabled }));
+        // Exclude the persisted session-memory marker (it is re-injected from
+        // `this._sessionMemory` below so there is exactly one copy at the head).
+        let messages = this._messageHistory
+            .filter(message => !isSessionMemoryMessage(message))
+            .map(message => this._sanitizeHistoryMessage(message, { provider, thinkingEnabled }));
+
+        // Unified, memory-aware context assembly: older messages fold into the
+        // rolling session memory (maintained asynchronously by
+        // _maybeCompactSessionMemory) and the most recent verbatim tail is kept
+        // within the provider's context budget.  Applies to ALL providers.
+        let budget = 200000;
+        try {
+            budget = estimateProviderCharBudget(provider, this._settings);
+        } catch (_e) { /* fall back to the conservative default */ }
+
+        const { memoryMsg, tail } = splitHistoryForBudget(messages, budget, this._sessionMemory || '');
+        const assembled = memoryMsg ? [memoryMsg, ...tail] : tail;
+
+        // Provider-specific safety nets remain as a final guard for a single
+        // oversized recent message that still overflows the budget.
         if (provider === 'deepseek') {
-            return this._truncateDeepSeekMessages(messages);
+            return this._truncateDeepSeekMessages(assembled);
         }
         if (provider === 'ollama') {
-            return this._truncateOllamaMessages(messages);
+            // Align the legacy char clamp with the unified budget so a large
+            // num-ctx can't re-trigger raw (non-summarizing) truncation below
+            // what the memory-aware split already kept.
+            return this._truncateOllamaMessages(assembled, { maxBodyChars: budget });
         }
 
-        return messages;
+        return assembled;
+    }
+
+    // Restore the folded session memory from the persisted marker message
+    // (a `role:'system'` message with `_sessionMemory:true`).
+    _loadSessionMemoryFromHistory() {
+        this._sessionMemory = '';
+        this._sessionMemoryStatus = 'empty';
+        this._compactionInFlight = false;
+        for (const message of this._messageHistory) {
+            if (isSessionMemoryMessage(message) && typeof message.content === 'string') {
+                this._sessionMemory = message.content.trim();
+                this._sessionMemoryStatus = this._sessionMemory ? 'active' : 'empty';
+                break;
+            }
+        }
+        if (this._sessionMemory) {
+            log(`[Katab:memory] Restored ${this._sessionMemory.length}-char session memory from the loaded conversation.`);
+        }
+    }
+
+    // Persist the session memory as a single marker system message at the front
+    // of `_messageHistory`.  Non-destructive: the full transcript remains on
+    // disk; only the API payload folds older turns into this summary.
+    _persistSessionMemory(text) {
+        const content = String(text || '').trim();
+        const filtered = this._messageHistory.filter(message => !isSessionMemoryMessage(message));
+        if (content) {
+            const memoryMessage = { role: 'system', content };
+            memoryMessage._sessionMemory = true;
+            filtered.splice(0, 0, memoryMessage);
+        }
+        this._messageHistory = filtered;
+        this._saveCurrentConversation();
+        HistoryManager.flushSync();
+    }
+
+    // Manual "Summarize now" — folds everything older than the most recent
+    // exchanges into the session memory regardless of the current budget.
+    _summarizeNow() {
+        if (this._isStreaming) {
+            this._addSystemMessage('Wait for the current response to finish before summarizing.', { variant: 'muted' });
+            return;
+        }
+        this._maybeCompactSessionMemory({ force: true });
+    }
+
+    // Roll older messages into the persistent session memory.  Runs in the
+    // background (fire-and-forget) so it never blocks the send path; the
+    // generation + conversation-id guards ensure a stale update can't clobber
+    // a conversation that changed while the LLM call was in flight.
+    async _maybeCompactSessionMemory({ force = false } = {}) {
+        if (this._compactionInFlight || this._isStreaming) {
+            return;
+        }
+        if (!Array.isArray(this._messageHistory) || this._messageHistory.length === 0) {
+            return;
+        }
+
+        const provider = this._currentProvider;
+        let budget = 200000;
+        try {
+            budget = estimateProviderCharBudget(provider, this._settings);
+        } catch (_e) { /* conservative default */ }
+
+        let tail = [];
+        try {
+            tail = this._messageHistory
+                .filter(message => !isSessionMemoryMessage(message))
+                .map(message => this._sanitizeHistoryMessage(message, { provider }));
+        } catch (e) {
+            // Never swallow this silently — a persistent sanitize failure would
+            // otherwise make the session memory appear frozen/never updating.
+            log(`[Katab:memory] Session memory fold skipped — history sanitization failed: ${e.message || e}`);
+            return;
+        }
+        if (tail.length === 0) {
+            return;
+        }
+
+        const memoryText = this._sessionMemory || '';
+        const split = splitHistoryForBudget(tail, budget, memoryText);
+
+        let toFold;
+        if (force) {
+            // Manual summarization: fold everything older than the last
+            // SESSION_MEMORY_KEEP_EXCHANGES exchanges, even if under budget.
+            const keepCount = SESSION_MEMORY_KEEP_EXCHANGES * 2;
+            const dropCount = Math.max(0, tail.length - keepCount);
+            if (dropCount < SESSION_MEMORY_MIN_FOLD_COUNT) {
+                this._addSystemMessage('Not enough history to summarize yet — keep chatting and try again later.', { variant: 'muted' });
+                return;
+            }
+            toFold = tail.slice(0, dropCount);
+        } else {
+            if (split.foldedCount < SESSION_MEMORY_MIN_FOLD_COUNT) {
+                return;
+            }
+            toFold = tail.slice(0, split.foldedCount);
+        }
+
+        if (toFold.length === 0) {
+            return;
+        }
+
+        const convId = this._currentConversationId;
+        const generation = this._chatGeneration;
+        this._compactionInFlight = true;
+        this._sessionMemoryStatus = 'compacting';
+        try {
+            const updateMessages = buildMemoryUpdateMessages(memoryText, toFold);
+            const outcome = await this._withTimeout(
+                this._requestNonStreamingCompletion(updateMessages, {
+                    maxTokens: SESSION_MEMORY_MAX_TOKENS,
+                    cancellable: new Gio.Cancellable(),
+                }),
+                SESSION_MEMORY_TIMEOUT_MS
+            );
+            if (outcome.kind !== 'ok') {
+                this._sessionMemoryStatus = memoryText ? 'active' : 'empty';
+                log('[Katab:memory] Session memory summarization timed out — will retry on a later turn.');
+                return;
+            }
+
+            const newMemory = parseMemoryResponse(outcome.value);
+            if (!newMemory) {
+                this._sessionMemoryStatus = memoryText ? 'active' : 'empty';
+                log('[Katab:memory] Session memory summarization returned empty — keeping previous memory.');
+                return;
+            }
+
+            // Don't write into a conversation that changed while we awaited.
+            if (generation !== this._chatGeneration || convId !== this._currentConversationId) {
+                // The new conversation already published its own memory state
+                // (load/new-chat); only clear OUR status if it is still set.
+                if (this._sessionMemoryStatus === 'compacting') {
+                    this._sessionMemoryStatus = this._sessionMemory ? 'active' : 'empty';
+                }
+                log('[Katab:memory] Conversation changed during summarization — discarding stale memory update.');
+                return;
+            }
+
+            this._sessionMemory = newMemory;
+            this._sessionMemoryStatus = 'active';
+            this._persistSessionMemory(newMemory);
+            this._renderTokenCounter();
+            log(`[Katab:memory] Session memory updated — folded ${toFold.length} earlier message(s) into a ${newMemory.length}-char summary.`);
+
+            if (!this._isStreaming) {
+                this._addSystemMessage(
+                    `Session memory updated — ${toFold.length} earlier turns summarized so the model keeps full context.`,
+                    { variant: 'muted' }
+                );
+            }
+        } catch (e) {
+            this._sessionMemoryStatus = memoryText ? 'active' : 'empty';
+            log(`[Katab:memory] Session memory update failed: ${e.message || e}`);
+        } finally {
+            this._compactionInFlight = false;
+            // Never leave the Session Info popup stuck on "Summarizing earlier
+            // turns…" when a fold is discarded or aborted mid-flight.
+            if (this._sessionMemoryStatus === 'compacting') {
+                this._sessionMemoryStatus = this._sessionMemory ? 'active' : 'empty';
+            }
+        }
     }
 
     _truncateOllamaMessages(messages, { maxBodyChars = 200000 } = {}) {
@@ -9699,7 +10291,7 @@ class KatabDialog {
             promptTokens = hitTokens + (missTokens ?? 0);
         }
 
-        let pricing = DEEPSEEK_PRICING[metrics.model] || DEEPSEEK_PRICING[DEEPSEEK_DEFAULT_PRICING_MODEL];
+        let pricing = deepseekPricingForTimestamp(metrics.model, metrics._epochMs || Date.now());
         // Cached tokens are billed at the hit rate instead of the miss rate.
         let savedUsd = hitTokens * (pricing.miss - pricing.hit) / 1_000_000;
         let inputFullUsd = promptTokens * pricing.miss / 1_000_000;
@@ -9968,10 +10560,16 @@ class KatabDialog {
                         can_focus: true,
                     });
                     updateBtn.connect('clicked', () => {
-                        this._updateKnowledgeUsage(uiElements, entry, { status: 'success' });
-                        this._executeKnowledgeUpdate(entry.about, entry.newFact, readRagConfig(this._settings)).catch(e =>
-                            log(`[Katab:rag] Deferred knowledge update failed: ${e.message}`)
-                        );
+                        this._executeKnowledgeUpdate(entry.about, entry.newFact, readRagConfig(this._settings))
+                            .then(outcome => {
+                                this._updateKnowledgeUsage(uiElements, entry, outcome.ok
+                                    ? { status: 'success' }
+                                    : { status: 'error', error: outcome.error || 'Knowledge base update failed.' });
+                            })
+                            .catch(e => {
+                                log(`[Katab:rag] Deferred knowledge update failed: ${e.message}`);
+                                this._updateKnowledgeUsage(uiElements, entry, { status: 'error', error: e.message });
+                            });
                     });
                     btnRow.add_child(updateBtn);
                     body.add_child(btnRow);
@@ -10124,10 +10722,22 @@ class KatabDialog {
     }
 
     _loadConversation(entry) {
+        // Prefer the freshest saved snapshot: history rows / menu items can
+        // hold a stale entry object captured before the latest save — e.g. a
+        // session-memory fold (or a background response save) that landed
+        // while the list was already rendered.  Loading a stale snapshot made
+        // the folded session memory appear to "not load back in".
+        if (entry?.id) {
+            const fresh = HistoryManager.getCached().find(item => item.id === entry.id);
+            if (fresh && Array.isArray(fresh.messages)) {
+                entry = fresh;
+            }
+        }
         this._cancelStream();
         this._lastResponseErrored = false;
         this._currentConversationId = entry.id;
         this._messageHistory = [...entry.messages];
+        this._loadSessionMemoryFromHistory();
         this._forceSynthesisActive = false;
         this._noResultsSynthesis = false;
         this._healingRetries = 0;
@@ -10171,10 +10781,11 @@ class KatabDialog {
         try {
             for (let msg of entry.messages) {
                 // Skip internal injection messages (self-healing retry prompts,
-                // research summaries, and synthesis retry priming) — these are
-                // injected during tool-use workflows to guide the model and
-                // should not appear as user messages in the chat log.
-                if (msg._healingInjection || msg._researchSummary || msg._synthesisRetry || msg._planInjection) {
+                // research summaries, synthesis retry priming, and the persisted
+                // session-memory marker) — these are injected during tool-use
+                // workflows / context folding to guide the model and should not
+                // appear as user messages in the chat log.
+                if (msg._healingInjection || msg._researchSummary || msg._synthesisRetry || msg._planInjection || isSessionMemoryMessage(msg)) {
                     continue;
                 }
                 if (msg.role === 'user') {
@@ -10238,6 +10849,17 @@ class KatabDialog {
             this._addSystemMessage('This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request.', { variant: 'warning' });
         }
         this._showChatView();
+
+        // Refresh the footer context gauge + Session Info popup for the loaded
+        // conversation.  Both are derived from the fingerprint-cached context
+        // payload and normally only recomputed by _renderTokenCounter();
+        // without this explicit refresh the gauge kept reporting the PREVIOUS
+        // conversation's payload (and ignored the loaded session memory) until
+        // the dialog was closed and reopened (open() → _fetchMaxContext →
+        // _renderTokenCounter).
+        this._contextPayloadCache = null;
+        this._renderTokenCounter();
+
         this._notifyCurrentChatChanged();
     }
 
@@ -10830,7 +11452,6 @@ class KatabDialog {
             snippetLabel.clutter_text.line_wrap = true;
             snippetLabel.clutter_text.single_line_mode = false;
             snippetLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            snippetLabel.clutter_text.max_length = 3;
             textCol.add_child(snippetLabel);
 
             row.add_child(textCol);
@@ -10868,6 +11489,9 @@ class KatabDialog {
         HistoryManager.flushSync();
         this._currentConversationId = null;
         this._messageHistory = [];
+        this._sessionMemory = '';
+        this._sessionMemoryStatus = 'empty';
+        this._compactionInFlight = false;
         this._forceSynthesisActive = false;
         this._noResultsSynthesis = false;
         this._healingRetries = 0;
@@ -17458,6 +18082,11 @@ class KatabDialog {
             return;
         }
 
+        // Between-turn checkpoint: fold older messages into the rolling session
+        // memory if the verbatim tail is approaching the provider's budget.
+        // Fire-and-forget — never blocks the send, and skips itself mid-stream.
+        this._maybeCompactSessionMemory();
+
         let rawPromptText = this._entry.get_text().trim();
         // Defensive cap in case any path let the draft grow past the limit.
         if (rawPromptText.length > PROMPT_INPUT_MAX_CHARS) {
@@ -17525,16 +18154,18 @@ class KatabDialog {
 
         const hasImageAttachment = documentMetas.some(meta => looksLikeImageAttachment(meta));
 
-        // DeepSeek is text-only, so images must be routed through a configured
-        // vision model. Fail-safe (never send raw images to DeepSeek): block
-        // with guidance when DeepSeek is active but no valid vision model is
-        // configured. Other non-Ollama providers keep their existing behavior.
+        // DeepSeek Flash (V4.1) accepts images natively; Pro is text-only, so
+        // images must be routed through a configured vision model. Fail-safe
+        // (never send raw images to a text-only DeepSeek model): block with
+        // guidance when no valid vision model is configured for Pro.
         if (hasImageAttachment && this._currentProvider === 'deepseek') {
-            const visionConfig = this._getVisionModelConfig();
-            const validation = this._validateVisionModelConfig(visionConfig);
-            if (!validation.ok) {
-                this._addSystemMessage(validation.message, { variant: 'warning' });
-                return;
+            if (!this._isDeepSeekNativeVisionModel()) {
+                const visionConfig = this._getVisionModelConfig();
+                const validation = this._validateVisionModelConfig(visionConfig);
+                if (!validation.ok) {
+                    this._addSystemMessage(validation.message, { variant: 'warning' });
+                    return;
+                }
             }
         } else if (hasImageAttachment && this._currentProvider !== 'ollama') {
             this._addSystemMessage('Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava.');
@@ -17779,7 +18410,7 @@ class KatabDialog {
             this._sendInFlight = true;
             try {
                 const ragConfig = readRagConfig(this._settings);
-                if (ragConfig.enabled) {
+                if (ragConfig.enabled && this._ragHasContent !== false) {
                     const effectiveQuery = webSearchQuery
                         || (crawlCommand?.isCommand ? stripCrawl4AICommand(promptText) : promptText);
                     if (effectiveQuery && effectiveQuery.trim()) {
@@ -17940,7 +18571,7 @@ class KatabDialog {
         // whole request to the vision model instead.  The await is bounded by
         // _withTimeout; the send button is live (streaming state is active), so
         // the user can press Stop to cancel mid-analysis.
-        if (this._currentProvider === 'deepseek' && hasImageAttachment) {
+        if (this._currentProvider === 'deepseek' && hasImageAttachment && !this._isDeepSeekNativeVisionModel()) {
             const visionConfig = this._getVisionModelConfig();
             if (visionConfig.enabled && visionConfig.mode === DEEPSEEK_VISION_MODE_PREPROCESS) {
                 // Parse the image bytes first (normal sends parse documents later
@@ -18093,10 +18724,12 @@ class KatabDialog {
                     if (documentMetas.length) {
                         this._applyAssistantRender(uiElements, 'Reading attached documents for research context\u2026', { plain: true });
                         const parsedDocs = [];
+                        const rawParsedDocs = [];
                         for (const docMeta of documentMetas) {
                             const parsedDocument = await this._documentToolRuntime.parseDocument(docMeta.path, requestCancellable);
                             this._rememberSessionDocument(parsedDocument);
                             parsedDocs.push(this._serializeDocumentMeta(parsedDocument));
+                            rawParsedDocs.push(parsedDocument);
                         }
                         userMessage.documents = parsedDocs;
                         this._messageHistory[this._messageHistory.length - 1] = userMessage;
@@ -18104,6 +18737,7 @@ class KatabDialog {
                         if (shouldClearPendingAfterSend) {
                             this._setPendingDocument(null);
                         }
+                        this._maybeIndexParsedDocuments(rawParsedDocs);
                         // Build document context for the planner prompt
                         const docBlocks = parsedDocs.map(d => buildDocumentPromptBlock(d));
                         documentContext = docBlocks.join('\n\n');
@@ -18177,6 +18811,7 @@ class KatabDialog {
                 && userMessage.documents.length > 0;
             if (documentMetas.length && !documentsAlreadyParsed) {
                 const parsedDocs = [];
+                const rawParsedDocs = [];
                 for (const docMeta of documentMetas) {
                     const docIsImage = looksLikeImageAttachment(docMeta);
                     const attachmentStatus = docIsImage
@@ -18186,6 +18821,7 @@ class KatabDialog {
                     const parsedDocument = await this._documentToolRuntime.parseDocument(docMeta.path, requestCancellable);
                     this._rememberSessionDocument(parsedDocument);
                     parsedDocs.push(this._serializeDocumentMeta(parsedDocument));
+                    rawParsedDocs.push(parsedDocument);
                 }
                 userMessage.documents = parsedDocs;
                 this._messageHistory[this._messageHistory.length - 1] = userMessage;
@@ -18193,6 +18829,7 @@ class KatabDialog {
                 if (shouldClearPendingAfterSend) {
                     this._setPendingDocument(null);
                 }
+                this._maybeIndexParsedDocuments(rawParsedDocs);
             }
 
             if (crawl4aiTargetUrl !== null || crawl4aiSearchQuery !== null) {
@@ -18348,7 +18985,7 @@ class KatabDialog {
         if (provider === 'deepseek' && this._forceSynthesisActive && model === 'deepseek-v4-pro') {
             const synthCtxSize = this._estimateContextSize();
             if (synthCtxSize > 60000) {
-                model = 'deepseek-v4-flash';
+                model = 'deepseek-flash';
                 log(`[Katab:synthesis] Switching model from V4 Pro → Flash for synthesis turn (context=${synthCtxSize} chars > 60K threshold).`);
             } else {
                 log(`[Katab:synthesis] Keeping V4 Pro for synthesis (context=${synthCtxSize} chars ≤ 60K — Pro handles small contexts correctly).`);
@@ -18615,6 +19252,7 @@ class KatabDialog {
                 model: model,
                 messages: deepseekMessages,
                 stream: true,
+                max_tokens: DEEPSEEK_MAX_OUTPUT_TOKENS,
                 stream_options: { include_usage: true },
                 thinking: { type: deepseekEffectiveThinking ? 'enabled' : 'disabled' },
                 user_id: this._buildDeepSeekUserId(),
@@ -18701,7 +19339,6 @@ class KatabDialog {
                 top_p: getOpt('top-p', 'double'),
                 min_p: getOpt('min-p', 'double'),
                 tfs_z: getOpt('tfs-z', 'double'),
-                typical_p: getOpt('typical-p', 'double'),
                 mirostat: getOpt('mirostat', 'int'),
                 mirostat_tau: getOpt('mirostat-tau', 'double'),
                 mirostat_eta: getOpt('mirostat-eta', 'double'),
@@ -19239,6 +19876,10 @@ class KatabDialog {
                             this._recordUsageEvent(responseState, 'completed');
                             this._clearActiveResponseState();
 
+                            // Between-turn checkpoint: fold older turns into session
+                            // memory once the verbatim tail approaches the budget.
+                            this._maybeCompactSessionMemory();
+
                             // ── Post-synthesis quality check ────────────
                             if (this._qualityCheckPending && finalContent) {
                                 this._qualityCheckPending = false;
@@ -19433,7 +20074,13 @@ class KatabDialog {
                                     // Record which model produced this reply so the
                                     // cache-savings estimate stays accurate when the
                                     // conversation is reloaded later.
-                                    metrics.model = this._settings.get_string('deepseek-model') || DEEPSEEK_DEFAULT_PRICING_MODEL;
+                                    // Use the model that actually served this
+                                    // reply (Pro→Flash synthesis switching can
+                                    // differ from the stored preference).
+                                    metrics.model = responseState.modelName
+                                        || this._settings.get_string('deepseek-model')
+                                        || DEEPSEEK_DEFAULT_PRICING_MODEL;
+                                    metrics._epochMs = Date.now();
 
                                     // Compute client-side performance timings.
                                     let nowUs = GLib.get_monotonic_time();
@@ -20234,6 +20881,13 @@ class KatabDialog {
         let foundResearchSummary = false;
 
         for (const msg of this._messageHistory) {
+            // Preserve the folded session memory — losing it during a synthesis
+            // retry would strip exactly the long-range context we summarized.
+            if (isSessionMemoryMessage(msg)) {
+                keepMessages.push(msg);
+                continue;
+            }
+
             // Always keep the original user message(s) (role === 'user' without tool_result blocks)
             if (msg.role === 'user') {
                 // Skip tool_result blocks (Anthropic format)
@@ -20648,7 +21302,7 @@ class KatabDialog {
             const options = {};
             for (const [prop, type] of [
                 ['temperature', 'double'], ['top-k', 'int'], ['top-p', 'double'], ['min-p', 'double'],
-                ['tfs-z', 'double'], ['typical-p', 'double'], ['mirostat', 'int'], ['mirostat-tau', 'double'],
+                ['tfs-z', 'double'], ['mirostat', 'int'], ['mirostat-tau', 'double'],
                 ['mirostat-eta', 'double'], ['repeat-last-n', 'int'], ['repeat-penalty', 'double'],
                 ['presence-penalty', 'double'], ['frequency-penalty', 'double'],
                 ['num-ctx', 'int'], ['num-predict', 'int'], ['num-keep', 'int'],
@@ -21100,7 +21754,10 @@ class KatabDialog {
 
                             // Phase 3: Coverage fallback — when KB results are poor, auto-trigger web search
                             const coverageScore = computeRagCoverageScore(searchResult?.results || []);
+                            const kbResults = searchResult?.results || [];
+                            const hasAnyMeaningfulResult = kbResults.some(r => (r.score || 0) >= RAG_FALLBACK_MIN_RESULT_SCORE);
                             const shouldFallback = ragConfig.fallbackEnabled
+                                && hasAnyMeaningfulResult
                                 && coverageScore < ragConfig.fallbackThreshold
                                 && this._isWebSearchEnabled()
                                 && this._webSearchMode !== TOOL_MODE_OFF

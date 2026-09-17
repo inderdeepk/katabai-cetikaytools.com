@@ -48,9 +48,9 @@ const CRAWL4AI_PDF_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
 // Optional LLM extraction — the provider runs server-side on the Crawl4AI
 // Docker container; Katab only selects the model and shapes the output.
-// Defaults to the user's DeepSeek V4 Flash model (matches the DeepSeek
+// Defaults to the user's DeepSeek V4.1 Flash model (matches the DeepSeek
 // provider's DEEPSEEK_API_KEY configured server-side).
-const CRAWL4AI_DEFAULT_LLM_PROVIDER = 'deepseek/deepseek-v4-flash';
+const CRAWL4AI_DEFAULT_LLM_PROVIDER = 'deepseek/deepseek-flash';
 const CRAWL4AI_DEFAULT_LLM_CHUNK_TOKEN_THRESHOLD = 4000;
 const CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE = 0.1;
 // Sensible defaults shipped with the two LLM modes so a user who flips the
