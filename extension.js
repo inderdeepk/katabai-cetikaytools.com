@@ -1940,12 +1940,8 @@ class KatabDialog {
                 // Close the Tools popup when clicking outside both the popup
                 // and the gear button.
                 if (this._toolsPopup?.visible) {
-                    const [popX, popY] = this._toolsPopup.get_transformed_position();
-                    const [popW, popH] = this._toolsPopup.get_transformed_size();
-                    const [gbX, gbY] = this._toolsGearWrap.get_transformed_position();
-                    const [gbW, gbH] = this._toolsGearWrap.get_transformed_size();
-                    const inPopup = cx >= popX && cx <= popX + popW && cy >= popY && cy <= popY + popH;
-                    const inGearBtn = cx >= gbX && cx <= gbX + gbW && cy >= gbY && cy <= gbY + gbH;
+                    const inPopup = this._isPointInActor(this._toolsPopup, cx, cy);
+                    const inGearBtn = this._isPointInActor(this._toolsGearWrap, cx, cy);
                     if (!inPopup && !inGearBtn) {
                         this._hideToolsPopup();
                         return Clutter.EVENT_STOP;
@@ -1954,18 +1950,20 @@ class KatabDialog {
                 // Close the Session Info popup when clicking outside both
                 // the popup and the token box.
                 if (this._sessionInfoPopup?.visible) {
-                    const [popX, popY] = this._sessionInfoPopup.get_transformed_position();
-                    const [popW, popH] = this._sessionInfoPopup.get_transformed_size();
-                    const [tbX, tbY] = this._tokenBox.get_transformed_position();
-                    const [tbW, tbH] = this._tokenBox.get_transformed_size();
-                    const inPopup = cx >= popX && cx <= popX + popW && cy >= popY && cy <= popY + popH;
-                    const inTokenBox = cx >= tbX && cx <= tbX + tbW && cy >= tbY && cy <= tbY + tbH;
+                    const inPopup = this._isPointInActor(this._sessionInfoPopup, cx, cy);
+                    const inTokenBox = this._isPointInActor(this._tokenBox, cx, cy);
                     if (!inPopup && !inTokenBox) {
                         this._hideSessionInfoPopup();
                         return Clutter.EVENT_STOP;
                     }
                 }
-                if (this._isClickOutsideDialog(cx, cy)) {
+                // Only close the chat when the click is outside the dialog
+                // container AND outside every visible floating popup.  Popups
+                // can extend past the dialog rectangle (they are anchored to
+                // dialog widgets but sized/clamped independently); treating
+                // those clicks as "outside" swallowed the click and closed the
+                // chat window instead.
+                if (this._isClickOutsideDialog(cx, cy) && !this._isClickOnDialogPopup(cx, cy)) {
                     this.close();
                     return Clutter.EVENT_STOP;
                 }
@@ -2441,11 +2439,80 @@ class KatabDialog {
 
         this.dialogLayout.set_width(this._dialogW);
         this.dialogLayout.set_height(this._dialogH);
+
+        // Floating popups are positioned against the overlay's local origin
+        // (primary monitor origin), so re-anchor any visible popup after a
+        // geometry change instead of leaving it at the old coordinates.
+        if (this._toolsPopup?.visible) this._positionToolsPopup();
+        if (this._sessionInfoPopup?.visible) this._positionSessionInfoPopup();
+        if (this._recentChatsPopup?.visible) this._positionRecentChatsPopup();
     }
 
     _isClickOutsideDialog(cx, cy) {
         return cx < this._dialogX || cx > this._dialogX + this._dialogW ||
             cy < this._dialogY || cy > this._dialogY + this._dialogH;
+    }
+
+    // True when a stage-space point lies inside the actor's transformed
+    // rectangle. Used for popup hit-testing and the click-outside guard.
+    _isPointInActor(actor, cx, cy) {
+        if (!actor || !actor.visible) return false;
+        const [x, y] = actor.get_transformed_position();
+        const [w, h] = actor.get_transformed_size();
+        if (!(w > 0) || !(h > 0)) return false;
+        return cx >= x && cx <= x + w && cy >= y && cy <= y + h;
+    }
+
+    // True when the pointer is over one of the dialog's floating popups.
+    // These popups are children of the full-screen overlay (not of the dialog
+    // container) and are anchored to in-dialog widgets, but they can
+    // legitimately extend past the dialog container's rectangle (e.g. when
+    // clamped at the monitor edge). A click on one must therefore never be
+    // treated as a click OUTSIDE the dialog — otherwise the stage capture
+    // handler closes the whole chat window out from under the click.
+    _isClickOnDialogPopup(cx, cy) {
+        const popups = [
+            this._toolsPopup,
+            this._sessionInfoPopup,
+            this._recentChatsPopup,
+            this._usageRangeDropdown,
+        ];
+        for (const popup of popups) {
+            if (popup && popup.visible && this._isPointInActor(popup, cx, cy)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Convert stage coordinates into the overlay actor's local coordinate
+    // space.  The overlay (`this.actor`) is positioned at the PRIMARY
+    // MONITOR's origin, which is not necessarily the stage origin (0, 0) —
+    // e.g. a laptop panel at +480 y below/above an external display.  All
+    // floating popups are children of the overlay, and `set_position()` is
+    // parent-relative, so anchors computed from child widgets
+    // (`get_transformed_position()`) and monitor geometry MUST be converted
+    // here first or every popup renders offset by the monitor origin.
+    _stageToOverlayCoords(stageX, stageY) {
+        let [originX, originY] = this.actor.get_transformed_position();
+        if (!this.actor.mapped) {
+            const monitor = Main.layoutManager.primaryMonitor;
+            originX = monitor?.x || 0;
+            originY = monitor?.y || 0;
+        }
+        return [stageX - originX, stageY - originY];
+    }
+
+    // Size of the overlay (== primary monitor) in local units, with a
+    // monitor-based fallback for the pre-allocation window.
+    _overlaySize() {
+        let [width, height] = this.actor.get_transformed_size();
+        if (!(width > 0) || !(height > 0)) {
+            const monitor = Main.layoutManager.primaryMonitor;
+            width = monitor?.width || 0;
+            height = monitor?.height || 0;
+        }
+        return [width, height];
     }
 
     _handleKeyPress(event) {
@@ -8042,7 +8109,13 @@ class KatabDialog {
             this._clipboardTempFiles = [];
         }
 
+        // Dismiss every floating popup so reopening the chat starts from a
+        // clean state — these are children of the overlay and would otherwise
+        // still be flagged visible and reappear on the next open().
+        this._hideToolsPopup();
+        this._hideSessionInfoPopup();
         this._hideRecentChatsPopup();
+        this._closeUsageRangeDropdown();
         this._notifyCurrentChatChanged();
     }
 
@@ -8932,7 +9005,7 @@ class KatabDialog {
         }
     }
 
-    // Position the popup above the token box, clamped to monitor bounds.
+    // Position the popup above the token box, clamped to overlay bounds.
     _positionSessionInfoPopup() {
         if (!this._sessionInfoPopup) return;
 
@@ -8940,34 +9013,39 @@ class KatabDialog {
         let [, popupWidth] = this._sessionInfoPopup.get_preferred_width(-1);
         let [, popupHeight] = this._sessionInfoPopup.get_preferred_height(popupWidth);
 
-        // Get the token box position in stage coordinates
-        let [tbX, tbY] = this._tokenBox.get_transformed_position();
+        // Token box anchor, converted from stage space into the overlay's
+        // local space (the overlay is pinned to the primary monitor origin,
+        // which is not necessarily the stage origin — see
+        // _stageToOverlayCoords).
+        let [tbX, tbY] = this._stageToOverlayCoords(
+            ...this._tokenBox.get_transformed_position());
         let [tbW, tbH] = this._tokenBox.get_transformed_size();
+
+        const [overlayWidth, overlayHeight] = this._overlaySize();
+        const margin = 12;
 
         // Position above the token box, right-aligned
         let popupX = tbX + tbW - popupWidth;
         let popupY = tbY - popupHeight - 8;
 
-        // Clamp to monitor bounds
-        const monitor = global.display.get_current_monitor();
-        const geom = global.display.get_monitor_geometry(monitor);
-        const margin = 12;
-
-        if (popupX + popupWidth > geom.x + geom.width - margin) {
-            popupX = geom.x + geom.width - popupWidth - margin;
+        if (popupX + popupWidth > overlayWidth - margin) {
+            popupX = overlayWidth - popupWidth - margin;
         }
-        if (popupX < geom.x + margin) {
-            popupX = geom.x + margin;
+        if (popupX < margin) {
+            popupX = margin;
         }
-        if (popupY < geom.y + margin) {
+        if (popupY < margin) {
             // Not enough room above — position below instead
             popupY = tbY + tbH + 8;
-            if (popupY + popupHeight > geom.y + geom.height - margin) {
-                popupY = geom.y + geom.height - popupHeight - margin;
+            if (popupY + popupHeight > overlayHeight - margin) {
+                popupY = overlayHeight - popupHeight - margin;
             }
         }
+        if (popupY < margin) {
+            popupY = margin;
+        }
 
-        this._sessionInfoPopup.set_position(popupX, popupY);
+        this._sessionInfoPopup.set_position(Math.round(popupX), Math.round(popupY));
     }
 
     // Refresh the popup contents with current data.  Only updates UI
@@ -9115,6 +9193,13 @@ class KatabDialog {
         if (parent) parent.set_child_above_sibling(this._toolsPopup, null);
         this._refreshToolsPopup();
         this._positionToolsPopup();
+        // Diagnostics for the floating-popup geometry (overlay-local units) —
+        // popups are children of the overlay, not the dialog container, so
+        // placement bugs are invisible without this trace.  One line per open.
+        try {
+            const [opW, opH] = this._overlaySize();
+            log(`[Katab:tools] Popup placed at ${Math.round(this._toolsPopup.x)},${Math.round(this._toolsPopup.y)} · overlay ${Math.round(opW)}×${Math.round(opH)} · dialog ${this._dialogX},${this._dialogY} ${this._dialogW}×${this._dialogH}`);
+        } catch (_e) { /* diagnostics only */ }
         if (this._toolsRepositionId) GLib.source_remove(this._toolsRepositionId);
         this._toolsRepositionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._toolsRepositionId = 0;
@@ -9169,31 +9254,41 @@ class KatabDialog {
         let [, popupWidth] = this._toolsPopup.get_preferred_width(-1);
         let [, popupHeight] = this._toolsPopup.get_preferred_height(popupWidth);
 
-        let [gbX, gbY] = this._toolsGearWrap.get_transformed_position();
+        // Gear anchor, converted from stage space into the overlay's local
+        // space (the overlay is pinned to the primary monitor origin, which
+        // is not necessarily the stage origin — see _stageToOverlayCoords).
+        // Skipping this conversion used to push the lower tool rows outside
+        // the dialog rectangle, where clicks closed the chat window instead
+        // of toggling the tool (e.g. the Deep Research row).
+        let [gbX, gbY] = this._stageToOverlayCoords(
+            ...this._toolsGearWrap.get_transformed_position());
         let [gbW, gbH] = this._toolsGearWrap.get_transformed_size();
+
+        const [overlayWidth, overlayHeight] = this._overlaySize();
+        const margin = 12;
 
         // Position above the gear button, right-aligned
         let popupX = gbX + gbW - popupWidth;
         let popupY = gbY - popupHeight - 8;
 
-        const monitor = global.display.get_current_monitor();
-        const geom = global.display.get_monitor_geometry(monitor);
-        const margin = 12;
-
-        if (popupX + popupWidth > geom.x + geom.width - margin) {
-            popupX = geom.x + geom.width - popupWidth - margin;
+        if (popupX + popupWidth > overlayWidth - margin) {
+            popupX = overlayWidth - popupWidth - margin;
         }
-        if (popupX < geom.x + margin) {
-            popupX = geom.x + margin;
+        if (popupX < margin) {
+            popupX = margin;
         }
-        if (popupY < geom.y + margin) {
+        if (popupY < margin) {
+            // Not enough room above — place below the gear button instead
             popupY = gbY + gbH + 8;
-            if (popupY + popupHeight > geom.y + geom.height - margin) {
-                popupY = geom.y + geom.height - popupHeight - margin;
+            if (popupY + popupHeight > overlayHeight - margin) {
+                popupY = overlayHeight - popupHeight - margin;
             }
         }
+        if (popupY < margin) {
+            popupY = margin;
+        }
 
-        this._toolsPopup.set_position(popupX, popupY);
+        this._toolsPopup.set_position(Math.round(popupX), Math.round(popupY));
     }
 
     _refreshToolsPopup() {
@@ -9290,6 +9385,16 @@ class KatabDialog {
 
                 row.connect('clicked', async () => {
                     if (isModeControlled) {
+                        // Deep Research needs at least one research-capable
+                        // tool underneath.  When neither Web Search nor Web
+                        // Scraper is available the row renders disabled and
+                        // must not silently flip a mode that cannot run —
+                        // explain how to make it usable instead.
+                        if (isDeepResearch && !this._toolModeAvailable(tool, TOOL_MODE_ON)) {
+                            this._addSystemMessage(
+                                'Deep Research needs Web Search or Web Scraper. Enable one in Settings → Tools, or switch its mode to On from this popup.');
+                            return;
+                        }
                         this._cycleToolMode(tool.toolName);
                         this._patchToolsPopupMode(tool.toolName);
                         this._updateToolsBadge();
@@ -11118,32 +11223,37 @@ class KatabDialog {
         let [, popupWidth] = this._recentChatsPopup.get_preferred_width(-1);
         let [, popupHeight] = this._recentChatsPopup.get_preferred_height(popupWidth);
 
-        let [btnX, btnY] = this._historyBtn.get_transformed_position();
+        // History button anchor, converted from stage space into the
+        // overlay's local space (see _stageToOverlayCoords).
+        let [btnX, btnY] = this._stageToOverlayCoords(
+            ...this._historyBtn.get_transformed_position());
         let [btnW, btnH] = this._historyBtn.get_transformed_size();
+
+        const [overlayWidth, overlayHeight] = this._overlaySize();
+        const margin = 12;
 
         // Position below the button, left-aligned
         let popupX = btnX;
         let popupY = btnY + btnH + 6;
 
-        const monitor = global.display.get_current_monitor();
-        const geom = global.display.get_monitor_geometry(monitor);
-        const margin = 12;
-
-        if (popupX + popupWidth > geom.x + geom.width - margin) {
+        if (popupX + popupWidth > overlayWidth - margin) {
             popupX = btnX + btnW - popupWidth;
         }
-        if (popupX < geom.x + margin) {
-            popupX = geom.x + margin;
+        if (popupX < margin) {
+            popupX = margin;
         }
-        if (popupY + popupHeight > geom.y + geom.height - margin) {
+        if (popupY + popupHeight > overlayHeight - margin) {
             // Not enough room below — position above instead
             popupY = btnY - popupHeight - 6;
-            if (popupY < geom.y + margin) {
-                popupY = geom.y + geom.height - popupHeight - margin;
+            if (popupY < margin) {
+                popupY = overlayHeight - popupHeight - margin;
             }
         }
+        if (popupY < margin) {
+            popupY = margin;
+        }
 
-        this._recentChatsPopup.set_position(popupX, popupY);
+        this._recentChatsPopup.set_position(Math.round(popupX), Math.round(popupY));
     }
 
     _formatRelativeTime(timestamp) {
