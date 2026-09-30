@@ -185,8 +185,8 @@ In addition to compressed summaries, the synthesis prompt includes granular `{cl
 
 | Constant | Normal Mode | Deep Research |
 |---|---|---|
-| `FORCE_SYNTHESIS_AFTER_ITERATIONS` | 5 | `DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS` (12) |
-| `CONTEXT_SYNTHESIS_THRESHOLD_CHARS` | 50,000 | `DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS` (150,000) |
+| Iteration trigger (force synthesis) | `web-search-max-tool-iterations` pref (default 10) | 12 rounds (`DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS` × 2) |
+| Context trigger (force synthesis) | max(`CONTEXT_SYNTHESIS_THRESHOLD_CHARS` 40,000; 75% of provider input budget) | max(`DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS` 80,000; 75% of provider input budget) |
 
 ### Truncation Tiers
 

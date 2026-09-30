@@ -227,10 +227,10 @@ const DEEP_RESEARCH_LOCAL_TOOL = {
     icon: DEEP_RESEARCH_TOOL_ICON,
     toolName: DEEP_RESEARCH_TOOL_NAME,
 };
-// DeepSeek V4 Pro reasoning quality collapses past ~80K chars of tool-result
-// context, so deep research must synthesise earlier than the UI-level iteration
-// limit suggests.  These thresholds are tighter than the normal mode values
-// because deep research accumulates web content much faster.
+// Base for the deep-research tool-iteration cap (×2 → 12 rounds — see
+// _getMaxToolIterations).  Deep research accumulates web content much faster
+// than normal mode, so its truncation tiers are more generous and it gets
+// more rounds before synthesis is forced.
 const DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS = 6;
 const DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS = 80000;
 // More generous truncation tiers for deep research — double the normal limits.
@@ -694,18 +694,21 @@ const TOOL_RESULT_TRUNCATION_TIERS = [
     { maxIteration: 6, readUrlChars: 3000, crawlChars: 6000, knowledgeChars: 2500, searchSnippetChars: 250, searchResults: 5 },
     { maxIteration: Infinity, readUrlChars: 1500, crawlChars: 3000, knowledgeChars: 1500, searchSnippetChars: 150, searchResults: 3 },
 ];
-// When the estimated total context exceeds this character threshold, we inject
-// a synthesis instruction so the model stops searching and writes its answer.
-// Tuned for DeepSeek V4 Pro — at 50K+ chars of tool results the model's
-// reasoning quality drops sharply, producing search-query regurgitation
-// instead of coherent synthesis.
+// Floor for the context-based force-synthesis trigger.  The effective
+// trigger is max(floor, fraction × provider input budget) — see
+// _getContextSynthesisThresholdChars.  A flat 40K-char payload limit
+// predated 1M-token providers and fired after a SINGLE tool batch in any
+// long conversation, so the model could never chain more than one tool
+// round per turn (the "stuck in another mode" bug — Sept 2026).
 const CONTEXT_SYNTHESIS_THRESHOLD_CHARS = 40000;
-// After this many tool iterations, force a synthesis instruction regardless
-// of exact context size — the model has gathered enough information.
-// Raised from 3→5 (July 2026): 3 was cutting off useful tool-call chains
-// mid-progress for simple queries (e.g. search→read→search→read→read),
-// causing the Flash fallback to produce 200-char near-empty responses.
-const FORCE_SYNTHESIS_AFTER_ITERATIONS = 5;
+// Fraction of the provider's input char budget at which the context-based
+// force-synthesis trigger fires.  Leaves headroom for the model's reply
+// while still stopping runaway loops before the payload hits the ceiling.
+const CONTEXT_SYNTHESIS_BUDGET_FRACTION = 0.75;
+// NOTE: the iteration-based synthesis trigger follows the user's
+// "Max Tool Iterations" setting (default 10) — see
+// _getEffectiveSynthesisThresholds().  The old fixed
+// FORCE_SYNTHESIS_AFTER_ITERATIONS=5 silently contradicted that pref.
 
 // ── Branch-level error recovery ──────────────────────────────────────────────
 // When a research branch fails (search timeout, crawl error, engine down),
@@ -18060,20 +18063,49 @@ class KatabDialog {
     }
 
     // Returns the synthesis thresholds to use for the current prompt,
-    // accounting for deep research mode.
+    // accounting for deep research mode AND the provider's real input budget.
+    //
+    // forceSynthesisIterations follows the user's "Max Tool Iterations" pref
+    // (web-search-max-tool-iterations, default 10; 12 in deep research) — the
+    // pref is the contract: "rounds the model may trigger per message before
+    // being forced to answer".  A fixed 5-iteration trigger used to cut every
+    // tool loop short, so the model looked "stuck in another mode" after a
+    // few calls no matter what the pref said.
     _getEffectiveSynthesisThresholds() {
+        const forceSynthesisIterations = this._getMaxToolIterations();
         if (this._isDeepResearchActive()) {
             return {
-                forceSynthesisIterations: DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS,
-                contextThresholdChars: DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS,
+                forceSynthesisIterations,
+                contextThresholdChars: this._getContextSynthesisThresholdChars(DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS),
                 truncationTiers: DEEP_RESEARCH_TRUNCATION_TIERS,
             };
         }
         return {
-            forceSynthesisIterations: FORCE_SYNTHESIS_AFTER_ITERATIONS,
-            contextThresholdChars: CONTEXT_SYNTHESIS_THRESHOLD_CHARS,
+            forceSynthesisIterations,
+            contextThresholdChars: this._getContextSynthesisThresholdChars(CONTEXT_SYNTHESIS_THRESHOLD_CHARS),
             truncationTiers: TOOL_RESULT_TRUNCATION_TIERS,
         };
+    }
+
+    // Scale the context-based force-synthesis trigger to the provider's real
+    // input budget.  The flat 40K-char threshold compared the WHOLE
+    // conversation payload against 40K chars, so in any long chat the first
+    // tool batch of a turn instantly forced synthesis — tools were removed
+    // from the payload and the model could never chain a second tool round
+    // (fixed Sept 2026).  Fires at max(floorChars, fraction × budget) — i.e.
+    // only when the payload genuinely approaches the context ceiling.
+    _getContextSynthesisThresholdChars(floorChars) {
+        const fallback = Number.isFinite(floorChars) ? floorChars : CONTEXT_SYNTHESIS_THRESHOLD_CHARS;
+        try {
+            const provider = this._currentProvider || this._settings.get_string('provider');
+            const budget = estimateProviderCharBudget(provider, this._settings);
+            if (Number.isFinite(budget) && budget > 0) {
+                return Math.max(fallback, Math.floor(budget * CONTEXT_SYNTHESIS_BUDGET_FRACTION));
+            }
+        } catch (_e) {
+            /* fall back to the flat floor */
+        }
+        return fallback;
     }
 
     // Estimate the serialized size of the message history (used to decide
@@ -20913,7 +20945,14 @@ class KatabDialog {
             // pipe directly before a tag name so the tool-call regexes match.
             .replace(/\uFF5C+/g, '|')
             .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '');
+            .replace(/\|(?=[a-zA-Z_])/g, '')
+            // Degraded models also mangle tags with a space after the angle
+            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
+            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
+            // Normalize the spacing so the tag-regexes below can match and
+            // remove these fragments instead of leaking them into the answer.
+            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
+            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
 
         const results = [];
 
@@ -21059,10 +21098,17 @@ class KatabDialog {
             // pipe directly before a tag name so the tool-call regexes match.
             .replace(/\uFF5C+/g, '|')
             .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '');
+            .replace(/\|(?=[a-zA-Z_])/g, '')
+            // Degraded models also mangle tags with a space after the angle
+            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
+            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
+            // Normalize the spacing so the tag-regexes below can match.
+            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
+            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
 
         // 1. Explicit wrapper tags — definitive signal of tool-call XML.
-        if (/<(function_calls|tool_calls)>/i.test(cleaned)) {
+        // ("calls" covers the mangled "< calls>" variant, normalized above.)
+        if (/<(function_calls|tool_calls|calls)>/i.test(cleaned)) {
             log(`[Katab:detect] Found wrapper tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`);
             return true;
         }
@@ -21090,7 +21136,7 @@ class KatabDialog {
         // for short responses (potential false negatives).
         if (content.length < 2000) {
             const head = cleaned.slice(0, 120);
-            const m1 = /<(function_calls|tool_calls)>/i.test(cleaned);
+            const m1 = /<(function_calls|tool_calls|calls)>/i.test(cleaned);
             const m2 = /<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(cleaned);
             const m3 = /<parameter\s/i.test(cleaned) && /<\/invoke>/i.test(cleaned);
             log(`[Katab:detect] No tool-call patterns found in ${content.length}-char response. Match1=${m1} Match2=${m2} Match3=${m3} Cleaned start: ${head}`);
@@ -21198,8 +21244,9 @@ class KatabDialog {
     // True if `text` still contains tool-call markup after an attempted strip.
     // Degraded models emit obfuscated variants the tag regexes miss (fullwidth
     // pipe fences, an invented "|DSML|" namespace prefix, invisible chars
-    // between tag letters), so normalize first, then look for known tool-call
-    // tag names inside angle brackets.
+    // between tag letters, a space after the angle bracket, a dropped
+    // "tool_"/"function_" prefix), so normalize first, then look for known
+    // tool-call tag names inside angle brackets.
     _stillLooksLikeToolMarkup(text) {
         if (!text || typeof text !== 'string') return false;
         const t = text
@@ -21207,9 +21254,15 @@ class KatabDialog {
             .replace(/[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g, '')
             .replace(/\uFF5C+/g, '|')
             .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '');
-        return /<[a-zA-Z_][a-zA-Z0-9_]*\b[^>]*>/.test(t)
-            && /(?:tool_calls|invoke|parameter|function|read_url|web_search|crawl_url|python|terminal)/i.test(t);
+            .replace(/\|(?=[a-zA-Z_])/g, '')
+            // Degraded models also mangle tags with a space after the angle
+            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
+            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
+            // Normalize the spacing so the checks below can catch the residue.
+            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
+            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
+        return /<\/?\s*[a-zA-Z_][a-zA-Z0-9_]*\b[^>]*>/.test(t)
+            && /(?:tool_calls?|function_calls?|invoke|parameter|function|\bcalls\b|read_url|web_search|crawl_url|python|terminal)/i.test(t);
     }
 
     // Strip known tool-call markup patterns from text, extracting whatever
@@ -21239,7 +21292,14 @@ class KatabDialog {
             // pipe directly before a tag name so the tool-call regexes match.
             .replace(/\uFF5C+/g, '|')
             .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '');
+            .replace(/\|(?=[a-zA-Z_])/g, '')
+            // Degraded models also mangle tags with a space after the angle
+            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
+            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
+            // Normalize the spacing so the tag-regexes below can match and
+            // remove these fragments instead of leaking them into the answer.
+            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
+            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
 
         // Remove XML-style tool-call blocks: <function_calls>...</function_calls>,
         // <tool_calls>...</tool_calls>, <invoke>...</invoke>.
@@ -21293,7 +21353,14 @@ class KatabDialog {
             // pipe directly before a tag name so the tool-call regexes match.
             .replace(/\uFF5C+/g, '|')
             .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '');
+            .replace(/\|(?=[a-zA-Z_])/g, '')
+            // Degraded models also mangle tags with a space after the angle
+            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
+            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
+            // Normalize the spacing so the tag-regexes below can match and
+            // remove these fragments instead of leaking them into the answer.
+            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
+            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
 
         // Remove balanced XML blocks (same stripping as above)
         cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '');
@@ -22516,6 +22583,10 @@ class KatabDialog {
         } catch (_) { /* settings read may fail during teardown */ }
 
         // ── Context budget check (Unsloth pattern: remove tools, don't ask) ──
+        // Thresholds are budget-relative now: the iteration cap follows the
+        // user's Max Tool Iterations pref and the context trigger fires only
+        // when the payload approaches the provider's real input budget —
+        // NOT after the first tool batch of a long conversation.
         const thresholds = this._getEffectiveSynthesisThresholds();
         const contextSize = this._estimateContextSize();
         const iteration = this._toolIterations || 0;
@@ -22528,7 +22599,7 @@ class KatabDialog {
             || contextSize > thresholds.contextThresholdChars;
 
         if (shouldForceSynthesis) {
-            log(`[Katab:synthesis] Forcing synthesis — iteration=${iteration} contextSize=${contextSize} chars deepResearch=${this._isDeepResearchActive()}`);
+            log(`[Katab:synthesis] Forcing synthesis — iteration=${iteration}/${thresholds.forceSynthesisIterations} contextSize=${contextSize}/${thresholds.contextThresholdChars} chars allEnginesDead=${allEnginesDead} deepResearch=${this._isDeepResearchActive()}`);
             // Set the flag so _streamResponse stops advertising tools.
             // This follows Unsloth's pattern: tools are simply absent from
             // the payload, so the model CANNOT call them, regardless of

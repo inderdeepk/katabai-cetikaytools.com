@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Synthesis prompt**: Changed from branch-summary to topic-driven, centering the user's original question.
 - **Raw fact injection**: Deep research synthesis now includes granular `{claim, url}` facts alongside compressed summaries.
 - **Context budget**: Adaptive proportional truncation with 80K-char budget for synthesis.
-- **Force-synthesis thresholds**: Raised `FORCE_SYNTHESIS_AFTER_ITERATIONS` from 3→5; model switch conditional on context size >60K.
+- **Autonomous tool-loop limits now follow the Max Tool Iterations preference**: The force-synthesis iteration trigger uses `web-search-max-tool-iterations` (default 10) instead of a hidden fixed cap of 5, and the context trigger scales to 75% of the provider's real input budget instead of a flat 40K-char payload limit that fired after a single tool batch in any long conversation — the model can now chain as many tool rounds as configured before being forced to answer.
 - **Ollama deep research**: Fixed timeouts and think-mode blocking during synthesis for local models.
 - **Offscreen framebuffer**: Removed `border-radius` and `box-shadow` from all chat content area elements to eliminate GPU texture errors on long responses.
 - **Mid-reply close/reopen guards**: UI update functions now check dialog open state before manipulating widgets.
@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **KB search caching**: Repeated identical knowledge-base queries within 60s reuse cached results instead of re-embedding the same text.
 
 ### Fixed
+- **Model "stuck in another mode" / mangled answer after tool calls**: In any conversation whose payload exceeded 40K chars the first tool batch instantly triggered force synthesis (tools silently removed from the request), so the model could never chain more than one tool round per turn — and its follow-up tool calls leaked into the final answer as raw XML text (mangled fragments like `< calls>`) because the "recovered prose" heuristic accepted the partial strip. The context trigger is now scaled to the provider's real budget (75% of input budget, DeepSeek ≈ 1.6M chars), degraded tag variants with spaces or a missing `tool_`/`function_` prefix are normalized and stripped, and mangled markup is routed to the synthesis retry instead of being rendered to the user.
 - **KB hybrid search could return deleted or evicted content**: the BM25 corpus was never pruned, so replaced facts, evicted chunks, and deleted conversations could resurface in hybrid results. Deletes now invalidate the corpus, which is rebuilt lazily from ChromaDB.
 - **Rejected KB indexing was recorded as success**: `indexed` stayed non-zero when a cap blocked storage, marking conversations as indexed although nothing was stored. Success is now gated on stored chunks, rejections surface a warning, and the reconcile pass counts only real successes.
 - **"Re-index" / "Clear KB" did nothing until a shell reload**: the in-memory sentinel was rewritten to disk after maintenance, so stale index state resurrected. Maintenance now signals the running extension (generation + action settings); Re-index rebuilds immediately and Clear stays cleared.
