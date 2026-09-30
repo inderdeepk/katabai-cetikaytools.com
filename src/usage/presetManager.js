@@ -74,7 +74,12 @@ export function loadPresets() {
         const [, bytes] = file.load_contents(null);
         const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes));
         return Array.isArray(parsed) ? parsed : [];
-    } catch (_e) {
+    } catch (e) {
+        // Log so a corrupt/unreadable presets.json is diagnosable — silently
+        // returning [] used to make all presets vanish with no trace.
+        if (!e?.matches?.(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND)) {
+            log(`[Katab:presets] Failed to load presets: ${e.message || e}`);
+        }
         return [];
     }
 }

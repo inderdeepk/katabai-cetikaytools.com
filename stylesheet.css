@@ -208,7 +208,7 @@
 }
 
 .katab-session-info-close-btn {
-    padding: 2px;
+    padding: 5px;
     border: none;
     background: transparent;
 }
@@ -230,7 +230,6 @@
     font-size: 0.82em;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.58);
-    text-transform: uppercase;
     margin-top: 6px;
     margin-bottom: 3px;
 }
@@ -866,6 +865,18 @@
     border: 1px solid rgba(243, 139, 168, 0.30);
 }
 
+.katab-theme-light .katab-kb-score-low {
+    color: #a0284a;
+}
+
+.katab-theme-light .katab-kb-score-high {
+    color: #1c6b2f;
+}
+
+.katab-theme-light .katab-kb-score-mid {
+    color: #8a5a00;
+}
+
 .katab-kb-result-text-col {
     spacing: 2px;
 }
@@ -892,7 +903,7 @@
 .katab-kb-pill {
     spacing: 4px;
     margin-left: 8px;
-    padding: 2px 8px;
+    padding: 4px 10px;
     border-radius: 9px;
     background-color: rgba(148, 226, 213, 0.14);
     border: 1px solid rgba(148, 226, 213, 0.50);
@@ -1218,7 +1229,6 @@
     font-size: 0.95em;
     color: rgba(235, 238, 245, 0.86);
     font-style: normal;
-    line-height: 1.55;
 }
 
 /* ── Light theme overrides ─────────────── */
@@ -2000,6 +2010,16 @@
     font-family: monospace;
 }
 
+/* Light theme: the pastel rose colors above are unreadable on the near-white
+   dialog surface — use darker rose/maroon tones (contrast ≥ 7:1). */
+.katab-theme-light .katab-error-title {
+    color: #a0284a;
+}
+
+.katab-theme-light .katab-error-details-label {
+    color: rgba(46, 12, 24, 0.88);
+}
+
 
 
 /* ════════════════════════════════════════════
@@ -2077,16 +2097,15 @@
 .katab-attachment-chip-label {
     color: rgba(255, 255, 255, 0.88);
     font-size: 0.95em;
-    x_expand: true;
 }
 
 .katab-attachment-chip-remove {
-    padding: 2px 6px;
+    padding: 5px 8px;
     border-radius: 5px;
     background-color: rgba(26, 26, 26, 0.60);
     border: 1px solid rgba(255, 255, 255, 0.06);
     color: rgba(255, 255, 255, 0.55);
-    font-size: 8.5pt;
+    font-size: 0.86em;
 }
 
 .katab-attachment-chip-remove:hover {
@@ -2252,14 +2271,6 @@
     background-color: rgba(255, 255, 255, 0.24);
 }
 
-.katab-prompt-entry {
-    background-color: transparent;
-    border: none;
-    color: #ffffff;
-    font-size: 1.14em;
-    padding: 0;
-}
-
 .katab-send-btn {
     background-color: rgba(255, 255, 255, 0.05);
     border-radius: 8px;
@@ -2287,101 +2298,6 @@
 .katab-send-icon {
     icon-size: 16px;
     color: rgba(255, 255, 255, 0.88);
-}
-
-/* ════════════════════════════════════════════
-   TOOLS BOX
-   ════════════════════════════════════════════ */
-
-.katab-tools-box {
-    spacing: 4px;
-}
-
-.katab-tool-btn {
-    padding: 3px 7px;
-    border-radius: 8px;
-    background-color: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.60);
-    width: 72px;
-    height: 44px;
-}
-
-.katab-tool-mode-btn {
-    width: 78px;
-    height: 44px;
-}
-
-.katab-tool-btn-content {
-    spacing: 5px;
-}
-
-.katab-tool-text-col {
-    spacing: 1px;
-}
-
-.katab-tool-name-label {
-    font-size: 8.5pt;
-    font-weight: 600;
-    color: inherit;
-}
-
-.katab-tool-mode-label {
-    font-size: 8pt;
-    font-weight: 600;
-    color: inherit;
-    opacity: 0.70;
-}
-
-.katab-tool-mode-auto {
-    background-color: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.60);
-}
-
-.katab-tool-mode-on {
-    background-color: rgba(148, 226, 213, 0.14);
-    border-color: rgba(148, 226, 213, 0.36);
-    color: #94e2d5;
-}
-
-.katab-tool-mode-off {
-    background-color: rgba(243, 139, 168, 0.09);
-    border-color: rgba(243, 139, 168, 0.24);
-    color: #f38ba8;
-}
-
-.katab-tool-btn:hover {
-    background-color: rgba(255, 255, 255, 0.10);
-    border-color: rgba(255, 255, 255, 0.14);
-    color: rgba(255, 255, 255, 0.88);
-}
-
-.katab-tool-mode-on:hover {
-    background-color: rgba(148, 226, 213, 0.20);
-    border-color: rgba(148, 226, 213, 0.48);
-    color: #c8fff7;
-}
-
-.katab-tool-mode-off:hover {
-    background-color: rgba(243, 139, 168, 0.14);
-    border-color: rgba(243, 139, 168, 0.36);
-    color: #ffd0dc;
-}
-
-.katab-tool-btn-disabled {
-    background-color: rgba(255, 255, 255, 0.03);
-    border-color: rgba(249, 226, 175, 0.14);
-    color: rgba(255, 255, 255, 0.28);
-}
-
-.katab-tool-btn-disabled:hover {
-    background-color: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.48);
-}
-
-.katab-tool-icon {
-    icon-size: 14px;
 }
 
 /* ════════════════════════════════════════════
@@ -2448,7 +2364,7 @@
 }
 
 .katab-tools-popup-close-btn {
-    padding: 2px;
+    padding: 5px;
     border: none;
     background: transparent;
 }
@@ -2472,7 +2388,6 @@
     font-weight: 600;
     color: rgba(255, 255, 255, 0.60);
     padding: 8px 8px 4px 8px;
-    text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
@@ -2558,6 +2473,10 @@
 .katab-theme-light .katab-token-progress {
     background-color: rgba(0, 0, 0, 0.06);
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-token-progress-reserved {
+    background-color: rgba(0, 0, 0, 0.22);
 }
 
 .katab-theme-light .katab-token-progress-fill {
@@ -2705,25 +2624,6 @@
 
 .katab-theme-light .katab-provider-status-arrow {
     color: rgba(0, 0, 0, 0.38);
-}
-
-.katab-theme-light .katab-close-btn,
-.katab-theme-light .katab-settings-btn,
-.katab-theme-light .katab-new-chat-btn {
-    background-color: transparent;
-}
-
-.katab-theme-light .katab-close-btn:hover,
-.katab-theme-light .katab-settings-btn:hover,
-.katab-theme-light .katab-new-chat-btn:hover {
-    background-color: rgba(0, 0, 0, 0.08);
-}
-
-.katab-theme-light .katab-close-icon,
-.katab-theme-light .katab-settings-icon,
-.katab-theme-light .katab-new-chat-icon,
-.katab-theme-light .katab-history-icon {
-    color: rgba(0, 0, 0, 0.58);
 }
 
 .katab-theme-light .katab-selection-row-badge {
@@ -3371,10 +3271,6 @@
     background-color: rgba(0, 0, 0, 0.24);
 }
 
-.katab-theme-light .katab-prompt-entry {
-    color: rgba(0, 0, 0, 0.87);
-}
-
 .katab-theme-light .katab-send-btn {
     background-color: rgba(0, 0, 0, 0.035);
     border-color: rgba(0, 0, 0, 0.05);
@@ -3386,47 +3282,6 @@
 
 .katab-theme-light .katab-send-icon {
     color: rgba(0, 0, 0, 0.75);
-}
-
-.katab-theme-light .katab-tool-btn {
-    background-color: rgba(0, 0, 0, 0.035);
-    border-color: rgba(0, 0, 0, 0.05);
-    color: rgba(0, 0, 0, 0.48);
-}
-
-.katab-theme-light .katab-tool-btn:hover {
-    background-color: rgba(0, 0, 0, 0.07);
-    color: rgba(0, 0, 0, 0.72);
-}
-
-.katab-theme-light .katab-tool-mode-auto {
-    background-color: rgba(0, 0, 0, 0.03);
-    border-color: rgba(0, 0, 0, 0.06);
-    color: rgba(0, 0, 0, 0.48);
-}
-
-.katab-theme-light .katab-tool-mode-on {
-    background-color: rgba(15, 118, 110, 0.10);
-    border-color: rgba(15, 118, 110, 0.26);
-    color: #0f766e;
-}
-
-.katab-theme-light .katab-tool-mode-on:hover {
-    background-color: rgba(15, 118, 110, 0.15);
-    border-color: rgba(15, 118, 110, 0.36);
-    color: #0b5f59;
-}
-
-.katab-theme-light .katab-tool-mode-off {
-    background-color: rgba(190, 24, 93, 0.08);
-    border-color: rgba(190, 24, 93, 0.20);
-    color: #be185d;
-}
-
-.katab-theme-light .katab-tool-mode-off:hover {
-    background-color: rgba(190, 24, 93, 0.12);
-    border-color: rgba(190, 24, 93, 0.30);
-    color: #9f1239;
 }
 
 .katab-theme-light .katab-tools-gear-btn {
@@ -4059,14 +3914,6 @@
 }
 
 .katab-pet-sprite-image,
-.katab-pet-sprite-accent {
-    icon-shadow: 0 2px 7px rgba(0, 0, 0, 0.30);
-}
-
-.katab-pet-sprite-accent-provider {
-    opacity: 0.88;
-}
-
 .katab-pet-sprite-fallback {
     font-size: 13pt;
     font-weight: bold;
@@ -4102,12 +3949,6 @@
     border-color: rgba(250, 179, 135, 0.65);
     background-color: rgba(250, 179, 135, 0.16);
     box-shadow: 0 0 14px rgba(250, 179, 135, 0.30);
-}
-
-.katab-usage-companion-face {
-    font-size: 12pt;
-    font-weight: bold;
-    color: rgba(255, 255, 255, 0.88);
 }
 
 .katab-usage-companion-text {
@@ -4345,32 +4186,9 @@
 }
 
 /* Accuracy pills, milestones, and local action */
-.katab-usage-pill-row,
 .katab-usage-action-row,
 .katab-usage-milestone-row {
     spacing: 6px;
-}
-
-.katab-usage-pill {
-    padding: 3px 8px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    background-color: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 0.62);
-    font-size: 8.2pt;
-    font-weight: 700;
-}
-
-.katab-usage-pill-exact {
-    border-color: rgba(166, 227, 161, 0.30);
-    background-color: rgba(166, 227, 161, 0.10);
-    color: #a6e3a1;
-}
-
-.katab-usage-pill-estimated {
-    border-color: rgba(249, 226, 175, 0.28);
-    background-color: rgba(249, 226, 175, 0.10);
-    color: #f9e2af;
 }
 
 .katab-usage-action-btn {
@@ -4508,13 +4326,6 @@
 }
 
 /* ── Tab bar ──────────────────────────────────────────────────────────── */
-.katab-usage-menu-face {
-    font-size: 10pt;
-    font-weight: bold;
-    color: #94e2d5;
-    width: 46px;
-}
-
 .katab-usage-menu-sprite {
     margin-right: 6px;
 }
@@ -4598,29 +4409,6 @@
 .katab-usage-activity-divider {
     background-color: rgba(255, 255, 255, 0.06);
     margin: 8px 0;
-}
-
-.katab-usage-local-badge {
-    padding: 6px 10px;
-    border-radius: 8px;
-    border: 1px solid rgba(166, 227, 161, 0.24);
-    background-color: rgba(166, 227, 161, 0.08);
-    spacing: 0;
-    min-width: 52px;
-}
-
-.katab-usage-local-pct {
-    font-size: 14pt;
-    font-weight: 800;
-    color: #a6e3a1;
-    x-align: center;
-}
-
-.katab-usage-local-label {
-    font-size: 0.86em;
-    font-weight: 700;
-    color: rgba(166, 227, 161, 0.65);
-    x-align: center;
 }
 
 .katab-usage-trend-line {
@@ -4753,11 +4541,6 @@
 
 .katab-usage-budget-fill-danger {
     background-color: #f38ba8;
-    border-radius: 4px;
-}
-
-.katab-usage-budget-remain {
-    background-color: rgba(255, 255, 255, 0.08);
     border-radius: 4px;
 }
 
@@ -4905,10 +4688,6 @@
     background-color: rgba(0, 0, 0, 0.04);
 }
 
-.katab-theme-light .katab-usage-companion-face {
-    color: rgba(0, 0, 0, 0.80);
-}
-
 .katab-theme-light .katab-usage-companion-name {
     color: rgba(0, 0, 0, 0.88);
 }
@@ -4962,24 +4741,6 @@
 
 .katab-theme-light .katab-usage-companion-home-icon {
     color: #2d7d2f;
-}
-
-.katab-theme-light .katab-usage-pill {
-    border-color: rgba(0, 0, 0, 0.10);
-    background-color: rgba(0, 0, 0, 0.04);
-    color: rgba(0, 0, 0, 0.58);
-}
-
-.katab-theme-light .katab-usage-pill-exact {
-    border-color: rgba(45, 125, 47, 0.26);
-    background-color: rgba(45, 125, 47, 0.10);
-    color: #2d7d2f;
-}
-
-.katab-theme-light .katab-usage-pill-estimated {
-    border-color: rgba(156, 105, 0, 0.22);
-    background-color: rgba(156, 105, 0, 0.09);
-    color: #8a5a00;
 }
 
 .katab-theme-light .katab-usage-action-btn {
@@ -5063,24 +4824,6 @@
 .katab-theme-light .katab-usage-subtab-btn-active {
     border-color: rgba(23, 146, 130, 0.40);
     background-color: rgba(23, 146, 130, 0.10);
-    color: #0f6e61;
-}
-
-.katab-theme-light .katab-usage-local-badge,
-.katab-theme-light .katab-usage-local-label,
-.katab-theme-light .katab-usage-local-pct,
-.katab-theme-light .katab-usage-trend-line,
-.katab-theme-light .katab-usage-activity-chart,
-.katab-theme-light .katab-usage-activity-col,
-.katab-theme-light .katab-usage-activity-stats,
-.katab-theme-light .katab-usage-activity-top,
-.katab-theme-light .katab-usage-activity-hero,
-.katab-theme-light .katab-usage-activity-trends,
-.katab-theme-light .katab-usage-provider-row-compact,
-.katab-theme-light .katab-usage-provider-row-icon-sm,
-.katab-theme-light .katab-usage-model-row-compact {}
-
-.katab-theme-light .katab-usage-menu-face {
     color: #0f6e61;
 }
 
@@ -5577,7 +5320,6 @@
 /* ── Content column ─────────────────────── */
 
 .katab-research-timeline-content {
-    x_expand: true;
     spacing: 2px;
 }
 
@@ -5616,8 +5358,6 @@
     background-color: rgba(0, 0, 0, 0.25);
     border: 1px solid rgba(148, 226, 213, 0.10);
     border-left: 2px solid rgba(148, 226, 213, 0.18);
-    reactive: true;
-    track_hover: true;
 }
 
 .katab-search-result-card:hover {
@@ -5654,7 +5394,6 @@
 
 .katab-search-result-text {
     spacing: 1px;
-    x_expand: true;
 }
 
 .katab-search-result-title {
@@ -5671,7 +5410,6 @@
 .katab-search-result-snippet {
     font-size: 0.86em;
     color: rgba(255, 255, 255, 0.68);
-    line-height: 1.4;
 }
 
 /* ── Page read status row ───────────────── */
@@ -5783,51 +5521,6 @@
     color: rgba(0, 0, 0, 0.52);
 }
 
-.katab-citation-inline-row {
-    spacing: 0;
-}
-
-.katab-citation-inline-btn {
-    padding: 1px 3px;
-    /* no border-radius — St + non-opaque bg triggers offscreen framebuffer */
-    border: 1px solid rgba(148, 226, 213, 0.30);
-    background-color: rgba(148, 226, 213, 0.14);
-    color: #94e2d5;
-    font-size: 8pt;
-    font-weight: 700;
-    font-family: monospace;
-}
-
-.katab-citation-inline-btn:hover {
-    background-color: rgba(148, 226, 213, 0.24);
-    border-color: rgba(148, 226, 213, 0.50);
-    color: #c8fff7;
-}
-
-.katab-citation-inline-btn:active {
-    background-color: rgba(148, 226, 213, 0.30);
-    color: #ffffff;
-}
-
-/* ── Light theme overrides ─────────────────────────────── */
-
-.katab-theme-light .katab-citation-inline-btn {
-    border-color: rgba(15, 118, 110, 0.32);
-    background-color: rgba(15, 118, 110, 0.10);
-    color: #0f766e;
-}
-
-.katab-theme-light .katab-citation-inline-btn:hover {
-    background-color: rgba(15, 118, 110, 0.18);
-    border-color: rgba(15, 118, 110, 0.44);
-    color: #0b5f59;
-}
-
-.katab-theme-light .katab-citation-inline-btn:active {
-    background-color: rgba(15, 118, 110, 0.24);
-    color: #09423b;
-}
-
 /* ── Quality check notice ──────────────────────────────── */
 /* Post-synthesis notice shown when research quality falls below threshold. */
 
@@ -5847,9 +5540,8 @@
 }
 
 .katab-quality-notice-item {
-    font-size: 8.2pt;
+    font-size: 0.86em;
     color: rgba(255, 255, 255, 0.65);
-    line-height: 1.4;
 }
 
 .katab-quality-notice-btn {

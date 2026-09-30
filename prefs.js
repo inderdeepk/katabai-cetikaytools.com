@@ -994,6 +994,49 @@ export default class KatabPreferences extends ExtensionPreferences {
             tokenUsageGroup
         );
 
+        createBooleanRow(
+            'Monthly Budget',
+            'Show a monthly spend budget card in the Token Breakdown panel and warn as spending approaches the limit.',
+            'token-budget-enabled',
+            tokenUsageGroup
+        );
+
+        const budgetAmountRow = createDoubleRow(
+            'Monthly Budget Amount',
+            'USD budget for a calendar month. Cost estimates use published model pricing.',
+            'token-budget-monthly-usd',
+            tokenUsageGroup,
+            1,
+            10000,
+            1
+        );
+
+        const budgetWarningRow = createIntRow(
+            'Budget Warning Threshold',
+            'Percentage of the monthly budget at which warnings start.',
+            'token-budget-warning-pct',
+            tokenUsageGroup,
+            10,
+            100,
+            5
+        );
+
+        // Amount + threshold only matter while the budget switch is on.
+        const syncBudgetVisibility = () => {
+            const enabled = settings.get_boolean('token-budget-enabled');
+            budgetAmountRow.visible = enabled;
+            budgetWarningRow.visible = enabled;
+        };
+        syncBudgetVisibility();
+        settings.connect('changed::token-budget-enabled', syncBudgetVisibility);
+
+        createBooleanRow(
+            'Desktop Notifications',
+            'Show a desktop notification when a response finishes while the chat is closed.',
+            'token-desktop-notifications-enabled',
+            notificationGroup
+        );
+
         const petSelectionRow = createChoiceRow(
             'Active Companion',
             'Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection.',
@@ -1875,7 +1918,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         // DeepSeek text-model guard notice.
         const visionGuardRow = createInstructionRow(
             'DeepSeek text models cannot see images',
-            'The Vision Model is set to a DeepSeek V4 model, which cannot analyze images. Choose a vision-capable model instead.',
+            'The Vision Model is set to a text-only DeepSeek model, which cannot analyze images. Choose a vision-capable model instead (e.g. deepseek-flash).',
             deepseekVisionGroup
         );
 
@@ -1898,10 +1941,14 @@ export default class KatabPreferences extends ExtensionPreferences {
         const syncVisionVisibility = () => {
             const backend = settings.get_string('deepseek-vision-backend') || '';
             const enabled = backend !== '';
-            const model = settings.get_string('deepseek-vision-model') || '';
+            const model = (settings.get_string('deepseek-vision-model') || '').toLowerCase();
+            // Mirror extension.js::_isDeepSeekNativeVisionModel — the Flash
+            // family (V4.1+) accepts images natively; only other deepseek-*
+            // models are text-only.
+            const isFlashFamily = model.startsWith('deepseek-flash') || model.startsWith('deepseek-v4-flash');
             visionModelRow.visible = enabled;
             visionFallbackRow.visible = enabled;
-            visionGuardRow.visible = enabled && model.toLowerCase().startsWith('deepseek-');
+            visionGuardRow.visible = enabled && model.startsWith('deepseek-') && !isFlashFamily;
             visionOllamaPickerRow.visible = backend === 'ollama';
             visionUrlRow.visible = backend === 'openai';
             visionKeyRow.visible = backend === 'openai';
@@ -1930,6 +1977,8 @@ export default class KatabPreferences extends ExtensionPreferences {
             description: 'Current DeepSeek account balance. Refreshed automatically by the provider health check every 30 seconds while the extension is running.',
         });
 
+        const balanceSyncers = [];
+
         const createBalanceDisplayRow = (title, subtitle, getter) => {
             const valueLabel = addCssClasses(new Gtk.Label({
                 label: '\u2014',
@@ -1949,14 +1998,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 valueLabel.set_text(getter() || '\u2014');
             };
             syncFromSettings();
-            settings.connect(`changed::deepseek-balance-${title.toLowerCase().replace(/\s+/g, '-')}`, syncFromSettings);
-            // Also refresh on these keys since the display row title may not match the key directly
-            settings.connect('changed::deepseek-balance-available', syncFromSettings);
-            settings.connect('changed::deepseek-balance-currency', syncFromSettings);
-            settings.connect('changed::deepseek-balance-total', syncFromSettings);
-            settings.connect('changed::deepseek-balance-granted', syncFromSettings);
-            settings.connect('changed::deepseek-balance-topped-up', syncFromSettings);
-            settings.connect('changed::deepseek-balance-last-checked', syncFromSettings);
+            balanceSyncers.push(syncFromSettings);
 
             row.add_suffix(valueLabel);
             addPreferenceRow(deepseekBalanceGroup, row);
@@ -2018,7 +2060,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         );
 
         // Last Checked
-        const lastCheckedRow = createBalanceDisplayRow(
+        createBalanceDisplayRow(
             'Last Checked',
             'When the balance was last fetched from the DeepSeek API.',
             () => {
@@ -2032,6 +2074,19 @@ export default class KatabPreferences extends ExtensionPreferences {
                 }
             }
         );
+
+        // One shared set of six GSettings watchers refreshes every balance row
+        // (each getter may depend on several keys — total/granted rows show the
+        // currency, the Available row reads last-checked).
+        for (const key of ['deepseek-balance-available', 'deepseek-balance-currency',
+            'deepseek-balance-total', 'deepseek-balance-granted',
+            'deepseek-balance-topped-up', 'deepseek-balance-last-checked']) {
+            settings.connect(`changed::${key}`, () => {
+                for (const sync of balanceSyncers) {
+                    sync();
+                }
+            });
+        }
 
         // Refresh Balance button
         const refreshBalanceBtn = addCssClasses(new Gtk.Button({
@@ -3618,8 +3673,8 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             // -- Reranking --
             createBooleanRow(
-                'Cross-Encoder Reranking',
-                'Apply a cross-encoder model (bge-reranker-v2-m3 via Ollama) to re-rank top candidate chunks for improved precision. Requires ollama pull bge-reranker-v2-m3. Adds ~200ms latency per search.',
+                'Reranking',
+                'Re-rank top candidate chunks with a local scoring model (bge-reranker-v2-m3 or similar) on your Ollama host. Chunks are scored in one batched call per 10 candidates. Requires the model to be pulled first.',
                 'rag-rerank-enabled',
                 advancedGroup
             );
@@ -3805,7 +3860,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             createButtonRow(
                 'Re-index Knowledge Base',
-                'Re-scan all documents, conversations, and research cache and rebuild the vector index from scratch.',
+                'Reset index tracking and rebuild from your saved conversations and the research cache. Documents are re-indexed as you use them.',
                 'Re-index',
                 () => {
                     const dialog = new Gtk.MessageDialog({
@@ -3827,13 +3882,85 @@ export default class KatabPreferences extends ExtensionPreferences {
                                 const file = Gio.File.new_for_path(path);
                                 if (file.query_exists(null)) file.delete(null);
                             } catch (_) { /* best effort */ }
+                            // Signal the running extension to reset its in-memory
+                            // index tracking immediately (otherwise the next
+                            // debounced sentinel save resurrects the stale data
+                            // and the re-index never happens without a reload).
+                            try {
+                                settings.set_string('rag-maintenance-action', 'reindex');
+                                settings.set_int('rag-maintenance-generation',
+                                    settings.get_int('rag-maintenance-generation') + 1);
+                            } catch (_) { /* schema may be stale */ }
 
                             setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
-                            ragMaintStatusRow.subtitle = 'Index state cleared. Content will be re-indexed on the next chat message.';
+                            ragMaintStatusRow.subtitle = 'Index state cleared — re-indexing will start now.';
                         }
                         dlg.destroy();
                     });
                     dialog.present();
+                },
+                maintenanceGroup
+            );
+
+            // ── Manual imports (processed by the running extension) ──────
+            // The prefs process cannot index directly (no document runtime or
+            // RAG session); selected paths are handed to the extension through
+            // a queue file plus the maintenance generation signal.
+            const queueKbImport = (paths) => {
+                try {
+                    const queuePath = GLib.build_filenamev([
+                        GLib.get_user_data_dir(), 'katabai', 'rag-import-queue.json',
+                    ]);
+                    GLib.file_set_contents(queuePath, JSON.stringify({ paths, ts: Date.now() }));
+                    // Action first so the extension sees the right intent when
+                    // the generation change arrives.
+                    settings.set_string('rag-maintenance-action', 'import');
+                    settings.set_int('rag-maintenance-generation',
+                        settings.get_int('rag-maintenance-generation') + 1);
+                    setStatusBadge(ragMaintBadge, 'Queued', 'katab-prefs-status-detected');
+                    ragMaintStatusRow.subtitle = `Queued ${paths.length} path(s) — the running extension will import them now.`;
+                } catch (e) {
+                    setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
+                    ragMaintStatusRow.subtitle = e?.message || 'Could not queue the import.';
+                }
+            };
+
+            createButtonRow(
+                'Import Files',
+                'Add files (txt, md, pdf, docx, eml) from disk to the knowledge base. Up to 50 files per import.',
+                'Select Files…',
+                () => {
+                    const dialog = new Gtk.FileDialog({ title: 'Import files into the knowledge base' });
+                    dialog.open_multiple(window, null, (dlg, result) => {
+                        try {
+                            const model = dlg.open_multiple_finish(result);
+                            const paths = [];
+                            const n = model.get_n_items();
+                            for (let i = 0; i < n; i++) {
+                                const f = model.get_item(i);
+                                const p = f?.get_path?.();
+                                if (p) paths.push(p);
+                            }
+                            if (paths.length > 0) queueKbImport(paths);
+                        } catch (_) { /* cancelled */ }
+                    });
+                },
+                maintenanceGroup
+            );
+
+            createButtonRow(
+                'Import Folder',
+                'Import every supported file in a folder (and up to 3 levels of subfolders).',
+                'Select Folder…',
+                () => {
+                    const dialog = new Gtk.FileDialog({ title: 'Import a folder into the knowledge base' });
+                    dialog.select_folder(window, null, (dlg, result) => {
+                        try {
+                            const f = dlg.select_folder_finish(result);
+                            const p = f?.get_path?.();
+                            if (p) queueKbImport([p]);
+                        } catch (_) { /* cancelled */ }
+                    });
                 },
                 maintenanceGroup
             );
@@ -3879,6 +4006,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                                             const f = Gio.File.new_for_path(sentinelPath);
                                             if (f.query_exists(null)) f.delete(null);
                                         } catch (_) { /* best effort */ }
+                                        // Tell the running extension to drop its
+                                        // in-memory sentinel too (it would otherwise
+                                        // rewrite stale ids to disk on the next save).
+                                        try {
+                                            settings.set_string('rag-maintenance-action', 'clear');
+                                            settings.set_int('rag-maintenance-generation',
+                                                settings.get_int('rag-maintenance-generation') + 1);
+                                        } catch (_) { /* schema may be stale */ }
 
                                         if (dropped.length > 0) {
                                             setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
@@ -3903,6 +4038,57 @@ export default class KatabPreferences extends ExtensionPreferences {
                 },
                 maintenanceGroup
             );
+        }
+
+        // ----- Deep Research detail subpage -----
+        const deepResearchSubpage = createToolSubpage('Deep Research');
+        {
+            const detailPage = deepResearchSubpage.detailPage;
+
+            const drIntroGroup = createPreferencesGroup({
+                title: 'Deep Research',
+                description: 'Deep Research runs a multi-phase pipeline (plan → branches → gap analysis → refinement → two-pass synthesis). Enable Web Search or Web Scraper to use it, then start a run from the chat footer Research button or the /research command.',
+            });
+
+            const drDepthRow = createChoiceRow(
+                'Research Depth',
+                'Standard keeps the current pipeline. Deep adds automatic quality retries and more gap queries. Max raises the quality bar and synthesis context budget further — more tokens and longer runs.',
+                drIntroGroup
+            );
+            bindChoiceRow(
+                drDepthRow,
+                'deep-research-depth',
+                [
+                    { label: 'Standard (Recommended)', value: 'standard' },
+                    { label: 'Deep', value: 'deep' },
+                    { label: 'Max', value: 'max' },
+                ],
+                settings.get_string.bind(settings),
+                settings.set_string.bind(settings),
+                value => `Custom (${value})`
+            );
+
+            const drModelsGroup = createPreferencesGroup({
+                title: 'Model Overrides',
+                description: 'Optional per-role model overrides — leave empty to use the active provider model. Compression runs on every scraped page (high volume); synthesis covers planning, critique, gap analysis, outline, and the final report.',
+            });
+
+            createStringRow(
+                'Compression Model',
+                'Cheap/fast model for high-volume page compression. Leave empty for the active model.',
+                'deep-research-compression-model',
+                drModelsGroup
+            );
+
+            createStringRow(
+                'Synthesis Model',
+                'Stronger model for planning and the final report. Leave empty for the active model.',
+                'deep-research-synthesis-model',
+                drModelsGroup
+            );
+
+            detailPage.add(drIntroGroup);
+            detailPage.add(drModelsGroup);
         }
 
         // Tool index rows (order defines display order on the Tools page).
@@ -3937,6 +4123,13 @@ export default class KatabPreferences extends ExtensionPreferences {
             gicon: Gio.icon_new_for_string(`${extensionPath}/icons/katab-knowledge-symbolic.svg`),
             enabledKey: 'rag-enabled',
             navPage: ragSubpage.navPage,
+        });
+
+        createToolIndexRow(toolsIndexGroup, {
+            title: 'Deep Research',
+            subtitle: 'Multi-phase research reports: plan, search, gap analysis, refinement, and two-pass synthesis.',
+            iconName: 'content-loading-symbolic',
+            navPage: deepResearchSubpage.navPage,
         });
     }
 

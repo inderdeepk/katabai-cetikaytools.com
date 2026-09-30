@@ -6,7 +6,7 @@ UUID           := katabai@cetikaytools.com
 INSTALL_DIR    := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 PACKAGE_NAME   := $(UUID).zip
 
-.PHONY: all compile-schemas check test package install clean help
+.PHONY: all compile-schemas check test test-verbose test-rag-server sync-rag-server package install clean help
 
 ## all            : Compile schemas and run checks
 all: compile-schemas check
@@ -78,14 +78,27 @@ test-verbose:
 	@gjs -m tests/presetManager.test.js || true
 	@echo "=== Done ==="
 
+## test-rag-server : Run RAG server unit tests (stdlib unittest via the service venv)
+test-rag-server:
+	@if [ -x $(HOME)/.local/share/katabai/rag-service/.venv/bin/python ]; then \
+		$(HOME)/.local/share/katabai/rag-service/.venv/bin/python -m unittest discover -s rag-service/tests -p 'test_*.py'; \
+	else \
+		echo "[SKIP] RAG service venv not found"; \
+	fi
+
+## sync-rag-server : Copy the in-repo RAG server into ~/.local/share/katabai/rag-service
+sync-rag-server:
+	@cp rag-service/server.py $(HOME)/.local/share/katabai/rag-service/server.py
+	@echo "[OK] RAG server synced — restart with: systemctl --user restart katabai-rag"
+
 ## package        : Create a distributable .zip for extensions.gnome.org
 package:
 	@rm -f $(PACKAGE_NAME)
 	zip -r $(PACKAGE_NAME) \
 		extension.js prefs.js metadata.json README.md \
 		stylesheet.css prefs.css \
-		schemas/ icons/ sprites/ src/ Documentation/ \
-		-x "*.git*" "*.swp" ".vscode/*" "schemas/*~" "*.zip"
+		schemas/ icons/ sprites/ src/ Documentation/ rag-service/ \
+		-x "*.git*" "*.swp" ".vscode/*" "schemas/*~" "*.zip" "*__pycache__*" "*.pyc"
 	@echo "[OK] Package created: $(PACKAGE_NAME)"
 
 ## install        : Copy extension to local GNOME extensions directory

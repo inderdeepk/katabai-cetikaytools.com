@@ -768,15 +768,36 @@ Health check.
 
 ### RAG Service
 
-**Default URL**: `http://localhost:11435`
+**Default URL**: `http://localhost:11435` · **Server source**: `rag-service/server.py` (deployed copy: `~/.local/share/katabai/rag-service/server.py`, systemd user unit `katabai-rag.service`)
 
-Python FastAPI + ChromaDB service for local semantic search. Endpoints are expected but may vary by implementation.
+Python FastAPI + ChromaDB service for local semantic search over three collections: `conversations`, `documents`, and `research_cache`. Embeddings come from Ollama (`/api/embed`). Collections use **cosine distance space**; legacy L2 collections are migrated automatically at startup (embeddings are copied verbatim — no re-embedding).
 
 #### GET `/health`
-Health check.
+Returns service status, collection chunk counts, storage limits, and backend diagnostics.
+
+Query parameters: `ollama_url`, `embedding_model` (optional — used for the backend probes).
+
+**Response** (abridged):
+```json
+{
+  "ok": true,
+  "version": "1.3.0",
+  "collections": { "conversations": 7849, "research_cache": 1012 },
+  "embedding": { "ok": false, "model": "nomic-embed-text", "url": "http://localhost:11434", "error": "Ollama unreachable ..." },
+  "limits": {
+    "max_chunks_per_collection": 10000,
+    "max_total_size_mb": 500,
+    "estimated_size_mb": 174.68,
+    "total_chunks": 8861,
+    "reranker_available": false,
+    "bm25_available": true,
+    "score_space": "cosine"
+  }
+}
+```
 
 #### POST `/search`
-Semantic search (dense, optionally hybrid BM25 + dense, and optional cross-encoder reranking).
+Semantic search: dense (cosine) always, optional BM25 hybrid fusion, optional batched reranking.
 
 **Request**:
 ```json
@@ -805,26 +826,50 @@ Semantic search (dense, optionally hybrid BM25 + dense, and optional cross-encod
     }
   ],
   "query": "key findings from last week",
-  "model": "nomic-embed-text"
+  "model": "nomic-embed-text",
+  "score_space": "cosine",
+  "mode": "dense+bm25"
 }
 ```
 
-`score` is normalized to 0–1 in every mode: dense cosine similarity for dense-only
-searches, a comparable 0–1 similarity for hybrid (BM25 + dense) fusion (not the raw
-reciprocal-rank-fusion value), and the cross-encoder relevance score when reranking is
-enabled.
+- `score` is a true cosine similarity in 0–1 (normalized dense/BM25 similarity for fused searches; the batched scorer's 0–1 output when reranking actually applied).
+- `mode` reports what the service **actually** applied (e.g. no `reranked` when the scoring model is missing).
+- When the embedding backend is down the service returns `503 {"detail": "Embedding backend unavailable: ..."}`.
 
 #### POST `/index`
-Index new content.
+Chunk, embed, and store texts. Up to 1000 texts per request; each text ≤100 000 characters.
 
 **Request**:
 ```json
 {
-  "content": "Text to index...",
-  "metadata": { "source": "conversation", "id": "conv_123" },
-  "collection": "conversations"
+  "texts": [
+    { "id": "conv_123#msg-4", "content": "Text to index...", "metadata": { "source": "conversation" } }
+  ],
+  "collection": "conversations",
+  "chunk_size": 800,
+  "chunk_overlap": 120,
+  "embedding_model": "nomic-embed-text",
+  "ollama_url": "http://localhost:11434",
+  "replace_ids": ["conv_123#msg-4"],
+  "max_chunks_per_collection": 10000,
+  "max_total_size_mb": 500,
+  "auto_prune": true
 }
 ```
 
-#### POST `/prune`
-Remove old entries.
+- `replace_ids` deletes existing chunks for the given ids/source ids before indexing (single metadata-filtered lookup).
+- Rejections (cap hit with `auto_prune: false`) return `indexed: 0, chunks: 0, rejected: N, reason: "..."`.
+- At the cap with `auto_prune: true`, the oldest chunks (by `indexed_at` metadata) are evicted.
+
+#### POST `/delete`
+Delete chunks by exact id, id prefix, or `source_id`. Deletion invalidates the collection's BM25 corpus (rebuilt lazily on the next hybrid search).
+
+**Request**:
+```json
+{ "collection": "conversations", "source_ids": ["update_prefs"] }
+```
+
+Accepts `ids`, `prefixes`, and/or `source_ids`; omitting `collection` searches all collections. Returns `{ "ok": true, "deleted": 3 }`.
+
+#### DELETE `/collection/{name}`
+Drop one collection. **POST `/clear`** drops all collections. **GET `/export`** pages out all chunks as JSON (`offset`/`limit` parameters).

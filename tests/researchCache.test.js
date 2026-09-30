@@ -17,6 +17,7 @@ import {
     getCacheStats,
     clearCache,
     invalidateCacheEntry,
+    getAllCacheEntries,
     _setCachePathForTesting,
 } from '../src/research/researchCache.js';
 import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
@@ -310,6 +311,17 @@ const tests = [
         assertEqual(getCachedSearchResults('query-1'), null, 'second oldest evicted');
         // Recent ones should survive
         assert(getCachedSearchResults('query-509') !== null, 'most recent survives');
+    }],
+
+    ['getAllCacheEntries: newest first + key included', () => {
+        resetForTest();
+        cacheSearchResults('first query', [{ title: 'a' }]);
+        cacheSearchResults('second query', [{ title: 'b' }]);
+        const entries = getAllCacheEntries();
+        assertEqual(entries.length, 2, 'two entries');
+        assertEqual(entries[0].query, 'second query', 'newest entry first');
+        assert(entries[0].key, 'entry includes its cache key');
+        assertEqual(entries[0].type, 'search', 'type preserved');
     }],
 ];
 

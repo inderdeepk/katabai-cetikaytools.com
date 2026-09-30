@@ -92,13 +92,22 @@ export function registerSource(tracker, url, label = '') {
 export function getUniqueSources(tracker) {
     if (!tracker || !tracker.urlToNumber) return [];
 
-    // Build reverse map: number → original URL
+    // Single pass over the citation entries — the first original URL seen for
+    // each citation number wins (previously an O(sources × entries) find()
+    // ran per source).
     const numToUrl = new Map();
+    for (const entry of (tracker.entries || [])) {
+        if (numToUrl.has(entry.citationNum)) continue;
+        const url = Array.isArray(entry.urls) && entry.urls.length > 0 ? entry.urls[0] : null;
+        if (url) {
+            numToUrl.set(entry.citationNum, url);
+        }
+    }
+
+    // Fall back to the normalized URL for citation numbers with no entry.
     for (const [normalized, num] of tracker.urlToNumber.entries()) {
         if (!numToUrl.has(num)) {
-            // Find the original (non-normalized) URL from entries
-            const entry = tracker.entries.find(e => e.citationNum === num);
-            numToUrl.set(num, entry ? entry.urls[0] : normalized);
+            numToUrl.set(num, normalized);
         }
     }
 

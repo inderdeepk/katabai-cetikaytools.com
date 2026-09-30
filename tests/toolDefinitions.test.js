@@ -29,7 +29,7 @@ const tests = [
         // toolDefinitions.js registers: web_search, read_url, crawl_url, document,
         // deep_research, knowledge_search. Additionally, ragTools.js may register
         // update_knowledge if imported transitively.
-        const expected = ['web_search', 'read_url', 'crawl_url', 'document', 'deep_research', 'knowledge_search'];
+        const expected = ['web_search', 'read_url', 'crawl_url', 'document', 'deep_research', 'knowledge_search', 'forget_knowledge'];
         for (const name of expected) {
             assert(names.includes(name), `${name} is registered`);
         }
@@ -106,6 +106,17 @@ const tests = [
         assertEqual(tool.command, null, 'no slash command');
     }],
 
+    ['toolDefinitions: forget_knowledge registration', () => {
+        const tool = lookupTool('forget_knowledge');
+        assert(tool !== undefined, 'forget_knowledge exists');
+        assertEqual(tool.dangerLevel, DANGER_POTENTIALLY_UNSAFE, 'potentially_unsafe');
+        assertEqual(tool.isMeta, false, 'not meta');
+        assert(tool.parameters !== null, 'has parameters');
+        assert(tool.parameters.required.includes('about'), 'requires about');
+        assertEqual(tool.uiLabel, null, 'agent-only (no footer button)');
+        assertEqual(tool.command, null, 'no slash command');
+    }],
+
     // ── Danger level partitioning ──────────────────────────────────────────
 
     ['toolDefinitions: danger level partitioning', () => {
@@ -114,11 +125,12 @@ const tests = [
 
         // web_search, read_url, crawl_url, deep_research, knowledge_search, explore_docs
         assertEqual(readOnly.length, 6, '6 read_only tools');
-        // document + update_knowledge are potentially_unsafe
-        assertEqual(unsafe.length, 2, '2 potentially_unsafe tools');
+        // document + update_knowledge + forget_knowledge are potentially_unsafe
+        assertEqual(unsafe.length, 3, '3 potentially_unsafe tools');
         const unsafeNames = unsafe.map(t => t.name);
         assert(unsafeNames.includes('document'), 'document is unsafe');
         assert(unsafeNames.includes('update_knowledge'), 'update_knowledge is unsafe');
+        assert(unsafeNames.includes('forget_knowledge'), 'forget_knowledge is unsafe');
     }],
 
     // ── No duplicate names ────────────────────────────────────────────────
@@ -146,8 +158,9 @@ const tests = [
         const toolNames = getAllToolNames();
         for (const name of toolNames) {
             const tool = lookupTool(name);
-            // update_knowledge intentionally has null uiLabel/uiIcon (not shown in chat footer)
-            if (name === 'update_knowledge') continue;
+            // update_knowledge / forget_knowledge intentionally have null
+            // uiLabel/uiIcon (agent-only memory tools)
+            if (name === 'update_knowledge' || name === 'forget_knowledge') continue;
             // explore_docs is agent-only — no footer button / slash command
             if (name === 'explore_docs') continue;
             assert(typeof tool.uiLabel === 'string' && tool.uiLabel.length > 0, `${name} has uiLabel`);

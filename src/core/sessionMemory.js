@@ -20,6 +20,11 @@ export const SESSION_MEMORY_KEEP_EXCHANGES = 6;
 // summarizing trivial chats is wasted latency/tokens.
 export const SESSION_MEMORY_MIN_FOLD_COUNT = 4;
 
+// Upper bound for the whole fold prompt (instruction + memory + transcript) when
+// the caller does not pass a provider-specific budget.  Callers with a smaller
+// context (e.g. Ollama num-ctx) should pass maxTotalChars so the fold fits.
+export const SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS = 32000;
+
 // Approximate characters-per-token used to convert token budgets into the
 // JSON-serialized character budgets that splitHistoryForBudget compares.
 const CHARS_PER_TOKEN = 3.5;
@@ -195,9 +200,17 @@ export const SESSION_MEMORY_UPDATE_INSTRUCTION =
  * Build the single user message sent to the model to update the memory.
  * A single user role works uniformly across all providers (including Anthropic,
  * which drops system messages in its non-streaming path).
+ *
+ * The fold transcript is bounded by `maxTotalChars` (the provider context
+ * budget): on small-context providers an unbounded fold prompt would overflow
+ * context, and any server-side truncation drops the instruction block at the
+ * head first.  When the transcript must shrink, the NEWEST folded messages are
+ * kept — they are nearest the live conversation.
  */
-export function buildMemoryUpdateMessages(currentMemory, toFold) {
-    const transcript = (Array.isArray(toFold) ? toFold : [])
+export function buildMemoryUpdateMessages(currentMemory, toFold, { maxTotalChars = SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS } = {}) {
+    const existing = String(currentMemory || '').trim();
+
+    let transcript = (Array.isArray(toFold) ? toFold : [])
         .map(message => {
             const role = message?.role || 'unknown';
             const content = typeof message?.content === 'string'
@@ -208,8 +221,13 @@ export function buildMemoryUpdateMessages(currentMemory, toFold) {
         .filter(Boolean)
         .join('\n\n');
 
+    const fixedOverhead = SESSION_MEMORY_UPDATE_INSTRUCTION.length + existing.length + 200;
+    const transcriptCap = Math.max(1000, Math.floor((maxTotalChars || SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS) - fixedOverhead));
+    if (transcript.length > transcriptCap) {
+        transcript = `[...older messages trimmed...]\n\n${transcript.slice(transcript.length - transcriptCap)}`;
+    }
+
     const parts = [];
-    const existing = String(currentMemory || '').trim();
     if (existing) {
         parts.push(`CURRENT SESSION MEMORY:\n${existing}`);
     }

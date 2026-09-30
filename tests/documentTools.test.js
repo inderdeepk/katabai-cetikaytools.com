@@ -139,6 +139,15 @@ const tests = [
         assert(result.filePath.includes('"quotes"'), 'escaped quotes handled');
     }],
 
+    ['parseDocumentCommand: /docs and /document are NOT commands (word boundary)', () => {
+        // Regression: the old startsWith check treated '/docs …' as '/doc'
+        // and opened the file picker instead of sending the message.
+        assertEqual(parseDocumentCommand('/docs are great'), null, '/docs rejected');
+        assertEqual(parseDocumentCommand('/document this please'), null, '/document rejected');
+        const bare = parseDocumentCommand('/doc');
+        assert(bare && bare.isCommand, 'bare /doc is still a command');
+    }],
+
     ['parseDocumentCommand: unclosed quote throws', () => {
         assertThrows(
             () => parseDocumentCommand('/doc "/unclosed path'),

@@ -14,6 +14,7 @@ import {
     parseRagCommand,
     computeRagCoverageScore,
     buildRagResultBlock,
+    buildRagToolSchema,
     readRagConfig,
     RagError,
     RagRuntime,
@@ -43,9 +44,12 @@ const tests = [
         assertEqual(r.query, '');
     }],
 
-    ['parseRagCommand bare /kb is not a command', () => {
+    ['parseRagCommand bare /kb is a command with empty query', () => {
+        // Recognized so the caller can show the "Add a query after /kb" hint
+        // instead of sending a literal "/kb" message to the model.
         const r = parseRagCommand('/kb');
-        assertEqual(r.isCommand, false);
+        assertEqual(r.isCommand, true);
+        assertEqual(r.query, '');
     }],
 
     ['computeRagCoverageScore empty/null', () => {
@@ -170,7 +174,10 @@ const tests = [
         let calls = 0;
         runtime._request = async () => {
             calls++;
-            return { status: 200, body: { results: [{ id: 'a', score: 0.5 }] } };
+            // The service reports plain "dense" (e.g. hybrid requested but the
+            // BM25 index is unavailable) — the cached hit must keep that mode,
+            // not the flags-based guess computed by the client.
+            return { status: 200, body: { results: [{ id: 'a', score: 0.5 }], mode: 'dense' } };
         };
         const cfg = {
             serviceUrl: 'http://localhost:11435',
@@ -180,11 +187,22 @@ const tests = [
             rerankEnabled: false,
             rerankModel: 'r',
             rerankCandidateMultiplier: 4,
-            hybridEnabled: false,
+            hybridEnabled: true,
         };
-        await runtime.search('cache me', cfg);
-        await runtime.search('cache me', cfg);
+        const first = await runtime.search('cache me', cfg);
+        const second = await runtime.search('cache me', cfg);
         assertEqual(calls, 1, 'second identical query must hit the cache');
+        assertEqual(first.mode, 'dense');
+        assertEqual(second.mode, 'dense', 'cached hit must keep the service-reported mode');
+    }],
+
+    ['RagRuntime.deleteCollection clears search cache', async () => {
+        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+        runtime._searchCache.set('seed', { results: [], mode: 'dense', expires: Date.now() + 60000 });
+        runtime._request = async () => ({ status: 200, body: { ok: true } });
+        const out = await runtime.deleteCollection('documents', { serviceUrl: 'http://localhost:11435' });
+        assertEqual(out.ok, true);
+        assertEqual(runtime._searchCache.size, 0, 'deleting a collection must invalidate cached searches');
     }],
 
     ['RagRuntime.index passes replace_ids', async () => {
@@ -213,6 +231,153 @@ const tests = [
         const out = await runtime.index([], 'documents', { serviceUrl: 'http://x' }, null);
         assertEqual(out.indexed, 0);
         assertEqual(called, false);
+    }],
+
+    ['RagRuntime.index surfaces rejected + clears search cache', async () => {
+        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+        runtime._searchCache.set('seed', { results: [], mode: 'dense', expires: Date.now() + 60000 });
+        runtime._request = async () => ({
+            status: 200,
+            body: { indexed: 0, chunks: 0, rejected: 4, reason: 'at cap' },
+        });
+        const out = await runtime.index(
+            [{ id: 'x', content: 'y' }],
+            'conversations',
+            { serviceUrl: 'http://x' },
+            null
+        );
+        assertEqual(out.chunks, 0);
+        assertEqual(out.rejected, 4);
+        assertEqual(out.reason, 'at cap');
+        assertEqual(runtime._searchCache.size, 0, 'indexing must invalidate cached searches');
+    }],
+
+    ['RagRuntime.search reports score_space', async () => {
+        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+        runtime._request = async () => ({ status: 200, body: { results: [], score_space: 'cosine' } });
+        const out = await runtime.search('q', {
+            serviceUrl: 'http://x',
+            topK: 5,
+            embeddingModel: 'm',
+            ollamaUrl: 'http://o',
+            rerankEnabled: false,
+            rerankModel: 'r',
+            rerankCandidateMultiplier: 4,
+            hybridEnabled: false,
+        });
+        assertEqual(out.scoreSpace, 'cosine');
+    }],
+
+    ['RagRuntime.health probes the embedding backend', async () => {
+        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+        let capturedUrl = '';
+        runtime._request = async (_m, url) => {
+            capturedUrl = url;
+            return { status: 200, body: { ok: true, collections: {}, embedding: { ok: false, error: 'no ollama' } } };
+        };
+        const out = await runtime.health({
+            serviceUrl: 'http://localhost:11435/',
+            ollamaUrl: 'http://localhost:11434',
+            embeddingModel: 'nomic-embed-text',
+        });
+        assert(capturedUrl.startsWith('http://localhost:11435/health?'), 'health URL keeps query params');
+        assert(capturedUrl.includes('ollama_url=http%3A%2F%2Flocalhost%3A11434'), 'includes encoded ollama_url');
+        assert(capturedUrl.includes('embedding_model=nomic-embed-text'), 'includes embedding model');
+        assertEqual(out.embedding.ok, false);
+    }],
+
+    ['RagRuntime.deleteData posts selectors + clears cache', async () => {
+        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+        runtime._searchCache.set('seed', { results: [], mode: 'dense', expires: Date.now() + 60000 });
+        let captured = null;
+        runtime._request = async (_m, url, body) => {
+            captured = { url, body };
+            return { status: 200, body: { ok: true, deleted: 3 } };
+        };
+        const out = await runtime.deleteData({ prefixes: ['conv_1'] }, { serviceUrl: 'http://localhost:11435' });
+        assertEqual(out.deleted, 3);
+        assertEqual(captured.url, 'http://localhost:11435/delete');
+        assertDeepEqual(captured.body.prefixes, ['conv_1']);
+        assertEqual(captured.body.collection, null);
+        assertDeepEqual(captured.body.source_ids, []);
+        assertEqual(runtime._searchCache.size, 0, 'delete must invalidate cached searches');
+    }],
+
+    ['RagRuntime.search prefers the service-reported mode', async () => {
+        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+        runtime._request = async () => ({
+            status: 200,
+            // Flags ask for hybrid + rerank, but the service reports dense only
+            // (e.g. reranker model missing) — the service answer must win.
+            body: { results: [], mode: 'dense' },
+        });
+        const out = await runtime.search('q', {
+            serviceUrl: 'http://x',
+            topK: 5,
+            embeddingModel: 'm',
+            ollamaUrl: 'http://o',
+            rerankEnabled: true,
+            rerankModel: 'r',
+            rerankCandidateMultiplier: 4,
+            hybridEnabled: true,
+        });
+        assertEqual(out.mode, 'dense');
+    }],
+
+    ['buildRagResultBlock labels memory updates + message roles', () => {
+        const out = buildRagResultBlock('q', {
+            results: [
+                {
+                    id: 'u1',
+                    content: 'fact',
+                    metadata: { source: 'knowledge_update', title: 'Prefs' },
+                    score: 0.8,
+                },
+                {
+                    id: 'm1',
+                    content: 'chat',
+                    metadata: { source: 'conversation', role: 'assistant', messageIndex: 12 },
+                    score: 0.6,
+                },
+            ],
+        });
+        assert(out.includes('(source: memory update)'), 'update labelled');
+        assert(out.includes('(source: conversation · assistant #12)'), 'role + index labelled');
+    }],
+
+    ['buildRagToolSchema exposes optional collection filter', () => {
+        const schema = buildRagToolSchema({ provider: 'openai' });
+        const props = schema.function.parameters.properties;
+        assert(props.collection !== undefined, 'collection param present');
+        assertDeepEqual(props.collection.enum, ['conversations', 'documents', 'research_cache']);
+        const anthropic = buildRagToolSchema({ provider: 'anthropic' });
+        assert(anthropic.input_schema.properties.collection !== undefined, 'anthropic shape too');
+    }],
+
+    ['RagRuntime.search forwards collection + separates cache', async () => {
+        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+        let calls = 0;
+        let lastBody = null;
+        runtime._request = async (_m, _u, body) => {
+            calls++;
+            lastBody = body;
+            return { status: 200, body: { results: [] } };
+        };
+        const cfg = {
+            serviceUrl: 'http://x',
+            topK: 5,
+            embeddingModel: 'm',
+            ollamaUrl: 'http://o',
+            rerankEnabled: false,
+            rerankModel: 'r',
+            rerankCandidateMultiplier: 4,
+            hybridEnabled: false,
+        };
+        await runtime.search('filtered', { ...cfg, collection: 'documents' });
+        assertEqual(lastBody.collection, 'documents');
+        await runtime.search('filtered', { ...cfg, collection: 'conversations' });
+        assertEqual(calls, 2, 'collection is part of the cache key');
+        assertEqual(lastBody.collection, 'conversations');
     }],
 
     ['RagError prototype chain', () => {

@@ -138,6 +138,11 @@ window.katab-prefs-window .navigation-sidebar,
     font-size: 0.9em;
 }
 
+.katab-prefs-balance-value {
+    font-weight: 600;
+    opacity: 0.92;
+}
+
 .katab-prefs-status-builtin {
     background-color: rgba(137, 180, 250, 0.18);
     border-color: rgba(137, 180, 250, 0.40);
@@ -369,6 +374,18 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge {
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-status-badge {
     background-color: rgba(0, 0, 0, 0.04);
     border-color: rgba(0, 0, 0, 0.10);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-status-builtin {
+    color: #1a4b8f;
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-status-detected {
+    color: #1c6b2f;
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-status-install {
+    color: #8a5a00;
 }
 
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-badge-icon,

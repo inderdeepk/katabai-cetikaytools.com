@@ -149,6 +149,26 @@ HistoryManager (static)
 
 ---
 
+## Knowledge Base (RAG)
+
+```
+RagRuntime (src/tools/ragTools.js)           server.py (FastAPI, 127.0.0.1:11435)
+    ├── health()      ──────────►  GET  /health     (probes Ollama embedding backend)
+    ├── index()       ──────────►  POST /index      → chunk → embed → ChromaDB + BM25
+    ├── search()      ──────────►  POST /search     → dense (cosine) + BM25 fusion + optional rerank
+    └── deleteData()  ──────────►  POST /delete     → purge by id / source_id / prefix
+        ChromaDB (~/.local/share/katabai/chroma) · embeddings via Ollama /api/embed
+```
+
+- **Space**: collections use cosine distance; `score = 1 − distance` is a true cosine similarity. Client thresholds (`RAG_RELEVANT_MIN_SCORE` 0.55, `RAG_HIGH_CONFIDENCE_SCORE` 0.72, `RAG_FALLBACK_MIN_RESULT_SCORE` 0.45) are calibrated for this scale.
+- **What gets indexed**: conversation turns (incremental deltas with per-message metadata), tool results (`web_search`, `read_url`, `crawl_url`, `explore_docs`), attached/imported documents, memory facts (`update_<slug>` ids), and — on Re-index — the local research cache (`research-cache.json`).
+- **State**: `rag-index-state.json` tracks indexed conversations (id → message count). Maintenance actions are signalled via `rag-maintenance-generation` + `rag-maintenance-action`; Re-index triggers a full reconcile + research-cache re-import, Clear resets and stays empty, Import processes a file/folder queue.
+- **BM25**: held in memory, marked dirty on any delete/replace/eviction, and rebuilt lazily from ChromaDB before the next hybrid search (ChromaDB is the single source of truth).
+- **Send-path bounds**: all local-service awaits go through `_withTimeout` (auto KB search 8s, tool search 15s, manual `/kb` 20s). When `/health` reports embeddings down, auto search is skipped with a chat notice; trivial prompts skip auto search entirely.
+- **Tool gating**: `knowledge_search`, `update_knowledge`, and `forget_knowledge` are advertised only when the KB is enabled, reachable, non-empty, and embeddings are up; `knowledge_search` accepts an optional `collection` filter.
+
+---
+
 ## Provider Payload Dialects
 
 ### Ollama

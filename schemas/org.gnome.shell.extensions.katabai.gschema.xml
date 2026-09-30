@@ -604,7 +604,7 @@
     <key name="rag-max-chunks-per-collection" type="i">
       <default>10000</default>
       <summary>Max Chunks Per Collection</summary>
-      <description>Hard cap on the number of text chunks stored in any single ChromaDB collection. When a collection reaches this limit, new indexing requests are rejected until old chunks are cleared. Set to 0 to disable the cap. (0–100000)</description>
+      <description>Hard cap on the number of text chunks stored in any single ChromaDB collection. When a collection reaches this limit, the oldest chunks are evicted automatically (when Auto-Prune is enabled) or new indexing is rejected (when disabled). Set to 0 to disable the cap. (0–100000)</description>
     </key>
     <key name="rag-max-total-size-mb" type="i">
       <default>500</default>
@@ -651,19 +651,19 @@
     <key name="rag-fallback-threshold" type="d">
       <default>0.6</default>
       <summary>Fallback Threshold</summary>
-      <description>Minimum best-result score (0.0–1.0) before auto-triggering a web search. Lower values = stricter (only fallback when KB is very poor). Higher values = more aggressive. 0.6 is the recommended moderate setting.</description>
+      <description>Minimum best-result score (cosine similarity, 0.0–1.0) before auto-triggering a web search. Lower values = stricter (only fallback when KB is very poor). Higher values = more aggressive. 0.6 is the recommended moderate setting.</description>
     </key>
 
     <!-- Phase 3: Cross-Encoder Reranking -->
     <key name="rag-rerank-enabled" type="b">
       <default>false</default>
-      <summary>Enable Cross-Encoder Reranking</summary>
-      <description>Apply a cross-encoder model (bge-reranker-v2-m3 via Ollama) to re-rank top candidate chunks for improved precision. Adds ~200ms latency per search. Requires ollama pull bge-reranker-v2-m3.</description>
+      <summary>Enable Reranking</summary>
+      <description>Re-rank top candidate chunks with a local scoring model (bge-reranker-v2-m3 or any chat-capable scorer) on your Ollama host. Candidates are scored in one batched call per 10 chunks. Requires the model to be pulled first (ollama pull bge-reranker-v2-m3).</description>
     </key>
     <key name="rag-rerank-model" type="s">
       <default>'bge-reranker-v2-m3'</default>
       <summary>Reranker Model</summary>
-      <description>Ollama model used for cross-encoder reranking. Must be pulled first with: ollama pull bge-reranker-v2-m3.</description>
+      <description>Ollama scoring model used for reranking. Candidates are scored in batched JSON calls, so any chat-capable scorer works. Must be pulled first (ollama pull bge-reranker-v2-m3).</description>
     </key>
     <key name="rag-rerank-candidate-multiplier" type="i">
       <default>4</default>
@@ -676,6 +676,21 @@
       <default>true</default>
       <summary>Enable Hybrid BM25 + Dense Retrieval</summary>
       <description>Combine keyword matching (BM25) with semantic search (dense embeddings) via reciprocal rank fusion for better recall. Enabled by default — the service gracefully falls back to dense-only if rank-bm25 is not installed.</description>
+    </key>
+
+    <!-- Internal: bumped by the preferences window when the knowledge base is
+         cleared or re-indexed, so the running extension resets its in-memory
+         index tracking immediately (without it, the next debounced sentinel
+         save resurrects stale state and the action does nothing). -->
+    <key name="rag-maintenance-generation" type="i">
+      <default>0</default>
+      <summary>RAG Maintenance Generation</summary>
+      <description>Incremented by the preferences window on Re-index / Clear Knowledge Base. The running extension watches this key and resets its in-memory index tracking when it changes.</description>
+    </key>
+    <key name="rag-maintenance-action" type="s">
+      <default>''</default>
+      <summary>RAG Maintenance Action</summary>
+      <description>Set by the preferences window alongside rag-maintenance-generation: 'reindex' requests an immediate full rebuild pass, 'clear' only resets index tracking (new content is indexed as it is created).</description>
     </key>
 
     <!-- Deep Research Settings -->
@@ -693,11 +708,6 @@
       <default>''</default>
       <summary>Deep Research Synthesis Model</summary>
       <description>Model used for strategic deep-research roles (planning, mid-research critique, gap analysis, outline, quality check). Leave empty to use the active provider's model. A stronger model here improves report quality.</description>
-    </key>
-    <key name="deep-research-charts-enabled" type="b">
-      <default>false</default>
-      <summary>Enable Inline Charts in Research Reports</summary>
-      <description>When enabled and the provider supports it, the synthesis prompt asks for inline SVG charts for quantitative data. Off by default because the chat surface renders Pango text only (SVG is not displayed).</description>
     </key>
   </schema>
 </schemalist>

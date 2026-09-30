@@ -17,6 +17,12 @@ const PDF_EXTENSION = 'pdf';
 const DOCX_EXTENSION = 'docx';
 const EML_EXTENSION = 'eml';
 
+// Parsed documents (including full base64 image payloads, which can be
+// several MB each) are cached per file so repeat sends don't re-parse.  The
+// cache is LRU-capped because the runtime lives for the whole shell session —
+// without a cap, every attachment ever parsed stayed resident forever.
+const DOCUMENT_RUNTIME_CACHE_MAX_ENTRIES = 12;
+
 const TOOL_STATUS = {
     BUILTIN: 'builtin',
     DETECTED: 'detected',
@@ -116,11 +122,20 @@ export function getDocumentToolCapabilities() {
 }
 
 export function parseDocumentCommand(promptText) {
-    if (!promptText || !promptText.startsWith(DOCUMENT_TOOL_COMMAND)) {
+    const text = String(promptText || '');
+    if (!text.startsWith(DOCUMENT_TOOL_COMMAND)) {
         return null;
     }
 
-    let remainder = promptText.slice(DOCUMENT_TOOL_COMMAND.length).trim();
+    // Word boundary: only '/doc' followed by whitespace (or the end of the
+    // prompt) is the command.  '/docs …' or '/document …' are ordinary text
+    // and must not open the file picker.
+    const after = text.slice(DOCUMENT_TOOL_COMMAND.length);
+    if (after && !/^\s/.test(after)) {
+        return null;
+    }
+
+    let remainder = after.trim();
     if (!remainder) {
         return {
             isCommand: true,
@@ -776,6 +791,23 @@ export class DocumentToolRuntime {
         this._cache = new Map();
     }
 
+    // Drop every cached parse. Called when the session attachment cache is
+    // cleared (new chat / conversation load / document tool disabled) so large
+    // image payloads are not retained after they can no longer be sent.
+    clearCache() {
+        this._cache.clear();
+    }
+
+    _cacheStore(key, value) {
+        // Refresh insertion order on re-set, then evict the oldest entries.
+        this._cache.delete(key);
+        this._cache.set(key, value);
+        while (this._cache.size > DOCUMENT_RUNTIME_CACHE_MAX_ENTRIES) {
+            const oldest = this._cache.keys().next().value;
+            this._cache.delete(oldest);
+        }
+    }
+
     getCapabilities() {
         return getDocumentToolCapabilities();
     }
@@ -835,6 +867,8 @@ export class DocumentToolRuntime {
         const cacheKey = this._buildCacheKey(resolvedPath, info);
         const cached = this._cache.get(cacheKey);
         if (cached) {
+            // LRU touch so frequently re-attached files survive eviction.
+            this._cacheStore(cacheKey, cached);
             return cached;
         }
 
@@ -861,7 +895,7 @@ export class DocumentToolRuntime {
                 cachedAt: Math.floor(Date.now() / 1000),
             };
 
-            this._cache.set(cacheKey, result);
+            this._cacheStore(cacheKey, result);
             return result;
         }
 
@@ -915,7 +949,7 @@ export class DocumentToolRuntime {
             cachedAt: Math.floor(Date.now() / 1000),
         };
 
-        this._cache.set(cacheKey, result);
+        this._cacheStore(cacheKey, result);
         return result;
     }
 

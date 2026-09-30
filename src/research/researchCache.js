@@ -84,7 +84,6 @@ function _flushNow() {
         _flushTimerId = 0;
     }
     if (!_dirty || !_cache) return;
-    _dirty = false;
     try {
         const encoder = new TextEncoder();
         const data = JSON.stringify(_cache);
@@ -95,8 +94,12 @@ function _flushNow() {
             Gio.FileCreateFlags.REPLACE_DESTINATION,
             null
         );
+        // Only mark clean AFTER a successful write — a failed flush keeps the
+        // dirty flag set so the next schedule/flushSync retries instead of
+        // silently losing the pending mutation.
+        _dirty = false;
     } catch (e) {
-        log(`[Katab:cache] Failed to flush research cache: ${e.message}`);
+        log(`[Katab:cache] Failed to flush research cache (will retry): ${e.message}`);
     }
 }
 
@@ -426,6 +429,21 @@ export function getCacheStats() {
 /**
  * Clear all cached entries.
  */
+/**
+ * Return a snapshot of every cache entry, newest first (matching `order`).
+ * Used by knowledge-base maintenance to re-import research results.
+ * @returns {Array<object>} copies of entries, each including its `key`
+ */
+export function getAllCacheEntries() {
+    _loadCache();
+    const out = [];
+    for (const key of _cache.order) {
+        const entry = _cache.entries[key];
+        if (entry) out.push({ key, ...entry });
+    }
+    return out;
+}
+
 export function clearCache() {
     _loadCache();
     _cache = { entries: {}, order: [] };
@@ -539,24 +557,33 @@ export function saveResearchCheckpoint(state) {
 
         const encoder = new TextEncoder();
         let data = encoder.encode(JSON.stringify(payload));
-        if (data.length > MAX_CHECKPOINT_FILE_BYTES) {
-            log(`[Katab:checkpoint] Payload ${data.length} bytes exceeds cap — aggressively trimming.`);
+        // Aggressive bounded trim: repeat until the payload fits the cap (max 3
+        // passes — a single halving pass could still leave an oversized
+        // checkpoint that was then written anyway).
+        for (let pass = 0; data.length > MAX_CHECKPOINT_FILE_BYTES && pass < 3; pass++) {
+            log(`[Katab:checkpoint] Payload ${data.length} bytes exceeds cap — aggressive trim pass ${pass + 1}.`);
+            const suffix = pass === 0 ? '\n[...aggressively trimmed...]' : '';
             for (const br of (payload.branchResults || [])) {
                 const half = Math.floor(br.findings.length / 2);
-                br.findings = br.findings.slice(0, half) + '\n[...aggressively trimmed...]';
-                br.facts = br.facts.slice(0, Math.floor(MAX_CHECKPOINT_FACTS_PER_BRANCH / 2));
-                br.sources = br.sources.slice(0, 25);
+                br.findings = br.findings.slice(0, half) + suffix;
+                br.facts = br.facts.slice(0, Math.max(4, Math.floor(br.facts.length / 2)));
+                br.sources = br.sources.slice(0, 10);
             }
             for (const rr of (payload.refinementResults || [])) {
                 const half = Math.floor(rr.findings.length / 2);
-                rr.findings = rr.findings.slice(0, half) + '\n[...aggressively trimmed...]';
-                rr.facts = rr.facts.slice(0, Math.floor(MAX_CHECKPOINT_FACTS_PER_BRANCH / 2));
-                rr.sources = rr.sources.slice(0, 25);
+                rr.findings = rr.findings.slice(0, half) + suffix;
+                rr.facts = rr.facts.slice(0, Math.max(4, Math.floor(rr.facts.length / 2)));
+                rr.sources = rr.sources.slice(0, 10);
             }
-            payload.citationEntries = payload.citationEntries.slice(0, 100);
-            payload.urlToNumber = payload.urlToNumber.slice(0, 100);
+            payload.citationEntries = payload.citationEntries.slice(0, Math.max(10, Math.floor(payload.citationEntries.length / 2)));
+            payload.urlToNumber = payload.urlToNumber.slice(0, Math.max(10, Math.floor(payload.urlToNumber.length / 2)));
+            if (pass === 2) {
+                // Last resort: drop the cross-branch context and gap rationale.
+                payload.globalContext = '';
+                payload.gapRationale = '';
+            }
             data = encoder.encode(JSON.stringify(payload));
-            log(`[Katab:checkpoint] After aggressive trim: ${data.length} bytes.`);
+            log(`[Katab:checkpoint] After trim pass ${pass + 1}: ${data.length} bytes.`);
         }
 
         const file = Gio.File.new_for_path(_checkpointFilePath());

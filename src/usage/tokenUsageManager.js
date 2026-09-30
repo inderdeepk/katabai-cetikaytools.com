@@ -72,11 +72,18 @@ const MODEL_PRICING = {
 
 const DEFAULT_CLOUD_PRICING = { input: 1.00, output: 4.00 };
 
+// Longest keys first so a specific model always wins over a shorter prefix:
+// 'gpt-4o-mini' must match its own entry, not the 'gpt-4o' prefix, and
+// 'o1-mini' must not inherit 'o1' rates. (Both were billed at the parent
+// model's 10-16x rate when MODEL_PRICING insertion order won.)
+const PRICING_KEYS_BY_SPECIFICITY = Object.entries(MODEL_PRICING)
+    .sort((a, b) => b[0].length - a[0].length);
+
 function pricingForModel(model, provider) {
     const key = String(model || '').trim();
     if (!key) return provider === 'ollama' || provider === 'unsloth' ? MODEL_PRICING.__local__ : DEFAULT_CLOUD_PRICING;
     const lower = key.toLowerCase();
-    for (const [pricingKey, pricing] of Object.entries(MODEL_PRICING)) {
+    for (const [pricingKey, pricing] of PRICING_KEYS_BY_SPECIFICITY) {
         if (lower === pricingKey.toLowerCase() || lower.startsWith(pricingKey.toLowerCase() + '-') || lower.includes(pricingKey.toLowerCase())) {
             return pricing;
         }
@@ -173,7 +180,10 @@ export function estimateSummaryCost(summary) {
     const perProvider = {};
     const perModel = [];
     for (const provider of summary.providers || []) {
-        const providerModels = (summary.models || []).filter(m => m.provider === provider.provider);
+        // Cost must consider ALL models — summary.models is display-truncated
+        // to the top rows. Fall back to it for hand-built summaries, and to
+        // the provider total when the provider has no model rows at all.
+        const providerModels = (summary.allModels || summary.models || []).filter(m => m.provider === provider.provider);
         const isDeepseekTiered = provider.provider === 'deepseek'
             && (provider.peakPrompt || provider.peakCompletion || provider.peakHit
                 || provider.offPeakPrompt || provider.offPeakCompletion || provider.offPeakHit);
@@ -680,8 +690,13 @@ export class TokenUsageManager {
 
         summary.providers = Object.values(providerAgg).sort((a, b) => b.total - a.total)
             .map(e => ({ ...e, share: summary.totalTokens > 0 ? e.total / summary.totalTokens : 0 }));
-        summary.models = Object.values(modelAgg).sort((a, b) => b.total - a.total).slice(0, MAX_MODEL_ROWS)
+        // Full model list for cost estimation; only the top rows are rendered.
+        // Slicing before estimation under-counted spend whenever a provider's
+        // model fell outside the top MAX_MODEL_ROWS overall.
+        const sortedModels = Object.values(modelAgg).sort((a, b) => b.total - a.total)
             .map(e => ({ ...e, share: summary.totalTokens > 0 ? e.total / summary.totalTokens : 0 }));
+        summary.allModels = sortedModels;
+        summary.models = sortedModels.slice(0, MAX_MODEL_ROWS);
 
         const now = GLib.DateTime.new_now_local();
         const todayKey = now.format('%Y-%m-%d');

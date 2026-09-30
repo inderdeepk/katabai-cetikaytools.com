@@ -650,15 +650,8 @@ export class WebSearchRuntime {
 
         // Honour the zero-result cooldown: if the last search returned
         // nothing, wait before hitting SearxNG again so upstream-engine
-        // rate limits have time to clear.
-        const cooldownRemaining = this._lastEmptyResultTime
-            ? WEB_SEARCH_EMPTY_RESULT_COOLDOWN_MS - (now - this._lastEmptyResultTime)
-            : 0;
-        if (cooldownRemaining > 0) {
-            log(`[Katab:webSearch] Cooling off for ${cooldownRemaining}ms after previous empty result (upstream rate-limit guard).`);
-            await this._sleepMs(cooldownRemaining);
-        }
-
+        // rate limits have time to clear.  Checked AFTER the all-duplicates
+        // early return above so a duplicate re-ask never stalls the send.
         if (deduped.length === 0) {
             log('[Katab:webSearch] All queries were duplicates — returning empty result set.');
             return {
@@ -670,6 +663,14 @@ export class WebSearchRuntime {
             };
         }
 
+        const cooldownRemaining = this._lastEmptyResultTime
+            ? WEB_SEARCH_EMPTY_RESULT_COOLDOWN_MS - (now - this._lastEmptyResultTime)
+            : 0;
+        if (cooldownRemaining > 0) {
+            log(`[Katab:webSearch] Cooling off for ${cooldownRemaining}ms after previous empty result (upstream rate-limit guard).`);
+            await this._sleepMs(cooldownRemaining);
+        }
+
         // Reassign list to deduped for the rest of the function.
         // (list is const, so we use deduped directly in the branches below.)
         const limit = clampLimit(config.resultLimit);
@@ -677,21 +678,32 @@ export class WebSearchRuntime {
         // Category-aware parallelism: when no explicit engines/categories are
         // configured by the user, issue the same query across multiple SearxNG
         // categories in parallel and merge the results.  This improves coverage
-        // without the user needing to think about categories.
+        // without the user needing to think about categories.  Explicit intent
+        // routes (code→StackOverflow/GitHub, news→news, …) take priority: they
+        // only apply when the fan-out is skipped, so a routed search must not
+        // be overridden by the generic category fan-out.
         const parallelCategories = config.parallelCategories;
         // Only fan a SINGLE query out across categories. When query expansion
         // produced multiple queries (deduped.length > 1), searching only
         // deduped[0] would silently drop the expanded queries — fall through
         // to the multi-query path below instead.
-        if (deduped.length === 1 && parallelCategories && Array.isArray(parallelCategories) && parallelCategories.length > 1) {
+        if (deduped.length === 1 && parallelCategories && Array.isArray(parallelCategories) && parallelCategories.length > 1 && !config.intentRoute) {
+            const failures = [];
             const batches = await Promise.all(parallelCategories.map(cat =>
                 this._searchSingle(deduped[0], { ...config, categories: cat, parallelCategories: null, intentRoute: null }, cancellable).catch(error => {
                     if (cancellable && cancellable.is_cancelled()) throw error;
+                    failures.push(error);
                     return { results: [], answers: [], unresponsiveEngines: [], suggestions: [] };
                 })
             ));
             const merged = mergeResults(batches.map(b => b.results));
             const answers = dedupeStrings(batches.flatMap(b => b.answers));
+            // If EVERY category failed (connection refused, json-disabled,
+            // http-error), surface the real error instead of reporting an
+            // empty result set.  Partial failures still return their results.
+            if (merged.length === 0 && answers.length === 0 && failures.length === batches.length) {
+                throw failures[0];
+            }
             const allUnresponsive = batches.flatMap(b => b.unresponsiveEngines || []);
             const allSuggestions = dedupeStrings(batches.flatMap(b => b.suggestions || []));
             return {
@@ -718,17 +730,24 @@ export class WebSearchRuntime {
             };
         }
 
+        const failures = [];
         const batches = await Promise.all(deduped.map(query => (
             this._searchSingle(query, config, cancellable).catch(error => {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
                 }
+                failures.push(error);
                 return { results: [], answers: [], unresponsiveEngines: [], suggestions: [] };
             })
         )));
 
         const merged = mergeResults(batches.map(batch => batch.results));
         const answers = dedupeStrings(batches.flatMap(batch => batch.answers));
+        // Same total-failure rule as the category fan-out: surface the real
+        // error when nothing came back from any query.
+        if (merged.length === 0 && answers.length === 0 && failures.length === batches.length) {
+            throw failures[0];
+        }
         const allUnresponsive = batches.flatMap(batch => batch.unresponsiveEngines || []);
         const allSuggestions = dedupeStrings(batches.flatMap(batch => batch.suggestions || []));
         return {

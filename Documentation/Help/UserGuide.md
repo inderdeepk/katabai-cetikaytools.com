@@ -163,6 +163,7 @@ Type `/help` at any time to see available commands for your current provider and
 | `/crawl URL` | Deep-scrape a web page with Crawl4AI |
 | `/crawl query` | Search then scrape the top result |
 | `/kb query` | Search your local knowledge base |
+| `/kb import "path"` | Import files or a folder into the knowledge base |
 | `/research` | Activate Deep Research mode for exhaustive multi-source research |
 | `/python` | Execute Python code (Unsloth only) |
 | `/terminal` | Run a shell command (Unsloth only) |
@@ -208,6 +209,15 @@ Press **Up Arrow** in an empty prompt (or at the first line) to recall your last
 
 ### Prompt Character Counter
 A counter appears at the bottom-right of the prompt area. It turns amber at 90% capacity and red at the 16,000 character limit. Pasting large text that exceeds the limit is automatically truncated with a notification.
+
+### Session Memory & Compaction
+Long conversations stay coherent automatically. Between turns Katab folds the oldest part of the transcript into a compact **session memory** (project & goal, current state, progress, decisions, Q&A, next steps) and sends that summary instead of the entire history — so you can chat for hours without losing earlier context or offtopic details.
+
+- Folding happens in the background — it never blocks sending.
+- Click the **token gauge** in the footer to open Session Info: it shows the current memory's size, and a **Summarize Now** button folds everything older than your last few exchanges immediately.
+- **Compact** (also in Session Info) trims the visible conversation itself, keeping the most recent exchanges.
+- Your full transcript is still saved to disk and shown in the chat — memory only changes what is sent to the model.
+- Starting a **New Chat** clears the memory for that conversation.
 
 ---
 
@@ -472,6 +482,18 @@ ollama pull nomic-embed-text
 - **Auto mode**: When KB mode is set to **Auto**, Katab automatically searches the knowledge base before each message and adds relevant context. Set to **On** for one-shot search, **Off** to skip.
 - **Autonomous**: The model can call `knowledge_search` when it needs information from your indexed documents.
 
+### Adding content
+- **Automatic**: conversations are indexed incrementally as you chat; web research results (`web_search`, `read_url`, `crawl_url`, `explore_docs`) are indexed as they happen; attached documents are indexed when you send them.
+- **Manual imports**: `/kb import "~/Documents/notes"` or `/kb import "~/file.pdf"` — imports files (`txt`, `md`, `pdf`, `docx`, `eml`; up to 50 per import, folders scanned up to 3 levels deep). The same is available in Preferences → Tools → Knowledge Base → **Import Files** / **Import Folder**.
+- **Memory updates**: with capable models, Katab can save durable facts (`update_knowledge`) or delete them (`forget_knowledge`) when you ask. Unless **Auto-Update** is enabled, saves and deletes appear as pending actions in the message's knowledge-base drawer and require your confirmation.
+
+### Maintenance
+- **Re-index** — resets index tracking and immediately rebuilds: conversations from your saved history plus the local research cache.
+- **Clear Knowledge Base** — empties every collection. It stays empty until new content is indexed (as you chat, import, or run research).
+- **Auto-prune** — when a collection reaches its chunk cap, the *oldest* chunks are evicted automatically. Katab warns once per session at 80% usage.
+- **Latency**: with the embedding model warm, searches take ~1–3 seconds; the first search after idle may be slower while the model loads (it is kept resident for 30 minutes after each use). If Ollama is not running, KB search pauses with a chat notice instead of failing silently.
+- **Result provenance**: KB results show their score (cosine similarity), source, and — for conversation hits — the role and message position; memory updates are labelled "memory update".
+
 ### Settings Reference
 | Setting | Description |
 |---|---|
@@ -480,12 +502,12 @@ ollama pull nomic-embed-text
 | **Embedding model** | Model used for vector embeddings |
 | **Chunk size / Overlap** | Document splitting parameters |
 | **Top-K** | Number of results to retrieve per query |
-| **Max chunks / collection** | Capacity limits |
-| **Auto-prune** | Automatically clean old entries |
+| **Max chunks / collection** | Capacity limits (the oldest chunks are evicted at the cap when Auto-prune is on) |
+| **Auto-prune** | Evict the oldest chunks instead of rejecting new indexing |
 | **Index toggles** | Which content to index: documents, conversations, research |
-| **Auto-update** | Re-index when files change |
-| **Reranking** | Re-rank results for improved relevance |
-| **Hybrid search** | Combine semantic and keyword search |
+| **Auto-update** | Let the model save or forget memory without asking each time |
+| **Reranking** | Re-rank results with a local scoring model (batched calls; model must be pulled) |
+| **Hybrid search** | Combine semantic (cosine) and keyword (BM25) search |
 
 ---
 
@@ -508,13 +530,25 @@ Deep Research is a meta-mode that raises tool-call limits and context thresholds
 - The research button only appears when web search or Crawl4AI is available.
 - A progress card shows each phase as it completes, with timing and source counts.
 
+### Depth & Model Overrides
+Open **Settings → Tools → Deep Research**:
+
+- **Research Depth** — `Standard` (default), `Deep`, or `Max`. Deep adds automatic quality retries and more gap-analysis queries; Max raises the quality bar and the synthesis context budget further (longer runs, more tokens).
+- **Compression Model** — optional cheap/fast model override for high-volume page compression (the bulk of the pipeline's LLM calls).
+- **Synthesis Model** — optional stronger model for planning, critique, gap analysis, outline, and the final report.
+
+Leave both model fields empty to use the active provider's model.
+
 ### Threshold Differences
-| Parameter | Normal | Deep Research |
+| Parameter | Normal | Deep Research (Standard) |
 |---|---|---|
-| Force-synthesis after | 5 iterations | 12 iterations |
-| Context synthesis threshold | 50K chars | 150K chars |
+| Force-synthesis after | 5 iterations | 6 iterations |
+| Max tool iterations | 10 (configurable) | 12 |
+| Context synthesis threshold | 40K chars | 80K chars |
 | Search results per query | 10 → 8 → 5 → 3 | 15 → 10 → 8 → 5 |
 | Crawl char limit | 24K → 12K → 6K → 3K | 24K → 16K → 10K → 6K |
+
+Selecting **Deep** or **Max** depth scales the synthesis context budget (120K / 160K chars) and raises retry/gap-query counts further.
 
 ### What to Expect
 - Deep Research takes longer — each branch involves multiple network calls and compression steps.
@@ -557,17 +591,10 @@ Katab keeps a private, local-only ledger of your AI token usage and pairs it wit
 
 ### Usage Dashboard
 - **Time ranges**: Today, Week, Month, Year, All Time.
-- **Chat combo**: Each reply in the same conversation builds a streak. The combo card shows reply count and session token score. Combos reset on new chat.
-- **Live counter**: Streaming token estimate in the chat header.
-- **Totals**: Prompt/reply split, reply count, DeepSeek cached-token savings.
-- **Efficiency**: Average tokens per reply, prompt:completion ratio, cache hit rate.
-- **Trend**: Comparison with previous range, most active day.
-- **By provider**: Stacked share bar, per-provider token rows with percentages.
-- **Top models**: Which models consumed the most tokens.
-- **Local share**: How much ran on your hardware, with a quick action to switch to Ollama.
-- **Achievements**: 21 badges across progression, streak, and special categories.
-- **Activity strip**: 14-day mini bar chart.
-- **Estimated cost**: Built-in pricing for major models.
+- **Context gauge**: The footer token box shows how full the context window is (system prompt + tools + messages + reserved space), including a draft preview while you type. Hover or click it for the Session Info breakdown.
+- **Overview tab**: Totals, prompt/reply split, DeepSeek cached-token savings, local-vs-cloud ratio with a quick action to switch the next draft to Ollama, trend summaries, milestones, and a 14-day activity chart.
+- **Collection tab**: Your pet collection — inspect pets and forms, preview crossbreeds, and pin a companion.
+- **Spending tab**: Estimated cost with per-provider and per-model breakdowns, plus monthly budget progress.
 
 ### Pet Collection
 Five provider pets live in your collection:
@@ -610,17 +637,17 @@ Five provider pets live in your collection:
 - Optional in-chat and desktop celebrations announce hatches, stage-ups, crossbreeds, and Mixie milestones.
 
 ### Token Budget & Cost Tracking
-- Set a **monthly USD budget** and warning threshold (default: $5 at 70%).
-- Katab estimates costs from token counts using built-in pricing tables.
-- Warnings appear in-chat and as desktop notifications when approaching the limit.
+- Set a **monthly USD budget** and warning threshold in **Settings → General** (Monthly Budget, Monthly Budget Amount, Budget Warning Threshold).
+- Katab estimates costs from token counts using built-in pricing tables (including DeepSeek peak/off-peak and cache hit/miss rates).
+- As spending approaches the limit, the Spending tab shows budget progress and the Overview surfaces a warning tip.
 
 ### Export & Reset
 Open **Settings → General → AI Token Breakdown**:
-- **Export**: JSON, CSV, Markdown report, or self-contained HTML page.
-- **Reset**: Deletes token analytics, all pet XP, crossbreeds, and Mixie progress. Chat history is not affected.
-- **Pause Tracking**: Temporarily stop recording without deleting data.
+- **Export Usage JSON**: Writes a timestamped copy of the ledger into your Documents folder.
+- **Reset Usage Ledger**: Deletes token analytics, all pet XP, crossbreeds, and Mixie progress. Chat history is not affected.
+- **Track Token Usage**: Pause/resume recording without deleting data.
 - **Retention**: Keep forever, prune after 90 days, or prune after 1 year.
-- **Desktop Notifications**: Toggle companion stage-ups, achievements, and budget alerts.
+- **Desktop Notifications**: Toggle completion notifications and budget alerts while the chat is closed.
 
 ---
 
@@ -717,10 +744,10 @@ The GTK4/Adwaita preferences window has these navigation pages:
 - Verify the health endpoint: `curl http://localhost:11235/health`
 - Check the URL in preferences matches your container port.
 
-#### Knowledge Base search times out
-- Ensure the RAG service is running: `curl http://localhost:11435/health`
-- Ensure Ollama is running for embeddings.
-- Auto KB search has a 3-second timeout — if the service is slow, switch KB mode to **Off** or **On** (manual).
+#### Knowledge Base search times out or is skipped
+- Ensure the RAG service is running: `curl http://localhost:11435/health` — the response includes an `embedding` block that reports whether Ollama and the embedding model are reachable.
+- Ensure Ollama is running for embeddings. When it is down, Katab shows "Knowledge Base embeddings unavailable" and pauses KB search instead of timing out on every message.
+- Auto KB search allows up to 8 seconds — if searches are still slow, check the RAG service logs; the model is kept warm for 30 minutes after each use (`ollama pull nomic-embed-text` once).
 
 #### Responses are blank or very short
 - If using DeepSeek Flash with web tools enabled, the model may hit tool-call limits. Try switching to Pro, or disable autonomous web search.

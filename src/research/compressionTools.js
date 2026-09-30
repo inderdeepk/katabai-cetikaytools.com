@@ -385,7 +385,10 @@ export async function compressPage({ rawText, sourceUrl, llmCall, cancellable = 
             return bullets.slice(0, 5).map(claim => ({ claim, url: sourceUrl, anchor_text: '' }));
         }
         return [];
-    } catch (_e) {
+    } catch (e) {
+        // Never swallow silently — an auth failure or provider outage must be
+        // distinguishable from "the page had no facts".
+        log(`[Katab:compress] Page compression failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
         return [];
     }
 }
@@ -418,7 +421,8 @@ export async function mergePageSummaries({ summaries, topic, llmCall, cancellabl
     try {
         const response = await llmCall(messages, { cancellable, maxTokens: DEFAULT_MAX_TOKENS_MERGE });
         return String(response || '').trim();
-    } catch (_e) {
+    } catch (e) {
+        log(`[Katab:compress] Summary merge failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
         // Fallback: simple concatenation
         return summaries.join('\n\n');
     }
@@ -450,7 +454,8 @@ export async function clusterThemes({ topicSummaries, llmCall, cancellable = nul
     try {
         const response = await llmCall(messages, { cancellable, maxTokens: DEFAULT_MAX_TOKENS_CLUSTER });
         return String(response || '').trim();
-    } catch (_e) {
+    } catch (e) {
+        log(`[Katab:compress] Theme clustering failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
         return combined;
     }
 }
@@ -480,7 +485,8 @@ export async function buildSectionDraft({ themedParagraphs, sectionTitle, llmCal
     try {
         const response = await llmCall(messages, { cancellable, maxTokens: DEFAULT_MAX_TOKENS_DRAFT });
         return String(response || '').trim();
-    } catch (_e) {
+    } catch (e) {
+        log(`[Katab:compress] Section draft failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
         return themedParagraphs;
     }
 }

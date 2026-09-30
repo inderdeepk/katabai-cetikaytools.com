@@ -11,10 +11,11 @@
 - **Document Attachments** — `.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`, `.eml`
 - **Web Search** via self-hosted SearxNG — manual `/search` or autonomous model-driven lookups
 - **Web Scraping** via Crawl4AI — deep browser rendering with `/crawl`
-- **Deep Research** — multi-phase pipeline: planning → parallel research → gap analysis → synthesis with citations
+- **Deep Research** — multi-phase pipeline: planning → parallel research → gap analysis → refinement → two-pass synthesis with citations; depth (Standard/Deep/Max) and per-role model overrides in Settings → Tools → Deep Research
 - **Knowledge Base** — local RAG semantic search on your indexed documents (`/kb`)
-- **Pet Collection** — 5 provider pets with 6 evolution stages, crossbreeds, and achievements
-- **Token Tracking** — local-only ledger with cost estimates, monthly budgets, and export formats
+- **Session Memory** — older turns fold into a persistent rolling summary so long chats keep context without resending the whole transcript
+- **Pet Collection** — 5 provider pets with 6 evolution stages, crossbreed forms, and the Mixie companion
+- **Token Tracking** — local-only ledger with cost estimates, configurable monthly budgets, and JSON export
 - **Ollama Presets** — save, load, and share model configuration profiles
 - **Dark/Light Theme** — automatic detection with live switching
 - **Keyboard Shortcut** — `Ctrl+Super+C` to toggle chat
@@ -32,6 +33,7 @@
   - [Web Search Tool](#optional-web-search-tool)
 - [Chat Formatting](#chat-formatting)
 - [AI Token Breakdown & Pets](#ai-token-breakdown)
+- [Session Memory](#session-memory)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -43,9 +45,10 @@
 - GNOME Shell version 46.
 - Optional local file support:
    - Plain text, Markdown, PNG, JPG, and JPEG work without extra packages.
-   - Image attachments are sent only through Ollama and require a vision-capable model such as `llama3.2-vision` or `llava`.
+   - Image understanding: DeepSeek Flash (V4.1) accepts images natively. Other providers need a vision-capable model — Ollama vision models take images directly, and text-only DeepSeek models can route images through the optional vision-model orchestration in Settings → DeepSeek.
    - PDFs require `pdftotext` from `poppler-utils` or the distro-equivalent `poppler` package.
    - DOCX files require `pandoc`.
+   - `.eml` email files are parsed with a built-in MIME reader — no extra tools needed.
 
 ### Manual Installation
 1. Clone or download the repository into your GNOME shell extensions directory:
@@ -216,20 +219,29 @@ Links are extracted from assistant responses and shown as clickable actions belo
 
 ## AI Token Breakdown
 
-Katab keeps a private, local-only ledger of your AI token usage and turns it into a fun companion with gamification:
+Katab keeps a private, local-only ledger of your AI token usage and turns it into a companion experience:
 
-- **Tokens button (top middle of the chat window)** — opens the full breakdown: totals for today / week / month / year / all time, combo streak with score, provider and model percentages with share bars, local-vs-cloud split, efficiency metrics (avg/reply, P:C ratio), trend card, milestone row, achievement badges, and a 14-day activity strip.
-- **Chat combo system** — each reply in the same conversation builds a combo streak visible in the chat header. Combos rack up a token score and unlock achievements; starting a new chat resets the counter to zero.
-- **Header live counter** — a streaming token counter appears next to the combo indicator during active responses, showing estimated tokens in real time.
-- **Achievement system** — 21 achievements across progression, streak, and special categories. Unlock badges like "Homegrown", "Deep Dive", "Diplomat", and "Penny Pincher". New unlocks show in-chat and in the achievements panel.
-- **Model pricing & cost** — built-in pricing for major models (GPT-4o, Claude, DeepSeek, etc.) with estimated spend calculation. The efficiency card shows tokens/reply averages and prompt:completion ratios.
-- **Panel dropdown snapshot** — the GNOME top-bar menu shows the active pet sprite, selected-range total, local share, leading provider, and a tiny provider share bar. Click it to jump straight to the full breakdown.
-- **Pet collection** — Ollie, Slothy, Sparky, Clyde, and Pearl each hatch and gain permanent XP from their own provider's token usage. Every pet independently grows through Hatchling → Sprout → Scholar → Sage → Archmage.
-- **Active companion** — follow the currently selected provider automatically or pin any available provider pet, crossbreed form, or Mixie from the collection view.
-- **Crossbreeds and Mixie** — raising two pets to Sprout permanently unlocks both directional crossbreed forms. Raising all five to Sprout unlocks Mixie, whose stage follows the least-advanced provider pet.
-- **Gentle local nudge** — the local card explains how much usage ran on hardware you control and includes a quick action that switches the next draft to Ollama.
-- **Export formats** — export your usage data as JSON, CSV, Markdown report, or a self-contained HTML page via the preferences panel.
-- **Settings controls** — Settings → General lets you pause tracking, choose the analytics range and retention, select follow/pinned companion behavior, enable celebrations, manage monthly budget warnings, export data, or reset analytics and collection progress. Everything stays local.
+- **Tokens button (top middle of the chat window)** — opens the breakdown panel with three tabs:
+  - **Overview** — totals for today / week / month / year / all time, the local-vs-cloud ratio with a one-click "Try Next Draft Locally" action, trend summaries, milestones, and a 14-day activity chart.
+  - **Collection** — the provider pet collection: inspect every pet, open detail views, pin a companion, and preview crossbreed forms.
+  - **Spending** — estimated spend with per-provider/per-model breakdowns and monthly-budget progress.
+- **Header context gauge** — the footer token box shows how full the context window is (system prompt + tool definitions + messages + space reserved for the response), with a draft-token preview while you type. Hover or click it for the Session Info breakdown, including the session-memory share and cumulative deep-research pipeline tokens.
+- **Model pricing & cost** — built-in pricing for major models, including DeepSeek's time-aware peak/off-peak and cache hit/miss rates. Estimates are best-effort; actual bills may differ.
+- **Budget warnings** — optionally set a monthly USD budget and a warning threshold (Settings → General). As spending approaches the limit, the Tokens panel shows budget progress and the Overview surfaces a warning tip.
+- **Pet collection** — Ollie, Slothy, Sparky, Clyde, and Pearl each hatch and gain permanent XP from their own provider's token usage, growing Hatchling → Sprout → Scholar → Sage → Archmage. Raising two pets to Sprout unlocks their crossbreed forms; raising all five unlocks Mixie.
+- **Active companion** — follow the current provider automatically, or pin any pet, crossbreed, or Mixie from the Collection tab.
+- **Panel dropdown snapshot** — the GNOME top-bar menu shows the current chat plus a pet/usage snapshot: selected-range total, local share, leading provider, and a mini share bar.
+- **Export** — "Export Usage JSON" writes a timestamped copy of the local ledger into your Documents folder. Everything stays on your machine.
+
+Settings (Settings → General) let you pause tracking, choose the default range, set retention, control celebrations and desktop notifications, configure the monthly budget, export, or reset analytics and pet progress.
+
+## Session Memory
+
+Long conversations stay coherent without resending the whole transcript every turn: Katab asynchronously folds older turns into a compact, persistent session memory (project & goal, current state, progress, decisions, Q&A, next steps). The full transcript is still saved to disk and shown in the chat — only the model-facing payload is condensed.
+
+- Folding runs in the background between turns and never blocks sending.
+- Inspect the current memory and trigger **Summarize Now** from the Session Info popup (click the token gauge in the footer).
+- The memory is stored inside the conversation itself, so it survives reloads and history switches.
 
 ## Contribution Guidelines
 

@@ -204,6 +204,20 @@ tests.push(
         assertEqual(cost, 2.50, 'gpt-4o variant matches base pricing');
     }],
 
+    ['estimateCost: mini models must not inherit parent pricing', () => {
+        // Regression: MODEL_PRICING insertion order previously let the
+        // 'gpt-4o' prefix win over 'gpt-4o-mini' (16x overcharge), and
+        // 'o1' over 'o1-mini' (13x overcharge).
+        assertEqual(estimateCost('gpt-4o-mini', 'openai', 1_000_000, 0), 0.15,
+            'gpt-4o-mini input rate');
+        assertEqual(estimateCost('gpt-4o-mini', 'openai', 0, 1_000_000), 0.60,
+            'gpt-4o-mini output rate');
+        assertEqual(estimateCost('o1-mini', 'openai', 1_000_000, 0), 1.10,
+            'o1-mini input rate');
+        assertEqual(estimateCost('gpt-4o-mini-2024-07-18', 'openai', 1_000_000, 0), 0.15,
+            'dated gpt-4o-mini variant');
+    }],
+
     ['estimateSummaryCost: proportional distribution', () => {
         const summary = {
             totalTokens: 10_000,

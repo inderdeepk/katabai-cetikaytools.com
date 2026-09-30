@@ -45,7 +45,7 @@ const WEB_SEARCH_PARAMS = {
             type: 'integer',
             minimum: 1,
             maximum: 20,
-            description: 'Max results to return (default 10, capped at 20).',
+            description: 'Max results to return (default 5, capped at 20).',
         },
     },
     required: ['query'],
@@ -141,7 +141,7 @@ registerTool({
 registerTool({
     name: 'document',
     description:
-        'Attach and parse a local file (txt, md, pdf, docx, png, jpg). ' +
+        'Attach and parse a local file (txt, md, pdf, docx, eml, png, jpg, jpeg). ' +
         'The file content is included in the conversation context so the AI can read, analyze, or summarize it.',
     parameters: null, // No API schema — this is a pre-send tool
     dangerLevel: DANGER_POTENTIALLY_UNSAFE,
@@ -181,6 +181,11 @@ const KNOWLEDGE_SEARCH_PARAMS = {
         query: {
             type: 'string',
             description: 'The search query to find semantically relevant information in the local knowledge base. Use natural language — the search is semantic, not keyword-based.',
+        },
+        collection: {
+            type: 'string',
+            enum: ['conversations', 'documents', 'research_cache'],
+            description: 'Optional: restrict the search to one collection — "conversations" (past chats), "documents" (imported/attached files), or "research_cache" (web research results). Omit to search everything.',
         },
     },
     required: ['query'],
@@ -233,6 +238,38 @@ registerTool({
     parameters: UPDATE_KNOWLEDGE_PARAMS,
     dangerLevel: DANGER_POTENTIALLY_UNSAFE,
     handler: createNotReadyHandler(UPDATE_KNOWLEDGE_TOOL_NAME),
+    uiLabel: null,
+    uiIcon: null,
+    command: null,
+    resultTruncationKey: null,
+    isMeta: false,
+    providerScoped: false,
+});
+
+// ── Knowledge Base Forget (delete a stored memory) ───────────────────────────
+
+export const FORGET_KNOWLEDGE_TOOL_NAME = 'forget_knowledge';
+
+const FORGET_KNOWLEDGE_PARAMS = {
+    type: 'object',
+    properties: {
+        about: {
+            type: 'string',
+            description: 'The exact topic label ("about" value) used when the memory was saved with update_knowledge. Deleting removes the stored fact for that topic.',
+        },
+    },
+    required: ['about'],
+};
+
+registerTool({
+    name: FORGET_KNOWLEDGE_TOOL_NAME,
+    description:
+        'Delete a previously saved memory from the local knowledge base. ' +
+        'Use when the user explicitly asks you to forget something or when a stored fact must be removed. ' +
+        'Only call this after confirming the stored memory exists via knowledge_search.',
+    parameters: FORGET_KNOWLEDGE_PARAMS,
+    dangerLevel: DANGER_POTENTIALLY_UNSAFE,
+    handler: createNotReadyHandler(FORGET_KNOWLEDGE_TOOL_NAME),
     uiLabel: null,
     uiIcon: null,
     command: null,

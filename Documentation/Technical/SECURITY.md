@@ -44,6 +44,10 @@ We take the security of Katab seriously. If you discover a security vulnerabilit
 - No data is exfiltrated — all embeddings, indexing, and search happen locally.
 - The service is expected to be firewalled from external networks.
 - Content indexed into the knowledge base (documents, conversations, research results) remains on the local machine.
+- Retrieved KB content may include previously crawled web text; result blocks label it as reference data (never instructions), and the web-content safety policy is applied whenever KB context is present.
+- The `forget_knowledge` tool can only delete memory-fact chunks (`update_<slug>` ids) — it cannot touch documents or conversation history — and manual mode requires explicit user confirmation.
+- Deleting a conversation from history also purges that conversation's indexed chunks from the KB.
+- `/kb import` parses only supported document formats (`txt`, `md`, `pdf`, `docx`, `eml`) from local paths the user explicitly selects, using the same local parsing pipeline as attachments.
 
 ## Deep Research Safety Notes
 
