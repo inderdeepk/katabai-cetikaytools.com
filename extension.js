@@ -120,6 +120,11 @@ import {
     PROVIDER_META,
 } from './src/providers/catalog.js';
 import {
+    buildNonStreamingChatRequest,
+    extractNonStreamingText,
+    extractNonStreamingUsage,
+} from './src/providers/nonStreamingRequest.js';
+import {
     MARKDOWN_SEGMENT_MAX_CHARS,
     buildAssistantRenderModel,
     formatInlineMarkdown,
@@ -20581,45 +20586,12 @@ class KatabDialog {
             try { apiKey = this._settings.get_string(`${provider}-api-key`); } catch (_e) { }
         }
 
-        let endpoint = url;
-        if (!endpoint.endsWith('/')) endpoint += '/';
-
-        const headers = { 'Content-Type': 'application/json' };
-        let payload;
-
-        if (provider === 'anthropic') {
-            if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
-                endpoint += 'v1/messages';
-            }
-            headers['x-api-key'] = apiKey;
-            headers['anthropic-version'] = '2023-06-01';
-            payload = {
-                model,
-                max_tokens: maxTokens,
-                messages: messages.filter(message => message.role !== 'system'),
-            };
-        } else if (provider === 'ollama') {
-            if (!endpoint.endsWith('api/chat')) {
-                endpoint += 'api/chat';
-            }
-            // Non-streaming calls (planner, gap analysis, compression) need
-            // fast, structured responses.  Disable think mode so the model
-            // produces output directly instead of getting stuck in a thinking
-            // phase that can time out or consume all output tokens.
-            payload = { model, messages, stream: false, think: false };
-        } else {
-            // openai / unsloth / deepseek (OpenAI-compatible chat completions)
-            if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions') && !endpoint.includes('v1/chat')) {
-                endpoint += 'chat/completions';
-            }
-            if (apiKey) {
-                headers['Authorization'] = `Bearer ${apiKey}`;
-            }
-            payload = { model, messages, stream: false, max_tokens: maxTokens };
-            if (provider === 'deepseek') {
-                payload.thinking = { type: 'disabled' };
-            }
-        }
+        // Provider request dialects (endpoint, headers, payload) live in
+        // src/providers/nonStreamingRequest.js so they stay unit-testable.
+        const request = buildNonStreamingChatRequest({ provider, baseUrl: url, model, apiKey, messages, maxTokens });
+        const endpoint = request.url;
+        const headers = request.headers;
+        const payload = request.payload;
 
         const message = Soup.Message.new('POST', endpoint);
         if (!message) {
@@ -20657,15 +20629,7 @@ class KatabDialog {
         // block and accumulate so the context-window meter and Session
         // Info popup accurately reflect total API token consumption.
         try {
-            let usageTokens = 0;
-            if (provider === 'ollama') {
-                usageTokens = (parsed.prompt_eval_count || 0) + (parsed.eval_count || 0);
-            } else if (provider === 'anthropic') {
-                usageTokens = (parsed.usage?.input_tokens || 0) + (parsed.usage?.output_tokens || 0);
-            } else {
-                // OpenAI / DeepSeek / Unsloth
-                usageTokens = (parsed.usage?.prompt_tokens || 0) + (parsed.usage?.completion_tokens || 0);
-            }
+            const usageTokens = extractNonStreamingUsage(provider, parsed);
             if (usageTokens > 0) {
                 this._currentUsage += usageTokens;
                 this._deepResearchCumulativeTokens += usageTokens;
@@ -20674,19 +20638,7 @@ class KatabDialog {
             }
         } catch (_e) { /* token counting is best-effort; never fail the response */ }
 
-        if (provider === 'anthropic') {
-            if (Array.isArray(parsed.content)) {
-                return parsed.content
-                    .filter(block => block && block.type === 'text' && typeof block.text === 'string')
-                    .map(block => block.text)
-                    .join('');
-            }
-            return '';
-        }
-        if (provider === 'ollama') {
-            return parsed.message?.content || '';
-        }
-        return parsed.choices?.[0]?.message?.content || '';
+        return extractNonStreamingText(provider, parsed);
     }
 
     // ── DeepSeek Vision Model (Image Support) ───────────────────────────────
