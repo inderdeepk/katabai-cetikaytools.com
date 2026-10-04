@@ -38,7 +38,6 @@ const CRAWL4AI_DEFAULT_WORD_COUNT = 10;
 const CRAWL4AI_DEFAULT_POLL_MS = 2000;
 const CRAWL4AI_MAX_POLL_MS = 10000;
 const CRAWL4AI_MAX_JOB_WAIT_MS = 5 * 60 * 1000; // 5 min total for async jobs
-const CRAWL4AI_MAX_CHARS_LIMIT = 100000;
 const CRAWL4AI_JSON_MAX_BYTES = 16 * 1024 * 1024; // 16 MB — crawl results can be large
 const CRAWL4AI_READ_CHUNK_BYTES = 64 * 1024;
 // Cap for PDF downloads — generous for papers (even image-heavy ones) but stops a

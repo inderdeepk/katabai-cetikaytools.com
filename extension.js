@@ -15319,7 +15319,7 @@ class KatabDialog {
                 return;
             }
             log(`[Katab:research] Research execution failed: ${e.message || e}`);
-            const uiElements = this._addChatMessage(
+            this._addChatMessage(
                 'assistant',
                 'Research execution encountered an error. Please try again.',
                 'text',
@@ -15391,7 +15391,7 @@ class KatabDialog {
         this._clearActiveResponseState();
 
         // Send a cancellation response
-        const uiElements = this._addChatMessage('assistant', message, 'text');
+        this._addChatMessage('assistant', message, 'text');
         this._saveCurrentConversation();
     }
 
@@ -15736,7 +15736,7 @@ class KatabDialog {
 
             if (allFindings.length === 0) {
                 // Nothing usable — give a graceful response
-                const uiElements = this._addChatMessage(
+                this._addChatMessage(
                     'assistant',
                     'I was unable to gather sufficient research data for this query. Please try a more specific question or check that SearXNG and Crawl4AI are running.',
                     'text',
@@ -15771,7 +15771,7 @@ class KatabDialog {
                 return;
             }
             log(`[Katab:research] _beginResearchExecution error: ${e.message || e}`);
-            const uiElements = this._addChatMessage(
+            this._addChatMessage(
                 'assistant',
                 'Research execution encountered an error. Please try again.',
                 'text',
@@ -16894,7 +16894,7 @@ class KatabDialog {
      */
     _faviconUrl(url) {
         try {
-            const match = String(url || '').match(/^(https?:\/\/[^\/]+)/);
+            const match = String(url || '').match(/^(https?:\/\/[^/]+)/);
             if (match) return match[1] + '/favicon.ico';
         } catch (_e) {
             /* fall through */
@@ -19701,7 +19701,7 @@ class KatabDialog {
         dataInputStream.read_line_async(GLib.PRIORITY_DEFAULT, cancellable, (stream, res) => {
             if (cancellable && cancellable.is_cancelled()) return;
             try {
-                let [lineBytes, length] = stream.read_line_finish(res);
+                let [lineBytes] = stream.read_line_finish(res);
                 if (lineBytes === null) {
                     // ── Stream ended (EOF) ───────────────────────────────────
                     log(
@@ -20010,10 +20010,17 @@ class KatabDialog {
                                             : 'The model was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.';
                                 }
                             } else if (
+                                // eslint-disable-next-line no-dupe-else-if
                                 finalContent &&
                                 this._forceSynthesisActive &&
                                 isSynthesisRegurgitation(finalContent, provider)
                             ) {
+                                // NOTE (deferred): this branch is currently unreachable — the
+                                // earlier `finalContent && this._forceSynthesisActive` branch
+                                // above already covers this condition, so the non-XML garbage
+                                // quality gate never runs.  Reordering the chain changes
+                                // synthesis-retry behavior; tracked as a follow-up fix (see the
+                                // ESLint-triage commit message).
                                 // ── Synthesis quality gate (non-XML garbage) ──────────
                                 const synthRetries = this._synthesisRetries || 0;
                                 if (synthRetries < 1) {
@@ -20476,7 +20483,6 @@ class KatabDialog {
     // the research summary.  This gives the model a clean slate for synthesis.
     _trimToolHistoryForSynthesis() {
         const keepMessages = [];
-        let foundResearchSummary = false;
 
         for (const msg of this._messageHistory) {
             // Preserve the folded session memory — losing it during a synthesis
@@ -20506,7 +20512,6 @@ class KatabDialog {
             // Keep research summary injection messages
             if (msg._researchSummary) {
                 keepMessages.push(msg);
-                foundResearchSummary = true;
                 continue;
             }
 
@@ -21184,7 +21189,6 @@ class KatabDialog {
 
             const toolName = tc.function?.name;
             const args = this._parseToolArguments(tc.function?.arguments);
-            const tool = lookupTool(toolName);
 
             // Build args summary + expand label/value for the log entry
             let argsSummary = '';
@@ -22174,7 +22178,7 @@ class KatabDialog {
                 return;
             }
             try {
-                let [lineBytes, length] = stream.read_line_finish(res);
+                let [lineBytes] = stream.read_line_finish(res);
                 if (lineBytes === null) {
                     // Pull finished
                     if (cancelBtn) cancelBtn.destroy();

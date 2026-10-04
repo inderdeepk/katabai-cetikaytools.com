@@ -11,6 +11,8 @@ import prettierConfig from 'eslint-config-prettier';
 const gjsGlobals = {
     // GJS console helpers.
     log: 'readonly',
+    logError: 'readonly',
+    print_exception: 'readonly',
     printerr: 'readonly',
     print: 'readonly',
     // GJS legacy import machinery (still referenced in comments/tests).
@@ -60,6 +62,13 @@ export default [
             'no-redeclare': 'error',
             'no-empty': ['error', { allowEmptyCatch: true }],
             'no-constant-condition': ['error', { checkLoops: false }],
+        },
+    },
+    {
+        // Node-only check scripts (not part of the GJS runtime).
+        files: ['scripts/check-css.mjs'],
+        languageOptions: {
+            globals: { process: 'readonly' },
         },
     },
     prettierConfig,

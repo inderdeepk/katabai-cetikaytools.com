@@ -2003,7 +2003,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'DeepSeek can perform extended chain-of-thought reasoning before responding. Thinking content is shown in a collapsible panel in chat.',
         });
 
-        const deepseekThinkingRow = createBooleanRow(
+        createBooleanRow(
             'Thinking Mode',
             'Enable extended reasoning. Increases response time but significantly improves quality on complex tasks.',
             'deepseek-thinking-enabled',
@@ -3691,7 +3691,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             );
             setStatusBadge(ragConnBadge, 'Untested', null);
 
-            const testButton = createButtonRow(
+            createButtonRow(
                 'Test Connection',
                 'Send a health check to verify the RAG service responds.',
                 'Test',
@@ -4377,7 +4377,6 @@ export default class KatabPreferences extends ExtensionPreferences {
                                 const limits = body?.limits || {};
                                 const totalChunks = limits.total_chunks || 0;
                                 const estMb = limits.estimated_size_mb || 0;
-                                const maxChunks = limits.max_chunks_per_collection || 0;
                                 const maxMb = limits.max_total_size_mb || 0;
 
                                 let pctText = '';

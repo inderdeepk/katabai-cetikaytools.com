@@ -27,6 +27,9 @@
  */
 export function normalizeToolCallMarkup(text, { light = false } = {}) {
     let out = String(text)
+        // Control characters are exactly what this normalization exists to
+        // strip, so matching them here is deliberate.
+        // eslint-disable-next-line no-control-regex
         .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
         .replace(
             /[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g,

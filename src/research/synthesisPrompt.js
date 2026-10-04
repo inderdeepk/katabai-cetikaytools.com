@@ -214,7 +214,7 @@ export function estimateTokens(text) {
     if (!text) return 0;
     const str = String(text);
     // Detect if text is mostly code/JSON (high ratio of punctuation/symbols)
-    const codeLike = (str.match(/[{}\[\];:]/g) || []).length / Math.max(str.length, 1);
+    const codeLike = (str.match(/[{}[\];:]/g) || []).length / Math.max(str.length, 1);
     const charsPerToken = codeLike > 0.05 ? 2.5 : 4.0;
     return Math.ceil(str.length / charsPerToken);
 }

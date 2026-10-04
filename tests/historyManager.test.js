@@ -17,11 +17,6 @@ function removeTestFile() {
     }
 }
 
-function readPersisted() {
-    const [, bytes] = Gio.File.new_for_path(TEST_PATH).load_contents(null);
-    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
-}
-
 // Order matters: these tests share the static HistoryManager cache.
 _setHistoryPathForTesting(TEST_PATH);
 removeTestFile();

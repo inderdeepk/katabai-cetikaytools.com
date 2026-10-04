@@ -327,12 +327,17 @@ function getAttachmentInfoForExtension(extension) {
 }
 
 function normalizeDocumentText(text) {
-    return text
-        .replace(/\r\n?/g, '\n')
-        .replace(/\u0000/g, '')
-        .replace(/[ \t]+\n/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+    return (
+        text
+            .replace(/\r\n?/g, '\n')
+            // Embedded NUL bytes are stripped deliberately — they break Pango
+            // markup and JSON round-trips.
+            // eslint-disable-next-line no-control-regex
+            .replace(/\u0000/g, '')
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim()
+    );
 }
 
 function truncateDocumentText(text, maxChars) {
