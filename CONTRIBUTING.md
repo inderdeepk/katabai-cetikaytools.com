@@ -44,6 +44,8 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
    journalctl -f -o cat /usr/bin/gnome-shell | grep -i katab
    ```
 
+`make reload` and `make logs` wrap steps 4 and 5 for quick iteration.
+
 ## Branching Strategy
 
 - **`main`**: Stable branch. Only merge tested, reviewed changes.
@@ -52,7 +54,7 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
 ### Workflow
 1. Create a feature branch from `New-Features`.
 2. Make your changes with clear, atomic commits.
-3. Run `make check` and `make test` to validate.
+3. Run `make check` (Node.js ES module syntax checks) and `make test` to validate — CI runs both on every PR.
 4. Test with a live GNOME Shell reload and verify no journal errors.
 5. Open a pull request against `New-Features`.
 
@@ -142,7 +144,7 @@ See [ARCHITECTURE.md](Documentation/Technical/ARCHITECTURE.md) for detailed file
 # Run unit tests
 make test
 
-# Syntax check
+# ES module syntax check for every JS file (requires Node.js)
 make check
 ```
 

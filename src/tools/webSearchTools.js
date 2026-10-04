@@ -140,15 +140,6 @@ const ENGINE_FALLBACK_CHAIN = [
 // Max fallback engines to try before giving up (prevents infinite chains).
 const MAX_FALLBACK_ATTEMPTS = 2;
 
-const WEB_SEARCH_TOOL_DESCRIPTION =
-    'Search the live web through a private SearxNG instance and return the most relevant titles, ' +
-    'URLs, and snippets. Use this whenever the user asks about current events, real-time data, ' +
-    'documentation, or anything outside your training knowledge.';
-
-const READ_URL_TOOL_DESCRIPTION =
-    'Fetch and read the full text content of a web page given its absolute http(s) URL. ' +
-    'Use this after web_search to read a promising result in depth before answering.';
-
 export class WebSearchToolError extends Error {
     constructor(message, { code = 'web-search-error', detail = null } = {}) {
         super(message);
@@ -235,82 +226,6 @@ export function parseWebSearchCommand(promptText) {
     }
 
     return null;
-}
-
-// ── Tool schema (function calling) ────────────────────────────────────────────
-
-function webSearchParameterSchema() {
-    return {
-        type: 'object',
-        properties: {
-            query: {
-                type: 'string',
-                description: 'The web search query. Be specific and concise; strip conversational filler.',
-            },
-            categories: {
-                type: 'string',
-                description: "Optional comma-separated SearxNG categories such as 'general', 'news', 'science', or 'it'.",
-            },
-            time_range: {
-                type: 'string',
-                enum: ['day', 'week', 'month', 'year'],
-                description: 'Optional recency filter. Use day for breaking news.',
-            },
-            limit: {
-                type: 'integer',
-                description: 'Optional maximum number of results to return.',
-            },
-        },
-        required: ['query'],
-    };
-}
-
-function readUrlParameterSchema() {
-    return {
-        type: 'object',
-        properties: {
-            url: {
-                type: 'string',
-                description: 'The absolute http(s) URL of a page (typically from a prior web_search result) to read in full.',
-            },
-        },
-        required: ['url'],
-    };
-}
-
-export function buildWebSearchToolSchemas({ provider, fetchPageEnabled = true } = {}) {
-    const definitions = [
-        {
-            name: WEB_SEARCH_TOOL_NAME,
-            description: WEB_SEARCH_TOOL_DESCRIPTION,
-            parameters: webSearchParameterSchema(),
-        },
-    ];
-
-    if (fetchPageEnabled) {
-        definitions.push({
-            name: READ_URL_TOOL_NAME,
-            description: READ_URL_TOOL_DESCRIPTION,
-            parameters: readUrlParameterSchema(),
-        });
-    }
-
-    if (provider === 'anthropic') {
-        return definitions.map(definition => ({
-            name: definition.name,
-            description: definition.description,
-            input_schema: definition.parameters,
-        }));
-    }
-
-    return definitions.map(definition => ({
-        type: 'function',
-        function: {
-            name: definition.name,
-            description: definition.description,
-            parameters: definition.parameters,
-        },
-    }));
 }
 
 // ── Result formatting ─────────────────────────────────────────────────────────

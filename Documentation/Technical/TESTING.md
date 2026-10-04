@@ -16,11 +16,11 @@ gjs -m tests/tokenUsageManager.test.js
 ## Syntax Validation
 
 ```bash
-# Check all JS files compile
+# Check that every JS file parses as an ES module (requires Node.js)
 make check
 
-# Or manually:
-gjs -c "imports.searchPath.push('.');"  # (limited — full check requires in-shell)
+# Or manually for a single file:
+node --input-type=module --check < extension.js
 ```
 
 ## In-Shell Testing

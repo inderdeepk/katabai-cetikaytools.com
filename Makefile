@@ -6,7 +6,13 @@ UUID           := katabai@cetikaytools.com
 INSTALL_DIR    := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 PACKAGE_NAME   := $(UUID).zip
 
-.PHONY: all compile-schemas check test test-verbose test-rag-server sync-rag-server package install clean help
+.PHONY: all compile-schemas check test test-verbose test-rag-server sync-rag-server package install reload logs clean help
+
+# Every JS file that must parse as an ES module (checked via node --check).
+JS_CHECK_FILES := extension.js prefs.js $(shell find src tests -name '*.js' 2>/dev/null)
+
+# Test suites are discovered, not listed, so test/test-verbose can never drift.
+TEST_FILES := $(wildcard tests/*.test.js)
 
 ## all            : Compile schemas and run checks
 all: compile-schemas check
@@ -16,66 +22,40 @@ compile-schemas:
 	glib-compile-schemas schemas/
 	@echo "[OK] GSettings schema compiled"
 
-## check          : Verify all JS files pass syntax checks
+## check          : Verify every JS file parses as an ES module (node --check)
 check:
-	@echo "--- Running gjs syntax checks ---"
-	@gjs -c "imports.searchPath.push('.');" 2>/dev/null || true
-	@echo "[OK] Check complete (full GJS validation requires in-shell reload)"
+	@echo "--- ES module syntax checks (node --input-type=module --check) ---"
+	@if command -v node >/dev/null 2>&1; then \
+		count=0; fail=0; \
+		for f in $(JS_CHECK_FILES); do \
+			count=$$((count + 1)); \
+			if ! node --input-type=module --check < "$$f"; then \
+				echo "[FAIL] $$f"; \
+				fail=1; \
+			fi; \
+		done; \
+		if [ $$fail -ne 0 ]; then echo "[FAIL] Syntax errors found"; exit 1; fi; \
+		echo "[OK] $$count files parse as ES modules"; \
+	else \
+		echo "[WARN] node not found - skipping JS syntax checks (install Node.js to enable)"; \
+	fi
 
-## test           : Run all unit tests
+## test           : Run all unit tests (discovered from tests/*.test.js)
 test:
-	@echo "=== Phase 1: Foundation ==="
-	@echo "--- Running network guard tests ---"
-	@gjs -m tests/networkGuard.test.js
-	@echo "--- Running citation tracker tests ---"
-	@gjs -m tests/citationTracker.test.js
-	@echo "--- Running session memory tests ---"
-	@gjs -m tests/sessionMemory.test.js
-	@echo "--- Running tool registry tests ---"
-	@gjs -m tests/toolRegistry.test.js
-	@echo "=== Phase 2: Research Pipeline ==="
-	@echo "--- Running compression tools tests ---"
-	@gjs -m tests/compressionTools.test.js
-	@echo "--- Running research cache tests ---"
-	@gjs -m tests/researchCache.test.js
-	@echo "=== Phase 3: Tool Implementations ==="
-	@echo "--- Running web search tools tests ---"
-	@gjs -m tests/webSearchTools.test.js
-	@echo "--- Running rag tools tests ---"
-	@gjs -m tests/ragTools.test.js
-	@echo "--- Running tool definitions tests ---"
-	@gjs -m tests/toolDefinitions.test.js
-	@echo "--- Running crawl4ai tools tests ---"
-	@gjs -m tests/crawl4aiTools.test.js
-	@echo "--- Running explore docs tools tests ---"
-	@gjs -m tests/exploreDocsTools.test.js
-	@echo "--- Running document tools tests ---"
-	@gjs -m tests/documentTools.test.js
-	@echo "=== Phase 4: Usage & State ==="
-	@echo "--- Running pet collection tests ---"
-	@gjs -m tests/petCollection.test.js
-	@echo "--- Running token usage manager tests ---"
-	@gjs -m tests/tokenUsageManager.test.js
-	@echo "--- Running preset manager tests ---"
-	@gjs -m tests/presetManager.test.js
+	@echo "=== Unit tests: $(words $(TEST_FILES)) suites ==="
+	@for f in $(TEST_FILES); do \
+		echo "--- Running $$f ---"; \
+		gjs -m $$f || exit 1; \
+	done
 	@echo "[OK] All tests passed"
 
-## test-verbose   : Run all unit tests with per-test output
+## test-verbose   : Run all unit tests with per-test output (never aborts early)
 test-verbose:
-	@echo "=== Full Test Suite (verbose) ==="
-	@gjs -m tests/networkGuard.test.js || true
-	@gjs -m tests/citationTracker.test.js || true
-	@gjs -m tests/sessionMemory.test.js || true
-	@gjs -m tests/toolRegistry.test.js || true
-	@gjs -m tests/compressionTools.test.js || true
-	@gjs -m tests/researchCache.test.js || true
-	@gjs -m tests/webSearchTools.test.js || true
-	@gjs -m tests/toolDefinitions.test.js || true
-	@gjs -m tests/crawl4aiTools.test.js || true
-	@gjs -m tests/documentTools.test.js || true
-	@gjs -m tests/petCollection.test.js || true
-	@gjs -m tests/tokenUsageManager.test.js || true
-	@gjs -m tests/presetManager.test.js || true
+	@echo "=== Full test suite (verbose): $(words $(TEST_FILES)) suites ==="
+	@for f in $(TEST_FILES); do \
+		echo "--- Running $$f ---"; \
+		gjs -m $$f || true; \
+	done
 	@echo "=== Done ==="
 
 ## test-rag-server : Run RAG server unit tests (stdlib unittest via the service venv)
@@ -107,9 +87,21 @@ install:
 	rsync -av --exclude='.git' --exclude='.vscode' --exclude='*.zip' --exclude='*.swp' ./ $(INSTALL_DIR)/
 	@echo "[OK] Installed to $(INSTALL_DIR)"
 
+## reload         : Disable + re-enable the extension in the running GNOME Shell
+reload:
+	@gnome-extensions disable $(UUID) 2>/dev/null || true
+	@gnome-extensions enable $(UUID)
+	@echo "[OK] Extension reloaded - follow logs with: make logs"
+
+## logs           : Follow GNOME Shell journal lines that mention katab
+logs:
+	journalctl -f -o cat /usr/bin/gnome-shell | grep --line-buffered -i katab
+
 ## clean          : Remove build artifacts
 clean:
 	rm -f $(PACKAGE_NAME)
+	rm -rf .pytest_cache
+	@find rag-service -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 	@echo "[OK] Cleaned"
 
 ## help           : Show this help message

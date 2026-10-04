@@ -61,16 +61,6 @@ const CRAWL4AI_DEFAULT_LLM_SCHEMA_JSON =
     '{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},'
     + '"key_points":{"type":"array","items":{"type":"string"}}},"required":["title","summary"]}';
 
-// ── Tool description ──────────────────────────────────────────────────────────
-
-const CRAWL4AI_TOOL_DESCRIPTION =
-    'Deep-scrape a single web page and return clean, readable Markdown. ' +
-    'Use this after web_search to read a promising result in full depth. ' +
-    'The page is rendered in a real browser (JavaScript, SPAs, lazy-loading), ' +
-    'then stripped of navigation, ads, and boilerplate leaving only the core content. ' +
-    'When LLM extraction is enabled, the result may instead contain structured ' +
-    'JSON or an LLM-guided answer extracted from the page.';
-
 // ── Error class ───────────────────────────────────────────────────────────────
 
 export class Crawl4AIError extends Error {
@@ -234,45 +224,6 @@ export function stripCrawl4AICommand(promptText) {
     }
 
     return text;
-}
-
-// ── Tool schema (provider-aware shape) ────────────────────────────────────────
-
-export function buildCrawl4AIToolSchema({ provider }) {
-    if (provider === 'anthropic') {
-        return [{
-            name: CRAWL4AI_TOOL_NAME,
-            description: CRAWL4AI_TOOL_DESCRIPTION,
-            input_schema: crawlUrlParameterSchema(),
-        }];
-    }
-
-    // OpenAI shape (used by OpenAI, Ollama, DeepSeek, Unsloth)
-    return [{
-        type: 'function',
-        function: {
-            name: CRAWL4AI_TOOL_NAME,
-            description: CRAWL4AI_TOOL_DESCRIPTION,
-            parameters: crawlUrlParameterSchema(),
-        },
-    }];
-}
-
-function crawlUrlParameterSchema() {
-    return {
-        type: 'object',
-        properties: {
-            url: {
-                type: 'string',
-                description: 'The absolute http(s) URL of the page to deep-scrape.',
-            },
-            query: {
-                type: 'string',
-                description: 'Optional: the user\'s original question, used to focus extraction on the most relevant content.',
-            },
-        },
-        required: ['url'],
-    };
 }
 
 // ── Result formatting ─────────────────────────────────────────────────────────
