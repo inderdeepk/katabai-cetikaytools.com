@@ -161,6 +161,11 @@ import {
     reviseResearchPlan,
 } from './src/research/planner.js';
 import {
+    runGapAnalysis,
+    runRePlanningCritique,
+    runCausalChainCheck,
+} from './src/research/pipeline.js';
+import {
     MARKDOWN_SEGMENT_MAX_CHARS,
     buildAssistantRenderModel,
     formatInlineMarkdown,
@@ -420,9 +425,6 @@ const RESEARCH_PROGRESS_WRITING = 'writing';       // Final report phase
 // searches.  These refinement searches run as lightweight mini-branches, and
 // ALL findings (original + refinement) feed into a two-pass synthesis.
 const GAP_ANALYSIS_MAX_FOLLOWUP_QUERIES = 2;
-const GAP_ANALYSIS_MAX_TOKENS = 512;
-const CAUSAL_CHAIN_MAX_TOKENS = 512;
-const CAUSAL_CHAIN_MAX_QUERIES = 3;
 const REFINEMENT_CRAWL_COUNT = 2;          // Fewer than branch crawl (3) — refinement is fast
 const SYNTHESIS_OUTLINE_MAX_TOKENS = 1024;
 const SYNTHESIS_OUTLINE_REFINEMENT_TURNS = 2;          // WebWeaver refines >2x; 2 is a solid budget
@@ -512,7 +514,6 @@ const TRANSIENT_ERROR_CODES = new Set([
 // against the original question.  If coverage gaps are detected, remaining
 // search angles can be adjusted before execution continues.
 const MID_RESEARCH_CRITIQUE_INTERVAL = 2;
-const MID_RESEARCH_CRITIQUE_MAX_TOKENS = 640;
 const MAX_CRITIQUE_SPAWNED_BRANCHES = 2;   // new angles spawned per critique
 const MAX_TOTAL_SPAWNED_BRANCHES = 3;      // total new angles per research run
 // ── Source contradiction detection ───────────────────────────────────────────
@@ -14216,11 +14217,18 @@ class KatabDialog {
                 this._updateProgressPhase('Analyzing coverage gaps...');
 
                 try {
-                    gapQueries = await this._runGapAnalysis(usefulBranches, this._originalResearchQuery);
+                    const gapResult = await runGapAnalysis(this._pipelineHost({
+                        gapAnalysisMaxQueries: this._getEffectiveDeepResearchConfig().gapAnalysisMaxQueries,
+                        qualityRetryMaxQueries: QUALITY_RETRY_MAX_FOLLOWUP_QUERIES,
+                    }), usefulBranches, this._originalResearchQuery);
+                    gapQueries = gapResult.queries;
+                    if (gapQueries.length > 0) {
+                        this._gapRationale = gapResult.rationale;
+                    }
                     // Causal-chain check: catch unsourced sub-claims the final
                     // answer depends on, and merge them into the refinement set.
                     try {
-                        const chainQueries = await this._runCausalChainCheck(usefulBranches, this._originalResearchQuery);
+                        const chainQueries = await runCausalChainCheck(this._pipelineHost(), usefulBranches, this._originalResearchQuery);
                         if (chainQueries.length > 0) {
                             gapQueries = [...gapQueries, ...chainQueries].slice(0, 4);
                             log(`[Katab:research] Combined ${gapQueries.length} gap + causal-chain queries for refinement.`);
@@ -14701,7 +14709,14 @@ class KatabDialog {
             let gapQueries = [];
             const usableBranches = this._branchResults.filter(r => r.findings && r.findings.length > 100);
             try {
-                gapQueries = await this._runGapAnalysis(usableBranches, this._originalResearchQuery, missingAspects);
+                const gapResult = await runGapAnalysis(this._pipelineHost({
+                    gapAnalysisMaxQueries: this._getEffectiveDeepResearchConfig().gapAnalysisMaxQueries,
+                    qualityRetryMaxQueries: QUALITY_RETRY_MAX_FOLLOWUP_QUERIES,
+                }), usableBranches, this._originalResearchQuery, missingAspects);
+                gapQueries = gapResult.queries;
+                if (gapQueries.length > 0) {
+                    this._gapRationale = gapResult.rationale;
+                }
             } catch (e) {
                 if (this._isRequestCancelled(e)) throw e;
                 log(`[Katab:quality] Retry gap analysis failed: ${e.message}`);
@@ -15705,7 +15720,7 @@ class KatabDialog {
             // ── Mid-research re-planning critique — every N branches ────
             if ((i + 1) % MID_RESEARCH_CRITIQUE_INTERVAL === 0 && i + 1 < plan.length) {
                 const remaining = plan.slice(i + 1);
-                const critique = await this._runRePlanningCritique(results, remaining, this._originalResearchQuery);
+                const critique = await runRePlanningCritique(this._pipelineHost(), results, remaining, this._originalResearchQuery);
                 if (critique.sufficient) {
                     log(`[Katab:critique] Findings sufficient after ${i + 1} branches — skipping remaining ${remaining.length}.`);
                     // Mark remaining branches as skipped
@@ -15776,212 +15791,23 @@ class KatabDialog {
      * @param {string} originalQuery - The user's original question
      * @returns {Promise<Array<{rationale: string, search_query: string}>>}
      */
-    async _runGapAnalysis(branchResults, originalQuery, missingAspects = null) {
-        if (!branchResults || branchResults.length === 0) return [];
-
-        log('[Katab:research] Starting gap analysis phase...');
-
-        // Build a compact summary of all branch findings
-        const summaries = branchResults
-            .filter(r => r.findings && r.findings.length > 50)
-            .map(r => {
-                const snippet = r.findings.length > 400
-                    ? r.findings.slice(0, 400).replace(/\n/g, ' ') + '...'
-                    : r.findings.replace(/\n/g, ' ');
-                return `- ${r.topic}: ${snippet}`;
-            })
-            .join('\n');
-
-        if (!summaries) {
-            log('[Katab:research] Gap analysis skipped — no usable findings to analyze.');
-            return [];
-        }
-
-        // When the caller supplies missingAspects (from a failed quality check),
-        // target the follow-up queries specifically at those gaps instead of
-        // doing an open-ended coverage sweep.
-        let userContent = `Original question: "${originalQuery}"\n\nResearch findings so far:\n${summaries}\n\n`;
-        if (missingAspects && missingAspects.length > 0) {
-            userContent += 'The previous report was rated low because these aspects were missing or poorly covered:\n';
-            for (const aspect of missingAspects) {
-                userContent += `- ${aspect}\n`;
-            }
-            userContent += `\nGenerate follow-up search queries that specifically target these missing aspects ` +
-                `(up to ${QUALITY_RETRY_MAX_FOLLOWUP_QUERIES} queries). Output a JSON array.\n`;
-        } else {
-            userContent += 'What critical gaps remain? Output 0-2 follow-up search queries as a JSON array.\n';
-        }
-
-        const messages = [
-            { role: 'system', content: GAP_ANALYSIS_SYSTEM_PROMPT },
-            { role: 'user', content: userContent },
-        ];
-
-        try {
-            const response = await this._requestNonStreamingCompletion(messages, {
-                cancellable: this._cancellable,
-                maxTokens: GAP_ANALYSIS_MAX_TOKENS,
-                modelOverride: this._getDeepResearchRoleModel('synthesis'),
-            });
-
-            const queries = parsePlannerResponse(response); // Reuse planner JSON parser
-            if (queries && queries.length > 0) {
-                const cfgQueries = this._getEffectiveDeepResearchConfig().gapAnalysisMaxQueries;
-                const cap = missingAspects && missingAspects.length > 0
-                    ? Math.max(cfgQueries, QUALITY_RETRY_MAX_FOLLOWUP_QUERIES)
-                    : cfgQueries;
-                const capped = queries.slice(0, cap);
-                log(`[Katab:research] Gap analysis found ${capped.length} follow-up queries: ${capped.map(q => q.search_query).join(', ')}`);
-                // Store rationale for synthesis context
-                this._gapRationale = capped.map(q => `${q.rationale} → "${q.search_query}"`).join('; ');
-                return capped;
-            }
-
-            log('[Katab:research] Gap analysis complete — coverage is sufficient, no follow-up needed.');
-            return [];
-        } catch (e) {
-            if (this._isRequestCancelled(e)) throw e;
-            log(`[Katab:research] Gap analysis failed: ${e.message}`);
-            return [];
-        }
-    }
-
-    // ── Mid-Research Self-Critique ──────────────────────────────────────
+    // ── Research pipeline analysis phases ───────────────────────────────
+    // Gap analysis, mid-research re-planning critique, and the causal-chain
+    // check live in src/research/pipeline.js (analysis-phase LLM calls).
 
     /**
-     * Re-plan mid-research: evaluate completed findings against the original
-     * question and decide how to handle the REMAINING plan. Unlike the old
-     * critique (which only adjusted queries), this can keep/adjust, DROP
-     * redundant angles, and SPAWN new angles from discovered sub-topics —
-     * mirroring Google's "iterate" step and WebWeaver's iterative refinement.
-     *
-     * @param {Array} completedResults - Results from branches already run
-     * @param {Array} remainingPlan - Plan items still to execute
-     * @param {string} originalQuery
-     * @returns {Promise<{sufficient: boolean, contradictions: Array,
-     *   adjustments: Array, drop_indices: Array, new_branches: Array}>}
+     * Dependency bag for the extracted research pipeline functions
+     * (src/research/pipeline.js). Callers can merge extras (e.g. the
+     * depth-scaled gap-analysis caps) into the bag.
      */
-    async _runRePlanningCritique(completedResults, remainingPlan, originalQuery) {
-        const empty = { sufficient: false, contradictions: [], adjustments: [], drop_indices: [], new_branches: [] };
-        if (!completedResults || completedResults.length === 0) return empty;
-        if (!remainingPlan || remainingPlan.length === 0) return { ...empty, sufficient: true };
-
-        log(`[Katab:critique] Mid-research re-plan — ${completedResults.length} completed, ${remainingPlan.length} remaining.`);
-
-        // Compact summary of completed findings
-        const completedSummary = completedResults
-            .filter(r => r.findings && r.findings.length > 50)
-            .map(r => {
-                const s = r.findings.length > 300
-                    ? r.findings.slice(0, 300).replace(/\n/g, ' ') + '...'
-                    : r.findings.replace(/\n/g, ' ');
-                return `- ${r.topic}: ${s}`;
-            })
-            .join('\n');
-
-        const remainingList = remainingPlan
-            .map((t, i) => `${i}. ${t.sub_task} (query: "${t.search_query}")${t.evidence_needed ? ` — evidence needed: ${t.evidence_needed}` : ''}`)
-            .join('\n');
-
-        const messages = [
-            { role: 'system', content: MID_RESEARCH_CRITIQUE_SYSTEM_PROMPT },
-            {
-                role: 'user',
-                content: `MAIN QUESTION: "${originalQuery}"\n\nCOMPLETED FINDINGS:\n${completedSummary}\n\nREMAINING ANGLES:\n${remainingList}\n\nEvaluate and output JSON.`,
-            },
-        ];
-
-        try {
-            const response = await this._requestNonStreamingCompletion(messages, {
-                cancellable: this._cancellable,
-                maxTokens: MID_RESEARCH_CRITIQUE_MAX_TOKENS,
-                modelOverride: this._getDeepResearchRoleModel('synthesis'),
-            });
-
-            // Parse JSON response
-            const clean = String(response || '').trim();
-            let parsed;
-            try {
-                parsed = JSON.parse(clean);
-            } catch (_) {
-                // Try to extract JSON from markdown wrapping
-                const jsonMatch = clean.match(/\{[\s\S]*\}/);
-                if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-            }
-
-            if (parsed) {
-                const sufficient = !!parsed.sufficient;
-                log(`[Katab:critique] Sufficient: ${sufficient}, adjustments: ${(parsed.adjustments || []).length}, drops: ${(parsed.drop_indices || []).length}, spawns: ${(parsed.new_branches || []).length}`);
-                return {
-                    sufficient,
-                    contradictions: parsed.contradictions || [],
-                    adjustments: parsed.adjustments || [],
-                    drop_indices: (parsed.drop_indices || []).filter(i => Number.isInteger(i)),
-                    new_branches: (parsed.new_branches || []).filter(nb => nb && nb.search_query),
-                };
-            }
-
-            log('[Katab:critique] Failed to parse re-plan response — continuing.');
-            return empty;
-        } catch (e) {
-            if (this._isRequestCancelled(e)) throw e;
-            log(`[Katab:critique] Mid-research re-plan failed: ${e.message}`);
-            return empty;
-        }
-    }
-
-    /**
-     * Causal-chain dependency check. After gap analysis, verify that every
-     * intermediate concept the final answer depends on has a source. Returns
-     * additional targeted follow-up queries for any unsourced sub-claims.
-     *
-     * @param {Array} allFindings - Combined branch findings so far
-     * @param {string} originalQuery
-     * @returns {Promise<Array<{rationale: string, search_query: string}>>}
-     */
-    async _runCausalChainCheck(allFindings, originalQuery) {
-        if (!allFindings || allFindings.length === 0) return [];
-
-        log('[Katab:research] Running causal-chain dependency check...');
-
-        const summaries = allFindings
-            .filter(r => r.findings && r.findings.length > 50)
-            .map(r => {
-                const s = r.findings.length > 400
-                    ? r.findings.slice(0, 400).replace(/\n/g, ' ') + '...'
-                    : r.findings.replace(/\n/g, ' ');
-                return `- ${r.topic}: ${s}`;
-            })
-            .join('\n');
-
-        if (!summaries) return [];
-
-        const messages = [
-            { role: 'system', content: CAUSAL_CHAIN_SYSTEM_PROMPT },
-            {
-                role: 'user',
-                content: `MAIN QUESTION: "${originalQuery}"\n\nRESEARCH FINDINGS:\n${summaries}\n\nOutput a JSON array of follow-up queries.`,
-            },
-        ];
-
-        try {
-            const response = await this._requestNonStreamingCompletion(messages, {
-                cancellable: this._cancellable,
-                maxTokens: CAUSAL_CHAIN_MAX_TOKENS,
-                modelOverride: this._getDeepResearchRoleModel('synthesis'),
-            });
-            const queries = parsePlannerResponse(response);
-            if (queries && queries.length > 0) {
-                const capped = queries.slice(0, CAUSAL_CHAIN_MAX_QUERIES);
-                log(`[Katab:research] Causal-chain check found ${capped.length} unsourced dependency queries: ${capped.map(q => q.search_query).join(', ')}`);
-                return capped;
-            }
-            return [];
-        } catch (e) {
-            if (this._isRequestCancelled(e)) throw e;
-            log(`[Katab:research] Causal-chain check failed: ${e.message}`);
-            return [];
-        }
+    _pipelineHost(extra = {}) {
+        return {
+            requestCompletion: (messages, opts) => this._requestNonStreamingCompletion(messages, opts),
+            modelOverride: this._getDeepResearchRoleModel('synthesis'),
+            getCancellable: () => this._cancellable,
+            isCancelled: (e) => this._isRequestCancelled(e),
+            ...extra,
+        };
     }
 
     // ── Iterative Loop: Refinement Research ─────────────────────────────
