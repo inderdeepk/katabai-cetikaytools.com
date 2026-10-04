@@ -47,6 +47,15 @@ const STOPPABLE_STATES = new Set([
     REQUEST_STATES.SYNTHESIS,
 ]);
 
+// Post-enrichment working states — exactly the window where the dialog's
+// legacy `_isStreaming` boolean was true (a response is streaming / stopping).
+const RESPONDING_STATES = new Set([
+    REQUEST_STATES.AWAITING_MODEL,
+    REQUEST_STATES.TOOL_LOOP,
+    REQUEST_STATES.SYNTHESIS,
+    REQUEST_STATES.STOPPING,
+]);
+
 const SETTLED_STATES = new Set([
     REQUEST_STATES.IDLE,
     REQUEST_STATES.DONE,
@@ -75,7 +84,9 @@ const SETTLED_STATES = new Set([
  * finish(outcome='done'): active (incl. stopping) → done/error. Settled → ok
  *   false, no change (idempotent clear).
  *
- * Predicates: isActive() (includes stopping), canSend() (settled), canStop().
+ * Predicates: isActive() (includes stopping), isResponding() (streaming /
+ * stopping — parity with the legacy `_isStreaming` boolean), canSend()
+ * (settled), canStop().
  */
 export function createRequestLifecycle() {
     let state = REQUEST_STATES.IDLE;
@@ -104,6 +115,10 @@ export function createRequestLifecycle() {
 
         isActive() {
             return ACTIVE_STATES.has(state);
+        },
+
+        isResponding() {
+            return RESPONDING_STATES.has(state);
         },
 
         canSend() {

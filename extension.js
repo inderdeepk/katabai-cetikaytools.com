@@ -1446,19 +1446,15 @@ class KatabDialog {
         this._cancellable = null;
         this._retrySourceId = 0;
         this._isStreaming = false;
-        // Pre-stream re-entrancy guard.  _sendMessage may await slow enrichment
-        // (RAG auto search) BEFORE streaming begins, during which _isStreaming is
-        // still false.  Without this, hammering Enter while the RAG service hangs
-        // stacked concurrent sends that all fired at once when the timeout
-        // resolved.  Released when streaming begins (hand-off to _isStreaming).
-        this._sendInFlight = false;
+        // Phase-6 request lifecycle recorder. The pre-stream re-entrancy guard
+        // (slow KB/web enrichment BEFORE streaming begins) is now the
+        // lifecycle's ENRICHING phase: a new send is dropped while the state
+        // is not settled (see _sendMessage). The legacy _isStreaming boolean
+        // is still written for parity during the migration; divergence is
+        // logged as [Katab:lifecycle] state mismatch.
+        this._lifecycle = createRequestLifecycle();
         this._lastResponseErrored = false;
         this._activeResponseState = null;
-        // Phase-6 request lifecycle recorder (dual-run bookkeeping only — the
-        // legacy _isStreaming / _activeResponseState booleans remain
-        // authoritative until the migration completes; mismatches are logged
-        // as [Katab:lifecycle] state mismatch).
-        this._lifecycle = createRequestLifecycle();
         this._sendBtn = null;
         this._sendIcon = null;
 
@@ -1674,7 +1670,7 @@ class KatabDialog {
 
         let available = this.hasCurrentChat();
         let status = 'empty';
-        if (this._isStreaming) {
+        if (this._lifecycle.isResponding()) {
             status = 'replying';
         } else if (available && this.isOpen) {
             status = 'open';
@@ -1686,7 +1682,7 @@ class KatabDialog {
             available,
             conversationId: this._currentConversationId,
             isOpen: this.isOpen,
-            isStreaming: this._isStreaming,
+            isStreaming: this._lifecycle.isResponding(),
             hasError: this._lastResponseErrored,
             status,
             title: userMessage
@@ -1716,11 +1712,6 @@ class KatabDialog {
     }
 
     _setStreamingState(isStreaming) {
-        // Hand the pre-stream re-entrancy guard over to _isStreaming: once
-        // streaming begins (or a response fully ends) the next Enter press can
-        // stop the response or start a fresh send instead of being dropped.
-        this._sendInFlight = false;
-
         if (this._isStreaming === isStreaming) {
             return;
         }
@@ -2034,7 +2025,7 @@ class KatabDialog {
             return;
         }
 
-        if (this._isStreaming) {
+        if (this._lifecycle.isResponding()) {
             this._sendBtn.add_style_class_name('katab-send-btn-stop');
             this._sendIcon.icon_name = 'process-stop-symbolic';
             this._sendBtn.accessible_name = 'Stop Generating';
@@ -7483,7 +7474,7 @@ class KatabDialog {
             accessible_name: 'Send Message',
         });
         sendBtn.connect('clicked', () => {
-            if (this._isStreaming) {
+            if (this._lifecycle.isResponding()) {
                 this._stopActiveResponse();
             } else {
                 this._sendMessage();
@@ -9810,7 +9801,7 @@ class KatabDialog {
     // Manual "Summarize now" — folds everything older than the most recent
     // exchanges into the session memory regardless of the current budget.
     _summarizeNow() {
-        if (this._isStreaming) {
+        if (this._lifecycle.isResponding()) {
             this._addSystemMessage('Wait for the current response to finish before summarizing.', { variant: 'muted' });
             return;
         }
@@ -9822,7 +9813,7 @@ class KatabDialog {
     // generation + conversation-id guards ensure a stale update can't clobber
     // a conversation that changed while the LLM call was in flight.
     async _maybeCompactSessionMemory({ force = false } = {}) {
-        if (this._compactionInFlight || this._isStreaming) {
+        if (this._compactionInFlight || this._lifecycle.isResponding()) {
             return;
         }
         if (!Array.isArray(this._messageHistory) || this._messageHistory.length === 0) {
@@ -9927,7 +9918,7 @@ class KatabDialog {
             this._renderTokenCounter();
             log(`[Katab:memory] Session memory updated — folded ${toFold.length} earlier message(s) into a ${newMemory.length}-char summary.`);
 
-            if (!this._isStreaming) {
+            if (!this._lifecycle.isResponding()) {
                 this._addSystemMessage(
                     `Session memory updated — ${toFold.length} earlier turns summarized so the model keeps full context.`,
                     { variant: 'muted' }
@@ -11567,7 +11558,7 @@ class KatabDialog {
     _newChat() {
         // Stop any active response first — this saves the partial response
         // (if any) to history before we start a fresh conversation.
-        if (this._isStreaming) {
+        if (this._lifecycle.isResponding()) {
             this._stopActiveResponse();
         } else {
             this._cancelStream();
@@ -12843,7 +12834,7 @@ class KatabDialog {
             return;
         }
         // Stop any active stream before regenerating
-        if (this._isStreaming) {
+        if (this._lifecycle.isResponding()) {
             this._stopActiveResponse();
         }
         this._entry.set_text(promptText);
@@ -14332,7 +14323,7 @@ class KatabDialog {
             // state we armed at approval so the send button returns to "Send"
             // instead of staying stuck on "Stop" (which would drop the user's
             // next message).
-            if (!this._activeResponseState && this._isStreaming) {
+            if (!this._activeResponseState && this._lifecycle.isResponding()) {
                 this._clearActiveResponseState();
             }
         }
@@ -14624,7 +14615,7 @@ class KatabDialog {
         // conversation, don't auto-retry — _runSynthesisPhase →
         // _streamResponse(uiElements) would call _cancelStream and cancel the
         // user's new request.
-        if (this._isStreaming) {
+        if (this._lifecycle.isResponding()) {
             log('[Katab:quality] Skipping auto-retry — a new response is already active.');
             return;
         }
@@ -14696,7 +14687,7 @@ class KatabDialog {
             // 5. Re-synthesize a new report; the quality check will run again on it.
             //    The user may have started a new message while the retry research
             //    was running — don't clobber it (see guard at the top too).
-            if (this._isStreaming) {
+            if (this._lifecycle.isResponding()) {
                 log('[Katab:quality] Skipping re-synthesis — a new response is already active.');
                 return;
             }
@@ -16296,18 +16287,17 @@ class KatabDialog {
     }
 
     async _sendMessage() {
-        if (this._isStreaming) {
+        if (this._lifecycle.isResponding()) {
             this._stopActiveResponse();
             return;
         }
 
         // Re-entrancy guard: _sendMessage may await slow enrichment (RAG auto
-        // search) BEFORE streaming begins, during which _isStreaming is still
-        // false.  Without this, hammering Enter while the RAG service hangs
-        // stacked concurrent sends that all fired at once once the timeout
-        // resolved.  The flag is released when streaming begins or ends
-        // (see _setStreamingState).
-        if (this._sendInFlight) {
+        // search) BEFORE streaming begins, during which the lifecycle is in
+        // ENRICHING (not yet responding).  Without this, hammering Enter while
+        // the RAG service hangs stacked concurrent sends that all fired at
+        // once once the timeout resolved.
+        if (!this._lifecycle.canSend()) {
             log('[Katab] Send ignored — a send is already in flight (awaiting knowledge base / web enrichment).');
             return;
         }
@@ -16575,11 +16565,12 @@ class KatabDialog {
         // conversations, and research cache. Runs synchronously before the
         // message is sent; results are injected as context.
         //
-        // The enrichment below can await a slow local RAG service.  We mark the
-        // send as in-flight only AFTER all validation returns below, so a
-        // disabled KB / empty /kb query can't leave the guard stuck true.
-        // Released by _setStreamingState when streaming begins (hand-off to
-        // _isStreaming) or the response ends.
+        // The enrichment below can await a slow local RAG service.  We enter
+        // the ENRICHING phase only AFTER all validation returns below, so a
+        // disabled KB / empty /kb query can't leave the guard stuck busy.
+        // The stream's _beginActiveResponse then transitions ENRICHING →
+        // AWAITING_MODEL within the same request; an aborted send settles via
+        // _clearActiveResponseState.
 
         let knowledgeContext = null;
         // Captured when the auto KB-fallback web search actually returns results.
@@ -16608,11 +16599,11 @@ class KatabDialog {
                     this._addSystemMessage('Usage: /kb import "~/path/to/file-or-folder" — imports txt, md, pdf, docx, and eml files into the knowledge base.', { variant: 'info' });
                     return;
                 }
-                this._sendInFlight = true;
+                this._lifecycle.begin(REQUEST_STATES.ENRICHING);
                 try {
                     await this._handleKbImportCommand(kbImportMatch[1]);
                 } finally {
-                    this._sendInFlight = false;
+                    this._lifecycle.finish();
                 }
                 this._entry.set_text('');
                 this._draftUsage = 0;
@@ -16621,8 +16612,10 @@ class KatabDialog {
             }
 
             // The /kb search below can await a slow local RAG service — guard
-            // against Enter-stacking concurrent sends from this point on.
-            this._sendInFlight = true;
+            // against Enter-stacking concurrent sends from this point on
+            // (ENRICHING keeps canSend() false until the stream begins and
+            // names the response).
+            this._lifecycle.begin(REQUEST_STATES.ENRICHING);
 
             promptText = kbCommand.query;
             try {
@@ -16655,8 +16648,8 @@ class KatabDialog {
             // user pointed at an exact page, so the scraped content is the
             // authoritative source — a KB/web supplement would only add noise.
             // Guard against Enter-stacking concurrent sends while this awaits a
-            // possibly-slow local RAG service.
-            this._sendInFlight = true;
+            // possibly-slow local RAG service (lifecycle ENRICHING).
+            this._lifecycle.begin(REQUEST_STATES.ENRICHING);
             try {
                 const ragConfig = readRagConfig(this._settings);
                 if (ragConfig.enabled && this._ragHasContent !== false && !this._ragBackendKnownDown()) {

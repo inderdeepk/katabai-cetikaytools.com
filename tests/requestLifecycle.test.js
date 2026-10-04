@@ -20,6 +20,27 @@ const tests = [
         assert(lc.canSend(), 'can send');
         assert(!lc.canStop(), 'cannot stop');
         assert(!lc.isActive(), 'not active');
+        assert(!lc.isResponding(), 'not responding');
+    }],
+
+    ['isResponding: false during enrichment, true from awaiting-model onward', () => {
+        const lc = fresh();
+        lc.begin(S.ENRICHING, 'k1');
+        assert(lc.isActive(), 'enriching is active');
+        assert(!lc.isResponding(), 'enriching is not responding');
+        assert(!lc.canSend(), 'cannot send during enrichment');
+
+        lc.begin(S.AWAITING_MODEL, 'k1');
+        assert(lc.isResponding(), 'awaiting-model responds');
+        lc.markPhase(S.TOOL_LOOP);
+        assert(lc.isResponding(), 'tool-loop responds');
+        lc.markPhase(S.SYNTHESIS);
+        assert(lc.isResponding(), 'synthesis responds');
+        lc.stop();
+        assert(lc.isResponding(), 'stopping still responds');
+        lc.finish();
+        assert(!lc.isResponding(), 'done does not respond');
+        assert(lc.canSend(), 'can send after done');
     }],
 
     ['begin from idle starts a new request (generation bump)', () => {
