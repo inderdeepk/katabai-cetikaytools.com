@@ -5,11 +5,13 @@ import {
     CAUSAL_CHAIN_MAX_QUERIES,
     MID_RESEARCH_CRITIQUE_MAX_TOKENS,
     SYNTHESIS_OUTLINE_MAX_TOKENS,
+    SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS,
     RESEARCH_QUALITY_CHECK_MAX_TOKENS,
     runGapAnalysis,
     runRePlanningCritique,
     runCausalChainCheck,
     buildSynthesisOutline,
+    critiqueAndRefineOutline,
     runQualityCheck,
 } from '../src/research/pipeline.js';
 import { assert, assertEqual, runTests } from './testUtils.js';
@@ -279,6 +281,54 @@ const tests = [
         assertEqual(result.missingAspects.length, 0, 'missing aspects default');
         assertEqual(result.unsupportedClaims.length, 0, 'claims default');
         assertEqual(result.unverifiedCitations.length, 0, 'citations default');
+    }],
+
+    ['critiqueAndRefineOutline: invalid input short-circuits without an LLM call', async () => {
+        const { calls, host } = makeHost([]);
+        assertEqual(await critiqueAndRefineOutline(host, null, BRANCHES, 'q'), null, 'null outline');
+        assertEqual(await critiqueAndRefineOutline(host, { sections: [{ title: 'S' }] }, null, 'q'), null, 'null findings');
+        assertEqual(await critiqueAndRefineOutline(host, { sections: [{ title: 'S' }] }, [{ topic: 't', findings: 'tiny' }], 'q'), null, 'no usable summaries');
+        assertEqual(calls.length, 0, 'no LLM calls');
+    }],
+
+    ['critiqueAndRefineOutline: parses direct JSON and embeds query + draft outline', async () => {
+        const improved = JSON.stringify({ sections: [{ title: 'S1', key_claims: ['k'] }] });
+        const { calls, host } = makeHost([improved]);
+        const outline = { sections: [{ title: 'Old', key_claims: ['kc'], based_on: ['b'] }] };
+        const result = await critiqueAndRefineOutline(host, outline, BRANCHES, 'q2');
+        assertEqual(result.sections[0].title, 'S1', 'sections parsed');
+        assertEqual(calls[0].opts.maxTokens, SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS, 'token budget');
+        assertEqual(calls[0].opts.modelOverride, 'model-x', 'model override');
+        const content = calls[0].messages[1].content;
+        assert(content.includes(`USER'S QUESTION: "q2"`), 'query embedded');
+        assert(content.includes('CURRENT OUTLINE'), 'outline block');
+        assert(content.includes('kc'), 'key claims serialized');
+    }],
+
+    ['critiqueAndRefineOutline: extracts wrapped JSON; unusable responses yield null', async () => {
+        const wrapped = 'Here you go: {"sections": [{"title": "W"}]} done.';
+        const { host } = makeHost([wrapped]);
+        const extracted = await critiqueAndRefineOutline(host, { sections: [{ title: 'S' }] }, BRANCHES, 'q');
+        assertEqual(extracted.sections[0].title, 'W', 'wrapped JSON extracted');
+
+        const { host: emptyHost } = makeHost(['{"sections": []}']);
+        assertEqual(await critiqueAndRefineOutline(emptyHost, { sections: [{ title: 'S' }] }, BRANCHES, 'q'), null, 'empty sections → null');
+
+        const { host: junkHost } = makeHost(['no json at all']);
+        assertEqual(await critiqueAndRefineOutline(junkHost, { sections: [{ title: 'S' }] }, BRANCHES, 'q'), null, 'junk → null');
+    }],
+
+    ['critiqueAndRefineOutline: cancellation rethrows', async () => {
+        const cancelErr = new Error('stop');
+        cancelErr.isCancel = true;
+        const { host } = makeHost([cancelErr]);
+        let threw = false;
+        try {
+            await critiqueAndRefineOutline(host, { sections: [{ title: 'S' }] }, BRANCHES, 'q');
+        } catch (e) {
+            threw = e === cancelErr;
+        }
+        assert(threw, 'cancel must rethrow');
     }],
 ];
 

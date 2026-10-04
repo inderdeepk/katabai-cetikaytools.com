@@ -1,8 +1,9 @@
 // pipeline.js — Research pipeline analysis phases (LLM calls + parsing).
 //
 // Extracted from extension.js: gap analysis, the mid-research re-planning
-// critique, and the causal-chain dependency check. These are the
-// "analysis" phases between branch research and refinement/synthesis.
+// critique, the causal-chain dependency check, and the synthesis-outline
+// critique/refinement pass. These are the "analysis" phases between branch
+// research and refinement/synthesis.
 //
 // Host bag (see KatabDialog._pipelineHost):
 //   {
@@ -20,6 +21,7 @@ import {
     MID_RESEARCH_CRITIQUE_SYSTEM_PROMPT,
     RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT,
     SYNTHESIS_OUTLINE_SYSTEM_PROMPT,
+    SYNTHESIS_OUTLINE_CRITIQUE_PROMPT,
     parsePlannerResponse,
 } from './prompts.js';
 
@@ -28,6 +30,7 @@ export const CAUSAL_CHAIN_MAX_TOKENS = 512;
 export const CAUSAL_CHAIN_MAX_QUERIES = 3;
 export const MID_RESEARCH_CRITIQUE_MAX_TOKENS = 640;
 export const SYNTHESIS_OUTLINE_MAX_TOKENS = 1024;
+export const SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS = 512;
 export const RESEARCH_QUALITY_CHECK_MAX_TOKENS = 640;
 
 /**
@@ -442,6 +445,84 @@ export async function runQualityCheck(host, reportText, originalQuery, facts = [
     } catch (e) {
         // Fire-and-forget caller — swallow and log (NO cancellation rethrow).
         log(`[Katab:quality] Quality check failed: ${e.message}`);
+        return null;
+    }
+}
+
+/**
+ * Critique a draft outline against the research findings and return an
+ * improved outline (same JSON shape). Returns null when the critique LLM call
+ * fails or produces an unparseable outline, so the caller keeps the previous draft.
+ *
+ * @param {object} host see module header
+ * @param {Object} outline - { sections: [{title, key_claims, based_on}] }
+ * @param {Array} allFindings
+ * @param {string} originalQuery
+ * @returns {Promise<Object|null>}
+ */
+export async function critiqueAndRefineOutline(host, outline, allFindings, originalQuery) {
+    const {
+        requestCompletion,
+        modelOverride = undefined,
+        getCancellable = () => null,
+        isCancelled = () => false,
+    } = host;
+
+    if (!outline || !allFindings) return null;
+
+    // Compact serialized draft outline
+    const outlineText = outline.sections
+        .map((s, i) => `${i + 1}. ${s.title}\n   Key claims: ${(s.key_claims || []).join('; ') || '—'}\n   Based on: ${(s.based_on || []).join(', ') || '—'}`)
+        .join('\n');
+
+    // Compact findings summary
+    const findingSummaries = allFindings
+        .filter(r => r.findings && r.findings.length > 50)
+        .map(r => {
+            const snippet = r.findings.length > 500
+                ? r.findings.slice(0, 500).replace(/\n/g, ' ') + '...'
+                : r.findings.replace(/\n/g, ' ');
+            return `Topic "${r.topic}": ${snippet}`;
+        })
+        .join('\n\n');
+
+    if (!findingSummaries) return null;
+
+    const messages = [
+        { role: 'system', content: SYNTHESIS_OUTLINE_CRITIQUE_PROMPT },
+        {
+            role: 'user',
+            content: `USER'S QUESTION: "${originalQuery}"\n\nCURRENT OUTLINE:\n${outlineText}\n\nRESEARCH FINDINGS:\n${findingSummaries}\n\nReturn the improved outline as JSON.`,
+        },
+    ];
+
+    try {
+        const response = await requestCompletion(messages, {
+            cancellable: getCancellable(),
+            maxTokens: SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS,
+            modelOverride,
+        });
+        const clean = String(response || '').trim();
+        try {
+            const parsed = JSON.parse(clean);
+            if (parsed.sections && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
+                return parsed;
+            }
+        } catch (_) { /* not pure JSON */ }
+        const jsonMatch = clean.match(/\{[\s\S]*"sections"[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed.sections && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
+                    return parsed;
+                }
+            } catch (_) { /* invalid */ }
+        }
+        log('[Katab:outline] Critique parsing failed — keeping previous outline.');
+        return null;
+    } catch (e) {
+        if (isCancelled(e)) throw e;
+        log(`[Katab:outline] Outline critique failed: ${e.message}`);
         return null;
     }
 }
