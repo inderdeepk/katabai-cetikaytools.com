@@ -21189,6 +21189,43 @@ class KatabDialog {
         return result;
     }
 
+    _partitionToolCalls(toolCalls) {
+        // ── Partition tools by danger level for parallel/serial execution ──
+        // read_only tools (web_search, read_url, crawl_url) run in parallel.
+        // potentially_unsafe tools run sequentially after read_only tools.
+        const readOnlyCalls = [];
+        const unsafeCalls = [];
+        for (const tc of toolCalls) {
+            const toolName = tc.function?.name;
+            const tool = lookupTool(toolName);
+            if (tool && tool.dangerLevel === 'potentially_unsafe') {
+                unsafeCalls.push(tc);
+            } else {
+                readOnlyCalls.push(tc);
+            }
+        }
+        return { readOnlyCalls, unsafeCalls };
+    }
+
+    _recordAssistantToolTurn(activeProvider, toolCalls, reasoningContent, pendingMessages) {
+        // Record the assistant tool-call turn using each provider's required shape.
+        if (activeProvider === 'anthropic') {
+            const assistantBlocks = toolCalls.map((tc) => ({
+                type: 'tool_use',
+                id: tc.id,
+                name: tc.function?.name,
+                input: this._parseToolArguments(tc.function?.arguments),
+            }));
+            pendingMessages.push({ role: 'assistant', content: assistantBlocks });
+        } else {
+            const assistantToolMsg = { role: 'assistant', tool_calls: toolCalls };
+            if (activeProvider === 'deepseek') {
+                assistantToolMsg.reasoning_content = reasoningContent || '';
+            }
+            pendingMessages.push(assistantToolMsg);
+        }
+    }
+
     async _handleToolCalls(toolCalls, uiElements, reasoningContent = '', provider = null) {
         // Bail if the response UI this turn belongs to was torn down (new
         // chat / conversation load / stop) while tools were being processed —
@@ -21207,21 +21244,7 @@ class KatabDialog {
         const pendingMessages = [];
 
         // Record the assistant tool-call turn using each provider's required shape.
-        if (activeProvider === 'anthropic') {
-            const assistantBlocks = toolCalls.map((tc) => ({
-                type: 'tool_use',
-                id: tc.id,
-                name: tc.function?.name,
-                input: this._parseToolArguments(tc.function?.arguments),
-            }));
-            pendingMessages.push({ role: 'assistant', content: assistantBlocks });
-        } else {
-            const assistantToolMsg = { role: 'assistant', tool_calls: toolCalls };
-            if (activeProvider === 'deepseek') {
-                assistantToolMsg.reasoning_content = reasoningContent || '';
-            }
-            pendingMessages.push(assistantToolMsg);
-        }
+        this._recordAssistantToolTurn(activeProvider, toolCalls, reasoningContent, pendingMessages);
 
         const anthropicResultBlocks = [];
 
@@ -21229,20 +21252,7 @@ class KatabDialog {
         // we don't need healing on this turn.
         this._healingRetries = 0;
 
-        // ── Partition tools by danger level for parallel/serial execution ──
-        // read_only tools (web_search, read_url, crawl_url) run in parallel.
-        // potentially_unsafe tools run sequentially after read_only tools.
-        const readOnlyCalls = [];
-        const unsafeCalls = [];
-        for (const tc of toolCalls) {
-            const toolName = tc.function?.name;
-            const tool = lookupTool(toolName);
-            if (tool && tool.dangerLevel === 'potentially_unsafe') {
-                unsafeCalls.push(tc);
-            } else {
-                readOnlyCalls.push(tc);
-            }
-        }
+        const { readOnlyCalls, unsafeCalls } = this._partitionToolCalls(toolCalls);
 
         // ── Track search state across tool calls ──────────────────────────
         let totalWebSearchesThisTurn = this._totalWebSearchesThisTurn || 0;
