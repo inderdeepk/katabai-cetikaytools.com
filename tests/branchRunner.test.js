@@ -229,8 +229,9 @@ const tests = [
         const ctx = getGlobalContext();
         assertEqual(ctx.summaries.length, 2, 'summaries pushed');
         assertEqual(ctx.coveredUrls.size, 2, 'covered urls tracked');
-        // Second branch received cross-branch context (preserved legacy wiring).
-        assert(String(plan[1]._contextAware).includes('Cross-branch context'), 'context note set');
+        // The cross-branch mechanism is the covered-URL filter (asserted above);
+        // no per-task context note is attached (dead wiring removed).
+        assertEqual(plan[1]._contextAware, undefined, 'no dead context note attached');
         // Timeline entries were created per branch and search cards were attached.
         assertEqual(calls.timeline.length, 2, 'timeline entries');
         assertEqual(calls.searchCards.length, 2, 'search result cards attached');

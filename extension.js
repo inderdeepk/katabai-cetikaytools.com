@@ -14293,7 +14293,7 @@ class KatabDialog {
             // ══════════════════════════════════════════════════════════════════
             // PHASE 4: Two-Pass Synthesis (outline → streamed report)
             // ══════════════════════════════════════════════════════════════════
-            const synthesized = await this._runSynthesisPhase(allFindings, plan);
+            const synthesized = await this._runSynthesisPhase(allFindings);
             if (!synthesized) {
                 clearResearchCheckpoint();
             }
@@ -14337,10 +14337,9 @@ class KatabDialog {
      * can re-synthesize a fresh report from the same code path.
      *
      * @param {Array} allFindings - Combined branch + refinement findings
-     * @param {Array} [plan] - The research plan (kept for API compatibility)
      * @returns {Promise<boolean>} true when the report stream was kicked off
      */
-    async _runSynthesisPhase(allFindings, plan) {
+    async _runSynthesisPhase(allFindings) {
         if (!allFindings || allFindings.length === 0) return false;
 
         // Add synthesis phase marker and timeline entry
@@ -14379,7 +14378,7 @@ class KatabDialog {
         }
 
         // Build the synthesis prompt with ALL findings + outline
-        const synthesisPrompt = this._buildSynthesisPrompt(allFindings, plan || this._activeResearchPlan);
+        const synthesisPrompt = this._buildSynthesisPrompt(allFindings);
         const synthesisMsg = {
             role: 'user',
             content: synthesisPrompt,
@@ -14887,10 +14886,9 @@ class KatabDialog {
      * wrapper assembles the context object from dialog state.
      *
      * @param {Array} branchResults
-     * @param {Array} plan - legacy parameter, currently unused (kept for caller parity)
      * @returns {string}
      */
-    _buildSynthesisPrompt(branchResults, plan) {
+    _buildSynthesisPrompt(branchResults) {
         return buildSynthesisPrompt({
             branchResults,
             citationTracker: this._citationTracker,

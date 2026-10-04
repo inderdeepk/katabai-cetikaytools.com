@@ -348,19 +348,14 @@ export async function runResearchBranches(host, plan) {
             continue;
         }
 
-        // ── Inject cross-branch context for branches 2+ ─────────────
+        // ── Cross-branch awareness for branches 2+ ──────────────────
+        // Later branches benefit from prior work through the covered-URL
+        // filter in executeResearchBranch (already-crawled URLs are skipped
+        // so crawl budget goes to NEW sources). A legacy `_contextAware`
+        // note was once built here but never consumed — removed so the code
+        // reflects the real mechanism.
         if (i > 0 && globalContext.summaries.length > 0) {
-            const priorSummaries = globalContext.summaries
-                .map(s => `- ${s.topic}: ${s.gist}`)
-                .join('\n');
-            const coveredUrlsText = globalContext.coveredUrls.size > 0
-                ? `\nAlready crawled ${globalContext.coveredUrls.size} URLs — avoid re-crawling these.`
-                : '';
-            const contextNote = `[Cross-branch context — prior branches already covered:]\n${priorSummaries}${coveredUrlsText}\n\nFocus your remaining search on what is UNIQUE to this angle: "${task.sub_task}". Your search query:`;
-            // Append context to the search query so the model/runtime
-            // can prioritize novel URLs and avoid redundant work.
-            task._contextAware = contextNote;
-            log(`[Katab:research] Branch ${i + 1} receiving context from ${globalContext.summaries.length} prior branches`);
+            log(`[Katab:research] Branch ${i + 1} received cross-branch context from ${globalContext.summaries.length} prior branches`);
         }
 
         // ── Create timeline entry on-demand (progressive disclosure) ──
