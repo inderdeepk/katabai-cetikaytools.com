@@ -17,6 +17,7 @@ import Gio from 'gi://Gio';
 import Soup from 'gi://Soup';
 
 import { getCachedSearchResults, cacheSearchResults } from '../research/researchCache.js';
+import { readCappedBytes } from '../shared/httpBody.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -412,43 +413,12 @@ export class RagRuntime {
         }
     }
 
-    // Stream a response body into memory, refusing to exceed maxBytes (mirrors
-    // webSearchTools._readStreamBytes / crawl4aiTools._readCappedBytes).
+    // Shared capped-body reader (src/shared/httpBody.js).
     _readCappedBytes(inputStream, maxBytes, cancellable = null) {
-        return new Promise((resolve, reject) => {
-            const chunks = [];
-            let total = 0;
-
-            const readNext = () => {
-                inputStream.read_bytes_async(RAG_READ_CHUNK_BYTES, GLib.PRIORITY_DEFAULT, cancellable, (stream, result) => {
-                    try {
-                        const bytes = stream.read_bytes_finish(result);
-                        const data = bytes.get_data();
-                        if (!data || data.length === 0) {
-                            const combined = new Uint8Array(total);
-                            let offset = 0;
-                            for (const chunk of chunks) {
-                                combined.set(chunk, offset);
-                                offset += chunk.length;
-                            }
-                            try { inputStream.close(null); } catch (_e) { /* ignore */ }
-                            resolve(combined);
-                            return;
-                        }
-                        total += data.length;
-                        if (total > maxBytes) {
-                            try { inputStream.close(null); } catch (_e) { /* ignore */ }
-                            reject(new Error(`The response exceeds the ${Math.round(maxBytes / (1024 * 1024))} MB safety limit.`));
-                            return;
-                        }
-                        chunks.push(new Uint8Array(data));
-                        readNext();
-                    } catch (error) {
-                        reject(error);
-                    }
-                });
-            };
-            readNext();
+        return readCappedBytes(inputStream, {
+            maxBytes,
+            chunkBytes: RAG_READ_CHUNK_BYTES,
+            cancellable,
         });
     }
 

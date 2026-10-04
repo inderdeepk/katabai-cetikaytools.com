@@ -88,6 +88,10 @@ import {
     TOKEN_USAGE_RANGES,
     TokenUsageManager,
 } from './src/usage/tokenUsageManager.js';
+import {
+    DEEPSEEK_DEFAULT_PRICING_MODEL,
+    deepseekPricingForTimestamp,
+} from './src/usage/deepseekPricing.js';
 import { PetSpriteActor } from './src/pets/petSpriteActor.js';
 import {
     parsePetForm,
@@ -333,55 +337,9 @@ const DEEPSEEK_MAX_CONTEXT_TOKENS = 1000000;
 const DEEPSEEK_MAX_OUTPUT_TOKENS = 384000;
 const DEEPSEEK_INPUT_TOKEN_BUDGET = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_MAX_OUTPUT_TOKENS;
 const DEEPSEEK_CONTEXT_PREFIX_MESSAGES = 2;
-// DeepSeek billing rates (USD per 1M tokens) used to estimate how much prompt
-// caching saved on each reply.  DeepSeek bills separate off-peak and peak
-// rates: peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday through
-// Friday; all other hours are off-peak at half the peak rate.  Input tokens
-// split into cache "hit" vs "miss" rates.  The legacy `deepseek-v4-flash`
-// alias is retired and served by V4.1-Flash, so it shares Flash pricing.
-const DEEPSEEK_PRICING = {
-    'deepseek-flash': {
-        offPeak: { miss: 0.15, hit: 0.003, out: 0.60 },
-        peak: { miss: 0.30, hit: 0.006, out: 1.20 },
-    },
-    'deepseek-v4-flash': {
-        offPeak: { miss: 0.15, hit: 0.003, out: 0.60 },
-        peak: { miss: 0.30, hit: 0.006, out: 1.20 },
-    },
-    'deepseek-v4-pro': {
-        offPeak: { miss: 0.66, hit: 0.022, out: 1.98 },
-        peak: { miss: 1.32, hit: 0.044, out: 3.96 },
-    },
-};
-const DEEPSEEK_DEFAULT_PRICING_MODEL = 'deepseek-flash';
-const DEEPSEEK_PEAK_WINDOWS_UTC = [
-    { startHour: 1, endHour: 4 },
-    { startHour: 6, endHour: 10 },
-];
-
-// Whether a given epoch (ms) falls inside DeepSeek's peak billing window.
-function isDeepSeekPeakHour(epochMs = Date.now()) {
-    const d = new Date(epochMs);
-    const day = d.getUTCDay();
-    if (day === 0 || day === 6) {
-        return false;
-    }
-    const hour = d.getUTCHours();
-    return DEEPSEEK_PEAK_WINDOWS_UTC.some(window => hour >= window.startHour && hour < window.endHour);
-}
-
-// Resolve the effective DeepSeek rate card for a model id, falling back to the
-// default Flash card when the id is unknown.
-function deepseekPricingForModel(model) {
-    return DEEPSEEK_PRICING[model] || DEEPSEEK_PRICING[DEEPSEEK_DEFAULT_PRICING_MODEL];
-}
-
-// Resolve the rate card for the tier that was active at a given epoch (ms).
-function deepseekPricingForTimestamp(model, epochMs = Date.now()) {
-    const pricing = deepseekPricingForModel(model);
-    const tier = isDeepSeekPeakHour(epochMs) ? 'peak' : 'offPeak';
-    return { ...pricing[tier], tier };
-}
+// DeepSeek billing rates + tier helpers live in src/usage/deepseekPricing.js
+// (imported at the top of this file) so the chat cache-savings chip and the
+// token-usage ledger share a single rate card.
 // ── DeepSeek Vision Model (Image Support) ─────────────────────────────────
 // deepseek-flash (V4.1) accepts images natively, so no external vision model
 // is needed for Flash.  deepseek-v4-pro remains text-only, so when images are

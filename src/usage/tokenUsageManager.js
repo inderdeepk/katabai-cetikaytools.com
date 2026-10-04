@@ -22,6 +22,14 @@ import {
     PET_PROVIDERS,
     resolveActivePetForm,
 } from '../pets/petCollection.js';
+import {
+    DEEPSEEK_TIER_PRICING,
+    isDeepSeekPeakHour,
+    deepseekPricingForModel,
+    deepseekPricingForTimestamp,
+    estimateDeepSeekCost,
+    estimateDeepSeekCostFromTiers,
+} from './deepseekPricing.js';
 
 // ── Ranges ───────────────────────────────────────────────────────────────────
 
@@ -95,71 +103,18 @@ function pricingForModel(model, provider) {
     return DEFAULT_CLOUD_PRICING;
 }
 
-// ── DeepSeek tier-aware pricing (peak vs off-peak, cache hit vs miss) ────────
-// Peak hours are 01:00-04:00 and 06:00-10:00 UTC, Monday through Friday; all
-// other hours are off-peak at half the peak rate.  These numbers must stay in
-// sync with DEEPSEEK_PRICING in extension.js.
+// ── DeepSeek tier-aware pricing — re-exported from the shared module ────────
+// The rate card and cost helpers live in src/usage/deepseekPricing.js so the
+// extension (cache-savings chip) and this ledger can never drift apart.
 
-const DEEPSEEK_TIER_PRICING = {
-    'deepseek-flash': {
-        offPeak: { hit: 0.003, miss: 0.15, out: 0.60 },
-        peak: { hit: 0.006, miss: 0.30, out: 1.20 },
-    },
-    'deepseek-v4-flash': {
-        offPeak: { hit: 0.003, miss: 0.15, out: 0.60 },
-        peak: { hit: 0.006, miss: 0.30, out: 1.20 },
-    },
-    'deepseek-v4-pro': {
-        offPeak: { hit: 0.022, miss: 0.66, out: 1.98 },
-        peak: { hit: 0.044, miss: 1.32, out: 3.96 },
-    },
+export {
+    DEEPSEEK_TIER_PRICING,
+    isDeepSeekPeakHour,
+    deepseekPricingForModel,
+    deepseekPricingForTimestamp,
+    estimateDeepSeekCost,
+    estimateDeepSeekCostFromTiers,
 };
-
-const DEEPSEEK_PEAK_WINDOWS_UTC = [
-    { startHour: 1, endHour: 4 },
-    { startHour: 6, endHour: 10 },
-];
-
-export function isDeepSeekPeakHour(epochMs = Date.now()) {
-    const d = new Date(epochMs);
-    const day = d.getUTCDay();
-    if (day === 0 || day === 6) return false;
-    const hour = d.getUTCHours();
-    return DEEPSEEK_PEAK_WINDOWS_UTC.some(w => hour >= w.startHour && hour < w.endHour);
-}
-
-export function deepseekPricingForModel(model) {
-    const key = String(model || '').trim();
-    return DEEPSEEK_TIER_PRICING[key] || DEEPSEEK_TIER_PRICING['deepseek-flash'];
-}
-
-export function deepseekPricingForTimestamp(model, epochMs = Date.now()) {
-    const pricing = deepseekPricingForModel(model);
-    const tier = isDeepSeekPeakHour(epochMs) ? 'peak' : 'offPeak';
-    return { ...pricing[tier], tier };
-}
-
-export function estimateDeepSeekCost(model, promptTokens, completionTokens, { epochMs = Date.now(), cachedHitTokens = 0 } = {}) {
-    const prompt = Math.max(0, Number(promptTokens) || 0);
-    const completion = Math.max(0, Number(completionTokens) || 0);
-    const hit = Math.min(prompt, Math.max(0, Number(cachedHitTokens) || 0));
-    const { hit: hitRate, miss: missRate, out: outRate } = deepseekPricingForTimestamp(model, epochMs);
-    return (hit * hitRate + (prompt - hit) * missRate + completion * outRate) / 1_000_000;
-}
-
-export function estimateDeepSeekCostFromTiers(model, tiers) {
-    const pricing = deepseekPricingForModel(model);
-    let total = 0;
-    for (const tier of ['peak', 'offPeak']) {
-        const t = (tiers && tiers[tier]) || {};
-        const prompt = Math.max(0, Number(t.prompt) || 0);
-        const completion = Math.max(0, Number(t.completion) || 0);
-        const hit = Math.min(prompt, Math.max(0, Number(t.hit) || 0));
-        const rates = pricing[tier];
-        total += (hit * rates.hit + (prompt - hit) * rates.miss + completion * rates.out) / 1_000_000;
-    }
-    return total;
-}
 
 export function formatCost(usd) {
     if (usd === undefined || usd === null) return '—';

@@ -15,6 +15,7 @@ import {
     cacheSearchResults,
     getCachedSearchResults,
 } from '../research/researchCache.js';
+import { readCappedBytes } from '../shared/httpBody.js';
 
 export const WEB_SEARCH_TOOL_COMMAND = '/search';
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
@@ -1100,46 +1101,17 @@ export class WebSearchRuntime {
     }
 
     _readStreamBytes(inputStream, maxBytes, cancellable = null) {
-        return new Promise((resolve, reject) => {
-            const chunks = [];
-            let total = 0;
-
-            const readNext = () => {
-                inputStream.read_bytes_async(WEB_SEARCH_READ_CHUNK_BYTES, GLib.PRIORITY_DEFAULT, cancellable, (stream, result) => {
-                    try {
-                        const bytes = stream.read_bytes_finish(result);
-                        const data = bytes.get_data();
-                        if (!data || data.length === 0) {
-                            const combined = new Uint8Array(total);
-                            let offset = 0;
-                            for (const chunk of chunks) {
-                                combined.set(chunk, offset);
-                                offset += chunk.length;
-                            }
-                            try { inputStream.close(null); } catch (_error) { }
-                            resolve(new GLib.Bytes(combined));
-                            return;
-                        }
-
-                        total += data.length;
-                        if (total > maxBytes) {
-                            try { inputStream.close(null); } catch (_error) { }
-                            reject(new WebSearchToolError('The page is too large to read safely.', {
-                                code: 'response-too-large',
-                                detail: `Exceeded ${maxBytes} bytes`,
-                            }));
-                            return;
-                        }
-
-                        chunks.push(new Uint8Array(data));
-                        readNext();
-                    } catch (error) {
-                        reject(error);
-                    }
-                });
-            };
-
-            readNext();
+        // Thin wrapper over the shared capped reader, preserving this tool's
+        // contract: GLib.Bytes on success, WebSearchToolError on the cap.
+        return readCappedBytes(inputStream, {
+            maxBytes,
+            chunkBytes: WEB_SEARCH_READ_CHUNK_BYTES,
+            cancellable,
+            asBytes: true,
+            makeError: maxBytes => new WebSearchToolError('The page is too large to read safely.', {
+                code: 'response-too-large',
+                detail: `Exceeded ${maxBytes} bytes`,
+            }),
         });
     }
 
