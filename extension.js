@@ -138,22 +138,17 @@ import {
     parseOpenAiCompatChunk,
     parseAnthropicChunk,
     accumulateStreamingToolCalls,
-    extractOllamaMetrics,
     extractDeepSeekMetrics,
 } from './src/providers/streamParse.js';
 import {
     DEEP_RESEARCH_SYSTEM_INSTRUCTION,
-    CAUSAL_CHAIN_SYSTEM_PROMPT,
-    GAP_ANALYSIS_SYSTEM_PROMPT,
     SYNTHESIS_OUTLINE_SYSTEM_PROMPT,
     SYNTHESIS_OUTLINE_CRITIQUE_PROMPT,
-    MID_RESEARCH_CRITIQUE_SYSTEM_PROMPT,
     FORCE_SYNTHESIS_SYSTEM_INSTRUCTION,
     REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION,
     NO_RESULTS_SYNTHESIS_SYSTEM_INSTRUCTION,
     TOOL_CALL_HEALING_INSTRUCTION,
     RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT,
-    parsePlannerResponse,
     isSynthesisRegurgitation,
 } from './src/research/prompts.js';
 import {

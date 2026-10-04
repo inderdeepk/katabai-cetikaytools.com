@@ -7,7 +7,7 @@ import {
     buildSectionDraft,
     compressResearchBranch,
 } from '../src/research/compressionTools.js';
-import { assert, assertEqual, assertDeepEqual, runTests, createMockLlmCall } from './testUtils.js';
+import { assert, assertEqual, createMockLlmCall } from './testUtils.js';
 
 const tests = [
     // ── _slidingWindowChunk ─────────────────────────────────────────────────

@@ -12,7 +12,7 @@ import {
     DANGER_READ_ONLY,
     DANGER_POTENTIALLY_UNSAFE,
 } from '../src/tools/toolRegistry.js';
-import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
+import { assert, assertEqual, runTests } from './testUtils.js';
 
 // IMPORTANT: Import triggers registration — must be after clearRegistry
 // to avoid leftover state from other test files.

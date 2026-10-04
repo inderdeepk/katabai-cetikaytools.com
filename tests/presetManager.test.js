@@ -6,7 +6,7 @@ import {
     settingsMatchPreset,
     reconcileActivePreset,
 } from '../src/usage/presetManager.js';
-import { assert, assertEqual, assertDeepEqual, runTests, createMockSettings } from './testUtils.js';
+import { assert, assertEqual, runTests, createMockSettings } from './testUtils.js';
 
 const tests = [
     // ── PRESET_SETTINGS structure ──────────────────────────────────────────

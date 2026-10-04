@@ -8,7 +8,7 @@ import {
     annotateCitations,
     buildCitationSummary,
 } from '../src/research/citationTracker.js';
-import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
+import { assert, assertEqual, runTests } from './testUtils.js';
 
 const tests = [
     // ── createCitationTracker ───────────────────────────────────────────────

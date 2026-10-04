@@ -3,8 +3,6 @@ import Gio from 'gi://Gio';
 import Soup from 'gi://Soup';
 
 import {
-    isPrivateIPv4,
-    isBlockedIPv6,
     isBlockedHost,
     assertFetchableUrl as _assertFetchableUrlBase,
     getUrlHost,

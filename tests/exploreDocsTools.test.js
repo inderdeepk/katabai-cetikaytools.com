@@ -5,7 +5,7 @@ import {
     scoreLinksByQuery,
     EXPLORE_DOCS_TOOL_NAME,
 } from '../src/tools/exploreDocsTools.js';
-import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
+import { assert, assertEqual, runTests } from './testUtils.js';
 
 // ── Mock crawl runtime ───────────────────────────────────────────────────────
 // Implements just enough of Crawl4AIRuntime.crawl() to drive ExploreDocsRuntime

@@ -4,7 +4,7 @@ import {
     isBlockedIPv6,
     isBlockedHost,
 } from '../src/shared/networkGuard.js';
-import { assert, assertEqual, runTests } from './testUtils.js';
+import { assert, runTests } from './testUtils.js';
 
 const tests = [
     // ── isPrivateIPv4 ──────────────────────────────────────────────────────

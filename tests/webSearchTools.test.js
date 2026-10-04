@@ -9,7 +9,7 @@ import {
     buildReadUrlResultBlock,
     readWebSearchConfig,
 } from '../src/tools/webSearchTools.js';
-import { assert, assertEqual, assertDeepEqual, runTests, createMockSettings } from './testUtils.js';
+import { assert, assertEqual, runTests, createMockSettings } from './testUtils.js';
 
 const tests = [
     // ── needsExpansion ─────────────────────────────────────────────────────

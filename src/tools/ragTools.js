@@ -16,7 +16,6 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import Soup from 'gi://Soup';
 
-import { getCachedSearchResults, cacheSearchResults } from '../research/researchCache.js';
 import { readCappedBytes } from '../shared/httpBody.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
