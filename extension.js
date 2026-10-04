@@ -106,6 +106,13 @@ import {
 } from './src/tools/toolRegistry.js';
 import './src/tools/toolDefinitions.js'; // side-effect: registers all tool definitions
 import {
+    contentLooksLikeToolCalls,
+    parseTextToolCalls,
+    stillLooksLikeToolMarkup,
+    stripTruncatedToolCallMarkup,
+} from './src/core/toolCallMarkup.js';
+import { HistoryManager } from './src/core/historyManager.js';
+import {
     compressResearchBranch,
 } from './src/research/compressionTools.js';
 import {
@@ -714,7 +721,7 @@ const CONTRADICTION_NUMERIC_TOLERANCE = 0.15;        // 15% difference flags a c
 // strip the malformed markup, inject a correction prompt, and retry on the
 // SAME turn — without consuming a tool iteration.  After MAX_HEALING_RETRIES
 // exhaustion, we fall through to the standard truncated-XML-aware markup
-// stripping (_stripTruncatedToolCallMarkup).
+// stripping (stripTruncatedToolCallMarkup in src/core/toolCallMarkup.js).
 const MAX_HEALING_RETRIES = 3;
 const TOOL_CALL_HEALING_INSTRUCTION =
     '\n\n[SYSTEM NOTE: Your previous tool-call syntax was malformed. ' +
@@ -1433,147 +1440,8 @@ class ProviderHealthMonitor {
     }
 }
 
-class HistoryManager {
-    static _cache = null;
-    static _dirty = false;
-    static _flushSourceId = 0;
-    static FLUSH_DELAY_MS = 200;
-
-    static get filePath() {
-        return GLib.build_filenamev([
-            GLib.get_user_data_dir(), 'katabai', 'history.json'
-        ]);
-    }
-
-    static ensureDir() {
-        let dir = Gio.File.new_for_path(
-            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai'])
-        );
-        try {
-            dir.make_directory_with_parents(null);
-        } catch (_e) {
-            // already exists
-        }
-    }
-
-    static _readFromDisk() {
-        try {
-            let file = Gio.File.new_for_path(this.filePath);
-            let [, bytes] = file.load_contents(null);
-            const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes));
-            // Guard against a syntactically-valid but non-array file (external
-            // corruption) — otherwise every save throws on .findIndex/.filter.
-            this._cache = Array.isArray(parsed) ? parsed : [];
-        } catch (_e) {
-            this._cache = [];
-        }
-        return this._cache;
-    }
-
-    /** Returns the cached array (reads disk once on first access). */
-    static load() {
-        if (this._cache === null) {
-            this._readFromDisk();
-        }
-        return this._cache;
-    }
-
-    /** Returns the cached array without ever touching disk. */
-    static getCached() {
-        if (this._cache === null) {
-            this._readFromDisk();
-        }
-        return this._cache;
-    }
-
-    /** Marks cache dirty and schedules a debounced flush to disk. */
-    static _scheduleFlush() {
-        this._dirty = true;
-        if (this._flushSourceId) {
-            return;
-        }
-        this._flushSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this.FLUSH_DELAY_MS, () => {
-            this._flushSourceId = 0;
-            this._flushNow();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    /** Writes the cache to disk immediately (called by the flush timer). */
-    static _flushNow() {
-        if (!this._dirty || this._cache === null) {
-            return;
-        }
-        this._dirty = false;
-        try {
-            this.ensureDir();
-            let file = Gio.File.new_for_path(this.filePath);
-            let data = new TextEncoder().encode(JSON.stringify(this._cache, null, 2));
-            file.replace_contents(data, null, false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
-        } catch (e) {
-            log(`Katab: failed to save history: ${e.message}`);
-        }
-    }
-
-    /** Force an immediate disk flush. Call on disable/destroy. */
-    static flushSync() {
-        if (this._flushSourceId) {
-            GLib.source_remove(this._flushSourceId);
-            this._flushSourceId = 0;
-        }
-        this._flushNow();
-    }
-
-    /** Invalidate the in-memory cache so the next load() re-reads disk. */
-    static invalidateCache() {
-        this._cache = null;
-    }
-
-    static saveConversation(messageHistory, existingId = null) {
-        let userMsgs = messageHistory.filter(m => m.role === 'user');
-        if (userMsgs.length === 0) return null;
-
-        // Safely extract the title from the first user message, handling
-        // array content (Anthropic blocks) and non-string edge cases.
-        let firstContent = userMsgs[0].content;
-        let rawTitle = (typeof firstContent === 'string'
-            ? firstContent
-            : Array.isArray(firstContent)
-                ? firstContent.map(b => (b?.text || b?.content || '')).join(' ')
-                : String(firstContent ?? '')
-        ).replace(/\s*\n\s*/g, ' ').trim();
-        let title = rawTitle.slice(0, 60);
-        if (rawTitle.length > 60) title += '\u2026';
-
-        let id = existingId || `conv_${Date.now()}`;
-        let entry = {
-            id: id,
-            title: title,
-            timestamp: Math.floor(Date.now() / 1000),
-            messages: [...messageHistory],
-        };
-
-        // Use cache instead of re-reading disk — mutate in-place so that
-        // _flushNow writes the updated array. Array.filter() returns a new
-        // array, which would silently detach from this._cache.
-        let arr = this.load();
-        if (existingId) {
-            let idx = arr.findIndex(e => e.id === existingId);
-            if (idx >= 0) arr.splice(idx, 1);
-        }
-        arr.unshift(entry);
-        if (arr.length > 50) arr.length = 50;
-        this._scheduleFlush();
-        return id;
-    }
-
-    static deleteConversation(id) {
-        let arr = this.load();
-        this._cache = arr.filter(e => e.id !== id);
-        this._scheduleFlush();
-    }
-}
+// HistoryManager (history.json persistence with debounced writes) lives in
+// src/core/historyManager.js and is imported at the top of this file.
 
 class KatabDialog {
     constructor(extension) {
@@ -20120,7 +19988,7 @@ class KatabDialog {
                         if (responseState.accumulatedThink && !finalContent && effectiveToolCalls.length === 0) {
                             const knownNames = responseState._knownToolNames || [];
                             if (knownNames.length > 0) {
-                                const thinkTools = this._tryParseTextToolCalls(responseState.accumulatedThink, knownNames);
+                                const thinkTools = parseTextToolCalls(responseState.accumulatedThink, knownNames);
                                 if (thinkTools !== null && thinkTools.length > 0) {
                                     log(`[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content: ${thinkTools.map(tc => tc.function?.name).join(', ')}`);
                                     effectiveToolCalls = thinkTools;
@@ -20149,7 +20017,7 @@ class KatabDialog {
                         // response state by _streamResponse.
                         if (effectiveToolCalls.length === 0 && finalContent) {
                             const knownNames = responseState._knownToolNames || [];
-                            const parsed = this._tryParseTextToolCalls(finalContent, knownNames);
+                            const parsed = parseTextToolCalls(finalContent, knownNames);
                             if (parsed !== null && parsed.length > 0) {
                                 log(`[Katab] Text-based tool-call fallback recovered ${parsed.length} call(s): ${parsed.map(tc => tc.function?.name).join(', ')}`);
                                 effectiveToolCalls = parsed;
@@ -20162,7 +20030,7 @@ class KatabDialog {
                         if (effectiveToolCalls.length === 0 && finalContent) {
                             const knownNames = responseState._knownToolNames || [];
                             if (knownNames.length > 0 && responseState.accumulatedThink) {
-                                const thinkTools = this._tryParseTextToolCalls(responseState.accumulatedThink, knownNames);
+                                const thinkTools = parseTextToolCalls(responseState.accumulatedThink, knownNames);
                                 if (thinkTools !== null && thinkTools.length > 0) {
                                     log(`[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content (secondary scan): ${thinkTools.map(tc => tc.function?.name).join(', ')}`);
                                     effectiveToolCalls = thinkTools;
@@ -20240,7 +20108,7 @@ class KatabDialog {
                             // ── Synthesis fallback: handle degraded model output ─────
                             // DeepSeek V4 Pro under context pressure emits raw XML
                             // tool-call markup instead of prose.  Regex-based detection
-                            // (_contentLooksLikeToolCalls) is fragile because Unicode
+                            // (contentLooksLikeToolCalls) is fragile because Unicode
                             // whitespace characters (U+00A0, U+2009, etc.) survive the
                             // cleaning steps and break JavaScript's \s matching.
                             //
@@ -20256,7 +20124,7 @@ class KatabDialog {
                                 // Tools were NOT advertised.  Any tool-call XML is noise.
                                 // Strip first, then decide what to do with the remains.
                                 log(`[Katab:synthesis] Force-synthesis response received (${finalContent.length} chars) — stripping XML unconditionally.`);
-                                const stripped = this._stripTruncatedToolCallMarkup(finalContent);
+                                const stripped = stripTruncatedToolCallMarkup(finalContent);
                                 const strippedLen = stripped ? stripped.trim().length : 0;
                                 const strippedRatio = finalContent.length > 0
                                     ? strippedLen / finalContent.length
@@ -20268,7 +20136,7 @@ class KatabDialog {
                                 // misclassify it as 100% good prose and render
                                 // the raw XML as the answer.  Detect that and
                                 // fall through to the synthesis retry instead.
-                                const stillMarkup = this._stillLooksLikeToolMarkup(stripped || '');
+                                const stillMarkup = stillLooksLikeToolMarkup(stripped || '');
 
                                 if (!stillMarkup && strippedLen > 200 && strippedRatio > 0.15) {
                                     // Substantial prose remained after stripping.
@@ -20312,7 +20180,7 @@ class KatabDialog {
                                         ? 'DeepSeek was unable to synthesize a response after gathering information through tool calls. The context may have grown too large.\n\n**Suggestions:**\n- Start a new chat and rephrase your request to be more focused.\n- Break complex multi-step research into separate conversations.\n- Try DeepSeek Flash for tool-heavy tasks.'
                                         : 'The model was unable to synthesize a response. The context may have grown too large.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.\n- Break complex research into separate conversations.';
                                 }
-                            } else if (finalContent && this._contentLooksLikeToolCalls(finalContent)) {
+                            } else if (finalContent && contentLooksLikeToolCalls(finalContent)) {
                                 // ── Non-synthesis: normal tool-call markup recovery ──
                                 const healingRetries = this._healingRetries || 0;
                                 if (healingRetries < MAX_HEALING_RETRIES) {
@@ -20333,7 +20201,7 @@ class KatabDialog {
                                     return;
                                 }
                                 log(`[Katab:heal] Healing retries exhausted — stripping markup.`);
-                                const stripped = this._stripTruncatedToolCallMarkup(finalContent);
+                                const stripped = stripTruncatedToolCallMarkup(finalContent);
                                 if (stripped && stripped.trim().length > 20) {
                                     finalContent = stripped.trim()
                                         + '\n\n[Note: The model attempted to use tools in a malformed format.]';
@@ -20756,351 +20624,14 @@ class KatabDialog {
         return {};
     }
 
-    // Fallback parser: when a model (e.g. DeepSeek V4 Pro) outputs tool calls as
-    // text in the content field instead of using structured delta.tool_calls, try
-    // to recover them so tools still execute. Handles:
-    //   JSON  : {"name":"read_url","arguments":{"url":"https://..."}}
-    //   func  : read_url({"url":"https://..."})
-    //   XML   : <function>read_url</function> followed by key:value pairs
-    _tryParseTextToolCalls(text, knownToolNames) {
-        if (!text || typeof text !== 'string' || !knownToolNames || knownToolNames.length === 0) {
-            return null;
-        }
+    // Tool-call markup detection/parsing/stripping lives in
+    // src/core/toolCallMarkup.js (imported at the top of this file).
 
-        const results = [];
 
-        // ----- JSON-object format: {"name":"tool","arguments":{...}} -----
-        // Use a character-by-character scan to find balanced JSON objects that
-        // contain "name" and "arguments" keys referencing a known tool.
-        const jsonResults = this._extractJsonToolCalls(text, knownToolNames);
-        for (const tc of jsonResults) {
-            results.push(tc);
-        }
 
-        // ----- Function-call format: tool_name({...}) -----
-        if (results.length === 0) {
-            for (const toolName of knownToolNames) {
-                // Find tool_name followed by parenthesised JSON arguments
-                const escaped = toolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const re = new RegExp(
-                    escaped + '\\s*\\(\\s*(\\{(?:[^{}]|\\{[^{}]*\\})*\\})\\s*\\)',
-                    'g'
-                );
-                let match;
-                while ((match = re.exec(text)) !== null) {
-                    try {
-                        const args = JSON.parse(match[1]);
-                        results.push({
-                            id: `txt_${results.length}_${Date.now()}`,
-                            type: 'function',
-                            function: { name: toolName, arguments: JSON.stringify(args) },
-                        });
-                    } catch (_) {
-                        // Not valid JSON – skip this match
-                    }
-                }
-            }
-        }
 
-        // ----- XML-ish / tagged format -----
-        // Some models wrap tool calls in <function> or <tool_call> tags with
-        // key:value parameter pairs on subsequent lines.
-        if (results.length === 0) {
-            results.push(...this._extractXmlStyleToolCalls(text, knownToolNames));
-        }
 
-        return results.length > 0 ? results : null;
-    }
 
-    // Scan for balanced JSON objects that look like tool calls: must have "name"
-    // and "arguments" keys where name is a known tool.
-    _extractJsonToolCalls(text, knownToolNames) {
-        const results = [];
-        // Find every `{` that could start a JSON tool-call object
-        for (let i = 0; i < text.length; i++) {
-            if (text[i] !== '{') continue;
-            const slice = text.slice(i);
-            // Quick sanity: the object must mention a known tool name within the
-            // first ~200 chars (avoids deeply scanning every brace).
-            const head = slice.slice(0, 200);
-            const hasKnownName = knownToolNames.some(n => head.includes(`"${n}"`));
-            if (!hasKnownName) continue;
-
-            const extracted = this._extractBalancedJson(slice);
-            if (!extracted) continue;
-
-            try {
-                const obj = JSON.parse(extracted);
-                if (obj && typeof obj === 'object' && typeof obj.name === 'string'
-                    && knownToolNames.includes(obj.name) && obj.arguments !== undefined) {
-                    results.push({
-                        id: `txt_${results.length}_${Date.now()}`,
-                        type: 'function',
-                        function: {
-                            name: obj.name,
-                            arguments: typeof obj.arguments === 'string'
-                                ? obj.arguments
-                                : JSON.stringify(obj.arguments),
-                        },
-                    });
-                }
-            } catch (_) {
-                // Not parseable JSON – skip
-            }
-        }
-        return results;
-    }
-
-    // Extract a balanced JSON object string starting at position 0 of `slice`.
-    _extractBalancedJson(slice) {
-        if (!slice || slice[0] !== '{') return null;
-        let depth = 0;
-        let inString = false;
-        let escape = false;
-        for (let j = 0; j < slice.length; j++) {
-            const ch = slice[j];
-            if (escape) {
-                escape = false;
-                continue;
-            }
-            if (ch === '\\' && inString) {
-                escape = true;
-                continue;
-            }
-            if (ch === '"') {
-                inString = !inString;
-                continue;
-            }
-            if (inString) continue;
-            if (ch === '{') depth++;
-            else if (ch === '}') {
-                depth--;
-                if (depth === 0) return slice.slice(0, j + 1);
-            }
-        }
-        return null;
-    }
-
-    // Parse XML-style tool call blocks (e.g. <function>read_url</function>
-    // followed by <parameter>key</parameter><parameter>value</parameter> pairs).
-    // Also handles <invoke name="tool">, <tool_call name="tool">, and
-    // named-parameter styles: <parameter name="url">value</parameter>.
-    _extractXmlStyleToolCalls(text, knownToolNames) {
-        // Strip invisible/control characters before matching — degraded
-        // models embed zero-width spaces, bidi marks, etc. between angle
-        // brackets and tag names.  Without this, regexes like /<invoke/
-        // won't match the actual content.
-        const cleanText = text
-            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-            .replace(/[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g, '')
-            .replace(/[\u{E0000}-\u{E007F}]/gu, '')
-            .replace(/[\u2039\u2329\u27E8\u3008\uFE64\uFF1C]/g, '<')
-            .replace(/[\u203A\u232A\u27E9\u3009\uFE65\uFF1E]/g, '>')
-            .replace(/[\u201C\u201D\u201E\uFF02]/g, '"')
-            // Fullwidth vertical line (U+FF5C) — degraded models build fake
-            // tag prefixes like "<|DSML|tool_calls>" instead of "<tool_calls>".
-            // Collapse pipes, drop the invented |DSML| namespace, and remove a
-            // pipe directly before a tag name so the tool-call regexes match.
-            .replace(/\uFF5C+/g, '|')
-            .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '')
-            // Degraded models also mangle tags with a space after the angle
-            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
-            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
-            // Normalize the spacing so the tag-regexes below can match and
-            // remove these fragments instead of leaking them into the answer.
-            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
-            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
-
-        const results = [];
-
-        // ── Pattern 1: <function>TOOL</function> + <parameter> pairs ──
-        const funcRe = /<function>\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*<\/function>/g;
-        let match;
-        while ((match = funcRe.exec(cleanText)) !== null) {
-            const name = match[1];
-            if (!knownToolNames.includes(name)) continue;
-
-            const after = cleanText.slice(match.index + match[0].length);
-            const nextFunc = after.search(/<function>/i);
-            const scope = nextFunc >= 0 ? after.slice(0, nextFunc) : after;
-
-            const args = this._parseXmlParameters(scope);
-            if (!args) continue;
-
-            results.push({
-                id: `txt_${results.length}_${Date.now()}`,
-                type: 'function',
-                function: { name, arguments: JSON.stringify(args) },
-            });
-        }
-
-        // ── Pattern 2: <invoke name="TOOL"> or <tool_call name="TOOL"> ──
-        // These may contain nested <parameter name="key">value</parameter> tags.
-        const invokeRe = /<(?:invoke|tool_call)\s+name\s*=\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*>/g;
-        while ((match = invokeRe.exec(cleanText)) !== null) {
-            const name = match[1];
-            if (!knownToolNames.includes(name)) continue;
-
-            // Find matching closing tag in the CLEAN text.
-            const tagName = match[0].startsWith('<invoke') ? 'invoke' : 'tool_call';
-            const closeTag = `</${tagName}>`;
-            const startIdx = match.index + match[0].length;
-            const closeIdx = cleanText.indexOf(closeTag, startIdx);
-            const scope = closeIdx >= 0 ? cleanText.slice(startIdx, closeIdx) : cleanText.slice(startIdx, startIdx + 500);
-
-            const args = this._parseXmlParameters(scope);
-            if (!args) continue;
-
-            results.push({
-                id: `txt_${results.length}_${Date.now()}`,
-                type: 'function',
-                function: { name, arguments: JSON.stringify(args) },
-            });
-        }
-
-        return results;
-    }
-
-    // Parse parameter key:value pairs from an XML scope string. Handles:
-    //   <parameter>key</parameter><parameter>value</parameter>  (positional)
-    //   <parameter name="key">value</parameter>                  (named)
-    _parseXmlParameters(scope) {
-        // Try named-parameter style first: <parameter name="key">value</parameter>
-        const namedRe = /<parameter\s+name\s*=\s*"([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
-        let nm;
-        const named = {};
-        while ((nm = namedRe.exec(scope)) !== null) {
-            named[nm[1].trim()] = nm[2].trim();
-        }
-        if (Object.keys(named).length > 0) return named;
-
-        // Fall back to positional: <parameter>val1</parameter><parameter>val2</parameter>
-        const paramRe = /<parameter>\s*([\s\S]*?)\s*<\/parameter>/g;
-        const params = [];
-        let pm;
-        while ((pm = paramRe.exec(scope)) !== null) {
-            params.push(pm[1]);
-        }
-        if (params.length === 0) return null;
-
-        if (params.length % 2 === 0) {
-            const args = {};
-            for (let k = 0; k < params.length; k += 2) {
-                args[params[k]] = params[k + 1];
-            }
-            return args;
-        }
-
-        // Single param — treat as the first required arg
-        const schema = this._getToolParamSchemaForScope();
-        const firstKey = schema.length > 0 ? schema[0] : 'url';
-        return { [firstKey]: params[0] };
-    }
-
-    // Lightweight: get param schema without needing tool name (used by XML parser).
-    _getToolParamSchemaForScope() {
-        return ['url']; // conservative default for XML parameter recovery
-    }
-
-    // Detect whether content looks like raw tool-call markup that wasn't
-    // successfully parsed into structured calls.
-    //
-    // IMPORTANT: This must ONLY match explicit tool-call XML syntax, NOT
-    // casual mentions of tool names in prose.  A legitimate response about
-    // "web_search architecture" contains angle brackets from markdown and
-    // mentions tool names — that is NOT a malformed tool call.
-    //
-    // Specific patterns matched:
-    //   <function_calls> / <tool_calls> wrapper tags
-    //   <invoke name="web_search"> (with known tool name)
-    //   <parameter name="..."> inside an invoke context
-    //   Raw tool_name({...}) at the START of content (not in prose)
-    _contentLooksLikeToolCalls(content) {
-        if (!content || typeof content !== 'string') return false;
-
-        // Guard: if the content is large (>5000 chars) and has substantial
-        // prose (newlines/paragraphs), it's likely a legitimate response
-        // that happens to mention tool names — not raw tool-call markup.
-        // Raw tool-call XML from a degraded model is dense tags with no
-        // natural paragraph structure.
-        if (content.length > 5000) {
-            const paragraphCount = (content.match(/\n\n/g) || []).length;
-            const sentenceCount = (content.match(/[.!?]\s/g) || []).length;
-            // A legitimate response has paragraphs and sentences.
-            // Raw tool-call XML has neither.
-            if (paragraphCount >= 2 || sentenceCount >= 5) {
-                log(`[Katab:detect] Skipping — large prose response (${content.length} chars, ${paragraphCount} paras, ${sentenceCount} sentences)`);
-                return false;
-            }
-        }
-
-        // Strip ALL invisible/control characters including Unicode format
-        // chars, then normalize Unicode lookalikes of <, >, " to ASCII.
-        let cleaned = content
-            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-            .replace(/[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g, '')
-            .replace(/[\u{E0000}-\u{E007F}]/gu, '');  // Unicode tags block (needs u flag)
-
-        // Normalize Unicode angle-bracket and quote lookalikes to ASCII.
-        // Degraded models sometimes produce fullwidth or mathematical
-        // brackets / smart quotes instead of standard <, >, ", which
-        // breaks regex matching against tool-call patterns.
-        cleaned = cleaned
-            .replace(/[\u2039\u2329\u27E8\u3008\uFE64\uFF1C]/g, '<')
-            .replace(/[\u203A\u232A\u27E9\u3009\uFE65\uFF1E]/g, '>')
-            .replace(/[\u201C\u201D\u201E\uFF02]/g, '"')  // Smart/curly quotes → ASCII
-            // Fullwidth vertical line (U+FF5C) — degraded models build fake
-            // tag prefixes like "<|DSML|tool_calls>" instead of "<tool_calls>".
-            // Collapse pipes, drop the invented |DSML| namespace, and remove a
-            // pipe directly before a tag name so the tool-call regexes match.
-            .replace(/\uFF5C+/g, '|')
-            .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '')
-            // Degraded models also mangle tags with a space after the angle
-            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
-            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
-            // Normalize the spacing so the tag-regexes below can match.
-            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
-            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
-
-        // 1. Explicit wrapper tags — definitive signal of tool-call XML.
-        // ("calls" covers the mangled "< calls>" variant, normalized above.)
-        if (/<(function_calls|tool_calls|calls)>/i.test(cleaned)) {
-            log(`[Katab:detect] Found wrapper tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`);
-            return true;
-        }
-
-        // 2. Invoke tags with known tool names — model is trying to invoke a tool.
-        if (/<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(cleaned)) {
-            log(`[Katab:detect] Found invoke tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`);
-            return true;
-        }
-
-        // 3. Parameter tags in an invoke context — supplementary signal.
-        if (/<parameter\s/i.test(cleaned) && /<\/invoke>/i.test(cleaned)) {
-            log(`[Katab:detect] Found parameter+invoke in ${content.length}-char response`);
-            return true;
-        }
-
-        // 4. Raw function-call at the very START of content (not in prose).
-        const trimmedStart = cleaned.trimStart();
-        if (/^(?:web_search|read_url|crawl_url)\s*\(\s*\{/i.test(trimmedStart)) {
-            log(`[Katab:detect] Found raw function-call at start of response`);
-            return true;
-        }
-
-        // Debug: log what the cleaned content looks like when detection fails
-        // for short responses (potential false negatives).
-        if (content.length < 2000) {
-            const head = cleaned.slice(0, 120);
-            const m1 = /<(function_calls|tool_calls|calls)>/i.test(cleaned);
-            const m2 = /<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(cleaned);
-            const m3 = /<parameter\s/i.test(cleaned) && /<\/invoke>/i.test(cleaned);
-            log(`[Katab:detect] No tool-call patterns found in ${content.length}-char response. Match1=${m1} Match2=${m2} Match3=${m3} Cleaned start: ${head}`);
-        }
-        return false;
-    }
 
     // ── Synthesis quality: regurgitation detection ────────────────────────────
     // When DeepSeek V4 Pro is forced to synthesise under context pressure, it
@@ -21199,222 +20730,11 @@ class KatabDialog {
         return detected;
     }
 
-    // True if `text` still contains tool-call markup after an attempted strip.
-    // Degraded models emit obfuscated variants the tag regexes miss (fullwidth
-    // pipe fences, an invented "|DSML|" namespace prefix, invisible chars
-    // between tag letters, a space after the angle bracket, a dropped
-    // "tool_"/"function_" prefix), so normalize first, then look for known
-    // tool-call tag names inside angle brackets.
-    _stillLooksLikeToolMarkup(text) {
-        if (!text || typeof text !== 'string') return false;
-        const t = text
-            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-            .replace(/[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g, '')
-            .replace(/\uFF5C+/g, '|')
-            .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '')
-            // Degraded models also mangle tags with a space after the angle
-            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
-            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
-            // Normalize the spacing so the checks below can catch the residue.
-            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
-            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
-        return /<\/?\s*[a-zA-Z_][a-zA-Z0-9_]*\b[^>]*>/.test(t)
-            && /(?:tool_calls?|function_calls?|invoke|parameter|function|\bcalls\b|read_url|web_search|crawl_url|python|terminal)/i.test(t);
-    }
 
-    // Strip known tool-call markup patterns from text, extracting whatever
-    // natural-language content remains.  Used as a last-resort recovery when
-    // the model produces raw XML/JSON tool calls instead of a synthesized
-    // answer (typically due to context overflow / model degradation).
-    // NOTE: this balanced-tag-only variant is retained for reference — the
-    // live recovery paths use _stripTruncatedToolCallMarkup below, which
-    // handles both balanced and truncated XML plus a string-based fallback.
-    _stripToolCallMarkup(text) {
-        if (!text || typeof text !== 'string') return text;
 
-        let cleaned = text;
 
-        // Strip ALL invisible/control characters, then normalize Unicode
-        // lookalikes — same approach as _contentLooksLikeToolCalls.
-        cleaned = cleaned
-            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-            .replace(/[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g, '')
-            .replace(/[\u{E0000}-\u{E007F}]/gu, '')
-            .replace(/[\u2039\u2329\u27E8\u3008\uFE64\uFF1C]/g, '<')
-            .replace(/[\u203A\u232A\u27E9\u3009\uFE65\uFF1E]/g, '>')
-            .replace(/[\u201C\u201D\u201E\uFF02]/g, '"')
-            // Fullwidth vertical line (U+FF5C) — degraded models build fake
-            // tag prefixes like "<|DSML|tool_calls>" instead of "<tool_calls>".
-            // Collapse pipes, drop the invented |DSML| namespace, and remove a
-            // pipe directly before a tag name so the tool-call regexes match.
-            .replace(/\uFF5C+/g, '|')
-            .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '')
-            // Degraded models also mangle tags with a space after the angle
-            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
-            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
-            // Normalize the spacing so the tag-regexes below can match and
-            // remove these fragments instead of leaking them into the answer.
-            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
-            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
 
-        // Remove XML-style tool-call blocks: <function_calls>...</function_calls>,
-        // <tool_calls>...</tool_calls>, <invoke>...</invoke>.
-        cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '');
-        cleaned = cleaned.replace(/<tool_calls>[\s\S]*?<\/tool_calls>/gi, '');
-        cleaned = cleaned.replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, '');
-        cleaned = cleaned.replace(/<function>\s*\w+\s*<\/function>/gi, '');
-        cleaned = cleaned.replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, '');
-        cleaned = cleaned.replace(/<parameter\b[^>]*\/>/gi, '');
 
-        // Remove JSON tool-call objects: {"name":"web_search","arguments":{...}}
-        // Be careful not to remove legitimate JSON in the response.
-        cleaned = cleaned.replace(/\{[^{}]*"name"\s*:\s*"(?:web_search|read_url|crawl_url|python|terminal)"[^{}]*\}/gi, '');
-
-        // Remove function-call syntax: web_search({...}), read_url({...}), etc.
-        cleaned = cleaned.replace(/(?:web_search|read_url|crawl_url|python|terminal)\s*\(\s*\{[^{}]*\}\s*\)/gi, '');
-
-        // Remove stray angle-bracket fragments and leftover XML tag bits.
-        cleaned = cleaned.replace(/<\/?[a-zA-Z_][a-zA-Z0-9_]*(?:\s[^>]*)?\/?>/g, '');
-
-        // Compact whitespace.
-        cleaned = cleaned.replace(/[ \t\f\v]+/g, ' ');
-        cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-
-        return cleaned.trim();
-    }
-
-    // ── Aggressive tool-call markup stripping (handles truncated XML) ─────────
-    // DeepSeek V4 Pro under context pressure often emits tool-call XML that is
-    // TRUNCATED (no closing </invoke> tag) because the stream ends mid-output.
-    // The balanced-only stripper requires closing tags, so truncated XML
-    // survives it.  This variant handles both balanced and truncated XML by
-    // stripping opening tags and their content up to end-of-string when no
-    // closing tag is found.
-    _stripTruncatedToolCallMarkup(text) {
-        if (!text || typeof text !== 'string') return text;
-
-        let cleaned = text;
-
-        // Same Unicode/whitespace cleaning as the balanced XML stripper.
-        cleaned = cleaned
-            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-            .replace(/[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g, '')
-            .replace(/[\u{E0000}-\u{E007F}]/gu, '')
-            .replace(/[\u2039\u2329\u27E8\u3008\uFE64\uFF1C]/g, '<')
-            .replace(/[\u203A\u232A\u27E9\u3009\uFE65\uFF1E]/g, '>')
-            .replace(/[\u201C\u201D\u201E\uFF02]/g, '"')
-            // Fullwidth vertical line (U+FF5C) — degraded models build fake
-            // tag prefixes like "<|DSML|tool_calls>" instead of "<tool_calls>".
-            // Collapse pipes, drop the invented |DSML| namespace, and remove a
-            // pipe directly before a tag name so the tool-call regexes match.
-            .replace(/\uFF5C+/g, '|')
-            .replace(/\|DSML\|/gi, '')
-            .replace(/\|(?=[a-zA-Z_])/g, '')
-            // Degraded models also mangle tags with a space after the angle
-            // bracket ("< invoke", "</ parameter>", "< calls>") or drop a
-            // "tool_"/"function_" prefix ("< calls>" — seen Sept 2026).
-            // Normalize the spacing so the tag-regexes below can match and
-            // remove these fragments instead of leaking them into the answer.
-            .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
-            .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
-
-        // Remove balanced XML blocks (same stripping as above)
-        cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '');
-        cleaned = cleaned.replace(/<tool_calls>[\s\S]*?<\/tool_calls>/gi, '');
-        cleaned = cleaned.replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, '');
-        cleaned = cleaned.replace(/<function>\s*\w+\s*<\/function>/gi, '');
-        cleaned = cleaned.replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, '');
-        cleaned = cleaned.replace(/<parameter\b[^>]*\/>/gi, '');
-
-        // ── Handle TRUNCATED XML (no closing tag) ─────────────────────────
-        // Remove any remaining opening tags that have no matching close tag.
-        // These are fragments like "<invoke name="crawl_url">\n<parameter ..."
-        // 1. Remove orphaned <invoke ...> through end of string or next <tag
-        cleaned = cleaned.replace(/<invoke\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi, '');
-        // 2. Remove orphaned <function_calls> / <tool_calls> without close
-        cleaned = cleaned.replace(/<(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi, '');
-        // 3. Remove any remaining <parameter ...> lines
-        cleaned = cleaned.replace(/<parameter\b[^>]*>[\s\S]*?(?=\n|$)/gi, '');
-        // 4. Remove any remaining <function>tool_name</function> fragments
-        cleaned = cleaned.replace(/<function>\s*\w+\s*<\/function>/gi, '');
-
-        // Remove JSON tool-call objects
-        cleaned = cleaned.replace(/\{[^{}]*"name"\s*:\s*"(?:web_search|read_url|crawl_url|python|terminal)"[^{}]*\}/gi, '');
-        // Remove function-call syntax
-        cleaned = cleaned.replace(/(?:web_search|read_url|crawl_url|python|terminal)\s*\(\s*\{[^{}]*\}\s*\)/gi, '');
-
-        // Remove stray angle-bracket fragments
-        cleaned = cleaned.replace(/<\/?[a-zA-Z_][a-zA-Z0-9_]*(?:\s[^>]*)?\/?>/g, '');
-
-        // Compact whitespace
-        cleaned = cleaned.replace(/[ \t\f\v]+/g, ' ');
-        cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-
-        cleaned = cleaned.trim();
-
-        // ── String-based fallback (regex-resistant Unicode) ────────────────
-        // If the content still contains tool-call XML fragments (the regex
-        // engine may fail to match due to Unicode whitespace that survives
-        // all cleaning steps), use line-by-line string operations as a last
-        // resort.  This is O(n) but only runs when regex stripping was
-        // ineffective.
-        if (cleaned && (
-            cleaned.includes('<invoke') ||
-            cleaned.includes('<tool_call') ||
-            cleaned.includes('<function_call') ||
-            cleaned.includes('<parameter') ||
-            cleaned.includes('web_search(') ||
-            cleaned.includes('read_url(') ||
-            cleaned.includes('crawl_url(')
-        )) {
-            const lines = cleaned.split('\n');
-            const kept = [];
-            let skipUntilClose = false;
-
-            for (const line of lines) {
-                const trimmed = line.trim();
-
-                // Detect tool-call opening lines (any tag-like fragment)
-                if (/< *(?:invoke|tool_call|function_call|parameter|function)[ >]/i.test(trimmed)) {
-                    skipUntilClose = true;
-                    continue;
-                }
-                // Detect closing tag while skipping
-                if (skipUntilClose && /<\/ *(?:invoke|tool_call|function_call)>/i.test(trimmed)) {
-                    skipUntilClose = false;
-                    continue;
-                }
-                // Skip standalone closing tags
-                if (/<\/ *(?:invoke|tool_call|function_call)>/i.test(trimmed)) {
-                    continue;
-                }
-                // Skip lines that are purely tool-call arguments (JSON objects with tool names)
-                if (/^\s*\{[^}]*"(?:web_search|read_url|crawl_url|python|terminal)"/.test(trimmed)) {
-                    continue;
-                }
-                // Skip function-call syntax lines
-                if (/^\s*(?:web_search|read_url|crawl_url|python|terminal)\s*\(/.test(trimmed)) {
-                    continue;
-                }
-
-                if (!skipUntilClose && trimmed) {
-                    kept.push(line);
-                }
-            }
-
-            if (kept.length > 0) {
-                cleaned = kept.join('\n').trim();
-                log(`[Katab:strip] String-based fallback kept ${kept.length}/${lines.length} lines after regex stripping was ineffective.`);
-            } else {
-                cleaned = '';
-                log(`[Katab:strip] String-based fallback removed all ${lines.length} lines — content was entirely tool-call XML.`);
-            }
-        }
-
-        return cleaned;
-    }
 
     // ── Trim tool-call history before synthesis retry ────────────────────────
     // When the synthesis turn fails (tool-call XML or regurgitation), the model
