@@ -401,7 +401,7 @@ export function buildCrawlerSection(ctx) {
 
     const llmProviderRow = createStringRow(
         'LLM Provider',
-        'LiteLLM model identifier. Defaults to DeepSeek V4.1 Flash (deepseek/deepseek-flash). Must match the provider allowed on your Crawl4AI server \u2014 set LLM_PROVIDER=<same value> and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
+        'LiteLLM model identifier. Defaults to DeepSeek V4.1 Flash (deepseek/deepseek-flash). Must match the provider allowed on your Crawl4AI server \u2014 set LLM_PROVIDER=&lt;same value&gt; and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
         'crawl4ai-llm-provider',
         llmGroup,
     );

@@ -519,7 +519,7 @@ export function buildOllamaPage(ctx) {
     syncPresetRow();
 
     // Connection & Model
-    const connectionGroup = createPreferencesGroup({ title: 'Connection & Request Shape' });
+    const connectionGroup = createPreferencesGroup({ title: 'Connection &amp; Request Shape' });
     createStringRow(
         'Base URL',
         'The HTTP address where Ollama is hosted.',
@@ -686,7 +686,7 @@ export function buildOllamaPage(ctx) {
     ollamaPage.add(hardwareGroup);
 
     // Generation Options
-    const generationGroup = createPreferencesGroup({ title: 'Model Behavior & Sampling' });
+    const generationGroup = createPreferencesGroup({ title: 'Model Behavior &amp; Sampling' });
 
     const tempRow = createDoubleRow(
         'Temperature',

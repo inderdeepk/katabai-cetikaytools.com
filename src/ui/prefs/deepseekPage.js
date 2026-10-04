@@ -26,7 +26,7 @@ export function buildDeepSeekPage(ctx) {
     // --- DeepSeek Settings ---
     const deepseekPage = createProviderPage('deepseek');
 
-    const deepseekConnectionGroup = createPreferencesGroup({ title: 'Connection & Model' });
+    const deepseekConnectionGroup = createPreferencesGroup({ title: 'Connection &amp; Model' });
     createStringRow(
         'Base URL',
         'The DeepSeek API endpoint. Change only when routing through a compatible proxy.',

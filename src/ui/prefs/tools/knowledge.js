@@ -59,7 +59,7 @@ export function buildKnowledgeSection(ctx) {
         ),
     );
     setupExpander.subtitle =
-        'Prefer one-click? Use Set Up & Start in the Service section above. The steps below are the manual alternative.';
+        'Prefer one-click? Use Set Up &amp; Start in the Service section above. The steps below are the manual alternative.';
     noticeGroup.add(setupExpander);
 
     createInstructionRow(
@@ -328,7 +328,7 @@ export function buildKnowledgeSection(ctx) {
     const serviceGroup = createPreferencesGroup({
         title: 'Service',
         description:
-            'Control the local RAG service (the systemd user unit katabai-rag.service). "Set Up & Start" performs the default install \u2014 create the Python venv, install dependencies, write the unit file, and start the service \u2014 skipping any step already done and leaving an existing (custom) unit file untouched. Start, Restart, and Stop manage an already-installed unit.',
+            'Control the local RAG service (the systemd user unit katabai-rag.service). "Set Up &amp; Start" performs the default install \u2014 create the Python venv, install dependencies, write the unit file, and start the service \u2014 skipping any step already done and leaving an existing (custom) unit file untouched. Start, Restart, and Stop manage an already-installed unit.',
     });
     detailPage.add(serviceGroup);
 
@@ -413,8 +413,8 @@ export function buildKnowledgeSection(ctx) {
                 if (!installed) {
                     setStatusBadge(ragServiceBadge, 'Not installed', 'katab-prefs-status-install');
                     ragServiceStatusRow.subtitle = venvReady
-                        ? 'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up & Start" to create it and launch the service.'
-                        : 'No service is set up yet. Use "Set Up & Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).';
+                        ? 'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up &amp; Start" to create it and launch the service.'
+                        : 'No service is set up yet. Use "Set Up &amp; Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).';
                     updateServiceButtons(false, false);
                 } else if (active) {
                     setStatusBadge(ragServiceBadge, 'Running', 'katab-prefs-status-detected');
@@ -613,7 +613,7 @@ export function buildKnowledgeSection(ctx) {
 
     createInfoRow(
         'Service Controls',
-        'Set Up & Start performs the default install (Python venv, dependencies, and unit file) and starts the service, adapting to what is already present. Start, Restart, and Stop manage the installed unit.',
+        'Set Up &amp; Start performs the default install (Python venv, dependencies, and unit file) and starts the service, adapting to what is already present. Start, Restart, and Stop manage the installed unit.',
         serviceGroup,
         serviceButtons,
     );

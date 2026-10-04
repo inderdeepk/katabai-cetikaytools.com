@@ -11,7 +11,7 @@ export function buildSimpleProviderPages(ctx) {
 
     // --- Unsloth Settings ---
     const unslothPage = createProviderPage('unsloth');
-    const unslothGroup = createPreferencesGroup({ title: 'Connection & Model' });
+    const unslothGroup = createPreferencesGroup({ title: 'Connection &amp; Model' });
     createStringRow(
         'Base URL',
         'e.g. http://localhost:8888/v1 — the Unsloth Studio API root.',
@@ -54,7 +54,7 @@ export function buildSimpleProviderPages(ctx) {
         unslothToolsGroup,
     );
     const openaiPage = createProviderPage('openai');
-    const openaiGroup = createPreferencesGroup({ title: 'Connection & Model' });
+    const openaiGroup = createPreferencesGroup({ title: 'Connection &amp; Model' });
     createStringRow(
         'Base URL',
         'e.g. https://api.openai.com/v1 — change only when using a proxy or compatible endpoint.',
@@ -78,7 +78,7 @@ export function buildSimpleProviderPages(ctx) {
 
     // --- Anthropic Settings ---
     const anthropicPage = createProviderPage('anthropic');
-    const anthropicGroup = createPreferencesGroup({ title: 'Connection & Model' });
+    const anthropicGroup = createPreferencesGroup({ title: 'Connection &amp; Model' });
     createStringRow(
         'Base URL',
         'e.g. https://api.anthropic.com — change only when using a proxy.',
