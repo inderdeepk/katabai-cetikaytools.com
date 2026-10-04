@@ -196,15 +196,6 @@ const tests = [
         assertEqual(second.mode, 'dense', 'cached hit must keep the service-reported mode');
     }],
 
-    ['RagRuntime.deleteCollection clears search cache', async () => {
-        const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
-        runtime._searchCache.set('seed', { results: [], mode: 'dense', expires: Date.now() + 60000 });
-        runtime._request = async () => ({ status: 200, body: { ok: true } });
-        const out = await runtime.deleteCollection('documents', { serviceUrl: 'http://localhost:11435' });
-        assertEqual(out.ok, true);
-        assertEqual(runtime._searchCache.size, 0, 'deleting a collection must invalidate cached searches');
-    }],
-
     ['RagRuntime.index passes replace_ids', async () => {
         const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
         let captured = null;

@@ -1456,10 +1456,6 @@ export class Crawl4AIRuntime {
         return base.replace(/\/+$/, '');
     }
 
-    _buildCrawlPayload(urls, config) {
-        return buildCrawlPayload(urls, config);
-    }
-
     async _requestCrawl(endpoint, jsonBody, apiToken, validatedUrls, config, cancellable) {
         let bytes;
         try {
@@ -1494,14 +1490,6 @@ export class Crawl4AIRuntime {
 
     _parseCrawlResults(results, config) {
         return parseCrawlResults(results, config);
-    }
-
-    // Extract JSON XHR/Fetch responses from the network_requests array returned
-    // by Crawl4AI when capture_network_requests is enabled.  Keeps only JSON
-    // responses, deduplicates by URL, and caps total output at 24K chars.
-    // Returns a formatted string block or '' if nothing useful was found.
-    _parseNetworkRequests(networkRequests) {
-        return parseNetworkRequests(networkRequests);
     }
 
     async _validateDns(url, allowLocal, cancellable) {

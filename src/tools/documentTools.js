@@ -808,10 +808,6 @@ export class DocumentToolRuntime {
         }
     }
 
-    getCapabilities() {
-        return getDocumentToolCapabilities();
-    }
-
     async parseDocument(rawPath, cancellable = null) {
         const resolvedPath = resolveDocumentPath(rawPath);
         if (!resolvedPath) {

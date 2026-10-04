@@ -594,22 +594,6 @@ export class RagRuntime {
     }
 
     /**
-     * Delete a named ChromaDB collection.
-     * @param {string} name - Collection name to delete.
-     * @param {{ serviceUrl: string }} config
-     * @param {Gio.Cancellable|null} [cancellable]
-     * @returns {Promise<{ ok: boolean }>}
-     */
-    async deleteCollection(name, config, cancellable = null) {
-        const url = `${config.serviceUrl.replace(/\/+$/, '')}/collection/${encodeURIComponent(name)}`;
-        await this._request('DELETE', url, null, cancellable);
-        // Deleting a collection changes what a search can return — drop the
-        // short-lived query cache like the other mutating operations do.
-        this._searchCache.clear();
-        return { ok: true };
-    }
-
-    /**
      * Delete chunks by exact id, id prefix, or source_id (e.g. purge a deleted
      * conversation's memory).  Clears the query cache so deleted content is not
      * served from a recent cached result.
@@ -628,30 +612,5 @@ export class RagRuntime {
         }, cancellable);
         this._searchCache.clear();
         return { ok: Boolean(body?.ok), deleted: Number(body?.deleted || 0) };
-    }
-
-    /**
-     * Drop ALL ChromaDB collections, wiping the entire knowledge base.
-     * @param {{ serviceUrl: string }} config
-     * @param {Gio.Cancellable|null} [cancellable]
-     * @returns {Promise<{ ok: boolean, dropped: string[] }>}
-     */
-    async clearAll(config, cancellable = null) {
-        const url = `${config.serviceUrl.replace(/\/+$/, '')}/clear`;
-        const { body } = await this._request('POST', url, {}, cancellable);
-        this._searchCache.clear();
-        return { ok: body?.ok || false, dropped: body?.dropped || [] };
-    }
-
-    /**
-     * Export all indexed data as structured JSON.
-     * @param {{ serviceUrl: string }} config
-     * @param {Gio.Cancellable|null} [cancellable]
-     * @returns {Promise<{ collections: object }>}
-     */
-    async exportData(config, cancellable = null) {
-        const url = `${config.serviceUrl.replace(/\/+$/, '')}/export`;
-        const { body } = await this._request('GET', url, null, cancellable);
-        return { collections: body?.collections || {} };
     }
 }
