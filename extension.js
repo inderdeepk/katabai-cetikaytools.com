@@ -132,6 +132,15 @@ import {
     buildDeepSeekStreamRequest,
 } from './src/providers/chatRequest.js';
 import {
+    splitThinkingTags,
+    parseOllamaChunk,
+    parseOpenAiCompatChunk,
+    parseAnthropicChunk,
+    accumulateStreamingToolCalls,
+    extractOllamaMetrics,
+    extractDeepSeekMetrics,
+} from './src/providers/streamParse.js';
+import {
     MARKDOWN_SEGMENT_MAX_CHARS,
     buildAssistantRenderModel,
     formatInlineMarkdown,
@@ -10404,40 +10413,6 @@ class KatabDialog {
             .map(item => item.message);
     }
 
-    _numberOrNull(value) {
-        return typeof value === 'number' && Number.isFinite(value) ? value : null;
-    }
-
-    _extractOllamaMetrics(payload) {
-        let metrics = {
-            total_duration: this._numberOrNull(payload.total_duration),
-            load_duration: this._numberOrNull(payload.load_duration),
-            prompt_eval_count: this._numberOrNull(payload.prompt_eval_count),
-            prompt_eval_duration: this._numberOrNull(payload.prompt_eval_duration),
-            eval_count: this._numberOrNull(payload.eval_count),
-            eval_duration: this._numberOrNull(payload.eval_duration),
-        };
-
-        return Object.values(metrics).some(value => value !== null) ? metrics : null;
-    }
-
-    _extractDeepSeekMetrics(usageChunk) {
-        if (!usageChunk) {
-            return null;
-        }
-
-        let metrics = {
-            prompt_tokens: this._numberOrNull(usageChunk.prompt_tokens),
-            completion_tokens: this._numberOrNull(usageChunk.completion_tokens),
-            total_tokens: this._numberOrNull(usageChunk.total_tokens),
-            reasoning_tokens: this._numberOrNull(usageChunk.completion_tokens_details?.reasoning_tokens ?? null),
-            cached_tokens_hit: this._numberOrNull(usageChunk.prompt_cache_hit_tokens ?? null),
-            cached_tokens_miss: this._numberOrNull(usageChunk.prompt_cache_miss_tokens ?? null),
-        };
-
-        return Object.values(metrics).some(value => value !== null) ? metrics : null;
-    }
-
     _formatMetricNumber(value, fractionDigits = 1) {
         return Number(value)
             .toFixed(fractionDigits)
@@ -19744,12 +19719,13 @@ class KatabDialog {
 
                 if (provider === 'ollama' && lineStr.startsWith('{')) {
                     let parsed = JSON.parse(lineStr);
+                    const chunk = parseOllamaChunk(parsed);
                     // Handle Ollama mid-stream errors (context overflow, XML tool-call
-                    // rejection, model crash, etc.). Store the error on the response state
-                    // rather than overwriting accumulatedText — the stream-end handler
-                    // will decide how to surface it after trying text-based tool recovery.
-                    if (parsed.error) {
-                        const errMsg = typeof parsed.error === 'string' ? parsed.error : (parsed.error.message || 'Unknown Ollama error');
+                    // rejection, model crash, etc.). The error is stashed on the response
+                    // state rather than overwriting accumulatedText — the stream-end
+                    // handler will decide how to surface it after trying text-based tool recovery.
+                    if (chunk.error) {
+                        const errMsg = chunk.error;
                         log(`[Katab] Ollama mid-stream error: ${errMsg}`);
                         // Surface the error in the diagnostic box immediately.
                         if (uiElements.diagnosticBox && uiElements.diagnosticLabel) {
@@ -19764,32 +19740,27 @@ class KatabDialog {
                         this._readSSE(dataInputStream, responseState, provider, cancellable);
                         return;
                     }
-                    if (parsed.message) {
-                        if (parsed.message.content) {
-                            deltaText = parsed.message.content;
+                    if (chunk.text) {
+                        deltaText = chunk.text;
+                    }
+                    if (chunk.think) {
+                        responseState.usesSeparateThinkingStream = true;
+                        thinkWrapper.visible = true;
+                        responseState.accumulatedThink += chunk.think;
+                        thinkLabel.set_text(responseState.accumulatedThink);
+                    }
+                    if (chunk.toolCalls) {
+                        const firstDetection = responseState.accumulatedToolCalls.length === 0;
+                        for (let tc of chunk.toolCalls) {
+                            responseState.accumulatedToolCalls.push(tc);
                         }
-                        // Ollama returns the thinking trace in `message.thinking` (canonical
-                        // field name). Older or alternative model runners may use `message.reasoning`.
-                        let thinkText = parsed.message.thinking || parsed.message.reasoning;
-                        if (thinkText) {
-                            responseState.usesSeparateThinkingStream = true;
-                            thinkWrapper.visible = true;
-                            responseState.accumulatedThink += thinkText;
-                            thinkLabel.set_text(responseState.accumulatedThink);
-                        }
-                        if (parsed.message.tool_calls) {
-                            const firstDetection = responseState.accumulatedToolCalls.length === 0;
-                            for (let tc of parsed.message.tool_calls) {
-                                responseState.accumulatedToolCalls.push(tc);
-                            }
-                            // Log first tool-call detection so the user sees it immediately.
-                            if (firstDetection) {
-                                log(`[Katab] Ollama streaming tool call(s) detected: ${parsed.message.tool_calls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
-                            }
+                        // Log first tool-call detection so the user sees it immediately.
+                        if (firstDetection) {
+                            log(`[Katab] Ollama streaming tool call(s) detected: ${chunk.toolCalls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
                         }
                     }
-                    if (parsed.done === true) {
-                        let metrics = this._extractOllamaMetrics(parsed);
+                    if (chunk.done) {
+                        const metrics = chunk.metrics;
                         if (metrics) {
                             nextAssistantMeta = {
                                 provider: 'ollama',
@@ -19809,89 +19780,65 @@ class KatabDialog {
                     if (jsonStr && jsonStr !== '[DONE]') {
                         let parsed = JSON.parse(jsonStr);
                         if (provider === 'anthropic') {
-                            if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'tool_use') {
-                                if (!responseState._anthropicToolUse) {
-                                    responseState._anthropicToolUse = new Map();
+                            if (!responseState._anthropicToolUse) {
+                                responseState._anthropicToolUse = new Map();
+                            }
+                            const event = parseAnthropicChunk(parsed, responseState._anthropicToolUse);
+                            if (event.text) {
+                                deltaText = event.text;
+                            }
+                            if (event.completedToolCall) {
+                                const firstDetection = responseState.accumulatedToolCalls.length === 0;
+                                responseState.accumulatedToolCalls.push(event.completedToolCall);
+                                if (firstDetection) {
+                                    log(`[Katab] Anthropic streaming tool call detected: ${event.completedToolCall.function.name}`);
                                 }
-                                responseState._anthropicToolUse.set(parsed.index, {
-                                    id: parsed.content_block.id,
-                                    name: parsed.content_block.name,
-                                    argsJson: '',
-                                });
-                            } else if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'input_json_delta') {
-                                const toolBlock = responseState._anthropicToolUse?.get(parsed.index);
-                                if (toolBlock) {
-                                    toolBlock.argsJson += parsed.delta.partial_json || '';
-                                }
-                            } else if (parsed.type === 'content_block_delta' && parsed.delta && parsed.delta.text) {
-                                deltaText = parsed.delta.text;
-                            } else if (parsed.type === 'content_block_stop') {
-                                const toolBlock = responseState._anthropicToolUse?.get(parsed.index);
-                                if (toolBlock) {
-                                    let toolInput = {};
-                                    try {
-                                        toolInput = toolBlock.argsJson ? JSON.parse(toolBlock.argsJson) : {};
-                                    } catch (_e) {
-                                        toolInput = {};
-                                    }
-                                    const firstDetection = responseState.accumulatedToolCalls.length === 0;
-                                    responseState.accumulatedToolCalls.push({
-                                        id: toolBlock.id,
-                                        type: 'function',
-                                        function: { name: toolBlock.name, arguments: JSON.stringify(toolInput) },
-                                    });
-                                    if (firstDetection) {
-                                        log(`[Katab] Anthropic streaming tool call detected: ${toolBlock.name}`);
-                                    }
-                                }
-                            } else if (parsed.type === 'message_start' && parsed.message?.usage) {
+                            }
+                            if (event.promptTokens !== null) {
                                 // Anthropic reports prompt tokens up front on message_start.
                                 responseState._usageFromStream = {
                                     ...(responseState._usageFromStream || {}),
-                                    prompt_tokens: Number(parsed.message.usage.input_tokens) || 0,
+                                    prompt_tokens: event.promptTokens,
                                 };
-                            } else if (parsed.type === 'message_delta' && parsed.usage?.output_tokens !== undefined) {
+                            }
+                            if (event.outputTokens !== null) {
                                 // message_delta carries the cumulative output token count.
                                 responseState._usageFromStream = {
                                     ...(responseState._usageFromStream || {}),
-                                    completion_tokens: Number(parsed.usage.output_tokens) || 0,
+                                    completion_tokens: event.outputTokens,
                                 };
                             }
                         } else if (provider === 'deepseek') {
-                            if (parsed.choices && parsed.choices.length > 0) {
-                                let delta = parsed.choices[0].delta;
-                                if (delta) {
-                                    // reasoning_content arrives before content during thinking
-                                    if (delta.reasoning_content) {
-                                        responseState.usesSeparateThinkingStream = true;
-                                        thinkWrapper.visible = true;
-                                        responseState.accumulatedThink += delta.reasoning_content;
-                                        thinkLabel.set_text(responseState.accumulatedThink);
-                                        // Capture TTFT on the first reasoning chunk as well.
-                                        if (responseState._requestStartUs && !responseState._firstTokenUs) {
-                                            responseState._firstTokenUs = GLib.get_monotonic_time();
-                                        }
-                                    }
-                                    if (delta.content) {
-                                        deltaText = delta.content;
-                                        // Capture Time-to-First-Token on the first content-bearing chunk.
-                                        if (responseState._requestStartUs && !responseState._firstTokenUs) {
-                                            responseState._firstTokenUs = GLib.get_monotonic_time();
-                                        }
-                                    }
-                                    // DeepSeek streams tool-call fragments by index (OpenAI-compatible).
-                                    if (delta.tool_calls) {
-                                        const firstDetection = responseState.accumulatedToolCalls.length === 0;
-                                        this._accumulateStreamingToolCalls(responseState, delta.tool_calls);
-                                        if (firstDetection && responseState.accumulatedToolCalls.length > 0) {
-                                            log(`[Katab] DeepSeek streaming tool call(s) detected: ${responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
-                                        }
-                                    }
+                            const event = parseOpenAiCompatChunk(parsed);
+                            // reasoning_content arrives before content during thinking
+                            if (event.think) {
+                                responseState.usesSeparateThinkingStream = true;
+                                thinkWrapper.visible = true;
+                                responseState.accumulatedThink += event.think;
+                                thinkLabel.set_text(responseState.accumulatedThink);
+                                // Capture TTFT on the first reasoning chunk as well.
+                                if (responseState._requestStartUs && !responseState._firstTokenUs) {
+                                    responseState._firstTokenUs = GLib.get_monotonic_time();
+                                }
+                            }
+                            if (event.text) {
+                                deltaText = event.text;
+                                // Capture Time-to-First-Token on the first content-bearing chunk.
+                                if (responseState._requestStartUs && !responseState._firstTokenUs) {
+                                    responseState._firstTokenUs = GLib.get_monotonic_time();
+                                }
+                            }
+                            // DeepSeek streams tool-call fragments by index (OpenAI-compatible).
+                            if (event.toolCallFragments) {
+                                const firstDetection = responseState.accumulatedToolCalls.length === 0;
+                                accumulateStreamingToolCalls(responseState, event.toolCallFragments);
+                                if (firstDetection && responseState.accumulatedToolCalls.length > 0) {
+                                    log(`[Katab] DeepSeek streaming tool call(s) detected: ${responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
                                 }
                             }
                             // Final usage chunk (stream_options: {include_usage: true})
-                            if (parsed.usage) {
-                                let metrics = this._extractDeepSeekMetrics(parsed.usage);
+                            if (event.usage) {
+                                let metrics = extractDeepSeekMetrics(event.usage);
                                 if (metrics) {
                                     // Record which model produced this reply so the
                                     // cache-savings estimate stays accurate when the
@@ -19924,24 +19871,18 @@ class KatabDialog {
                             }
                         } else {
                             // OpenAI / Unsloth
-                            if (parsed.type === 'tool_result') {
-                                let toolContent = parsed.content || 'No output.';
-                                let toolName = parsed.tool_use_id || 'Tool';
-                                deltaText = `\n\n> **Server-side tool executed (${toolName})**:\n> \`\`\`\n> ${toolContent.split('\n').join('\n> ')}\n> \`\`\`\n\n`;
-                            } else if (parsed.choices && parsed.choices.length > 0) {
-                                let delta = parsed.choices[0].delta;
-                                if (delta) {
-                                    if (delta.content) {
-                                        deltaText = delta.content;
-                                    }
-                                    // OpenAI streams tool-call fragments by index; assemble them.
-                                    if (delta.tool_calls) {
-                                        const firstDetection = responseState.accumulatedToolCalls.length === 0;
-                                        this._accumulateStreamingToolCalls(responseState, delta.tool_calls);
-                                        if (firstDetection && responseState.accumulatedToolCalls.length > 0) {
-                                            log(`[Katab] OpenAI/Unsloth streaming tool call(s) detected: ${responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
-                                        }
-                                    }
+                            const event = parseOpenAiCompatChunk(parsed);
+                            if (event.serverToolResult) {
+                                deltaText = event.serverToolResult;
+                            } else if (event.text) {
+                                deltaText = event.text;
+                            }
+                            // OpenAI streams tool-call fragments by index; assemble them.
+                            if (event.toolCallFragments) {
+                                const firstDetection = responseState.accumulatedToolCalls.length === 0;
+                                accumulateStreamingToolCalls(responseState, event.toolCallFragments);
+                                if (firstDetection && responseState.accumulatedToolCalls.length > 0) {
+                                    log(`[Katab] OpenAI/Unsloth streaming tool call(s) detected: ${responseState.accumulatedToolCalls.map(tc => tc.function?.name).filter(Boolean).join(', ')}`);
                                 }
                             }
                         }
@@ -19966,37 +19907,16 @@ class KatabDialog {
                     if (responseState.usesSeparateThinkingStream && (provider === 'deepseek' || provider === 'ollama')) {
                         responseState.accumulatedText += deltaText;
                     } else {
-                        // Split the text based on tags
-                        let i = 0;
-                        while (i < deltaText.length) {
-                            // Handle inline thinking tags — <thinking>…</thinking>
-                            // and the shorter <think>…</think>. The previous
-                            // literals were corrupted to 'igid'/'igr', so
-                            // <thinking> output showed as raw text and a
-                            // <think>…</thinking> mismatch swallowed the reply.
-                            if (!responseState.isThinking) {
-                                const thinkingOpen = deltaText.startsWith('<thinking>', i);
-                                if (thinkingOpen || deltaText.startsWith('<think>', i)) {
-                                    responseState.isThinking = true;
-                                    thinkWrapper.visible = true;
-                                    i += thinkingOpen ? 10 : 7; // skip tag
-                                    continue;
-                                }
-                            } else {
-                                const thinkingClose = deltaText.startsWith('</thinking>', i);
-                                if (thinkingClose || deltaText.startsWith('</think>', i)) {
-                                    responseState.isThinking = false;
-                                    i += thinkingClose ? 11 : 8; // skip tag
-                                    continue;
-                                }
-                            }
-                            if (responseState.isThinking) {
-                                responseState.accumulatedThink += deltaText[i];
-                            } else {
-                                responseState.accumulatedText += deltaText[i];
-                            }
-                            i++;
+                        // Split the text based on inline thinking tags —
+                        // <thinking>…</thinking> and <think>…</think> — carrying
+                        // the thinking state across deltas (see streamParse.js).
+                        const split = splitThinkingTags(deltaText, responseState.isThinking);
+                        responseState.isThinking = split.isThinking;
+                        if (split.openedThinking) {
+                            thinkWrapper.visible = true;
                         }
+                        responseState.accumulatedThink += split.think;
+                        responseState.accumulatedText += split.text;
                     }
 
                     if (responseState.accumulatedThink) {
@@ -20238,42 +20158,6 @@ class KatabDialog {
         const removedCount = this._messageHistory.length - keepMessages.length;
         log(`[Katab:synthesis] Trimmed ${removedCount} tool-call history message(s) before synthesis retry — kept ${keepMessages.length} message(s).`);
         this._messageHistory = keepMessages;
-    }
-
-    _accumulateStreamingToolCalls(responseState, deltaToolCalls) {
-        if (!Array.isArray(deltaToolCalls)) {
-            return;
-        }
-        if (!responseState._toolCallsByIndex) {
-            responseState._toolCallsByIndex = new Map();
-        }
-
-        for (const tc of deltaToolCalls) {
-            const index = Number.isInteger(tc.index) ? tc.index : responseState._toolCallsByIndex.size;
-            let entry = responseState._toolCallsByIndex.get(index);
-            if (!entry) {
-                entry = { id: '', type: 'function', function: { name: '', arguments: '' } };
-                responseState._toolCallsByIndex.set(index, entry);
-            }
-            if (tc.id) {
-                entry.id = tc.id;
-            }
-            if (tc.type) {
-                entry.type = tc.type;
-            }
-            if (tc.function) {
-                if (tc.function.name) {
-                    entry.function.name = tc.function.name;
-                }
-                if (tc.function.arguments) {
-                    entry.function.arguments += tc.function.arguments;
-                }
-            }
-        }
-
-        responseState.accumulatedToolCalls = [...responseState._toolCallsByIndex.entries()]
-            .sort((a, b) => a[0] - b[0])
-            .map(([, value]) => value);
     }
 
     // Expand a single user query into a small set of diverse search queries using a
