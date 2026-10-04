@@ -4,9 +4,13 @@ import {
     CAUSAL_CHAIN_MAX_TOKENS,
     CAUSAL_CHAIN_MAX_QUERIES,
     MID_RESEARCH_CRITIQUE_MAX_TOKENS,
+    SYNTHESIS_OUTLINE_MAX_TOKENS,
+    RESEARCH_QUALITY_CHECK_MAX_TOKENS,
     runGapAnalysis,
     runRePlanningCritique,
     runCausalChainCheck,
+    buildSynthesisOutline,
+    runQualityCheck,
 } from '../src/research/pipeline.js';
 import { assert, assertEqual, runTests } from './testUtils.js';
 
@@ -173,6 +177,108 @@ const tests = [
             threw = true;
         }
         assert(threw, 'cancel rethrown');
+    }],
+
+    ['buildSynthesisOutline: empty or unusable findings skip the LLM call', async () => {
+        const { calls, host } = makeHost([]);
+        assertEqual(await buildSynthesisOutline(host, [], 'q'), null, 'empty findings');
+        assertEqual(await buildSynthesisOutline(host, [{ topic: 't', findings: 'tiny' }], 'q'), null, 'short findings');
+        assertEqual(calls.length, 0, 'no LLM calls');
+    }],
+
+    ['buildSynthesisOutline: direct JSON parse and prompt contents', async () => {
+        const outlineJson = JSON.stringify({ sections: [{ title: 'A', key_claims: ['x [1]'] }] });
+        const { calls, host } = makeHost([outlineJson]);
+        const outline = await buildSynthesisOutline(host, BRANCHES, 'how do widgets work');
+        assertEqual(outline.sections.length, 1, 'one section');
+        assertEqual(calls[0].opts.maxTokens, SYNTHESIS_OUTLINE_MAX_TOKENS, 'token budget');
+        const content = calls[0].messages[1].content;
+        assert(content.includes('how do widgets work'), 'query embedded');
+        assert(content.includes('Topic A'), 'topic embedded');
+    }],
+
+    ['buildSynthesisOutline: extracts sections from wrapped prose; bad shapes yield null', async () => {
+        const wrapped = 'Here is the outline:\n{"sections": [{"title": "B"}]}\nDone.';
+        const { host } = makeHost([wrapped]);
+        const outline = await buildSynthesisOutline(host, BRANCHES, 'q');
+        assertEqual(outline.sections[0].title, 'B', 'extracted from prose');
+
+        const { host: badHost } = makeHost(['{"notSections": []}', '{"sections": "nope"}']);
+        assertEqual(await buildSynthesisOutline(badHost, BRANCHES, 'q'), null, 'missing sections');
+        assertEqual(await buildSynthesisOutline(badHost, BRANCHES, 'q'), null, 'non-array sections');
+    }],
+
+    ['buildSynthesisOutline: errors yield null, cancellation rethrows', async () => {
+        const { host } = makeHost([new Error('x')]);
+        assertEqual(await buildSynthesisOutline(host, BRANCHES, 'q'), null, 'graceful null');
+
+        const cancelErr = new Error('stop');
+        cancelErr.isCancel = true;
+        const { host: cancelHost } = makeHost([cancelErr]);
+        let threw = false;
+        try {
+            await buildSynthesisOutline(cancelHost, BRANCHES, 'q');
+        } catch (_e) {
+            threw = true;
+        }
+        assert(threw, 'cancel rethrown');
+    }],
+
+    ['runQualityCheck: parses the two-axis shape and embeds facts', async () => {
+        const payload = JSON.stringify({
+            coverage_score: 2,
+            groundedness_score: 1,
+            missing_aspects: ['aspect one'],
+            unsupported_claims: ['claim x', ''],
+            unverified_citations: ['[3]'],
+        });
+        const facts = [{ claim: 'claim one', url: 'https://a.example' }, { claim: 'claim two' }];
+        const { calls, host } = makeHost([payload]);
+        const result = await runQualityCheck(host, 'The report text is long enough.', 'orig q', facts);
+        assertEqual(result.coverage, 2, 'coverage');
+        assertEqual(result.groundedness, 1, 'groundedness');
+        assertEqual(result.missingAspects.length, 1, 'missing aspects');
+        assertEqual(result.unsupportedClaims.join(','), 'claim x', 'empty strings filtered');
+        assertEqual(result.unverifiedCitations.join(','), '[3]', 'citations kept');
+        assertEqual(calls[0].opts.maxTokens, RESEARCH_QUALITY_CHECK_MAX_TOKENS, 'token budget');
+        const content = calls[0].messages[1].content;
+        assert(content.includes('- claim one [https://a.example]'), 'fact with url');
+        assert(content.includes('- claim two'), 'fact without url');
+    }],
+
+    ['runQualityCheck: legacy score fallback, no-facts block, report truncation', async () => {
+        const legacy = JSON.stringify({ score: 4, groundedness_score: 3, missing_aspects: [] });
+        const { calls, host } = makeHost([legacy]);
+        const report = 'R'.repeat(6500) + 'TAILMARKER';
+        const result = await runQualityCheck(host, report, 'q', []);
+        assertEqual(result.coverage, 4, 'legacy score used');
+        const content = calls[0].messages[1].content;
+        assert(content.includes('(none provided)'), 'no-facts block');
+        assert(!content.includes('TAILMARKER'), 'report truncated at 6000');
+    }],
+
+    ['runQualityCheck: unusable responses and errors yield null (errors are swallowed)', async () => {
+        const { host } = makeHost(['no json here']);
+        assertEqual(await runQualityCheck(host, 'report', 'q', []), null, 'no score → null');
+
+        const { host: emptyHost } = makeHost(['{"groundedness_score": 5}']);
+        assertEqual(await runQualityCheck(emptyHost, 'report', 'q', []), null, 'coverage missing → null');
+
+        // Fire-and-forget caller: even a cancel-like error must NOT rethrow.
+        const cancelErr = new Error('stop');
+        cancelErr.isCancel = true;
+        const { host: errHost } = makeHost([cancelErr]);
+        const result = await runQualityCheck(errHost, 'report', 'q', []);
+        assertEqual(result, null, 'swallowed, no rethrow');
+    }],
+
+    ['runQualityCheck: non-array fields default to empty', async () => {
+        const payload = JSON.stringify({ coverage_score: 5, groundedness_score: 5, missing_aspects: 'x', unsupported_claims: {}, unverified_citations: null });
+        const { host } = makeHost([payload]);
+        const result = await runQualityCheck(host, 'report', 'q', []);
+        assertEqual(result.missingAspects.length, 0, 'missing aspects default');
+        assertEqual(result.unsupportedClaims.length, 0, 'claims default');
+        assertEqual(result.unverifiedCitations.length, 0, 'citations default');
     }],
 ];
 

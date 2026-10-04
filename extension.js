@@ -142,13 +142,11 @@ import {
 } from './src/providers/streamParse.js';
 import {
     DEEP_RESEARCH_SYSTEM_INSTRUCTION,
-    SYNTHESIS_OUTLINE_SYSTEM_PROMPT,
     SYNTHESIS_OUTLINE_CRITIQUE_PROMPT,
     FORCE_SYNTHESIS_SYSTEM_INSTRUCTION,
     REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION,
     NO_RESULTS_SYNTHESIS_SYSTEM_INSTRUCTION,
     TOOL_CALL_HEALING_INSTRUCTION,
-    RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT,
     isSynthesisRegurgitation,
 } from './src/research/prompts.js';
 import {
@@ -159,6 +157,8 @@ import {
     runGapAnalysis,
     runRePlanningCritique,
     runCausalChainCheck,
+    buildSynthesisOutline,
+    runQualityCheck,
 } from './src/research/pipeline.js';
 import {
     MARKDOWN_SEGMENT_MAX_CHARS,
@@ -421,7 +421,6 @@ const RESEARCH_PROGRESS_WRITING = 'writing';       // Final report phase
 // ALL findings (original + refinement) feed into a two-pass synthesis.
 const GAP_ANALYSIS_MAX_FOLLOWUP_QUERIES = 2;
 const REFINEMENT_CRAWL_COUNT = 2;          // Fewer than branch crawl (3) — refinement is fast
-const SYNTHESIS_OUTLINE_MAX_TOKENS = 1024;
 const SYNTHESIS_OUTLINE_REFINEMENT_TURNS = 2;          // WebWeaver refines >2x; 2 is a solid budget
 const SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS = 512;
 const DEFAULT_DEEPSEEK_SYSTEM_PROMPT = `Reply in the same language as the most recent user message unless the user explicitly asks you to switch languages. Do not default to Chinese unless the user asks for Chinese. ${WEB_CONTENT_SAFETY_SYSTEM_PROMPT}`;
@@ -527,7 +526,6 @@ const MAX_HEALING_RETRIES = 3;
 // The quality gate scores the report on TWO independent axes and, when coverage
 // is insufficient, auto-iterates the research loop (extended test-time compute)
 // by targeting the missing aspects with new research — up to the retry budget.
-const RESEARCH_QUALITY_CHECK_MAX_TOKENS = 640;
 const QUALITY_CHECK_SCORE_THRESHOLD = 3;               // coverage below this triggers auto-retry
 const QUALITY_CHECK_GROUNDEDNESS_THRESHOLD = 3;        // groundedness below this shows a warning
 const MAX_QUALITY_RETRY_ITERATIONS = 2;                // extra research passes after the first report
@@ -14504,95 +14502,38 @@ class KatabDialog {
         const cfg = this._getEffectiveDeepResearchConfig();
         log(`[Katab:quality] Running post-synthesis quality check (retry ${this._qualityRetryCount}/${cfg.maxQualityRetries})...`);
 
-        // Build a capped fact list so the evaluator can ground claims against
-        // the actual evidence gathered during research.
-        const allFacts = this._collectResearchFacts();
-        const factsBlock = allFacts.length > 0
-            ? '\n\nRESEARCH FACTS (ground the report against these):\n' +
-            allFacts.slice(0, 60).map(f =>
-                `- ${f.claim.slice(0, 200)}${f.url ? ` [${f.url}]` : ''}`
-            ).join('\n')
-            : '\n\nRESEARCH FACTS: (none provided)';
+        // The LLM call + response parsing live in src/research/pipeline.js;
+        // this method keeps the warning/retry orchestration.
+        const result = await runQualityCheck(this._pipelineHost(), reportText, originalQuery, this._collectResearchFacts());
+        if (!result) return;
+        this._qualityCheckResult = result;
 
-        const messages = [
-            { role: 'system', content: RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT },
-            {
-                role: 'user',
-                content: `USER'S QUESTION: "${originalQuery}"\n\nREPORT:\n${reportText.slice(0, 6000)}${factsBlock}\n\nRate the report and output JSON.`,
-            },
-        ];
+        // Groundedness failure = fabrication/overreach risk for THIS report.
+        // Show a verification warning when the coarse score is low OR specific
+        // unsupported claims / bad citations were flagged. This does not block
+        // a coverage retry — the two axes are independent, and a fresh report
+        // is re-checked.
+        const groundednessFlagged = (result.groundedness !== null && result.groundedness < QUALITY_CHECK_GROUNDEDNESS_THRESHOLD)
+            || result.unsupportedClaims.length > 0
+            || result.unverifiedCitations.length > 0;
+        if (groundednessFlagged) {
+            this._showGroundednessWarning(this._qualityCheckResult);
+        }
 
-        try {
-            const response = await this._requestNonStreamingCompletion(messages, {
-                cancellable: this._cancellable,
-                maxTokens: RESEARCH_QUALITY_CHECK_MAX_TOKENS,
-                modelOverride: this._getDeepResearchRoleModel('synthesis'),
-            });
-
-            const clean = String(response || '').trim();
-            let parsed;
-            try {
-                parsed = JSON.parse(clean);
-            } catch (_) {
-                const jsonMatch = clean.match(/\{[\s\S]*\}/);
-                if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-            }
-
-            // Accept the new two-axis shape, and fall back to the legacy single
-            // `score` field so older check prompts still work.
-            const coverage = parsed && (typeof parsed.coverage_score === 'number'
-                ? parsed.coverage_score
-                : (typeof parsed.score === 'number' ? parsed.score : null));
-            const groundedness = parsed && typeof parsed.groundedness_score === 'number'
-                ? parsed.groundedness_score
-                : null;
-            const missingAspects = parsed && Array.isArray(parsed.missing_aspects)
-                ? parsed.missing_aspects
-                : [];
-            const unsupportedClaims = parsed && Array.isArray(parsed.unsupported_claims)
-                ? parsed.unsupported_claims.map(String).filter(Boolean)
-                : [];
-            const unverifiedCitations = parsed && Array.isArray(parsed.unverified_citations)
-                ? parsed.unverified_citations.map(String).filter(Boolean)
-                : [];
-
-            if (coverage === null) {
-                log('[Katab:quality] No usable score parsed — skipping quality gate.');
-                return;
-            }
-
-            log(`[Katab:quality] coverage=${coverage}/5 groundedness=${groundedness ?? 'n/a'}/5 missing=${missingAspects.length} unsupported=${unsupportedClaims.length} badCites=${unverifiedCitations.length}`);
-            this._qualityCheckResult = { coverage, groundedness, missingAspects, unsupportedClaims, unverifiedCitations };
-
-            // Groundedness failure = fabrication/overreach risk for THIS report.
-            // Show a verification warning when the coarse score is low OR specific
-            // unsupported claims / bad citations were flagged. This does not block
-            // a coverage retry — the two axes are independent, and a fresh report
-            // is re-checked.
-            const groundednessFlagged = (groundedness !== null && groundedness < QUALITY_CHECK_GROUNDEDNESS_THRESHOLD)
-                || unsupportedClaims.length > 0
-                || unverifiedCitations.length > 0;
-            if (groundednessFlagged) {
-                this._showGroundednessWarning(this._qualityCheckResult);
-            }
-
-            // Coverage insufficient = the report missed aspects. Auto-iterate the
-            // research loop by targeting the missing aspects with new research,
-            // unless the retry budget is exhausted (then show the manual option).
-            if (coverage < cfg.qualityThreshold && missingAspects.length > 0) {
-                if (this._qualityRetryCount < cfg.maxQualityRetries) {
-                    this._autoRetryResearch(missingAspects).catch(e => {
-                        if (this._isRequestCancelled(e)) return;
-                        log(`[Katab:quality] Auto-retry research failed: ${e.message || e}`);
-                        this._showQualityCheckNotice(this._qualityCheckResult);
-                    });
-                } else {
-                    log(`[Katab:quality] Retry budget exhausted (${cfg.maxQualityRetries}) — showing manual continue option.`);
+        // Coverage insufficient = the report missed aspects. Auto-iterate the
+        // research loop by targeting the missing aspects with new research,
+        // unless the retry budget is exhausted (then show the manual option).
+        if (result.coverage < cfg.qualityThreshold && result.missingAspects.length > 0) {
+            if (this._qualityRetryCount < cfg.maxQualityRetries) {
+                this._autoRetryResearch(result.missingAspects).catch(e => {
+                    if (this._isRequestCancelled(e)) return;
+                    log(`[Katab:quality] Auto-retry research failed: ${e.message || e}`);
                     this._showQualityCheckNotice(this._qualityCheckResult);
-                }
+                });
+            } else {
+                log(`[Katab:quality] Retry budget exhausted (${cfg.maxQualityRetries}) — showing manual continue option.`);
+                this._showQualityCheckNotice(this._qualityCheckResult);
             }
-        } catch (e) {
-            log(`[Katab:quality] Quality check failed: ${e.message}`);
         }
     }
 
@@ -15965,7 +15906,7 @@ class KatabDialog {
      * @returns {Promise<Object|null>} { sections: [...] } or null on failure
      */
     async _generateAndRefineOutline(allFindings, originalQuery) {
-        let outline = await this._buildSynthesisOutline(allFindings, originalQuery);
+        let outline = await buildSynthesisOutline(this._pipelineHost(), allFindings, originalQuery);
         if (!outline || !outline.sections || outline.sections.length === 0) {
             log('[Katab:outline] No initial outline — skipping refinement.');
             return outline;
@@ -16071,74 +16012,6 @@ class KatabDialog {
      * @param {string} originalQuery
      * @returns {Promise<Object|null>} { sections: [...] } or null on failure
      */
-    async _buildSynthesisOutline(allFindings, originalQuery) {
-        if (!allFindings || allFindings.length === 0) return null;
-
-        log('[Katab:synthesis] Pass 1: Generating report outline...');
-
-        // Compact summaries for the outline prompt
-        const findingSummaries = allFindings
-            .filter(r => r.findings && r.findings.length > 50)
-            .map(r => {
-                const snippet = r.findings.length > 500
-                    ? r.findings.slice(0, 500).replace(/\n/g, ' ') + '...'
-                    : r.findings.replace(/\n/g, ' ');
-                return `Topic "${r.topic}": ${snippet}\nSources: ${(r.sources || []).join(', ') || 'none'}`;
-            })
-            .join('\n\n');
-
-        if (!findingSummaries) {
-            log('[Katab:synthesis] Outline skipped — no findings to synthesize.');
-            return null;
-        }
-
-        const messages = [
-            { role: 'system', content: SYNTHESIS_OUTLINE_SYSTEM_PROMPT },
-            {
-                role: 'user',
-                content: `USER'S QUESTION: "${originalQuery}"\n\nALL RESEARCH FINDINGS:\n${findingSummaries}\n\nGenerate a structured outline for the final report. Output as JSON.`,
-            },
-        ];
-
-        try {
-            const response = await this._requestNonStreamingCompletion(messages, {
-                cancellable: this._cancellable,
-                maxTokens: SYNTHESIS_OUTLINE_MAX_TOKENS,
-                modelOverride: this._getDeepResearchRoleModel('synthesis'),
-            });
-
-            // Parse the JSON outline
-            const clean = String(response || '').trim();
-            // Try direct parse
-            try {
-                const parsed = JSON.parse(clean);
-                if (parsed.sections && Array.isArray(parsed.sections)) {
-                    log(`[Katab:synthesis] Outline generated — ${parsed.sections.length} sections.`);
-                    return parsed;
-                }
-            } catch (_) { /* not pure JSON */ }
-
-            // Try to find JSON object in the response
-            const jsonMatch = clean.match(/\{[\s\S]*"sections"[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    const parsed = JSON.parse(jsonMatch[0]);
-                    if (parsed.sections && Array.isArray(parsed.sections)) {
-                        log(`[Katab:synthesis] Outline extracted — ${parsed.sections.length} sections.`);
-                        return parsed;
-                    }
-                } catch (_) { /* invalid */ }
-            }
-
-            log('[Katab:synthesis] Outline parsing failed — proceeding without outline.');
-            return null;
-        } catch (e) {
-            if (this._isRequestCancelled(e)) throw e;
-            log(`[Katab:synthesis] Outline generation failed: ${e.message}`);
-            return null;
-        }
-    }
-
     // ── Research Timeline (Narrative Deep Research UI) ────────────────────
     // The timeline replaces the old flat progress card with a chronological,
     // narrative-style display that reads out what the model is doing actively.

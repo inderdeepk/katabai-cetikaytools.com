@@ -18,6 +18,8 @@ import {
     CAUSAL_CHAIN_SYSTEM_PROMPT,
     GAP_ANALYSIS_SYSTEM_PROMPT,
     MID_RESEARCH_CRITIQUE_SYSTEM_PROMPT,
+    RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT,
+    SYNTHESIS_OUTLINE_SYSTEM_PROMPT,
     parsePlannerResponse,
 } from './prompts.js';
 
@@ -25,6 +27,8 @@ export const GAP_ANALYSIS_MAX_TOKENS = 512;
 export const CAUSAL_CHAIN_MAX_TOKENS = 512;
 export const CAUSAL_CHAIN_MAX_QUERIES = 3;
 export const MID_RESEARCH_CRITIQUE_MAX_TOKENS = 640;
+export const SYNTHESIS_OUTLINE_MAX_TOKENS = 1024;
+export const RESEARCH_QUALITY_CHECK_MAX_TOKENS = 640;
 
 /**
  * Gap analysis: review initial findings against the user's question and
@@ -264,5 +268,180 @@ export async function runCausalChainCheck(host, allFindings, originalQuery) {
         if (isCancelled(e)) throw e;
         log(`[Katab:research] Causal-chain check failed: ${e.message}`);
         return [];
+    }
+}
+
+/**
+ * Pass 1 of synthesis: generate a structured report outline from all findings.
+ * Returns the parsed `{ sections: [...] }` object, or null when there is
+ * nothing to outline or the response cannot be parsed.
+ *
+ * @param {object} host see module header
+ * @param {Array} allFindings - Combined branch + refinement findings
+ * @param {string} originalQuery
+ * @returns {Promise<{sections: Array}|null>}
+ */
+export async function buildSynthesisOutline(host, allFindings, originalQuery) {
+    const {
+        requestCompletion,
+        modelOverride = undefined,
+        getCancellable = () => null,
+        isCancelled = () => false,
+    } = host;
+
+    if (!allFindings || allFindings.length === 0) return null;
+
+    log('[Katab:synthesis] Pass 1: Generating report outline...');
+
+    // Compact summaries for the outline prompt
+    const findingSummaries = allFindings
+        .filter(r => r.findings && r.findings.length > 50)
+        .map(r => {
+            const snippet = r.findings.length > 500
+                ? r.findings.slice(0, 500).replace(/\n/g, ' ') + '...'
+                : r.findings.replace(/\n/g, ' ');
+            return `Topic "${r.topic}": ${snippet}\nSources: ${(r.sources || []).join(', ') || 'none'}`;
+        })
+        .join('\n\n');
+
+    if (!findingSummaries) {
+        log('[Katab:synthesis] Outline skipped — no findings to synthesize.');
+        return null;
+    }
+
+    const messages = [
+        { role: 'system', content: SYNTHESIS_OUTLINE_SYSTEM_PROMPT },
+        {
+            role: 'user',
+            content: `USER'S QUESTION: "${originalQuery}"\n\nALL RESEARCH FINDINGS:\n${findingSummaries}\n\nGenerate a structured outline for the final report. Output as JSON.`,
+        },
+    ];
+
+    try {
+        const response = await requestCompletion(messages, {
+            cancellable: getCancellable(),
+            maxTokens: SYNTHESIS_OUTLINE_MAX_TOKENS,
+            modelOverride,
+        });
+
+        // Parse the JSON outline
+        const clean = String(response || '').trim();
+        // Try direct parse
+        try {
+            const parsed = JSON.parse(clean);
+            if (parsed.sections && Array.isArray(parsed.sections)) {
+                log(`[Katab:synthesis] Outline generated — ${parsed.sections.length} sections.`);
+                return parsed;
+            }
+        } catch (_) { /* not pure JSON */ }
+
+        // Try to find JSON object in the response
+        const jsonMatch = clean.match(/\{[\s\S]*"sections"[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed.sections && Array.isArray(parsed.sections)) {
+                    log(`[Katab:synthesis] Outline extracted — ${parsed.sections.length} sections.`);
+                    return parsed;
+                }
+            } catch (_) { /* invalid */ }
+        }
+
+        log('[Katab:synthesis] Outline parsing failed — proceeding without outline.');
+        return null;
+    } catch (e) {
+        if (isCancelled(e)) throw e;
+        log(`[Katab:synthesis] Outline generation failed: ${e.message}`);
+        return null;
+    }
+}
+
+/**
+ * Post-synthesis quality gate: score the report on coverage + groundedness and
+ * extract the flagged aspects/claims. Returns
+ * `{ coverage, groundedness, missingAspects, unsupportedClaims, unverifiedCitations }`
+ * or null when there is no usable score (or the call failed — errors are
+ * swallowed and logged, matching the original fire-and-forget caller).
+ *
+ * @param {object} host see module header
+ * @param {string} reportText - The final report text
+ * @param {string} originalQuery - The user's research question
+ * @param {Array<{claim: string, url?: string}>} facts - Research facts to ground against
+ * @returns {Promise<object|null>}
+ */
+export async function runQualityCheck(host, reportText, originalQuery, facts = []) {
+    const {
+        requestCompletion,
+        modelOverride = undefined,
+        getCancellable = () => null,
+    } = host;
+
+    // Build a capped fact list so the evaluator can ground claims against
+    // the actual evidence gathered during research.
+    const factsBlock = facts.length > 0
+        ? '\n\nRESEARCH FACTS (ground the report against these):\n' +
+        facts.slice(0, 60).map(f =>
+            `- ${f.claim.slice(0, 200)}${f.url ? ` [${f.url}]` : ''}`
+        ).join('\n')
+        : '\n\nRESEARCH FACTS: (none provided)';
+
+    const messages = [
+        { role: 'system', content: RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT },
+        {
+            role: 'user',
+            content: `USER'S QUESTION: "${originalQuery}"\n\nREPORT:\n${reportText.slice(0, 6000)}${factsBlock}\n\nRate the report and output JSON.`,
+        },
+    ];
+
+    try {
+        const response = await requestCompletion(messages, {
+            cancellable: getCancellable(),
+            maxTokens: RESEARCH_QUALITY_CHECK_MAX_TOKENS,
+            modelOverride,
+        });
+
+        const clean = String(response || '').trim();
+        let parsed;
+        try {
+            parsed = JSON.parse(clean);
+        } catch (_) {
+            const jsonMatch = clean.match(/\{[\s\S]*\}/);
+            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        }
+
+        // Accept the new two-axis shape, and fall back to the legacy single
+        // `score` field so older check prompts still work.
+        const coverage = parsed && (typeof parsed.coverage_score === 'number'
+            ? parsed.coverage_score
+            : (typeof parsed.score === 'number' ? parsed.score : null));
+        const groundedness = parsed && typeof parsed.groundedness_score === 'number'
+            ? parsed.groundedness_score
+            : null;
+        const missingAspects = parsed && Array.isArray(parsed.missing_aspects)
+            ? parsed.missing_aspects
+            : [];
+        const unsupportedClaims = parsed && Array.isArray(parsed.unsupported_claims)
+            ? parsed.unsupported_claims.map(String).filter(Boolean)
+            : [];
+        const unverifiedCitations = parsed && Array.isArray(parsed.unverified_citations)
+            ? parsed.unverified_citations.map(String).filter(Boolean)
+            : [];
+
+        // A totally unparseable response leaves `parsed` undefined and the
+        // expression above short-circuits to undefined — treat that the same
+        // as a parsed-but-unscored response (original only checked null, which
+        // recorded a result with an undefined score and skipped the gate
+        // silently).
+        if (coverage === null || coverage === undefined) {
+            log('[Katab:quality] No usable score parsed — skipping quality gate.');
+            return null;
+        }
+
+        log(`[Katab:quality] coverage=${coverage}/5 groundedness=${groundedness ?? 'n/a'}/5 missing=${missingAspects.length} unsupported=${unsupportedClaims.length} badCites=${unverifiedCitations.length}`);
+        return { coverage, groundedness, missingAspects, unsupportedClaims, unverifiedCitations };
+    } catch (e) {
+        // Fire-and-forget caller — swallow and log (NO cancellation rethrow).
+        log(`[Katab:quality] Quality check failed: ${e.message}`);
+        return null;
     }
 }
