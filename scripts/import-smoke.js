@@ -15,10 +15,17 @@ const EXCLUDED_FILES = new Set([
     'src/pets/petSpriteActor.js',
 ]);
 
-const EXCLUDED_PREFIXES = [
-    // GTK4/libadwaita modules — only importable in the preferences process.
-    'src/ui/prefs/',
-];
+// GTK4/libadwaita are imported by the preferences-side modules
+// (src/ui/prefs/).  They are present on GNOME desktops; when unavailable the
+// prefs modules are skipped rather than failing the smoke test.
+let gtkAvailable = false;
+try {
+    await import('gi://Gtk?version=4.0');
+    await import('gi://Adw');
+    gtkAvailable = true;
+} catch (_e) {
+    gtkAvailable = false;
+}
 
 function listJsFiles(dir) {
     const files = [];
@@ -55,10 +62,11 @@ let imported = 0;
 let skipped = 0;
 
 for (const relPath of modules) {
-    if (
-        EXCLUDED_FILES.has(relPath) ||
-        EXCLUDED_PREFIXES.some((prefix) => relPath.startsWith(prefix))
-    ) {
+    if (EXCLUDED_FILES.has(relPath)) {
+        skipped++;
+        continue;
+    }
+    if (relPath.startsWith('src/ui/prefs/') && !gtkAvailable) {
         skipped++;
         continue;
     }
@@ -75,4 +83,5 @@ if (failures.length > 0) {
     for (const failure of failures) printerr(`  ${failure}`);
     System.exit(1);
 }
-print(`[OK] Import smoke: ${imported} src modules imported, ${skipped} excluded.`);
+const gtkNote = gtkAvailable ? '' : ' — GTK4/libadwaita unavailable, prefs modules skipped';
+print(`[OK] Import smoke: ${imported} src modules imported, ${skipped} excluded${gtkNote}.`);
