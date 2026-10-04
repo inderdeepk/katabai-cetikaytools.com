@@ -14298,151 +14298,12 @@ class KatabDialog {
         });
         bubbleBox.add_child(senderLabel);
 
-        let thinkWrapper = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-think-wrapper',
-            visible: false,
-            x_expand: true,
-        });
-
-        // ── Thinking header bar ─────────────────────────────────────────
-        let thinkHeader = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-think-header',
-            x_expand: true,
-        });
-
-        let thinkIcon = new St.Icon({
-            gicon: Gio.icon_new_for_string(
-                `${this._extension.path}/icons/katab-lightbulb-symbolic.svg`,
-            ),
-            style_class: 'katab-think-icon',
-        });
-        thinkHeader.add_child(thinkIcon);
-
-        let thinkTitle = new St.Label({
-            text: 'Thinking',
-            style_class: 'katab-think-title',
-        });
-        thinkHeader.add_child(thinkTitle);
-
-        let thinkButton = new St.Button({
-            label: 'Show',
-            style_class: 'katab-think-toggle-btn',
-            toggle_mode: true,
-            can_focus: true,
-            accessible_name: 'Show reasoning',
-        });
-        thinkHeader.add_child(thinkButton);
-
-        thinkWrapper.add_child(thinkHeader);
-
-        // ── Thinking content body ───────────────────────────────────────
-        let thinkBody = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-think-body',
-            visible: false,
-            x_expand: true,
-        });
-
-        let thinkLabel = new St.Label({
-            text: '',
-            style_class: 'katab-think-label',
-            visible: true,
-            x_expand: true,
-        });
-        thinkLabel.clutter_text.line_wrap = true;
-        thinkLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        thinkLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        thinkLabel.clutter_text.single_line_mode = false;
-        thinkLabel.clutter_text.can_focus = false;
-        this._makeTextSelectable(thinkLabel);
-        thinkBody.add_child(thinkLabel);
-
-        thinkWrapper.add_child(thinkBody);
-
-        thinkButton.connect('notify::checked', () => {
-            thinkBody.visible = thinkButton.checked;
-            thinkButton.label = thinkButton.checked ? 'Hide' : 'Show';
-            thinkButton.accessible_name = thinkButton.checked ? 'Hide reasoning' : 'Show reasoning';
-            if (thinkButton.checked) {
-                thinkWrapper.add_style_class_name('katab-think-wrapper-expanded');
-            } else {
-                thinkWrapper.remove_style_class_name('katab-think-wrapper-expanded');
-            }
-        });
-
+        const { thinkWrapper, thinkLabel } = this._buildThinkingSection();
         bubbleBox.add_child(thinkWrapper);
 
-        // ── Tool call log (collapsible, visible when tools are executed) ──
-        let toolCallLogBox = null;
-        let toolLogWrapper = null;
-        let toolLogCountLabel = null;
-        if (!isUser) {
-            toolLogWrapper = new St.BoxLayout({
-                vertical: true,
-                style_class: 'katab-tool-call-log',
-                visible: false,
-                x_expand: true,
-            });
-
-            // Summary header — always visible when tool log is shown, click to expand/collapse
-            let toolLogHeader = new St.BoxLayout({
-                style_class: 'katab-tool-call-group-header',
-                reactive: true,
-                can_focus: true,
-                track_hover: true,
-                x_expand: true,
-                accessible_name: 'Show tool details',
-            });
-            toolLogHeader.add_child(
-                new St.Icon({
-                    icon_name: 'applications-utilities-symbolic',
-                    style_class: 'katab-tool-call-name',
-                    icon_size: 14,
-                    y_align: Clutter.ActorAlign.CENTER,
-                }),
-            );
-            toolLogCountLabel = new St.Label({
-                text: 'Ran 0 tools',
-                style_class: 'katab-tool-call-group-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            toolLogHeader.add_child(toolLogCountLabel);
-            let toolLogChevron = new St.Icon({
-                icon_name: 'pan-end-symbolic',
-                style_class: 'katab-tool-call-group-chevron',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            toolLogHeader.add_child(toolLogChevron);
-            toolLogWrapper.add_child(toolLogHeader);
-
-            // Body — collapsed by default, holds the individual tool-call entry widgets
-            toolCallLogBox = new St.BoxLayout({
-                vertical: true,
-                style_class: 'katab-tool-call-group-body',
-                visible: false,
-                x_expand: true,
-            });
-            toolLogWrapper.add_child(toolCallLogBox);
-
-            toolLogHeader.connect('button-press-event', () => {
-                let expanded = toolCallLogBox.visible;
-                toolCallLogBox.visible = !expanded;
-                toolLogChevron.icon_name = expanded ? 'pan-end-symbolic' : 'pan-down-symbolic';
-                toolLogHeader.accessible_name = expanded
-                    ? 'Show tool details'
-                    : 'Hide tool details';
-                if (expanded) {
-                    toolLogWrapper.add_style_class_name('katab-tool-call-group-collapsed');
-                } else {
-                    toolLogWrapper.remove_style_class_name('katab-tool-call-group-collapsed');
-                }
-                return Clutter.EVENT_STOP;
-            });
-
-            bubbleBox.add_child(toolLogWrapper);
-        }
+        const { toolLogWrapper, toolCallLogBox, toolLogCountLabel } =
+            this._buildToolLogSection(isUser);
+        if (toolLogWrapper) bubbleBox.add_child(toolLogWrapper);
 
         let contentBox = new St.BoxLayout({
             vertical: true,
@@ -14523,108 +14384,18 @@ class KatabDialog {
         });
         copyBtnRow.add_child(metricsLabel);
 
-        // ── DeepSeek prompt-cache savings pill (assistant only) ──────────────
-        // Sits quietly at the end of the footer row and only appears when a reply
-        // actually reused cached tokens. Clicking it reveals the explanation
-        // drawer built just below the footer row (see further down).
-        let cacheSavingsPill = null;
-        let cacheSavingsPillLabel = null;
-        let cacheSavingsChevron = null;
-        if (!isUser) {
-            cacheSavingsPill = new St.BoxLayout({
-                style_class: 'katab-cache-pill',
-                y_align: Clutter.ActorAlign.CENTER,
-                reactive: true,
-                can_focus: true,
-                track_hover: true,
-                visible: false,
-            });
-            cacheSavingsPill.add_child(
-                new St.Icon({
-                    icon_name: 'emblem-ok-symbolic',
-                    style_class: 'katab-cache-pill-icon',
-                    y_align: Clutter.ActorAlign.CENTER,
-                }),
-            );
-            cacheSavingsPillLabel = new St.Label({
-                text: '',
-                style_class: 'katab-cache-pill-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            cacheSavingsPill.add_child(cacheSavingsPillLabel);
-            cacheSavingsChevron = new St.Icon({
-                icon_name: 'pan-end-symbolic',
-                style_class: 'katab-cache-pill-chevron',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            cacheSavingsPill.add_child(cacheSavingsChevron);
-            copyBtnRow.add_child(cacheSavingsPill);
-        }
-
-        // ── Knowledge Base usage pill (assistant only) ───────────────────
-        // Small glowing teal pill that replaces the KB rows in the tool-call
-        // log. Clicking it reveals the KB drawer built below the footer row.
-        let kbPill = null;
-        let kbPillIcon = null;
-        let kbPillLabel = null;
-        let kbChevron = null;
-        let kbDrawer = null;
-        let kbDrawerBody = null;
-        if (!isUser) {
-            kbPill = new St.BoxLayout({
-                style_class: 'katab-kb-pill',
-                y_align: Clutter.ActorAlign.CENTER,
-                reactive: true,
-                can_focus: true,
-                track_hover: true,
-                visible: false,
-            });
-            kbPillIcon = new St.Icon({
-                gicon: createRagGicon(this._extension.path),
-                style_class: 'katab-kb-pill-icon',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            kbPill.add_child(kbPillIcon);
-            kbPillLabel = new St.Label({
-                text: 'KB',
-                style_class: 'katab-kb-pill-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            kbPill.add_child(kbPillLabel);
-            kbChevron = new St.Icon({
-                icon_name: 'pan-end-symbolic',
-                style_class: 'katab-kb-pill-chevron',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            kbPill.add_child(kbChevron);
-            copyBtnRow.add_child(kbPill);
-
-            kbDrawer = new St.BoxLayout({
-                vertical: true,
-                style_class: 'katab-kb-drawer',
-                x_expand: true,
-                visible: false,
-            });
-            kbDrawerBody = new St.BoxLayout({
-                vertical: true,
-                style_class: 'katab-kb-drawer-body',
-                x_expand: true,
-            });
-            kbDrawer.add_child(kbDrawerBody);
-
-            kbPill.connect('button-press-event', () => {
-                const show = !kbDrawer.visible;
-                kbDrawer.visible = show;
-                kbChevron.icon_name = show ? 'pan-down-symbolic' : 'pan-end-symbolic';
-                if (show) {
-                    kbPill.add_style_class_name('katab-kb-pill-expanded');
-                } else {
-                    kbPill.remove_style_class_name('katab-kb-pill-expanded');
-                }
-                this._scrollToBottom();
-                return Clutter.EVENT_STOP;
-            });
-        }
+        const pills = this._buildAssistantPills(isUser, copyBtnRow);
+        const {
+            cacheSavingsPill,
+            cacheSavingsPillLabel,
+            cacheSavingsChevron,
+            kbPill,
+            kbPillIcon,
+            kbPillLabel,
+            kbChevron,
+            kbDrawer,
+            kbDrawerBody,
+        } = pills;
 
         if (!isUser) {
             this._applyAssistantMetrics(metricsLabel, messageMeta, copyBtnRow);
@@ -14635,50 +14406,11 @@ class KatabDialog {
             copyBtnRow.set_pack_start(true);
         }
 
-        // Explanation drawer for the cache-savings pill (assistant only). Hidden
-        // until the pill is clicked; contents are (re)built by _applyCacheSavings.
-        let cacheSavingsDrawer = null;
-        let cacheSavingsDrawerBody = null;
-        if (!isUser) {
-            cacheSavingsDrawer = new St.BoxLayout({
-                vertical: true,
-                style_class: 'katab-cache-drawer',
-                x_expand: true,
-                visible: false,
-            });
-            cacheSavingsDrawerBody = new St.BoxLayout({
-                vertical: true,
-                style_class: 'katab-cache-drawer-body',
-                x_expand: true,
-            });
-            cacheSavingsDrawer.add_child(cacheSavingsDrawerBody);
-
-            cacheSavingsPill.connect('button-press-event', () => {
-                let show = !cacheSavingsDrawer.visible;
-                cacheSavingsDrawer.visible = show;
-                cacheSavingsChevron.icon_name = show ? 'pan-down-symbolic' : 'pan-end-symbolic';
-                if (show) {
-                    cacheSavingsPill.add_style_class_name('katab-cache-pill-expanded');
-                } else {
-                    cacheSavingsPill.remove_style_class_name('katab-cache-pill-expanded');
-                }
-                this._scrollToBottom();
-                return Clutter.EVENT_STOP;
-            });
-
-            // Populate immediately for messages restored from history (metrics
-            // are present up front); live replies fill this in during streaming.
-            this._applyCacheSavings(
-                {
-                    cacheSavingsPill,
-                    cacheSavingsPillLabel,
-                    cacheSavingsChevron,
-                    cacheSavingsDrawer,
-                    cacheSavingsDrawerBody,
-                },
-                messageMeta,
-            );
-        }
+        const { cacheSavingsDrawer, cacheSavingsDrawerBody } = this._buildCacheSavingsDrawer(
+            isUser,
+            messageMeta,
+            pills,
+        );
 
         let linkBox = null;
         let sourcesBox = null;
@@ -14869,6 +14601,324 @@ class KatabDialog {
         // skip touching the disposed widgets.
         uiElements._katabChatGen = this._chatGeneration;
         return uiElements;
+    }
+
+    _buildAssistantPills(isUser, copyBtnRow) {
+        // ── DeepSeek prompt-cache savings pill (assistant only) ──────────────
+        // Sits quietly at the end of the footer row and only appears when a reply
+        // actually reused cached tokens. Clicking it reveals the explanation
+        // drawer built just below the footer row (see further down).
+        let cacheSavingsPill = null;
+        let cacheSavingsPillLabel = null;
+        let cacheSavingsChevron = null;
+        if (!isUser) {
+            cacheSavingsPill = new St.BoxLayout({
+                style_class: 'katab-cache-pill',
+                y_align: Clutter.ActorAlign.CENTER,
+                reactive: true,
+                can_focus: true,
+                track_hover: true,
+                visible: false,
+            });
+            cacheSavingsPill.add_child(
+                new St.Icon({
+                    icon_name: 'emblem-ok-symbolic',
+                    style_class: 'katab-cache-pill-icon',
+                    y_align: Clutter.ActorAlign.CENTER,
+                }),
+            );
+            cacheSavingsPillLabel = new St.Label({
+                text: '',
+                style_class: 'katab-cache-pill-label',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            cacheSavingsPill.add_child(cacheSavingsPillLabel);
+            cacheSavingsChevron = new St.Icon({
+                icon_name: 'pan-end-symbolic',
+                style_class: 'katab-cache-pill-chevron',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            cacheSavingsPill.add_child(cacheSavingsChevron);
+            copyBtnRow.add_child(cacheSavingsPill);
+        }
+
+        // ── Knowledge Base usage pill (assistant only) ───────────────────
+        // Small glowing teal pill that replaces the KB rows in the tool-call
+        // log. Clicking it reveals the KB drawer built below the footer row.
+        let kbPill = null;
+        let kbPillIcon = null;
+        let kbPillLabel = null;
+        let kbChevron = null;
+        let kbDrawer = null;
+        let kbDrawerBody = null;
+        if (!isUser) {
+            kbPill = new St.BoxLayout({
+                style_class: 'katab-kb-pill',
+                y_align: Clutter.ActorAlign.CENTER,
+                reactive: true,
+                can_focus: true,
+                track_hover: true,
+                visible: false,
+            });
+            kbPillIcon = new St.Icon({
+                gicon: createRagGicon(this._extension.path),
+                style_class: 'katab-kb-pill-icon',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            kbPill.add_child(kbPillIcon);
+            kbPillLabel = new St.Label({
+                text: 'KB',
+                style_class: 'katab-kb-pill-label',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            kbPill.add_child(kbPillLabel);
+            kbChevron = new St.Icon({
+                icon_name: 'pan-end-symbolic',
+                style_class: 'katab-kb-pill-chevron',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            kbPill.add_child(kbChevron);
+            copyBtnRow.add_child(kbPill);
+
+            kbDrawer = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-kb-drawer',
+                x_expand: true,
+                visible: false,
+            });
+            kbDrawerBody = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-kb-drawer-body',
+                x_expand: true,
+            });
+            kbDrawer.add_child(kbDrawerBody);
+
+            kbPill.connect('button-press-event', () => {
+                const show = !kbDrawer.visible;
+                kbDrawer.visible = show;
+                kbChevron.icon_name = show ? 'pan-down-symbolic' : 'pan-end-symbolic';
+                if (show) {
+                    kbPill.add_style_class_name('katab-kb-pill-expanded');
+                } else {
+                    kbPill.remove_style_class_name('katab-kb-pill-expanded');
+                }
+                this._scrollToBottom();
+                return Clutter.EVENT_STOP;
+            });
+        }
+
+        return {
+            cacheSavingsPill,
+            cacheSavingsPillLabel,
+            cacheSavingsChevron,
+            kbPill,
+            kbPillIcon,
+            kbPillLabel,
+            kbChevron,
+            kbDrawer,
+            kbDrawerBody,
+        };
+    }
+
+    _buildCacheSavingsDrawer(
+        isUser,
+        messageMeta,
+        { cacheSavingsPill, cacheSavingsPillLabel, cacheSavingsChevron },
+    ) {
+        // Explanation drawer for the cache-savings pill (assistant only). Hidden
+        // until the pill is clicked; contents are (re)built by _applyCacheSavings.
+        let cacheSavingsDrawer = null;
+        let cacheSavingsDrawerBody = null;
+        if (!isUser) {
+            cacheSavingsDrawer = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-cache-drawer',
+                x_expand: true,
+                visible: false,
+            });
+            cacheSavingsDrawerBody = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-cache-drawer-body',
+                x_expand: true,
+            });
+            cacheSavingsDrawer.add_child(cacheSavingsDrawerBody);
+
+            cacheSavingsPill.connect('button-press-event', () => {
+                let show = !cacheSavingsDrawer.visible;
+                cacheSavingsDrawer.visible = show;
+                cacheSavingsChevron.icon_name = show ? 'pan-down-symbolic' : 'pan-end-symbolic';
+                if (show) {
+                    cacheSavingsPill.add_style_class_name('katab-cache-pill-expanded');
+                } else {
+                    cacheSavingsPill.remove_style_class_name('katab-cache-pill-expanded');
+                }
+                this._scrollToBottom();
+                return Clutter.EVENT_STOP;
+            });
+
+            // Populate immediately for messages restored from history (metrics
+            // are present up front); live replies fill this in during streaming.
+            this._applyCacheSavings(
+                {
+                    cacheSavingsPill,
+                    cacheSavingsPillLabel,
+                    cacheSavingsChevron,
+                    cacheSavingsDrawer,
+                    cacheSavingsDrawerBody,
+                },
+                messageMeta,
+            );
+        }
+
+        return { cacheSavingsDrawer, cacheSavingsDrawerBody };
+    }
+
+    _buildToolLogSection(isUser) {
+        let toolCallLogBox = null;
+        let toolLogWrapper = null;
+        let toolLogCountLabel = null;
+        if (!isUser) {
+            toolLogWrapper = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-tool-call-log',
+                visible: false,
+                x_expand: true,
+            });
+
+            // Summary header — always visible when tool log is shown, click to expand/collapse
+            let toolLogHeader = new St.BoxLayout({
+                style_class: 'katab-tool-call-group-header',
+                reactive: true,
+                can_focus: true,
+                track_hover: true,
+                x_expand: true,
+                accessible_name: 'Show tool details',
+            });
+            toolLogHeader.add_child(
+                new St.Icon({
+                    icon_name: 'applications-utilities-symbolic',
+                    style_class: 'katab-tool-call-name',
+                    icon_size: 14,
+                    y_align: Clutter.ActorAlign.CENTER,
+                }),
+            );
+            toolLogCountLabel = new St.Label({
+                text: 'Ran 0 tools',
+                style_class: 'katab-tool-call-group-label',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            toolLogHeader.add_child(toolLogCountLabel);
+            let toolLogChevron = new St.Icon({
+                icon_name: 'pan-end-symbolic',
+                style_class: 'katab-tool-call-group-chevron',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            toolLogHeader.add_child(toolLogChevron);
+            toolLogWrapper.add_child(toolLogHeader);
+
+            // Body — collapsed by default, holds the individual tool-call entry widgets
+            toolCallLogBox = new St.BoxLayout({
+                vertical: true,
+                style_class: 'katab-tool-call-group-body',
+                visible: false,
+                x_expand: true,
+            });
+            toolLogWrapper.add_child(toolCallLogBox);
+
+            toolLogHeader.connect('button-press-event', () => {
+                let expanded = toolCallLogBox.visible;
+                toolCallLogBox.visible = !expanded;
+                toolLogChevron.icon_name = expanded ? 'pan-end-symbolic' : 'pan-down-symbolic';
+                toolLogHeader.accessible_name = expanded
+                    ? 'Show tool details'
+                    : 'Hide tool details';
+                if (expanded) {
+                    toolLogWrapper.add_style_class_name('katab-tool-call-group-collapsed');
+                } else {
+                    toolLogWrapper.remove_style_class_name('katab-tool-call-group-collapsed');
+                }
+                return Clutter.EVENT_STOP;
+            });
+        }
+        return { toolLogWrapper, toolCallLogBox, toolLogCountLabel };
+    }
+
+    _buildThinkingSection() {
+        let thinkWrapper = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-think-wrapper',
+            visible: false,
+            x_expand: true,
+        });
+
+        // ── Thinking header bar ─────────────────────────────────────────
+        let thinkHeader = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-think-header',
+            x_expand: true,
+        });
+
+        let thinkIcon = new St.Icon({
+            gicon: Gio.icon_new_for_string(
+                `${this._extension.path}/icons/katab-lightbulb-symbolic.svg`,
+            ),
+            style_class: 'katab-think-icon',
+        });
+        thinkHeader.add_child(thinkIcon);
+
+        let thinkTitle = new St.Label({
+            text: 'Thinking',
+            style_class: 'katab-think-title',
+        });
+        thinkHeader.add_child(thinkTitle);
+
+        let thinkButton = new St.Button({
+            label: 'Show',
+            style_class: 'katab-think-toggle-btn',
+            toggle_mode: true,
+            can_focus: true,
+            accessible_name: 'Show reasoning',
+        });
+        thinkHeader.add_child(thinkButton);
+
+        thinkWrapper.add_child(thinkHeader);
+
+        // ── Thinking content body ───────────────────────────────────────
+        let thinkBody = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-think-body',
+            visible: false,
+            x_expand: true,
+        });
+
+        let thinkLabel = new St.Label({
+            text: '',
+            style_class: 'katab-think-label',
+            visible: true,
+            x_expand: true,
+        });
+        thinkLabel.clutter_text.line_wrap = true;
+        thinkLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        thinkLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        thinkLabel.clutter_text.single_line_mode = false;
+        thinkLabel.clutter_text.can_focus = false;
+        this._makeTextSelectable(thinkLabel);
+        thinkBody.add_child(thinkLabel);
+
+        thinkWrapper.add_child(thinkBody);
+
+        thinkButton.connect('notify::checked', () => {
+            thinkBody.visible = thinkButton.checked;
+            thinkButton.label = thinkButton.checked ? 'Hide' : 'Show';
+            thinkButton.accessible_name = thinkButton.checked ? 'Hide reasoning' : 'Show reasoning';
+            if (thinkButton.checked) {
+                thinkWrapper.add_style_class_name('katab-think-wrapper-expanded');
+            } else {
+                thinkWrapper.remove_style_class_name('katab-think-wrapper-expanded');
+            }
+        });
+
+        return { thinkWrapper, thinkLabel };
     }
 
     _scrollToBottom() {
