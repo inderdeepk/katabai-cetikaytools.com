@@ -130,6 +130,7 @@ import {
     buildOpenAiCompatStreamRequest,
     buildAnthropicStreamRequest,
     buildDeepSeekStreamRequest,
+    buildOllamaStreamRequest,
 } from './src/providers/chatRequest.js';
 import {
     splitThinkingTags,
@@ -19134,11 +19135,6 @@ class KatabDialog {
             headers = built.headers;
             payload = built.payload;
         } else if (provider === 'ollama') {
-            if (!endpoint.endsWith('api/chat')) {
-                endpoint += 'api/chat';
-            }
-            headers['Content-Type'] = 'application/json';
-
             if (requestHasImages) {
                 const supportsVision = await this._ollamaModelSupportsVision(model, { cancellable });
                 // User pressed Stop during the vision-capability probe — the stop
@@ -19168,14 +19164,14 @@ class KatabDialog {
             const options = buildOllamaOptions(getOpt);
 
             const keepAlive = normalizeOllamaKeepAlive(this._settings.get_string('ollama-keep-alive'));
-            let responseFormat = this._settings.get_string('ollama-format');
-            let rawMode = this._settings.get_boolean('ollama-raw');
+            const responseFormat = this._settings.get_string('ollama-format');
+            const rawMode = this._settings.get_boolean('ollama-raw');
             // Disable think mode during forced synthesis — the model's thinking
             // phase can consume all available output tokens when processing
             // large tool-result contexts, leaving nothing for the actual answer.
             // This mirrors the DeepSeek pattern where thinking is disabled when
             // synthesis is forced and tools are removed.
-            let thinkMode = this._forceSynthesisActive
+            const thinkMode = this._forceSynthesisActive
                 ? false
                 : this._settings.get_boolean('ollama-think');
 
@@ -19188,35 +19184,21 @@ class KatabDialog {
             const ollamaSystemText = this._mergeSystemPromptParts(ollamaSystemPrompt, autoSystemContext);
             const ollamaMessages = this._withSystemPromptText(apiMessages, ollamaSystemText);
 
-            payload = {
-                model: model,
+            const built = buildOllamaStreamRequest({
+                baseUrl: url,
+                model,
                 messages: ollamaMessages,
-                stream: true,
-                keep_alive: keepAlive,
+                keepAlive,
                 think: thinkMode,
-                options: options,
-            };
-
-            if (responseFormat) {
-                payload.format = responseFormat;
-            }
-
-            if (rawMode) {
-                payload.raw = true;
-            }
-
-            if (advertiseLocalTools) {
-                payload.tools = buildToolSchemasFor(webSearchToolNames, 'openai');
-            }
-            if (advertiseCrawl4AI) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(crawlToolNames, 'openai')];
-            }
-            if (advertiseExploreDocs) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(exploreDocsToolNames, 'openai')];
-            }
-            if (advertiseRag) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(ragToolNames, 'openai')];
-            }
+                format: responseFormat,
+                raw: rawMode,
+                options,
+                advertise: builderAdvertise,
+                toolNames: builderToolNames,
+            });
+            endpoint = built.endpoint;
+            headers = built.headers;
+            payload = built.payload;
         }
 
         // --- DEBUG: Log message structure and validate JSON for Ollama ---

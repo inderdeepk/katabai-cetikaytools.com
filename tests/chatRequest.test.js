@@ -5,6 +5,7 @@ import {
     buildOpenAiCompatStreamRequest,
     buildAnthropicStreamRequest,
     buildDeepSeekStreamRequest,
+    buildOllamaStreamRequest,
 } from '../src/providers/chatRequest.js';
 // Side-effect import: registers all tool definitions so buildToolSchemasFor
 // resolves real schemas (extension.js imports it the same way).
@@ -272,6 +273,58 @@ const tests = [
         });
         assert(!('tools' in json.payload), 'tools suppressed in JSON mode');
         assert(!('tool_choice' in json.payload), 'no tool_choice in JSON mode');
+    }],
+
+    ['ollama: endpoint, payload, format/raw conditionals', () => {
+        const built = buildOllamaStreamRequest({
+            baseUrl: 'http://localhost:11434',
+            model: 'llama3',
+            messages: [{ role: 'user', content: 'hi' }],
+            options: { temperature: 0.7 },
+        });
+        assertEqual(built.endpoint, 'http://localhost:11434/api/chat', 'endpoint suffix');
+        assertEqual(built.headers['Content-Type'], 'application/json', 'content type');
+        assert(!('Authorization' in built.headers), 'no auth for local ollama');
+        assertEqual(built.payload.model, 'llama3', 'model');
+        assertEqual(built.payload.stream, true, 'stream');
+        assertEqual(built.payload.keep_alive, '5m', 'default keep alive');
+        assertEqual(built.payload.think, true, 'default think');
+        assertEqual(built.payload.options.temperature, 0.7, 'options passed through');
+        assert(!('format' in built.payload), 'no format when empty');
+        assert(!('raw' in built.payload), 'no raw when false');
+
+        const withFormat = buildOllamaStreamRequest({
+            baseUrl: 'http://localhost:11434/api/chat',
+            model: 'm',
+            messages: [],
+            keepAlive: '999999h',
+            think: false,
+            format: 'json',
+            raw: true,
+        });
+        // Frozen quirk (same class as nonStreamingRequest): the trailing-slash
+        // normalization runs BEFORE the suffix check, so a base URL already
+        // ending in a path segment gets a DOUBLED suffix. Plain base URLs
+        // (http://host:port) are the supported config. Fix streaming +
+        // non-streaming normalizations together if this is ever changed.
+        assertEqual(withFormat.endpoint, 'http://localhost:11434/api/chat/api/chat', 'suffix doubled (frozen quirk)');
+        assertEqual(withFormat.payload.keep_alive, '999999h', 'keep alive override');
+        assertEqual(withFormat.payload.think, false, 'think override');
+        assertEqual(withFormat.payload.format, 'json', 'format set');
+        assertEqual(withFormat.payload.raw, true, 'raw set');
+    }],
+
+    ['ollama: tools gate per family (no web-search seeding quirk)', () => {
+        const built = buildOllamaStreamRequest({
+            baseUrl: 'http://localhost:11434',
+            model: 'm',
+            messages: [],
+            advertise: { crawl: true, webSearch: false },
+            toolNames: NAMES,
+        });
+        const names = built.payload.tools.map(toolNameOf);
+        assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not seeded');
+        assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl advertised');
     }],
 ];
 

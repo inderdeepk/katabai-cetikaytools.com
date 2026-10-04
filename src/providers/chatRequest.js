@@ -138,6 +138,52 @@ export function buildAnthropicStreamRequest({
 }
 
 /**
+ * Build the streaming request for Ollama (/api/chat). The vision-capability
+ * probe and all send-side effects stay in the extension; `keepAlive` is
+ * expected to be pre-normalized via normalizeOllamaKeepAlive.
+ */
+export function buildOllamaStreamRequest({
+    baseUrl,
+    model,
+    messages,
+    keepAlive = '5m',
+    think = true,
+    format = '',
+    raw = false,
+    options = {},
+    advertise = {},
+    toolNames = {},
+}) {
+    let endpoint = ensureTrailingSlash(baseUrl);
+    if (!endpoint.endsWith('api/chat')) {
+        endpoint += 'api/chat';
+    }
+
+    const headers = { 'Content-Type': 'application/json' };
+
+    const payload = {
+        model: model,
+        messages: messages,
+        stream: true,
+        keep_alive: keepAlive,
+        think: think,
+        options: options,
+    };
+
+    if (format) {
+        payload.format = format;
+    }
+
+    if (raw) {
+        payload.raw = true;
+    }
+
+    appendDialectToolGroups(payload, advertise, toolNames, 'openai');
+
+    return { endpoint, headers, payload };
+}
+
+/**
  * Build the streaming request for DeepSeek. `messages` must already carry the
  * merged system prompt; `thinking` mirrors the dialog's
  * `deepseekEffectiveThinking` decision and `userId` the `_buildDeepSeekUserId()`
