@@ -19961,7 +19961,48 @@ class KatabDialog {
                 // quirks.  The retry trims the tool-call history to break
                 // the pattern at its source.
 
-                if (finalContent && this._forceSynthesisActive) {
+                if (
+                    finalContent &&
+                    this._forceSynthesisActive &&
+                    !contentLooksLikeToolCalls(finalContent) &&
+                    isSynthesisRegurgitation(finalContent, provider)
+                ) {
+                    // ── Synthesis quality gate (non-XML garbage) ──────────
+                    // The model regurgitated search-query fragments instead of
+                    // synthesizing. Give it one retry with a stricter prompt
+                    // and a trimmed tool-call history; if the retry also fails,
+                    // the log below accepts the current response as-is.
+                    // XML-style tool markup is excluded here so it still flows
+                    // through the unconditional stripping branch below.
+                    const synthRetries = this._synthesisRetries || 0;
+                    if (synthRetries < 1) {
+                        this._synthesisRetries = synthRetries + 1;
+                        log(
+                            `[Katab:synth-gate] Synthesis regurgitation detected (${finalContent.length} chars) — retrying with trimmed context.`,
+                        );
+                        this._trimToolHistoryForSynthesis();
+                        const retryMsg = {
+                            role: 'user',
+                            content:
+                                '[QUALITY GATE — Produce a COMPREHENSIVE report with: ' +
+                                'executive summary, detailed analysis, technical details, ' +
+                                'source citations with URLs, and recommendations. ' +
+                                'At least 500 words of substantive prose. No XML or tool calls.]',
+                        };
+                        retryMsg._synthesisRetry = true;
+                        this._messageHistory.push(retryMsg);
+                        this._saveCurrentConversation();
+                        HistoryManager.flushSync();
+                        this._applyAssistantRender(uiElements, 'Refining synthesis…', {
+                            plain: true,
+                        });
+                        this._streamResponse(uiElements);
+                        return;
+                    }
+                    log(
+                        `[Katab:synth-gate] Synthesis retry exhausted — accepting current response.`,
+                    );
+                } else if (finalContent && this._forceSynthesisActive) {
                     // ── Force-synthesis: unconditional stripping ──────────
                     // Tools were NOT advertised.  Any tool-call XML is noise.
                     // Strip first, then decide what to do with the remains.
@@ -20077,47 +20118,6 @@ class KatabDialog {
                                 ? 'DeepSeek was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.'
                                 : 'The model was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.';
                     }
-                } else if (
-                    // eslint-disable-next-line no-dupe-else-if
-                    finalContent &&
-                    this._forceSynthesisActive &&
-                    isSynthesisRegurgitation(finalContent, provider)
-                ) {
-                    // NOTE (deferred): this branch is currently unreachable — the
-                    // earlier `finalContent && this._forceSynthesisActive` branch
-                    // above already covers this condition, so the non-XML garbage
-                    // quality gate never runs.  Reordering the chain changes
-                    // synthesis-retry behavior; tracked as a follow-up fix (see the
-                    // ESLint-triage commit message).
-                    // ── Synthesis quality gate (non-XML garbage) ──────────
-                    const synthRetries = this._synthesisRetries || 0;
-                    if (synthRetries < 1) {
-                        this._synthesisRetries = synthRetries + 1;
-                        log(
-                            `[Katab:synth-gate] Synthesis regurgitation detected (${finalContent.length} chars) — retrying with trimmed context.`,
-                        );
-                        this._trimToolHistoryForSynthesis();
-                        const retryMsg = {
-                            role: 'user',
-                            content:
-                                '[QUALITY GATE — Produce a COMPREHENSIVE report with: ' +
-                                'executive summary, detailed analysis, technical details, ' +
-                                'source citations with URLs, and recommendations. ' +
-                                'At least 500 words of substantive prose. No XML or tool calls.]',
-                        };
-                        retryMsg._synthesisRetry = true;
-                        this._messageHistory.push(retryMsg);
-                        this._saveCurrentConversation();
-                        HistoryManager.flushSync();
-                        this._applyAssistantRender(uiElements, 'Refining synthesis…', {
-                            plain: true,
-                        });
-                        this._streamResponse(uiElements);
-                        return;
-                    }
-                    log(
-                        `[Katab:synth-gate] Synthesis retry exhausted — accepting current response.`,
-                    );
                 }
                 this._applyAssistantRender(uiElements, finalContent, { final: true });
                 const assistantMsg = this._buildAssistantHistoryMessage(
