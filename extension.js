@@ -7249,6 +7249,19 @@ class KatabDialog {
     }
 
     _buildUI() {
+        this._buildHeaderBar();
+        this._buildChatArea();
+        this._buildHistoryView();
+        this._buildPanelsAndFooter();
+        this._buildTokenGauge();
+        this._buildPromptEditor();
+        this._buildToolsArea();
+        this._wirePromptEditorEvents();
+        this._buildSendButton();
+        this._applyInitialChatUI();
+    }
+
+    _buildHeaderBar() {
         let headerBox = new St.BoxLayout({
             vertical: false,
             style_class: 'katab-header-box',
@@ -7581,7 +7594,9 @@ class KatabDialog {
         });
         closeBtn.connect('clicked', () => this.close());
         headerBox.add_child(closeBtn);
+    }
 
+    _buildChatArea() {
         this._chatScroll = new St.ScrollView({
             style_class: 'katab-chat-scroll',
             hscrollbar_policy: St.PolicyType.NEVER,
@@ -7607,7 +7622,9 @@ class KatabDialog {
         });
         this._messageList._katabChatGen = this._chatGeneration;
         this._chatContainer.add_child(this._messageList);
+    }
 
+    _buildHistoryView() {
         // History view (hidden by default) — wrapper with search bar + scrollable list
         this._historyView = new St.BoxLayout({
             vertical: true,
@@ -7738,7 +7755,9 @@ class KatabDialog {
             style_class: 'katab-history-container',
         });
         historyScroll.add_child(this._historyContainer);
+    }
 
+    _buildPanelsAndFooter() {
         // Preset picker panel (hidden by default, replaces chat scroll like history)
         this._presetPicker = this._buildPresetPicker();
         this.contentLayout.add_child(this._presetPicker);
@@ -7784,8 +7803,9 @@ class KatabDialog {
             vertical: false,
         });
         this.contentLayout.add_child(this._footerBox);
-        let footerBox = this._footerBox;
+    }
 
+    _buildTokenGauge() {
         // Add the token indicator to the footer Box
         this._tokenBox = new St.Widget({
             style_class: 'katab-token-box',
@@ -7873,8 +7893,10 @@ class KatabDialog {
             return Clutter.EVENT_PROPAGATE;
         });
 
-        footerBox.add_child(this._tokenBox);
+        this._footerBox.add_child(this._tokenBox);
+    }
 
+    _buildPromptEditor() {
         this._promptColumn = new St.BoxLayout({
             vertical: true,
             style_class: 'katab-prompt-column',
@@ -7882,7 +7904,7 @@ class KatabDialog {
             y_expand: false,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        footerBox.add_child(this._promptColumn);
+        this._footerBox.add_child(this._promptColumn);
 
         this._promptScroll = new St.ScrollView({
             style_class: 'katab-prompt-scroll',
@@ -7963,7 +7985,9 @@ class KatabDialog {
         this._promptEditor.add_child(this._entry);
         this._applyPromptTextColor();
         this._syncPromptHintVisibility();
+    }
 
+    _buildToolsArea() {
         // ══ Consolidated Tools Gear Button ════════════════════════════
         // Single gear icon that opens a popup listing all tools with
         // mode toggles (Auto/On/Off). A red badge shows how many tools
@@ -8039,8 +8063,10 @@ class KatabDialog {
             return Clutter.EVENT_PROPAGATE;
         });
 
-        footerBox.add_child(this._toolsGearWrap);
+        this._footerBox.add_child(this._toolsGearWrap);
+    }
 
+    _wirePromptEditorEvents() {
         this._entry.connect('text-changed', () => {
             // Safety-net character cap. If the draft is over the limit (typed,
             // IME, or any path that bypassed the paste guard) trim it back.
@@ -8255,7 +8281,9 @@ class KatabDialog {
 
             return Clutter.EVENT_PROPAGATE;
         });
+    }
 
+    _buildSendButton() {
         let sendBtn = new St.Button({
             child: new St.Icon({
                 icon_name: 'mail-send-symbolic',
@@ -8275,9 +8303,11 @@ class KatabDialog {
         });
         this._sendBtn = sendBtn;
         this._sendIcon = sendBtn.child;
-        footerBox.add_child(sendBtn);
+        this._footerBox.add_child(sendBtn);
         this._updateSendButton();
+    }
 
+    _applyInitialChatUI() {
         this._addWelcomeMessage();
         this._updateToolsUI();
         this._updatePendingDocumentUI();
