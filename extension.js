@@ -1443,6 +1443,15 @@ class KatabDialog {
         this._messageHistory = [];
         this._soupSession = new Soup.Session();
         this._soupSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+        // Dedicated session for draft-tokenizer probes so their timeout can
+        // never interact with an in-flight chat request on the shared session.
+        this._tokenizeSession = new Soup.Session();
+        this._tokenizeSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+        // Per-provider tokenize-probe support: null = untested, true = works,
+        // false = endpoint definitively missing (404/405) — skip re-probing and
+        // use the character estimate.  Ollama has no public /api/tokenize
+        // route, so its first probe normally fails and is cached here.
+        this._tokenizeSupported = { unsloth: null, ollama: null };
         this._cancellable = null;
         this._retrySourceId = 0;
         // Request lifecycle: the single source of truth for send/stop state
@@ -8123,6 +8132,13 @@ class KatabDialog {
             this._ragIndexFlushTimeoutId = 0;
         }
 
+        // Stop any in-flight tokenize probe request created by the prompt
+        // debounce; the session itself is released with the dialog.
+        if (this._tokenizeSession) {
+            try { this._tokenizeSession.abort(); } catch (_e) { /* session already gone */ }
+            this._tokenizeSession = null;
+        }
+
         // Disconnect all settings handlers collected via _connectSetting.
         if (this._settingsHandlerIds && this._settingsHandlerIds.length > 0) {
             for (const id of this._settingsHandlerIds) {
@@ -8163,12 +8179,15 @@ class KatabDialog {
             return;
         }
 
-        this._soupSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+        const provider = this._currentProvider;
+        const canProbe = (provider === 'unsloth' || provider === 'ollama')
+            && this._tokenizeSupported[provider] !== false;
 
-        if (this._currentProvider === 'unsloth' || this._currentProvider === 'ollama') {
+        if (canProbe) {
+            let statusCode = 0;
             try {
                 let url;
-                if (this._currentProvider === 'unsloth') {
+                if (provider === 'unsloth') {
                     let baseUrl = this._settings.get_string('unsloth-url') || 'http://127.0.0.1:8080';
                     if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
                     if (baseUrl.endsWith('/v1')) baseUrl = baseUrl.slice(0, -3);
@@ -8179,7 +8198,7 @@ class KatabDialog {
                     url = baseUrl + '/api/tokenize';
                 }
 
-                let body = this._currentProvider === 'ollama'
+                let body = provider === 'ollama'
                     ? JSON.stringify({ model: this._settings.get_string('ollama-model') || 'llama3', prompt: text })
                     : JSON.stringify({ content: text });
 
@@ -8188,24 +8207,38 @@ class KatabDialog {
                     'application/json',
                     new GLib.Bytes(new TextEncoder().encode(body))
                 );
-                if (this._currentProvider === 'unsloth') {
+                if (provider === 'unsloth') {
                     let apiKey = '';
                     try { apiKey = this._settings.get_string('unsloth-api-key'); } catch (_e) { }
                     if (apiKey) message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
                 }
 
                 let bytes = await new Promise((resolve, reject) => {
-                    this._soupSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, res) => {
+                    this._tokenizeSession.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (session, res) => {
                         try {
                             resolve(session.send_and_read_finish(res));
                         } catch (e) { reject(e); }
                     });
                 });
 
+                statusCode = message.status_code;
+                if (statusCode < 200 || statusCode >= 300) {
+                    throw new Error(`tokenize probe returned HTTP ${statusCode}`);
+                }
+
                 let data = JSON.parse(new TextDecoder('utf-8').decode(bytes.get_data()));
 
+                this._tokenizeSupported[provider] = true;
                 this._draftUsage = data.tokens ? data.tokens.length : Math.ceil(text.length / 4);
             } catch (e) {
+                // A 404/405 means the endpoint does not exist on this server
+                // (Ollama has no public /api/tokenize route) — cache that so the
+                // probe runs at most once per session instead of on every
+                // debounced typing pause.  Transient errors stay uncached.
+                if (statusCode === 404 || statusCode === 405) {
+                    this._tokenizeSupported[provider] = false;
+                    log(`[Katab:tokenize] ${provider} has no tokenize endpoint — using character estimate.`);
+                }
                 this._draftUsage = Math.ceil(text.length / 4);
             }
             this._renderTokenCounter();
