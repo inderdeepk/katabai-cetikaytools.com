@@ -3,6 +3,9 @@ schemas/gschemas.compiled
 *.zip
 *.tar.gz
 
+# Node tooling (ESLint/Prettier dev dependencies)
+node_modules/
+
 # Environment variables & secrets
 .env
 .env.*

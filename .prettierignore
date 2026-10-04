@@ -1,0 +1,8 @@
+node_modules/
+package-lock.json
+schemas/
+icons/
+sprites/
+Documentation/
+rag-service/
+*.zip
