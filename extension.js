@@ -113,6 +113,10 @@ import {
 } from './src/core/toolCallMarkup.js';
 import { HistoryManager } from './src/core/historyManager.js';
 import {
+    createRequestLifecycle,
+    REQUEST_STATES,
+} from './src/core/requestLifecycle.js';
+import {
     DEEPSEEK_MODELS,
     PROVIDER_ACCENT_CLASSES,
     PROVIDER_ICON_STYLE_CLASSES,
@@ -1450,6 +1454,11 @@ class KatabDialog {
         this._sendInFlight = false;
         this._lastResponseErrored = false;
         this._activeResponseState = null;
+        // Phase-6 request lifecycle recorder (dual-run bookkeeping only — the
+        // legacy _isStreaming / _activeResponseState booleans remain
+        // authoritative until the migration completes; mismatches are logged
+        // as [Katab:lifecycle] state mismatch).
+        this._lifecycle = createRequestLifecycle();
         this._sendBtn = null;
         this._sendIcon = null;
 
@@ -1717,6 +1726,14 @@ class KatabDialog {
         }
 
         this._isStreaming = isStreaming;
+
+        // Phase-6 dual-run: the lifecycle recorder must agree with the legacy
+        // boolean. Mismatches are logged during the migration window; the
+        // boolean stays authoritative until reads are flipped (a later phase).
+        if (isStreaming !== this._lifecycle.isActive()) {
+            log(`[Katab:lifecycle] state mismatch — _isStreaming=${isStreaming} but lifecycle state=${this._lifecycle.state} (generation ${this._lifecycle.generation})`);
+        }
+
         this._updateSendButton();
         this._notifyCurrentChatChanged();
     }
@@ -1733,6 +1750,13 @@ class KatabDialog {
 
     _clearActiveResponseState() {
         this._clearPendingRetry();
+        // Phase-6 dual-run recorder (bookkeeping only). An active response
+        // state that the lifecycle never began is a mismatch worth surfacing.
+        const hadResponseState = this._activeResponseState !== null;
+        const lcFinish = this._lifecycle.finish();
+        if (hadResponseState && !lcFinish.ok) {
+            log(`[Katab:lifecycle] state mismatch — cleared a response the lifecycle never began (state=${lcFinish.previous}).`);
+        }
         this._activeResponseState = null;
         this._cancellable = null;
         this._setStreamingState(false);
@@ -1976,6 +2000,17 @@ class KatabDialog {
             ? prevState.accumulatedThink + '\n\n'
             : '';
 
+        // Phase-6 dual-run recorder (bookkeeping only). The lifecycle key is a
+        // stable per-RESPONSE identity (unlike _usageEventId, which is fresh
+        // per tool-call iteration) so same-message re-arms are recognised.
+        const lifecycleKey = sameMessage && prevState._lifecycleKey
+            ? prevState._lifecycleKey
+            : GLib.uuid_string_random();
+        const lcBegin = this._lifecycle.begin(REQUEST_STATES.AWAITING_MODEL, lifecycleKey);
+        if (!lcBegin.ok) {
+            log(`[Katab:lifecycle] state mismatch — begin(awaiting-model) from ${lcBegin.previous} (${lcBegin.reason}).`);
+        }
+
         this._activeResponseState = {
             accumulatedText: '',
             accumulatedThink: preservedThink,
@@ -1986,6 +2021,7 @@ class KatabDialog {
             mode,
             modelName,
             provider,
+            _lifecycleKey: lifecycleKey,
             _usageEventId: GLib.uuid_string_random(),
             uiElements,
         };
@@ -2012,6 +2048,12 @@ class KatabDialog {
     _stopActiveResponse() {
         if (!this._cancellable) {
             return;
+        }
+
+        // Phase-6 dual-run recorder (bookkeeping only).
+        const lcStop = this._lifecycle.stop();
+        if (!lcStop.ok) {
+            log(`[Katab:lifecycle] state mismatch — stop() while ${lcStop.previous} (${lcStop.reason}).`);
         }
 
         this._shouldNotifyOnResponseComplete = false;
@@ -13884,6 +13926,9 @@ class KatabDialog {
         // synthesis phase re-creates its own streaming state as usual.
         this._shouldNotifyOnResponseComplete = false;
         this._cancellable = new Gio.Cancellable();
+        // Phase-6 dual-run recorder: the research run is one anonymous
+        // tool-loop request; its synthesis stream later names the response.
+        this._lifecycle.begin(REQUEST_STATES.TOOL_LOOP);
         this._setStreamingState(true);
 
         // Start the research: enter the tool-call loop with research findings injection
