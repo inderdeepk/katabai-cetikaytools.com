@@ -6,13 +6,18 @@
 // send, redirect handling, cancellables, the Ollama 404-pull prompt, and all
 // UI stay in extension.js; these builders never touch the network.
 //
-// Behaviour note: these builders are exact extractions — quirks of the
-// original inline code (e.g. the DeepSeek web-search seeding under tools) are
-// preserved and frozen by tests, NOT silently fixed.
+// Behaviour note: two inherited quirks were fixed in the review pass after
+// extraction (kept together across streaming + non-streaming modules):
+//   1. endpoint suffixes are no longer doubled for path-suffixed base URLs
+//   2. DeepSeek web-search schemas are only seeded when webSearch is advertised
+// The tests pin the fixed behaviour.
 import { buildToolSchemasFor } from '../tools/toolRegistry.js';
 
-function ensureTrailingSlash(url) {
-    return url.endsWith('/') ? url : `${url}/`;
+// Strip trailing slashes so the suffix checks below recognise an
+// already-suffixed base URL (e.g. "…/api/chat") and do not append the suffix
+// twice.  Keep in sync with nonStreamingRequest.js.
+function normalizeBaseUrl(url) {
+    return String(url ?? '').replace(/\/+$/, '');
 }
 
 function buildBaseHeaders(apiKey) {
@@ -57,9 +62,9 @@ export function buildOpenAiCompatStreamRequest({
     advertise = {},
     toolNames = {},
 }) {
-    let endpoint = ensureTrailingSlash(baseUrl);
+    let endpoint = normalizeBaseUrl(baseUrl);
     if (!endpoint.endsWith('chat/completions') && !endpoint.includes('v1/chat')) {
-        endpoint += 'chat/completions';
+        endpoint += '/chat/completions';
     }
 
     const headers = buildBaseHeaders(apiKey);
@@ -108,9 +113,9 @@ export function buildAnthropicStreamRequest({
     advertise = {},
     toolNames = {},
 }) {
-    let endpoint = ensureTrailingSlash(baseUrl);
+    let endpoint = normalizeBaseUrl(baseUrl);
     if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
-        endpoint += 'v1/messages';
+        endpoint += '/v1/messages';
     }
 
     // Anthropic specific headers
@@ -154,9 +159,9 @@ export function buildOllamaStreamRequest({
     advertise = {},
     toolNames = {},
 }) {
-    let endpoint = ensureTrailingSlash(baseUrl);
+    let endpoint = normalizeBaseUrl(baseUrl);
     if (!endpoint.endsWith('api/chat')) {
-        endpoint += 'api/chat';
+        endpoint += '/api/chat';
     }
 
     const headers = { 'Content-Type': 'application/json' };
@@ -202,10 +207,9 @@ export function buildDeepSeekStreamRequest({
     advertise = {},
     toolNames = {},
 }) {
-    let endpoint = ensureTrailingSlash(baseUrl);
+    let endpoint = normalizeBaseUrl(baseUrl);
     if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions')) {
-        if (!endpoint.endsWith('/')) endpoint += '/';
-        endpoint += 'chat/completions';
+        endpoint += '/chat/completions';
     }
 
     const headers = buildBaseHeaders(apiKey);
@@ -258,22 +262,12 @@ export function buildDeepSeekStreamRequest({
         }
     }
 
-    // Tools and JSON mode are mutually exclusive on DeepSeek. NOTE: the
-    // web-search group is seeded whenever tools are enabled — even when the
-    // webSearch advertisement flag is false — exactly as the original inline
-    // builder did. Frozen by test; recorded as a follow-up (do not "fix" here).
+    // Tools and JSON mode are mutually exclusive on DeepSeek.  Each tool
+    // family gates independently — web search may be off (or suppressed by a
+    // strong KB hit) while crawl/RAG tools are still active.
     const hasTools = (advertise.webSearch || advertise.crawl || advertise.rag) && !jsonMode;
     if (hasTools) {
-        payload.tools = buildToolSchemasFor(toolNames.webSearch, 'openai');
-        if (advertise.crawl) {
-            payload.tools = [...payload.tools, ...buildToolSchemasFor(toolNames.crawl, 'openai')];
-        }
-        if (advertise.exploreDocs) {
-            payload.tools = [...payload.tools, ...buildToolSchemasFor(toolNames.exploreDocs, 'openai')];
-        }
-        if (advertise.rag) {
-            payload.tools = [...payload.tools, ...buildToolSchemasFor(toolNames.rag, 'openai')];
-        }
+        appendDialectToolGroups(payload, advertise, toolNames, 'openai');
         payload.tool_choice = 'auto';
     }
 

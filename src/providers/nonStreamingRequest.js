@@ -5,11 +5,9 @@
 // _streamResponse.  Extracted so endpoint/header/payload construction and
 // response/usage extraction are unit-testable without the GNOME Shell.
 //
-// BEHAVIOR FROZEN: the endpoint normalization below reproduces the original
-// logic exactly, including a pre-existing quirk — a base URL that already ends
-// in a path suffix (e.g. "http://host/api/chat") receives an ADDITIONAL suffix
-// because a trailing "/" is appended first.  Plain base URLs
-// (http://host:port) are the supported configuration; see the test suite.
+// Endpoint normalization strips trailing slashes before the suffix check, so
+// an already-suffixed base URL (e.g. "http://host/api/chat") keeps its single
+// suffix instead of receiving a second one.  Keep in sync with chatRequest.js.
 
 /**
  * Build the HTTP request for a non-streaming chat completion.
@@ -24,15 +22,14 @@
  * @returns {{ url: string, headers: Record<string,string>, payload: object }}
  */
 export function buildNonStreamingChatRequest({ provider, baseUrl, model, apiKey = '', messages, maxTokens = 256 }) {
-    let endpoint = String(baseUrl ?? '');
-    if (!endpoint.endsWith('/')) endpoint += '/';
+    let endpoint = String(baseUrl ?? '').replace(/\/+$/, '');
 
     const headers = { 'Content-Type': 'application/json' };
     let payload;
 
     if (provider === 'anthropic') {
         if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
-            endpoint += 'v1/messages';
+            endpoint += '/v1/messages';
         }
         headers['x-api-key'] = apiKey;
         headers['anthropic-version'] = '2023-06-01';
@@ -43,7 +40,7 @@ export function buildNonStreamingChatRequest({ provider, baseUrl, model, apiKey 
         };
     } else if (provider === 'ollama') {
         if (!endpoint.endsWith('api/chat')) {
-            endpoint += 'api/chat';
+            endpoint += '/api/chat';
         }
         // Non-streaming calls (planner, gap analysis, compression) need
         // fast, structured responses.  Disable think mode so the model
@@ -53,7 +50,7 @@ export function buildNonStreamingChatRequest({ provider, baseUrl, model, apiKey 
     } else {
         // openai / unsloth / deepseek (OpenAI-compatible chat completions)
         if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions') && !endpoint.includes('v1/chat')) {
-            endpoint += 'chat/completions';
+            endpoint += '/chat/completions';
         }
         if (apiKey) {
             headers['Authorization'] = `Bearer ${apiKey}`;

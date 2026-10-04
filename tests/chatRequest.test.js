@@ -244,7 +244,7 @@ const tests = [
         assertEqual(prepended.payload.messages[0].role, 'system', 'minimal system prepended');
     }],
 
-    ['deepseek: frozen quirks — web-search seeding and JSON/tools exclusivity', () => {
+    ['deepseek: tools gate per family and JSON/tools exclusivity hold', () => {
         const built = buildDeepSeekStreamRequest({
             baseUrl: 'https://api.deepseek.com',
             model: 'm',
@@ -254,11 +254,10 @@ const tests = [
             toolNames: NAMES,
         });
         const names = built.payload.tools.map(toolNameOf);
-        // Frozen quirk: the web-search group is seeded whenever tools are
-        // enabled, even though the webSearch advertisement flag is false.
-        // Recorded as a follow-up — not fixed in this refactor.
-        assert(names.includes(WEB_SEARCH_TOOL_NAME), 'web search seeded (quirk)');
-        assert(names.includes(READ_URL_TOOL_NAME), 'read_url seeded (quirk)');
+        // Fixed in the review pass: the web-search group is only seeded when
+        // the webSearch advertisement flag is set (matches openai/ollama).
+        assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not seeded');
+        assert(!names.includes(READ_URL_TOOL_NAME), 'read_url not seeded');
         assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl appended');
         assertEqual(built.payload.tool_choice, 'auto', 'auto tool choice');
 
@@ -302,16 +301,36 @@ const tests = [
             format: 'json',
             raw: true,
         });
-        // Frozen quirk (same class as nonStreamingRequest): the trailing-slash
-        // normalization runs BEFORE the suffix check, so a base URL already
-        // ending in a path segment gets a DOUBLED suffix. Plain base URLs
-        // (http://host:port) are the supported config. Fix streaming +
-        // non-streaming normalizations together if this is ever changed.
-        assertEqual(withFormat.endpoint, 'http://localhost:11434/api/chat/api/chat', 'suffix doubled (frozen quirk)');
+        // Endpoint normalization strips trailing slashes before the suffix
+        // check, so an already-suffixed base URL keeps exactly one suffix.
+        assertEqual(withFormat.endpoint, 'http://localhost:11434/api/chat', 'suffix not doubled');
         assertEqual(withFormat.payload.keep_alive, '999999h', 'keep alive override');
         assertEqual(withFormat.payload.think, false, 'think override');
         assertEqual(withFormat.payload.format, 'json', 'format set');
         assertEqual(withFormat.payload.raw, true, 'raw set');
+    }],
+
+    ['endpoint normalization: trailing slashes and existing suffixes', () => {
+        const openai = buildOpenAiCompatStreamRequest({
+            provider: 'openai', baseUrl: 'https://api.openai.com/v1/chat/completions', model: 'm', messages: [],
+        });
+        assertEqual(openai.endpoint, 'https://api.openai.com/v1/chat/completions', 'openai suffix kept');
+        const openaiSlash = buildOpenAiCompatStreamRequest({
+            provider: 'openai', baseUrl: 'https://api.openai.com/v1/', model: 'm', messages: [],
+        });
+        assertEqual(openaiSlash.endpoint, 'https://api.openai.com/v1/chat/completions', 'openai trailing slash + single suffix');
+        const anthropic = buildAnthropicStreamRequest({
+            baseUrl: 'https://api.anthropic.com/v1/messages/', model: 'm', messages: [],
+        });
+        assertEqual(anthropic.endpoint, 'https://api.anthropic.com/v1/messages', 'anthropic suffix kept, slash stripped');
+        const deepseek = buildDeepSeekStreamRequest({
+            baseUrl: 'https://api.deepseek.com/chat/completions', model: 'm', messages: [], maxTokens: 1,
+        });
+        assertEqual(deepseek.endpoint, 'https://api.deepseek.com/chat/completions', 'deepseek suffix kept');
+        const ollama = buildOllamaStreamRequest({
+            baseUrl: 'http://localhost:11434/api/chat/', model: 'm', messages: [],
+        });
+        assertEqual(ollama.endpoint, 'http://localhost:11434/api/chat', 'ollama suffix kept, slash stripped');
     }],
 
     ['ollama: tools gate per family (no web-search seeding quirk)', () => {

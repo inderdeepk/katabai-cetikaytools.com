@@ -38,7 +38,7 @@ const tests = [
             apiKey: 'k',
             messages: MESSAGES,
         });
-        assertEqual(req.url, 'https://proxy.example/v1/messages/', 'trailing slash only');
+        assertEqual(req.url, 'https://proxy.example/v1/messages', 'suffix not appended again');
     }],
 
     // ── ollama ─────────────────────────────────────────────────────────────
@@ -96,17 +96,30 @@ const tests = [
         assert(!('thinking' in req.payload), 'no deepseek thinking block');
     }],
 
-    ['endpoint quirk: path-suffixed base URL receives a doubled suffix (pre-existing behavior)', () => {
-        // Documented legacy behavior: a trailing "/" is appended before the
-        // suffix check, so "…/api/chat" becomes "…/api/chat/api/chat".
-        // Base URLs (http://host:port) are the supported configuration.
-        const req = buildNonStreamingChatRequest({
+    ['endpoint normalization: path-suffixed base URLs keep a single suffix', () => {
+        const ollama = buildNonStreamingChatRequest({
             provider: 'ollama',
             baseUrl: 'http://host/api/chat',
             model: 'm',
             messages: MESSAGES,
         });
-        assertEqual(req.url, 'http://host/api/chat/api/chat', 'quirk frozen by test');
+        assertEqual(ollama.url, 'http://host/api/chat', 'ollama suffix not doubled');
+
+        const openai = buildNonStreamingChatRequest({
+            provider: 'openai',
+            baseUrl: 'https://proxy.example/v1/chat/completions/',
+            model: 'm',
+            messages: MESSAGES,
+        });
+        assertEqual(openai.url, 'https://proxy.example/v1/chat/completions', 'openai suffix kept, slash stripped');
+
+        const anthropic = buildNonStreamingChatRequest({
+            provider: 'anthropic',
+            baseUrl: 'https://proxy.example/v1/messages/',
+            model: 'm',
+            messages: MESSAGES,
+        });
+        assertEqual(anthropic.url, 'https://proxy.example/v1/messages', 'anthropic suffix kept, slash stripped');
     }],
 
     // ── response extraction ────────────────────────────────────────────────
