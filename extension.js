@@ -113,6 +113,13 @@ import {
 } from './src/core/toolCallMarkup.js';
 import { HistoryManager } from './src/core/historyManager.js';
 import {
+    MARKDOWN_SEGMENT_MAX_CHARS,
+    buildAssistantRenderModel,
+    formatInlineMarkdown,
+    normalizeUrl,
+    splitTextIntoBoundedChunks,
+} from './src/ui/markdownRender.js';
+import {
     compressResearchBranch,
 } from './src/research/compressionTools.js';
 import {
@@ -613,36 +620,8 @@ const STREAMING_FAST_THROTTLE_US = 33000;   // single-label fast path (~30 fps)
 const STREAMING_FULL_THROTTLE_US = 300000;  // full markdown render (~3.3 fps)
 const STREAMING_SINGLE_LABEL_MAX_CHARS = 6000;
 
-// Same GPU-texture bound applied to rendered markdown segments (final render
-// and long-stream throttled render) and code blocks, so no single StLabel can
-// ever grow past GL_MAX_TEXTURE_SIZE.
-const MARKDOWN_SEGMENT_MAX_CHARS = 6000;
-
-// Split a block of text into chunks no longer than @maxChars, breaking only at
-// line boundaries so per-line markdown formatting (headings, lists, quotes,
-// inline styles) stays intact inside each chunk. Always returns at least one
-// chunk; a pathological single over-long line is kept whole (still far below
-// the 8192 px texture cap at typical 2× scale).
-function splitTextIntoBoundedChunks(text, maxChars) {
-    const lines = String(text ?? '').split('\n');
-    const chunks = [];
-    let current = [];
-    let currentLen = 0;
-    for (const line of lines) {
-        const lineLen = line.length + 1; // +1 for the '\n' used to rejoin
-        if (currentLen + lineLen > maxChars && current.length > 0) {
-            chunks.push(current.join('\n'));
-            current = [];
-            currentLen = 0;
-        }
-        current.push(line);
-        currentLen += lineLen;
-    }
-    if (current.length > 0) {
-        chunks.push(current.join('\n'));
-    }
-    return chunks.length > 0 ? chunks : [''];
-}
+// Markdown chunk-size bound + splitTextIntoBoundedChunks are imported from
+// src/ui/markdownRender.js (see the import block at the top of this file).
 
 // How many previously sent prompts to keep for shell-style Up/Down recall.
 const PROMPT_HISTORY_MAX_ENTRIES = 100;
@@ -11880,30 +11859,6 @@ class KatabDialog {
         this._notifyCurrentChatChanged();
     }
 
-    _stripHtmlTags(text) {
-        // Convert AI-returned HTML into clean plain text suitable for Pango markup.
-        // Block-level elements gain newlines so references don't run together;
-        // all remaining tags are removed, preserving inner text content.
-        let result = String(text ?? '');
-        // <br> variants → newline
-        result = result.replace(/<br\s*\/?>/gi, '\n');
-        // <li> opens a bullet; </li> adds a newline
-        result = result.replace(/<li[^>]*>/gi, '• ');
-        result = result.replace(/<\/li>/gi, '\n');
-        // </p>, </div>, </ol>, </ul>, </h1>-</h6> → newline for separation
-        result = result.replace(/<\/(?:p|div|ol|ul|h[1-6])>/gi, '\n');
-        // strip every remaining HTML/XML tag
-        result = result.replace(/<[^>]*>/g, '');
-        return result;
-    }
-
-    _escapeMarkup(text) {
-        return String(text ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    }
-
     _setLabelMarkup(label, markup, fallbackText) {
         try {
             label.clutter_text.set_markup(markup);
@@ -11911,10 +11866,6 @@ class KatabDialog {
             log(`Katab: failed to render formatted text: ${e.message}`);
             label.set_text(fallbackText);
         }
-    }
-
-    _renderPlainMarkup(text) {
-        return this._escapeMarkup(this._stripHtmlTags(text)).replace(/\t/g, '    ');
     }
 
     _truncateText(text, maxLength = 48) {
@@ -11936,377 +11887,17 @@ class KatabDialog {
         return error?.code === 'cancelled';
     }
 
-    _normalizeUrl(url) {
-        let trimmed = String(url ?? '').trim().replace(/[.,!?;:]+$/g, '');
-        return /^https?:\/\/\S+$/i.test(trimmed) ? trimmed : null;
-    }
+    // Markdown rendering (inline formatting, headings/lists, tables, code
+    // fences, blockquotes, link extraction, chunking) lives in
+    // src/ui/markdownRender.js — imported at the top of this file.
 
-    _extractLinks(text) {
-        let collectedLinks = [];
 
-        let transformedText = String(text ?? '').replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => {
-            let normalizedUrl = this._normalizeUrl(url);
-            if (normalizedUrl) {
-                collectedLinks.push({
-                    label: label.trim(),
-                    url: normalizedUrl,
-                });
 
-                return label;
-            }
 
-            return _match;
-        });
 
-        transformedText = transformedText.replace(/https?:\/\/[^\s<>()]+/g, match => {
-            let normalizedUrl = this._normalizeUrl(match);
-            if (!normalizedUrl) {
-                return match;
-            }
 
-            collectedLinks.push({
-                label: '',
-                url: normalizedUrl,
-            });
 
-            return normalizedUrl + match.slice(normalizedUrl.length);
-        });
 
-        let links = [];
-        let seen = new Set();
-        for (let link of collectedLinks) {
-            if (seen.has(link.url)) {
-                continue;
-            }
-
-            seen.add(link.url);
-            links.push(link);
-        }
-
-        return {
-            text: transformedText,
-            links: links,
-        };
-    }
-
-    _formatInlineMarkdown(text) {
-        let escapedText = this._escapeMarkup(this._stripHtmlTags(text));
-        let codeTokens = [];
-
-        escapedText = escapedText.replace(/`([^`\n]+)`/g, (_match, code) => {
-            let token = `@@KATAB_CODE_${codeTokens.length}@@`;
-            codeTokens.push(
-                `<span font_family="monospace" weight="600">${code}</span>`
-            );
-            return token;
-        });
-
-        escapedText = escapedText.replace(/\*\*([^\n]+?)\*\*/g, '<b>$1</b>');
-        escapedText = escapedText.replace(/__([^\n]+?)__/g, '<b>$1</b>');
-        escapedText = escapedText.replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
-        escapedText = escapedText.replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
-
-        // Note: [N] citation markers are NOT styled here — they are rendered
-        // as clickable St.Button widgets by _createTextWithCitationButtons.
-
-        for (let i = 0; i < codeTokens.length; i++) {
-            escapedText = escapedText.replace(`@@KATAB_CODE_${i}@@`, codeTokens[i]);
-        }
-
-        return escapedText;
-    }
-
-    _formatMarkdownLine(line) {
-        if (line === '') {
-            return '';
-        }
-
-        let headingMatch = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
-        if (headingMatch) {
-            let headingSizes = {
-                1: 'x-large',
-                2: 'large',
-                3: 'medium',
-                4: 'medium',
-                5: 'small',
-                6: 'small',
-            };
-
-            return `<span size="${headingSizes[headingMatch[1].length]}" weight="bold">${this._formatInlineMarkdown(headingMatch[2].trim())}</span>`;
-        }
-
-        let bulletMatch = line.match(/^\s{0,3}[-*]\s+(.*)$/);
-        if (bulletMatch) {
-            return `• ${this._formatInlineMarkdown(bulletMatch[1])}`;
-        }
-
-        let orderedMatch = line.match(/^\s{0,3}(\d+)\.\s+(.*)$/);
-        if (orderedMatch) {
-            return `${orderedMatch[1]}. ${this._formatInlineMarkdown(orderedMatch[2])}`;
-        }
-
-        return this._formatInlineMarkdown(line);
-    }
-
-    _formatMarkdownTextSegment(text) {
-        return String(text ?? '')
-            .split('\n')
-            .map(line => this._formatMarkdownLine(line))
-            .join('\n');
-    }
-
-    _splitMarkdownTableRow(line) {
-        let normalized = String(line ?? '').trim();
-        if (!normalized.includes('|')) {
-            return [];
-        }
-
-        if (normalized.startsWith('|')) {
-            normalized = normalized.slice(1);
-        }
-
-        if (normalized.endsWith('|')) {
-            normalized = normalized.slice(0, -1);
-        }
-
-        return normalized.split('|').map(cell => cell.trim());
-    }
-
-    _looksLikeMarkdownTableRow(line) {
-        let cells = this._splitMarkdownTableRow(line);
-        return cells.length > 1;
-    }
-
-    _isMarkdownTableSeparator(line) {
-        let cells = this._splitMarkdownTableRow(line);
-        return cells.length > 1 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
-    }
-
-    _parseMarkdownTable(lines, startIndex) {
-        if (startIndex + 1 >= lines.length) {
-            return null;
-        }
-
-        let headerLine = lines[startIndex];
-        let separatorLine = lines[startIndex + 1];
-        if (!this._looksLikeMarkdownTableRow(headerLine) || !this._isMarkdownTableSeparator(separatorLine)) {
-            return null;
-        }
-
-        let headers = this._splitMarkdownTableRow(headerLine);
-        let separatorCells = this._splitMarkdownTableRow(separatorLine);
-        if (headers.length < 2 || separatorCells.length !== headers.length) {
-            return null;
-        }
-
-        let rows = [];
-        let rawLines = [headerLine, separatorLine];
-        let index = startIndex + 2;
-
-        while (index < lines.length && this._looksLikeMarkdownTableRow(lines[index])) {
-            let cells = this._splitMarkdownTableRow(lines[index]);
-            if (cells.length !== headers.length) {
-                break;
-            }
-
-            rows.push(cells);
-            rawLines.push(lines[index]);
-            index++;
-        }
-
-        return {
-            headers,
-            rows,
-            nextIndex: index,
-            rawText: rawLines.join('\n'),
-        };
-    }
-
-    _isMarkdownDividerLine(line) {
-        return /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(String(line ?? ''));
-    }
-
-    _appendMarkdownSegmentsFromText(segments, text) {
-        let lines = String(text ?? '').split('\n');
-        for (const segment of this._buildMarkdownSegmentsFromLines(lines)) {
-            segments.push(segment);
-        }
-    }
-
-    _buildMarkdownSegmentsFromLines(lines) {
-        let segments = [];
-        let bufferedLines = [];
-
-        let flushBufferedLines = () => {
-            if (bufferedLines.length === 0) {
-                return;
-            }
-
-            let blockText = bufferedLines.join('\n');
-            bufferedLines = [];
-
-            if (blockText === '') {
-                return;
-            }
-
-            for (const chunk of splitTextIntoBoundedChunks(blockText, MARKDOWN_SEGMENT_MAX_CHARS)) {
-                segments.push({
-                    type: 'text',
-                    markup: this._formatMarkdownTextSegment(chunk),
-                    fallbackText: chunk,
-                });
-            }
-        };
-
-        let index = 0;
-        while (index < lines.length) {
-            let line = lines[index];
-
-            // Blockquote: group consecutive "> ..." lines, strip the markers,
-            // and parse the inner block as full markdown (tables, lists,
-            // headings, bold, etc.) inside a styled quote container. This
-            // replaces the old per-line "| " prefix that rendered as a stray
-            // slash/pipe before every quoted line.
-            if (/^\s{0,3}>\s?(.*)$/.test(line)) {
-                flushBufferedLines();
-
-                let innerLines = [];
-                while (index < lines.length) {
-                    let quoteMatch = lines[index].match(/^\s{0,3}>\s?(.*)$/);
-                    if (!quoteMatch) {
-                        break;
-                    }
-
-                    innerLines.push(quoteMatch[1]);
-                    index++;
-                }
-
-                if (innerLines.length > 0) {
-                    segments.push({
-                        type: 'blockquote',
-                        segments: this._buildMarkdownSegmentsFromLines(innerLines),
-                    });
-                }
-
-                continue;
-            }
-
-            let table = this._parseMarkdownTable(lines, index);
-            if (table) {
-                flushBufferedLines();
-                segments.push({
-                    type: 'table',
-                    headers: table.headers,
-                    rows: table.rows,
-                    fallbackText: table.rawText,
-                });
-                index = table.nextIndex;
-                continue;
-            }
-
-            if (this._isMarkdownDividerLine(line)) {
-                flushBufferedLines();
-                segments.push({ type: 'rule' });
-                index++;
-                continue;
-            }
-
-            bufferedLines.push(line);
-            index++;
-        }
-
-        flushBufferedLines();
-
-        return segments;
-    }
-
-    _buildCodeBlockSegment(language, codeText) {
-        return {
-            type: 'code',
-            language: String(language ?? '').trim(),
-            code: String(codeText ?? '').replace(/\t/g, '    ').replace(/\n$/, ''),
-        };
-    }
-
-    _buildAssistantRenderModel(rawText, { final = false, plain = false } = {}) {
-        let sourceText = String(rawText ?? '');
-        if (plain) {
-            const plainSegments = [];
-            for (const chunk of splitTextIntoBoundedChunks(sourceText, MARKDOWN_SEGMENT_MAX_CHARS)) {
-                plainSegments.push({
-                    type: 'text',
-                    markup: this._renderPlainMarkup(chunk),
-                    fallbackText: chunk,
-                });
-            }
-            return {
-                segments: plainSegments,
-                links: [],
-            };
-        }
-
-        let parseableText = sourceText;
-        let trailingPlainText = '';
-        let fenceMatches = parseableText.match(/```/g) || [];
-        if (!final && fenceMatches.length % 2 === 1) {
-            let lastFenceIndex = parseableText.lastIndexOf('```');
-            trailingPlainText = parseableText.slice(lastFenceIndex);
-            parseableText = parseableText.slice(0, lastFenceIndex);
-        }
-
-        let segments = [];
-        let links = [];
-        let codeBlockRegex = /```([^\n`]*)\n([\s\S]*?)```/g;
-        let lastIndex = 0;
-        let match;
-
-        while ((match = codeBlockRegex.exec(parseableText)) !== null) {
-            if (match.index > lastIndex) {
-                let extracted = this._extractLinks(parseableText.slice(lastIndex, match.index));
-                links.push(...extracted.links);
-                if (extracted.text !== '') {
-                    this._appendMarkdownSegmentsFromText(segments, extracted.text);
-                }
-            }
-
-            segments.push(this._buildCodeBlockSegment(match[1], match[2]));
-            lastIndex = codeBlockRegex.lastIndex;
-        }
-
-        if (lastIndex < parseableText.length) {
-            let extracted = this._extractLinks(parseableText.slice(lastIndex));
-            links.push(...extracted.links);
-            if (extracted.text !== '') {
-                this._appendMarkdownSegmentsFromText(segments, extracted.text);
-            }
-        }
-
-        if (trailingPlainText) {
-            for (const chunk of splitTextIntoBoundedChunks(trailingPlainText, MARKDOWN_SEGMENT_MAX_CHARS)) {
-                segments.push({
-                    type: 'text',
-                    markup: this._renderPlainMarkup(chunk),
-                    fallbackText: chunk,
-                });
-            }
-        }
-
-        let uniqueLinks = [];
-        let seen = new Set();
-        for (let link of links) {
-            if (seen.has(link.url)) {
-                continue;
-            }
-
-            seen.add(link.url);
-            uniqueLinks.push(link);
-        }
-
-        return {
-            segments,
-            links: uniqueLinks,
-        };
-    }
 
     _positionFromTextEvent(clutterText, event) {
         let [x, y] = event.get_coords();
@@ -12473,7 +12064,7 @@ class KatabDialog {
         label.clutter_text.can_focus = false;
         this._makeTextSelectable(label);
 
-        let markup = this._formatInlineMarkdown(text);
+        let markup = formatInlineMarkdown(text);
         if (header) {
             markup = `<b>${markup}</b>`;
         }
@@ -12846,7 +12437,7 @@ class KatabDialog {
                 const url = m[m.length - 1]; // URL is always the last capture group
                 const title = m.length >= 4 ? m[2].replace(/\*\*/g, '').trim() : '';
                 if (!map.has(num)) {
-                    map.set(num, { url: this._normalizeUrl(url) || url, title });
+                    map.set(num, { url: normalizeUrl(url) || url, title });
                 }
             }
         }
@@ -12857,7 +12448,7 @@ class KatabDialog {
             const num = parseInt(m[1], 10);
             const url = m[2].replace(/[.,;:!]+$/g, '');
             if (!map.has(num)) {
-                map.set(num, { url: this._normalizeUrl(url) || url, title: '' });
+                map.set(num, { url: normalizeUrl(url) || url, title: '' });
             }
         }
 
@@ -13253,7 +12844,7 @@ class KatabDialog {
             uiElements._katabStreamLabel = null;
         }
 
-        let rendered = this._buildAssistantRenderModel(sourceText, options);
+        let rendered = buildAssistantRenderModel(sourceText, options);
 
         // Parse bibliography section for clickable [N] citation button mapping
         this._currentBibMap = this._parseMessageBibliography(sourceText);
