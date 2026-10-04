@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Provider switcher in chat header**: Click the provider chip to switch AI backends directly from the chat overlay.
 - **Ollama system prompt**: Customizable system prompt for Ollama models, live date injection for all providers.
 - **RAG auto-search timeout guard**: `_withTimeout` helper bounds all local service awaits (RAG, Crawl4AI, SearxNG) preventing stuck sends.
-- **Send re-entrancy guard**: `_sendInFlight` flag prevents multiple concurrent sends during long-running enrichment phases.
+- **Request lifecycle state machine**: one lifecycle (`src/core/requestLifecycle.js` — idle → enriching → awaiting-model ⇄ tool-loop → synthesis → stopping → done/error) is now the single source of truth for send/stop state. The re-entrancy guard over slow KB/web enrichment is its *enriching* phase, and the send button, Enter key, chat status, and stop-before-action guards read lifecycle state instead of the legacy `_sendInFlight` flag.
 - **Appearance controls now functional**: "Chat Text Size" (Compact / Comfortable / Large) and "Glassy Translucent Dialog" (Preferences → General → Appearance) are now applied by the shell overlay — a root style class scales the whole em-based type scale, and the glass toggle switches the dialog surface between translucent and a higher-contrast opaque surface. The prompt editor also follows the accessibility text-scaling factor again.
 - **Deep Research settings page**: Preferences → Tools → Deep Research now exposes the research depth (Standard / Deep / Max) and optional compression / synthesis model overrides, which were previously dconf-only.
 - **Budget & notification settings**: Monthly budget amount, warning threshold, and desktop notifications are now configurable in Preferences → General (the shell already rendered budget cards and notifications for these keys).
@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **KB search caching**: Repeated identical knowledge-base queries within 60s reuse cached results instead of re-embedding the same text.
 
 ### Fixed
+- **Auto-retry no longer races a fresh send during knowledge-base enrichment**: the post-synthesis quality retry now checks the full request lifecycle (`canSend()`) before starting and before re-synthesising, so it cannot clobber a new message whose KB/web enrichment is still in flight.
 - **Unparseable quality-check response no longer records a blank result**: when the evaluator returned text without a usable score, the coverage value was `undefined` and bypassed the skip guard, storing a quality result with no score. It is now treated like the parsed-but-unscored case: logged and skipped.
 - **Doubled endpoint suffix fixed**: a provider base URL that already ended with a path segment (e.g. `…/api/chat`) no longer receives the suffix twice (`…/api/chat/api/chat`) — streaming and non-streaming endpoint normalization now strip trailing slashes before the suffix check.
 - **DeepSeek tool advertisement fixed**: when web search is disabled or suppressed while crawl/RAG tools are active, `web_search`/`read_url` schemas are no longer advertised — each tool family now gates independently, matching the other providers and the context estimator.
@@ -99,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tool-call UI disposed widget errors**: `_responseUiAlive` guards prevent accessing destroyed widgets during async tool execution.
 - **Prompt character cap**: Large paste handling with truncation notification.
 - **Inline citation buttons**: `[N]` markers in deep research reports are now clickable, bibliography parsed from assistant output.
-- **Enter-stacking**: Multiple rapid sends blocked by `_sendInFlight` guard.
+- **Enter-stacking**: Multiple rapid sends are blocked by the request-lifecycle guard while KB/web enrichment is in flight.
 - **Welcome new-chat scroll**: New Chat after loading a long conversation now resets viewport and prompt text.
 - **Silent crawl success path**: A successful scrape produced no `[Katab:crawl4ai]` journalctl lines (only failures/cache hits logged). The success path now logs the scrape start (mode + provider + URLs), `/llm/job` submission and completion (with output sizes), markdown per-URL results, and a `/crawl command → scraping` trigger line.
 - **Raw `/crawl` text leaking into the RAG auto-search query**: With an inline `/crawl <url>` command, the RAG web-search fallback searched the raw command text. Added `stripCrawl4AICommand` so the auto-search query and the model-visible user message keep only the conversational part (e.g. "tell me what this page is about").

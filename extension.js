@@ -1445,13 +1445,14 @@ class KatabDialog {
         this._soupSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
         this._cancellable = null;
         this._retrySourceId = 0;
-        this._isStreaming = false;
-        // Phase-6 request lifecycle recorder. The pre-stream re-entrancy guard
-        // (slow KB/web enrichment BEFORE streaming begins) is now the
-        // lifecycle's ENRICHING phase: a new send is dropped while the state
-        // is not settled (see _sendMessage). The legacy _isStreaming boolean
-        // is still written for parity during the migration; divergence is
-        // logged as [Katab:lifecycle] state mismatch.
+        // Request lifecycle: the single source of truth for send/stop state
+        // (idle → enriching → awaiting-model ⇄ tool-loop → synthesis →
+        // stopping → done/error). The pre-stream re-entrancy guard (slow
+        // KB/web enrichment before the stream begins) is the ENRICHING
+        // phase; a new send is dropped while the state is not settled (see
+        // _sendMessage). Chat/UI view-lifecycle (_chatGeneration,
+        // _responseUiAlive, _isChatUiCurrent) stays a separate concern — it
+        // guards UI ownership, not request state.
         this._lifecycle = createRequestLifecycle();
         this._lastResponseErrored = false;
         this._activeResponseState = null;
@@ -1711,18 +1712,18 @@ class KatabDialog {
         });
     }
 
+    /**
+     * Apply the streaming-state UI (send/stop button styling + indicator
+     * refresh) and assert lifecycle consistency. The lifecycle transitions
+     * FIRST at every call site (_beginActiveResponse → begin(),
+     * _clearActiveResponseState → finish(), the research arm → begin()), so
+     * a divergence logged here means a caller skipped or reordered its
+     * transition. The UI updates are idempotent and the indicator notify is
+     * debounced, so this runs on every call.
+     */
     _setStreamingState(isStreaming) {
-        if (this._isStreaming === isStreaming) {
-            return;
-        }
-
-        this._isStreaming = isStreaming;
-
-        // Phase-6 dual-run: the lifecycle recorder must agree with the legacy
-        // boolean. Mismatches are logged during the migration window; the
-        // boolean stays authoritative until reads are flipped (a later phase).
         if (isStreaming !== this._lifecycle.isActive()) {
-            log(`[Katab:lifecycle] state mismatch — _isStreaming=${isStreaming} but lifecycle state=${this._lifecycle.state} (generation ${this._lifecycle.generation})`);
+            log(`[Katab:lifecycle] state mismatch — requested ${isStreaming} but lifecycle state=${this._lifecycle.state} (generation ${this._lifecycle.generation})`);
         }
 
         this._updateSendButton();
@@ -14611,12 +14612,12 @@ class KatabDialog {
         // Guard: research context may have been torn down (new chat or
         // conversation load) while the quality check was awaiting its response.
         if (!this._originalResearchQuery) return;
-        // Guard: if the user has already started a new response in the same
-        // conversation, don't auto-retry — _runSynthesisPhase →
-        // _streamResponse(uiElements) would call _cancelStream and cancel the
-        // user's new request.
-        if (this._lifecycle.isResponding()) {
-            log('[Katab:quality] Skipping auto-retry — a new response is already active.');
+        // Guard: if the user has already started a new request in the same
+        // conversation (including its KB/web enrichment window), don't
+        // auto-retry — _runSynthesisPhase → _streamResponse(uiElements) would
+        // call _cancelStream and cancel the user's new request.
+        if (!this._lifecycle.canSend()) {
+            log('[Katab:quality] Skipping auto-retry — a new request is already in flight.');
             return;
         }
 
@@ -14687,8 +14688,8 @@ class KatabDialog {
             // 5. Re-synthesize a new report; the quality check will run again on it.
             //    The user may have started a new message while the retry research
             //    was running — don't clobber it (see guard at the top too).
-            if (this._lifecycle.isResponding()) {
-                log('[Katab:quality] Skipping re-synthesis — a new response is already active.');
+            if (!this._lifecycle.canSend()) {
+                log('[Katab:quality] Skipping re-synthesis — a new request is already in flight.');
                 return;
             }
             await this._runSynthesisPhase(allFindings);
@@ -16868,9 +16869,9 @@ class KatabDialog {
             && this._activeResearchPlan.length > 0;
         if ((this._deepResearchMode === TOOL_MODE_ON || planPending) && !this._planApproved && !this._planBranchesStarted) {
             // If the user is currently editing the plan, block the send so edits aren't lost.
-            // _beginActiveResponse has already flipped _isStreaming and set the
-            // cancellable, so cancel the pending response to un-stick the send
-            // button (otherwise the next Enter would push a bogus stopped reply).
+            // _beginActiveResponse has already armed the response lifecycle and
+            // set the cancellable, so cancel the pending response to un-stick
+            // the send button (otherwise the next Enter would push a bogus stopped reply).
             if (this._editingPlan) {
                 this._applyAssistantRender(uiElements,
                     'Finish editing the research plan or cancel editing before sending.',

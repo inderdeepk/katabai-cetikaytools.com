@@ -172,6 +172,57 @@ const tests = [
         assertEqual(lc3.state, S.DONE, 'stopped request settles as done');
     }],
 
+    ['historical: rapid Enter during enrichment cannot stack sends', () => {
+        const lc = fresh();
+        // Send #1 enters KB enrichment (awaiting a slow RAG service).
+        assert(lc.begin(S.ENRICHING).ok, 'first send begins enriching');
+        // Rapid second Enter: the dialog drops it via !canSend().
+        assert(!lc.canSend(), 'second send would be dropped');
+        assert(!lc.isResponding(), 'not yet responding');
+        // Enrichment completes; the stream names the request.
+        const named = lc.begin(S.AWAITING_MODEL, 'k1');
+        assert(named.ok && named.reason === null, 'naming is clean');
+        assertEqual(lc.generation, 1, 'one request generation');
+        assert(lc.finish().ok, 'response ends');
+        assert(lc.canSend(), 'sendable again');
+    }],
+
+    ['historical: stop mid-tool-call settles to done', () => {
+        const lc = fresh();
+        lc.begin(S.AWAITING_MODEL, 'k1');
+        lc.begin(S.TOOL_LOOP, 'k1');
+        const stop = lc.stop();
+        assert(stop.ok && stop.previous === S.TOOL_LOOP, 'stop from tool-loop');
+        assert(lc.isResponding(), 'stopping still blocks sends');
+        assert(lc.finish().ok, 'finalisation settles');
+        assert(lc.canSend(), 'sendable again');
+    }],
+
+    ['historical: close/reopen mid-stream then a fresh send is clean', () => {
+        const lc = fresh();
+        lc.begin(S.AWAITING_MODEL, 'k1');
+        // Dialog close cancels the stream → _clearActiveResponseState.
+        assert(lc.finish().ok, 'close settles the request');
+        // Reopen + new send.
+        const next = lc.begin(S.ENRICHING, 'k2');
+        assert(next.ok && next.reason === null, 'fresh send clean after close');
+        assertEqual(lc.generation, 2, 'new generation');
+    }],
+
+    ['historical: new chat during tool execution stops then restarts cleanly', () => {
+        const lc = fresh();
+        lc.begin(S.AWAITING_MODEL, 'k1');
+        lc.begin(S.TOOL_LOOP, 'k1');
+        // _newChat → _stopActiveResponse → clear → first send in the new chat.
+        assert(lc.stop().ok, 'stop');
+        assert(lc.finish().ok, 'finalise');
+        const freshSend = lc.begin(S.ENRICHING, 'k2');
+        assert(freshSend.ok, 'new chat send begins');
+        const named = lc.begin(S.AWAITING_MODEL, 'k2');
+        assert(named.ok && named.reason === null, 'named cleanly');
+        assertEqual(lc.generation, 2, 'second generation');
+    }],
+
     ['full request sequence: enrichment → model → tools → synthesis → done', () => {
         const lc = fresh();
         assert(lc.begin(S.ENRICHING, 'r1').ok, 'begin');
