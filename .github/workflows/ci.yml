@@ -23,6 +23,15 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install npm dev tooling
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier format check
+        run: npm run format:check
+
       - name: Compile GSettings schema
         run: make compile-schemas
 

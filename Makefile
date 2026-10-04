@@ -6,10 +6,10 @@ UUID           := katabai@cetikaytools.com
 INSTALL_DIR    := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 PACKAGE_NAME   := $(UUID).zip
 
-.PHONY: all compile-schemas check test test-verbose test-rag-server sync-rag-server package install reload logs clean help
+.PHONY: all compile-schemas check lint format format-check test test-verbose test-rag-server sync-rag-server package install reload logs clean help
 
 # Every JS file that must parse as an ES module (checked via node --check).
-JS_CHECK_FILES := extension.js prefs.js $(shell find src tests -name '*.js' 2>/dev/null)
+JS_CHECK_FILES := extension.js prefs.js $(shell find src tests scripts \( -name '*.js' -o -name '*.mjs' \) 2>/dev/null)
 
 # Test suites are discovered, not listed, so test/test-verbose can never drift.
 TEST_FILES := $(wildcard tests/*.test.js)
@@ -39,6 +39,30 @@ check:
 	else \
 		echo "[WARN] node not found - skipping JS syntax checks (install Node.js to enable)"; \
 	fi
+	@echo "--- CSS delimiter balance ---"
+	@if command -v node >/dev/null 2>&1; then \
+		node scripts/check-css.mjs; \
+	else \
+		echo "[WARN] node not found - skipping CSS balance check"; \
+	fi
+	@echo "--- GJS import smoke (src modules) ---"
+	@if command -v gjs >/dev/null 2>&1; then \
+		gjs -m scripts/import-smoke.js; \
+	else \
+		echo "[WARN] gjs not found - skipping import smoke"; \
+	fi
+
+## lint           : Run ESLint (requires: npm install)
+lint:
+	npm run lint
+
+## format         : Apply Prettier formatting (requires: npm install)
+format:
+	npm run format
+
+## format-check   : Verify Prettier formatting without writing (requires: npm install)
+format-check:
+	npm run format:check
 
 ## test           : Run all unit tests (discovered from tests/*.test.js)
 test:
