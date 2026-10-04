@@ -127,6 +127,9 @@ import {
 import {
     buildOllamaOptions,
     normalizeOllamaKeepAlive,
+    buildOpenAiCompatStreamRequest,
+    buildAnthropicStreamRequest,
+    buildDeepSeekStreamRequest,
 } from './src/providers/chatRequest.js';
 import {
     MARKDOWN_SEGMENT_MAX_CHARS,
@@ -19046,79 +19049,50 @@ class KatabDialog {
         );
         const apiMessagesWithSystemPolicy = this._withSystemPromptText(apiMessages, autoSystemContext);
 
+        // Shared per-branch inputs for the extracted provider builders.
+        const builderAdvertise = {
+            webSearch: advertiseLocalTools,
+            crawl: advertiseCrawl4AI,
+            exploreDocs: advertiseExploreDocs,
+            rag: advertiseRag,
+        };
+        const builderToolNames = {
+            webSearch: webSearchToolNames,
+            crawl: crawlToolNames,
+            exploreDocs: exploreDocsToolNames,
+            rag: ragToolNames,
+        };
+
         // Prepare Dialects
         if (provider === 'unsloth' || provider === 'openai') {
-            if (!endpoint.endsWith('chat/completions') && !endpoint.includes('v1/chat')) {
-                endpoint += 'chat/completions';
-            }
-            headers['Content-Type'] = 'application/json';
-            payload = {
-                model: model,
+            const built = buildOpenAiCompatStreamRequest({
+                provider,
+                baseUrl: url,
+                apiKey,
+                model,
                 messages: apiMessagesWithSystemPolicy,
-                stream: true
-            };
-            if (provider === 'openai') {
-                // Ask OpenAI to append a final usage chunk so token analytics
-                // can record exact counts instead of estimates.
-                payload.stream_options = { include_usage: true };
-            }
-            if (this._forcedTool) {
-                payload.tool_choice = { type: "function", function: { name: this._forcedTool } };
-            }
-            if (provider === 'unsloth') {
-                payload.enable_tools = true;
-                payload.enabled_tools = ["python", "terminal"];
-                if (this._getToolMode(WEB_SEARCH_TOOL_NAME) !== TOOL_MODE_OFF || this._forcedTool === WEB_SEARCH_TOOL_NAME) {
-                    payload.enabled_tools.unshift("web_search");
-                }
-                payload.session_id = this._currentConversationId || `session_${Date.now()}`;
-            }
-            if (advertiseLocalTools) {
-                payload.tools = buildToolSchemasFor(webSearchToolNames, 'openai');
-            }
-            if (advertiseCrawl4AI) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(crawlToolNames, 'openai')];
-            }
-            if (advertiseExploreDocs) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(exploreDocsToolNames, 'openai')];
-            }
-            if (advertiseRag) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(ragToolNames, 'openai')];
-            }
+                forcedTool: this._forcedTool,
+                conversationId: this._currentConversationId,
+                unslothEnableWebSearch: this._getToolMode(WEB_SEARCH_TOOL_NAME) !== TOOL_MODE_OFF || this._forcedTool === WEB_SEARCH_TOOL_NAME,
+                advertise: builderAdvertise,
+                toolNames: builderToolNames,
+            });
+            endpoint = built.endpoint;
+            headers = built.headers;
+            payload = built.payload;
         } else if (provider === 'anthropic') {
-            if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
-                endpoint += 'v1/messages';
-            }
-            // Anthropic specific headers
-            headers['x-api-key'] = apiKey;
-            headers['anthropic-version'] = '2023-06-01';
-            headers['Content-Type'] = 'application/json';
-
-            // Format Anthropic messages (remove system prompts from history or map them)
-            let anthropicMessages = apiMessages.filter(m => m.role !== 'system');
-            const anthropicSystemPrompt = this._buildSystemPromptText(apiMessages, autoSystemContext);
-
-            payload = {
-                model: model,
-                messages: anthropicMessages,
-                stream: true,
-                max_tokens: 4096
-            };
-            if (anthropicSystemPrompt) {
-                payload.system = anthropicSystemPrompt;
-            }
-            if (advertiseLocalTools) {
-                payload.tools = buildToolSchemasFor(webSearchToolNames, 'anthropic');
-            }
-            if (advertiseCrawl4AI) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(crawlToolNames, 'anthropic')];
-            }
-            if (advertiseExploreDocs) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(exploreDocsToolNames, 'anthropic')];
-            }
-            if (advertiseRag) {
-                payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(ragToolNames, 'anthropic')];
-            }
+            const built = buildAnthropicStreamRequest({
+                baseUrl: url,
+                apiKey,
+                model,
+                messages: apiMessages,
+                systemPrompt: this._buildSystemPromptText(apiMessages, autoSystemContext),
+                advertise: builderAdvertise,
+                toolNames: builderToolNames,
+            });
+            endpoint = built.endpoint;
+            headers = built.headers;
+            payload = built.payload;
         } else if (provider === 'deepseek' && this._visionDirectActive()) {
             // Mode A (direct routing): the whole request — including image_url
             // content blocks — goes to the configured vision model, which
@@ -19154,12 +19128,6 @@ class KatabDialog {
                 // endpoints reject it; usage is estimated from chunks instead.
             };
         } else if (provider === 'deepseek') {
-            if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions')) {
-                if (!endpoint.endsWith('/')) endpoint += '/';
-                endpoint += 'chat/completions';
-            }
-            headers['Content-Type'] = 'application/json';
-
             const reasoningEffort = this._settings.get_string('deepseek-reasoning-effort') || 'high';
             const jsonMode = this._settings.get_boolean('deepseek-json-mode');
             let deepseekSystemPrompt = DEFAULT_DEEPSEEK_SYSTEM_PROMPT;
@@ -19172,76 +19140,24 @@ class KatabDialog {
             // Build messages — DeepSeek natively supports system role; for tool-call turns
             // we must echo reasoning_content back on the assistant message that preceded the tool call.
             const deepseekPrompt = this._mergeSystemPromptParts(deepseekSystemPrompt, autoSystemContext);
-            let deepseekMessages = this._withSystemPromptText(apiMessages, deepseekPrompt);
+            const deepseekMessages = this._withSystemPromptText(apiMessages, deepseekPrompt);
 
-            // Tools and JSON mode are mutually exclusive on DeepSeek.  RAG tools
-            // are included so knowledge_search/update_knowledge are advertised
-            // even when only RAG is autonomous (matches _estimateToolDefTokens
-            // and the ollama/openai branches, which gate each tool family
-            // independently).
-            const hasTools = (advertiseLocalTools || advertiseCrawl4AI || advertiseRag) && !jsonMode;
-
-            // When thinking is enabled the API requires reasoning_content on every
-            // assistant message. _sanitizeHistoryMessage already ensures every
-            // assistant message carries at least an empty string when thinking is
-            // on. This loop is a defense-in-depth pass for any messages that may
-            // have slipped through (e.g. from old conversation files).
-            if (deepseekEffectiveThinking) {
-                for (const msg of deepseekMessages) {
-                    if (msg.role === 'assistant' && msg.reasoning_content === undefined) {
-                        msg.reasoning_content = '';
-                    }
-                }
-            }
-
-            payload = {
-                model: model,
+            const built = buildDeepSeekStreamRequest({
+                baseUrl: url,
+                apiKey,
+                model,
                 messages: deepseekMessages,
-                stream: true,
-                max_tokens: DEEPSEEK_MAX_OUTPUT_TOKENS,
-                stream_options: { include_usage: true },
-                thinking: { type: deepseekEffectiveThinking ? 'enabled' : 'disabled' },
-                user_id: this._buildDeepSeekUserId(),
-            };
-
-            if (deepseekEffectiveThinking) {
-                payload.reasoning_effort = reasoningEffort;
-            }
-
-            // JSON mode: inject prompt guard if the word 'json' is absent from the system message.
-            if (jsonMode) {
-                payload.response_format = { type: 'json_object' };
-                let systemMsg = payload.messages.find(m => m.role === 'system');
-                if (systemMsg && !/json/i.test(systemMsg.content || '')) {
-                    // Clone to avoid mutating _messageHistory
-                    payload.messages = payload.messages.map(m =>
-                        m === systemMsg
-                            ? { ...m, content: (m.content || '') + '\n\nEnsure the output is formatted as a valid JSON object.' }
-                            : m
-                    );
-                } else if (!systemMsg) {
-                    // No system message — prepend a minimal one satisfying the requirement
-                    payload.messages = [
-                        { role: 'system', content: 'Ensure the output is formatted as a valid JSON object.' },
-                        ...payload.messages
-                    ];
-                }
-            }
-
-            // Tools and JSON mode are mutually exclusive on DeepSeek.
-            if (hasTools) {
-                payload.tools = buildToolSchemasFor(webSearchToolNames, 'openai');
-                if (advertiseCrawl4AI) {
-                    payload.tools = [...payload.tools, ...buildToolSchemasFor(crawlToolNames, 'openai')];
-                }
-                if (advertiseExploreDocs) {
-                    payload.tools = [...payload.tools, ...buildToolSchemasFor(exploreDocsToolNames, 'openai')];
-                }
-                if (advertiseRag) {
-                    payload.tools = [...payload.tools, ...buildToolSchemasFor(ragToolNames, 'openai')];
-                }
-                payload.tool_choice = 'auto';
-            }
+                thinking: deepseekEffectiveThinking,
+                reasoningEffort,
+                jsonMode,
+                maxTokens: DEEPSEEK_MAX_OUTPUT_TOKENS,
+                userId: this._buildDeepSeekUserId(),
+                advertise: builderAdvertise,
+                toolNames: builderToolNames,
+            });
+            endpoint = built.endpoint;
+            headers = built.headers;
+            payload = built.payload;
         } else if (provider === 'ollama') {
             if (!endpoint.endsWith('api/chat')) {
                 endpoint += 'api/chat';
