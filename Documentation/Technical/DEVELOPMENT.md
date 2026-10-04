@@ -81,39 +81,50 @@ katabai@cetikaytools.com/
 ├── extension.js              # Main entry: KatabExtension, KatabDialog, HistoryManager,
 │                             #   ProviderHealthMonitor, Indicator
 ├── prefs.js                  # GTK4/Adwaita preferences orchestrator (separate process)
-├── src/ui/prefs/             # Preferences pages: widgets.js context factory + page modules
-│                             #   (generalPage, ollamaPage, deepseekPage, providerPages, tools/*)
 ├── prefs.css                 # Preferences CSS (loaded by prefs.js via Gtk.CssProvider)
 ├── stylesheet.css            # Shell overlay St CSS (auto-loaded by GNOME)
 ├── metadata.json             # Extension manifest (UUID, versions, schema)
-├── Makefile                  # compile-schemas, check, test, package, install, clean
+├── Makefile                  # compile-schemas, check, lint, format, test, package, install, reload, logs, clean
+├── package.json              # Dev tooling (ESLint/Prettier) — not shipped in the extension
+├── scripts/                  # check-css.mjs (CSS delimiter balance) + import-smoke.js (gjs module loading)
+├── .github/workflows/ci.yml  # CI: extension checks + tests + package, RAG service tests
 ├── schemas/
 │   ├── org.gnome.shell.extensions.katabai.gschema.xml  # ~80+ GSettings keys
 │   └── gschemas.compiled                              # Compiled binary (gitignored)
 ├── src/
-│   ├── core/                 # Planned refactoring targets (currently empty)
+│   ├── core/                 # historyManager, requestLifecycle (send/stop FSM), toolCallMarkup
+│   ├── providers/            # catalog, chatRequest, nonStreamingRequest, streamParse
+│   ├── ui/                   # markdownRender (render-model helpers) + prefs/ page modules
+│   │                         #   (widgets.js context factory; generalPage, ollamaPage,
+│   │                         #   deepseekPage, providerPages, tools/*)
 │   ├── tools/
 │   │   ├── toolRegistry.js    # Declarative tool registry (ToolDefinition Map)
 │   │   ├── toolDefinitions.js # Concrete tool definitions (side-effect import)
 │   │   ├── webSearchTools.js  # SearxNG search + read_url page fetch + SSRF guard
 │   │   ├── crawl4aiTools.js   # Crawl4AI deep browser scraping + async job polling
 │   │   ├── ragTools.js        # Local RAG / knowledge base semantic search
-│   │   └── documentTools.js   # Local file parser (txt/md/pdf/docx/png/jpg)
+│   │   ├── exploreDocsTools.js # Agent-directed docs navigation
+│   │   └── documentTools.js   # Local file parser (txt/md/pdf/docx/png/jpg/eml)
 │   ├── research/
+│   │   ├── prompts.js           # Research prompts + response parsers + regurgitation gate
+│   │   ├── planner.js           # Planner agent + plan revision
+│   │   ├── pipeline.js          # Gap analysis, critiques, outline, quality check
+│   │   ├── branchRunner.js      # Branch execution (search → crawl → compress)
+│   │   ├── synthesisPrompt.js   # Final-report prompt builder + contradiction detection
 │   │   ├── compressionTools.js  # LLM-based hierarchical compression (4 levels)
 │   │   ├── citationTracker.js   # Citation → bibliography binding
 │   │   └── researchCache.js     # SHA-256 keyed persistent cache
 │   ├── usage/
 │   │   ├── tokenUsageManager.js # Token ledger, cost, budget, achievements, pets
+│   │   ├── deepseekPricing.js   # DeepSeek peak/off-peak pricing
 │   │   └── presetManager.js     # Ollama preset CRUD (27 settings)
 │   ├── pets/
 │   │   ├── petCollection.js     # Pet definitions, stages, forms, crossbreeds
 │   │   └── petSpriteActor.js   # Clutter sprite renderer with animation
 │   └── shared/
+│       ├── httpBody.js          # Capped HTTP body reader (shared by tool runtimes)
 │       └── networkGuard.js      # IPv4/IPv6 SSRF blocklists
-├── tests/
-│   ├── petCollection.test.js    # Pet logic unit tests
-│   └── tokenUsageManager.test.js # Token usage unit tests
+├── tests/                    # GJS unit-test suites (gjs -m tests/*.test.js)
 ├── icons/                    # Provider logos + custom SVG icons (9 files)
 ├── sprites/                  # Pet sprite PNGs (5 providers + eggs + accents + mixie)
 └── Documentation/            # Help, Technical, Archive, Research Reports
@@ -500,7 +511,7 @@ The GSettings schema (`schemas/org.gnome.shell.extensions.katabai.gschema.xml`) 
 
 ### Reading in Code
 ```javascript
-// In extension.js or prefs.js
+// In extension.js or a src/ui/prefs/ page module (prefs.js is just the orchestrator)
 const enabled = this._settings.get_boolean('my-feature-enabled');
 
 // Watch for changes
@@ -525,8 +536,13 @@ gjs -m tests/tokenUsageManager.test.js
 
 ### Syntax Checks
 ```bash
-make check
+make check            # node parse (all JS incl. scripts/), CSS delimiter balance, gjs import smoke
+npm run lint          # ESLint (flat config)
+npm run format:check  # Prettier verification
+npm run format        # rewrite files to canonical style (fixes format:check)
 ```
+
+If `format:check` flags files you did not edit, an editor formatter is fighting the repo style — set your default JS formatter to the workspace Prettier extension (see `.vscode/settings.json`).
 
 ### In-Shell Validation
 The authoritative test is a live GNOME Shell reload:

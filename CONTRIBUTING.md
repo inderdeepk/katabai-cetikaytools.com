@@ -54,7 +54,7 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
 ### Workflow
 1. Create a feature branch from `New-Features`.
 2. Make your changes with clear, atomic commits.
-3. Run `make check` (Node.js ES module syntax checks) and `make test` to validate — CI runs both on every PR.
+3. Run the full local validation: `make check` (parse + CSS + import smoke), `make test`, `npm run lint`, and `npm run format:check` — CI runs all of them on every PR.
 4. Test with a live GNOME Shell reload and verify no journal errors.
 5. Open a pull request against `New-Features`.
 
@@ -67,6 +67,7 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
 - **Soup v3**: All HTTP uses `gi://Soup?version=3.0`. Import paths must include the version.
 - **Async patterns**: Use `async`/`await` with `Gio.Cancellable` for network operations. Never block the main thread.
 - **Error handling**: Always wrap `JSON.parse`, API calls, and file I/O in try/catch.
+- **Formatting**: The repo is Prettier-formatted (4-space indent, single quotes, semicolons, 100 columns). Use `npm run format`, and make sure your editor's JS formatter is the workspace Prettier setup — a different formatter produces drift that fails CI's `format:check`.
 - **Naming**: camelCase for variables and methods, PascalCase for classes, UPPER_SNAKE_CASE for constants.
 - **Comments**: JSDoc-style for public APIs. Explain _why_, not _what_.
 
@@ -106,13 +107,14 @@ schemas/              — GSettings schema XML + compiled binary
 src/
 ├── core/             — HistoryManager, request-lifecycle FSM, tool-call markup
 ├── providers/        — Provider request builders, stream parsers, catalog
-├── ui/               — Markdown render-model helpers
+├── ui/               — Markdown render-model helpers + prefs/ page modules
 ├── tools/            — Tool implementations and declarative registry
 ├── research/         — Deep research pipeline (planner, branch runner, synthesis, compression, citations, cache)
 ├── usage/            — Token tracking, DeepSeek pricing, presets
 ├── pets/             — Pet collection system
 └── shared/           — Shared utilities (HTTP body reader, SSRF guard)
-tests/                — Unit tests
+tests/                — GJS unit-test suites
+scripts/              — check-css.mjs + import-smoke.js dev checks (npm tooling in package.json; not shipped)
 Documentation/        — Help, Technical, Archive, Research Reports
 icons/                — Provider logos and custom icons
 sprites/              — Pet sprite PNGs
@@ -146,8 +148,15 @@ See [ARCHITECTURE.md](Documentation/Technical/ARCHITECTURE.md) for detailed file
 # Run unit tests
 make test
 
-# ES module syntax check for every JS file (requires Node.js)
+# ES module syntax check, CSS delimiter balance, and gjs import smoke
 make check
+
+# ESLint (requires Node.js — run `npm ci` once)
+npm run lint
+
+# Prettier formatting
+npm run format        # rewrite files to canonical style
+npm run format:check  # verify (CI gate)
 ```
 
 - Unit tests use GJS (`gjs -m`) and live in `tests/`.

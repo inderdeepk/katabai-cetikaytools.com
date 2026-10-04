@@ -66,9 +66,9 @@ Only investigate when accompanied by a stack trace.
 | `src/pets/petCollection.js` | ✅ Tested | 16 tests: stages, XP, crossbreeds, Mixie |
 | `src/usage/tokenUsageManager.js` | ✅ Tested | Store creation, event recording, summaries |
 | `src/shared/networkGuard.js` | ⚠️ Partial | Can be tested with Node.js outside GNOME Shell |
-| `extension.js` | ❌ Untestable | Requires GNOME Shell runtime (Clutter, St) |
-| `prefs.js` | ❌ Untestable | Requires GTK4/Adwaita runtime |
-| `src/tools/*.js` | ❌ Untestable | Require Soup session or GNOME Shell APIs |
+| `extension.js` | ❌ Untestable | Requires GNOME Shell runtime (Clutter, St) — covered by `make check` parse + mandatory in-shell verification |
+| `prefs.js` | ⚠️ Partial | Orchestrator only — covered by `make check` parse and a live prefs open; its `src/ui/prefs/**` modules are additionally import-smoked by `make check` when GTK4/Adwaita are available (CI installs them) |
+| `src/tools/*.js` | ⚠️ Partial | Pure helpers/config parsers are unit-tested; runtime network calls need live services |
 
 ## End-to-End Testing Checklist
 
@@ -87,7 +87,7 @@ For new features, verify:
 ## Regression Test Checklist
 
 Before merging to main:
-1. ☐ `make check` passes (syntax validation)
+1. ☐ `make check` passes (ES-module parse + CSS delimiter balance + gjs import smoke)
 2. ☐ `make test` passes (unit tests)
 3. ☐ `make compile-schemas` succeeds
 4. ☐ `make package` creates valid zip

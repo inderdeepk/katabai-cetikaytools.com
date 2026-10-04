@@ -10,7 +10,7 @@ Katab (ਕਿਤਾਬ) is a GNOME Shell extension providing a desktop AI assist
 |---|---|---|
 | `metadata.json` | Extension manifest | GNOME Shell |
 | `extension.js` | Main JS entry — enable/disable, panel indicator, imports from `src/` | GNOME Shell |
-| `prefs.js` | GTK4/Adwaita preferences window | GNOME Shell prefs system |
+| `prefs.js` | GTK4/Adwaita preferences orchestrator (pages in `src/ui/prefs/`) | GNOME Shell prefs system |
 | `stylesheet.css` | Shell overlay St CSS (GNOME auto-loads from root) | GNOME Shell |
 | `prefs.css` | GTK preferences CSS (loaded by prefs.js) | prefs.js |
 
@@ -64,6 +64,8 @@ src/
     ├── httpBody.js              ← Capped HTTP body reader (shared by all tool runtimes)
     └── networkGuard.js          ← SSRF protection (IPv4/IPv6 blocklists)
 ```
+
+> **Decomposition status (Oct 2026)**: `prefs.js` is fully split — an 86-line orchestrator plus the `src/ui/prefs/` modules above. In `extension.js`, `_buildUI`, `_addChatMessage`, the SSE stream-end finalization (`_handleStreamEnd`), and the tool-call partition/recording logic are extracted into focused methods; `_sendMessage` and the tool-execution loop remain single large methods pending a context-object refactor (no behavioral issues).
 
 ## Assets
 
