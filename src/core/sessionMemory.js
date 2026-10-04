@@ -42,9 +42,9 @@ const DEEPSEEK_INPUT_TOKEN_BUDGET = 616000;
 const OPENAI_CONTEXT_TOKENS = {
     'gpt-4o': 128000,
     'gpt-4o-mini': 128000,
-    'o1': 200000,
+    o1: 200000,
     'o1-mini': 128000,
-    'o3': 200000,
+    o3: 200000,
     'o3-mini': 200000,
     'o4-mini': 200000,
     'gpt-4.1': 1047576,
@@ -100,7 +100,9 @@ export function estimateProviderCharBudget(provider, settings) {
             return Math.floor(DEEPSEEK_INPUT_TOKEN_BUDGET * CHARS_PER_TOKEN);
         }
         if (provider === 'openai') {
-            const model = String(safeGetString(settings, 'openai-model', 'gpt-4o') || '').toLowerCase();
+            const model = String(
+                safeGetString(settings, 'openai-model', 'gpt-4o') || '',
+            ).toLowerCase();
             const tokens = OPENAI_CONTEXT_TOKENS[model] || 32000;
             return Math.max(0, Math.floor(tokens * OUTPUT_RESERVE_RATIO * CHARS_PER_TOKEN));
         }
@@ -151,10 +153,14 @@ export function splitHistoryForBudget(messages, budget = 200000, memoryText = ''
     let newestUserIdx = -1;
     for (let i = list.length - 1; i >= 0; i--) {
         const m = list[i];
-        if (m?.role === 'user'
-            && !(Array.isArray(m?.content)
-                && m.content.length > 0
-                && m.content.every(b => b?.type === 'tool_result'))) {
+        if (
+            m?.role === 'user' &&
+            !(
+                Array.isArray(m?.content) &&
+                m.content.length > 0 &&
+                m.content.every((b) => b?.type === 'tool_result')
+            )
+        ) {
             newestUserIdx = i;
             break;
         }
@@ -207,22 +213,30 @@ export const SESSION_MEMORY_UPDATE_INSTRUCTION =
  * head first.  When the transcript must shrink, the NEWEST folded messages are
  * kept — they are nearest the live conversation.
  */
-export function buildMemoryUpdateMessages(currentMemory, toFold, { maxTotalChars = SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS } = {}) {
+export function buildMemoryUpdateMessages(
+    currentMemory,
+    toFold,
+    { maxTotalChars = SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS } = {},
+) {
     const existing = String(currentMemory || '').trim();
 
     let transcript = (Array.isArray(toFold) ? toFold : [])
-        .map(message => {
+        .map((message) => {
             const role = message?.role || 'unknown';
-            const content = typeof message?.content === 'string'
-                ? message.content
-                : JSON.stringify(message?.content ?? '');
+            const content =
+                typeof message?.content === 'string'
+                    ? message.content
+                    : JSON.stringify(message?.content ?? '');
             return `[${role}] ${content}`;
         })
         .filter(Boolean)
         .join('\n\n');
 
     const fixedOverhead = SESSION_MEMORY_UPDATE_INSTRUCTION.length + existing.length + 200;
-    const transcriptCap = Math.max(1000, Math.floor((maxTotalChars || SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS) - fixedOverhead));
+    const transcriptCap = Math.max(
+        1000,
+        Math.floor((maxTotalChars || SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS) - fixedOverhead),
+    );
     if (transcript.length > transcriptCap) {
         transcript = `[...older messages trimmed...]\n\n${transcript.slice(transcript.length - transcriptCap)}`;
     }
@@ -233,10 +247,12 @@ export function buildMemoryUpdateMessages(currentMemory, toFold, { maxTotalChars
     }
     parts.push(`NEW MESSAGES TO FOLD IN:\n${transcript || '(none)'}`);
 
-    return [{
-        role: 'user',
-        content: `${SESSION_MEMORY_UPDATE_INSTRUCTION}\n\n${parts.join('\n\n')}`,
-    }];
+    return [
+        {
+            role: 'user',
+            content: `${SESSION_MEMORY_UPDATE_INSTRUCTION}\n\n${parts.join('\n\n')}`,
+        },
+    ];
 }
 
 /**

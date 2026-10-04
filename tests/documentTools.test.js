@@ -100,278 +100,383 @@ Line one with =C3=A9 accent and a soft=\nbreak.
 const tests = [
     // ── parseDocumentCommand ───────────────────────────────────────────────
 
-    ['parseDocumentCommand: /doc alone opens picker', () => {
-        const result = parseDocumentCommand('/doc');
-        assert(result.isCommand, 'is command');
-        assert(result.needsPicker, 'needs picker');
-        assertEqual(result.filePath, null, 'no file path');
-        assertEqual(result.promptText, '', 'no prompt text');
-    }],
+    [
+        'parseDocumentCommand: /doc alone opens picker',
+        () => {
+            const result = parseDocumentCommand('/doc');
+            assert(result.isCommand, 'is command');
+            assert(result.needsPicker, 'needs picker');
+            assertEqual(result.filePath, null, 'no file path');
+            assertEqual(result.promptText, '', 'no prompt text');
+        },
+    ],
 
-    ['parseDocumentCommand: /doc "path/to/file"', () => {
-        const result = parseDocumentCommand('/doc "/home/user/file.txt"');
-        assert(result.isCommand, 'is command');
-        assert(!result.needsPicker, 'does not need picker');
-        assertEqual(result.filePath, '/home/user/file.txt', 'path extracted');
-        assertEqual(result.promptText, '', 'no remaining prompt');
-    }],
+    [
+        'parseDocumentCommand: /doc "path/to/file"',
+        () => {
+            const result = parseDocumentCommand('/doc "/home/user/file.txt"');
+            assert(result.isCommand, 'is command');
+            assert(!result.needsPicker, 'does not need picker');
+            assertEqual(result.filePath, '/home/user/file.txt', 'path extracted');
+            assertEqual(result.promptText, '', 'no remaining prompt');
+        },
+    ],
 
-    ['parseDocumentCommand: /doc "path" with additional prompt text', () => {
-        const result = parseDocumentCommand('/doc "/tmp/file.txt" summarize this document');
-        assertEqual(result.filePath, '/tmp/file.txt', 'path extracted');
-        assertEqual(result.promptText, 'summarize this document', 'prompt extracted');
-    }],
+    [
+        'parseDocumentCommand: /doc "path" with additional prompt text',
+        () => {
+            const result = parseDocumentCommand('/doc "/tmp/file.txt" summarize this document');
+            assertEqual(result.filePath, '/tmp/file.txt', 'path extracted');
+            assertEqual(result.promptText, 'summarize this document', 'prompt extracted');
+        },
+    ],
 
-    ['parseDocumentCommand: /doc "path with spaces"', () => {
-        const result = parseDocumentCommand('/doc "/path/with spaces/file.md"');
-        assertEqual(result.filePath, '/path/with spaces/file.md', 'spaces in path');
-    }],
+    [
+        'parseDocumentCommand: /doc "path with spaces"',
+        () => {
+            const result = parseDocumentCommand('/doc "/path/with spaces/file.md"');
+            assertEqual(result.filePath, '/path/with spaces/file.md', 'spaces in path');
+        },
+    ],
 
-    ['parseDocumentCommand: /doc without quotes defaults to picker', () => {
-        const result = parseDocumentCommand('/doc some text');
-        assert(result.isCommand, 'is command');
-        assert(result.needsPicker, 'needs picker without quotes');
-        assertEqual(result.promptText, 'some text', 'remaining becomes prompt');
-    }],
+    [
+        'parseDocumentCommand: /doc without quotes defaults to picker',
+        () => {
+            const result = parseDocumentCommand('/doc some text');
+            assert(result.isCommand, 'is command');
+            assert(result.needsPicker, 'needs picker without quotes');
+            assertEqual(result.promptText, 'some text', 'remaining becomes prompt');
+        },
+    ],
 
-    ['parseDocumentCommand: escaped quotes in path', () => {
-        const result = parseDocumentCommand('/doc "/path/with/\\"quotes\\"/file.txt"');
-        assert(result.filePath.includes('"quotes"'), 'escaped quotes handled');
-    }],
+    [
+        'parseDocumentCommand: escaped quotes in path',
+        () => {
+            const result = parseDocumentCommand('/doc "/path/with/\\"quotes\\"/file.txt"');
+            assert(result.filePath.includes('"quotes"'), 'escaped quotes handled');
+        },
+    ],
 
-    ['parseDocumentCommand: /docs and /document are NOT commands (word boundary)', () => {
-        // Regression: the old startsWith check treated '/docs …' as '/doc'
-        // and opened the file picker instead of sending the message.
-        assertEqual(parseDocumentCommand('/docs are great'), null, '/docs rejected');
-        assertEqual(parseDocumentCommand('/document this please'), null, '/document rejected');
-        const bare = parseDocumentCommand('/doc');
-        assert(bare && bare.isCommand, 'bare /doc is still a command');
-    }],
+    [
+        'parseDocumentCommand: /docs and /document are NOT commands (word boundary)',
+        () => {
+            // Regression: the old startsWith check treated '/docs …' as '/doc'
+            // and opened the file picker instead of sending the message.
+            assertEqual(parseDocumentCommand('/docs are great'), null, '/docs rejected');
+            assertEqual(parseDocumentCommand('/document this please'), null, '/document rejected');
+            const bare = parseDocumentCommand('/doc');
+            assert(bare && bare.isCommand, 'bare /doc is still a command');
+        },
+    ],
 
-    ['parseDocumentCommand: unclosed quote throws', () => {
-        assertThrows(
-            () => parseDocumentCommand('/doc "/unclosed path'),
-            'tell the document path apart',
-            'unclosed quote'
-        );
-    }],
+    [
+        'parseDocumentCommand: unclosed quote throws',
+        () => {
+            assertThrows(
+                () => parseDocumentCommand('/doc "/unclosed path'),
+                'tell the document path apart',
+                'unclosed quote',
+            );
+        },
+    ],
 
-    ['parseDocumentCommand: not a /doc command', () => {
-        assertEqual(parseDocumentCommand('regular message'), null, 'not a command');
-        assertEqual(parseDocumentCommand(''), null, 'empty');
-        assertEqual(parseDocumentCommand(null), null, 'null');
-    }],
+    [
+        'parseDocumentCommand: not a /doc command',
+        () => {
+            assertEqual(parseDocumentCommand('regular message'), null, 'not a command');
+            assertEqual(parseDocumentCommand(''), null, 'empty');
+            assertEqual(parseDocumentCommand(null), null, 'null');
+        },
+    ],
 
     // ── resolveDocumentPath ────────────────────────────────────────────────
 
-    ['resolveDocumentPath: tilde expansion', () => {
-        const result = resolveDocumentPath('~/Documents/file.txt');
-        assert(result !== null, 'result exists');
-        assert(!result.startsWith('~'), 'tilde expanded');
-        assert(result.endsWith('/Documents/file.txt'), 'path preserved');
-    }],
+    [
+        'resolveDocumentPath: tilde expansion',
+        () => {
+            const result = resolveDocumentPath('~/Documents/file.txt');
+            assert(result !== null, 'result exists');
+            assert(!result.startsWith('~'), 'tilde expanded');
+            assert(result.endsWith('/Documents/file.txt'), 'path preserved');
+        },
+    ],
 
-    ['resolveDocumentPath: bare tilde', () => {
-        const result = resolveDocumentPath('~');
-        assert(result !== null, 'bare tilde expands to home');
-        assert(!result.includes('~'), 'no tilde in result');
-    }],
+    [
+        'resolveDocumentPath: bare tilde',
+        () => {
+            const result = resolveDocumentPath('~');
+            assert(result !== null, 'bare tilde expands to home');
+            assert(!result.includes('~'), 'no tilde in result');
+        },
+    ],
 
-    ['resolveDocumentPath: absolute path preserved', () => {
-        const result = resolveDocumentPath('/usr/share/doc/README');
-        assertEqual(result, '/usr/share/doc/README', 'absolute path unchanged');
-    }],
+    [
+        'resolveDocumentPath: absolute path preserved',
+        () => {
+            const result = resolveDocumentPath('/usr/share/doc/README');
+            assertEqual(result, '/usr/share/doc/README', 'absolute path unchanged');
+        },
+    ],
 
-    ['resolveDocumentPath: null/empty returns null', () => {
-        assertEqual(resolveDocumentPath(null), null, 'null → null');
-        assertEqual(resolveDocumentPath(''), null, 'empty → null');
-        assertEqual(resolveDocumentPath('  '), null, 'whitespace → null');
-    }],
+    [
+        'resolveDocumentPath: null/empty returns null',
+        () => {
+            assertEqual(resolveDocumentPath(null), null, 'null → null');
+            assertEqual(resolveDocumentPath(''), null, 'empty → null');
+            assertEqual(resolveDocumentPath('  '), null, 'whitespace → null');
+        },
+    ],
 
     // ── buildDocumentPromptBlock ───────────────────────────────────────────
 
-    ['buildDocumentPromptBlock: standard document', () => {
-        const block = buildDocumentPromptBlock({
-            displayName: 'README.md',
-            path: '/home/user/README.md',
-            parserName: 'Gio.File',
-            text: '# Hello World\n\nThis is a test.',
-            truncated: false,
-        });
-        assert(block.includes('README.md'), 'display name');
-        assert(block.includes('/home/user/README.md'), 'source path');
-        assert(block.includes('Gio.File'), 'parser name');
-        assert(block.includes('# Hello World'), 'content');
-    }],
+    [
+        'buildDocumentPromptBlock: standard document',
+        () => {
+            const block = buildDocumentPromptBlock({
+                displayName: 'README.md',
+                path: '/home/user/README.md',
+                parserName: 'Gio.File',
+                text: '# Hello World\n\nThis is a test.',
+                truncated: false,
+            });
+            assert(block.includes('README.md'), 'display name');
+            assert(block.includes('/home/user/README.md'), 'source path');
+            assert(block.includes('Gio.File'), 'parser name');
+            assert(block.includes('# Hello World'), 'content');
+        },
+    ],
 
-    ['buildDocumentPromptBlock: truncated document', () => {
-        const block = buildDocumentPromptBlock({
-            displayName: 'large.txt',
-            path: '/tmp/large.txt',
-            parserName: 'Gio.File',
-            text: 'content',
-            truncated: true,
-        });
-        assert(block.includes('truncated'), 'truncation note');
-    }],
+    [
+        'buildDocumentPromptBlock: truncated document',
+        () => {
+            const block = buildDocumentPromptBlock({
+                displayName: 'large.txt',
+                path: '/tmp/large.txt',
+                parserName: 'Gio.File',
+                text: 'content',
+                truncated: true,
+            });
+            assert(block.includes('truncated'), 'truncation note');
+        },
+    ],
 
     // ── buildMissingDocumentPromptBlock ────────────────────────────────────
 
-    ['buildMissingDocumentPromptBlock: with display name', () => {
-        const block = buildMissingDocumentPromptBlock({ displayName: 'notes.txt', path: '/tmp/notes.txt' });
-        assert(block.includes('notes.txt'), 'display name used');
-        assert(block.includes('Reattach'), 'reattach instruction');
-    }],
+    [
+        'buildMissingDocumentPromptBlock: with display name',
+        () => {
+            const block = buildMissingDocumentPromptBlock({
+                displayName: 'notes.txt',
+                path: '/tmp/notes.txt',
+            });
+            assert(block.includes('notes.txt'), 'display name used');
+            assert(block.includes('Reattach'), 'reattach instruction');
+        },
+    ],
 
-    ['buildMissingDocumentPromptBlock: fallback to path', () => {
-        const block = buildMissingDocumentPromptBlock({ path: '/tmp/notes.txt' });
-        assert(block.includes('/tmp/notes.txt'), 'path used as fallback');
-    }],
+    [
+        'buildMissingDocumentPromptBlock: fallback to path',
+        () => {
+            const block = buildMissingDocumentPromptBlock({ path: '/tmp/notes.txt' });
+            assert(block.includes('/tmp/notes.txt'), 'path used as fallback');
+        },
+    ],
 
     // ── buildMissingImagePromptBlock ───────────────────────────────────────
 
-    ['buildMissingImagePromptBlock: with display name', () => {
-        const block = buildMissingImagePromptBlock({ displayName: 'screenshot.png' });
-        assert(block.includes('screenshot.png'), 'display name');
-        assert(block.includes('Previously attached image'), 'image context');
-    }],
+    [
+        'buildMissingImagePromptBlock: with display name',
+        () => {
+            const block = buildMissingImagePromptBlock({ displayName: 'screenshot.png' });
+            assert(block.includes('screenshot.png'), 'display name');
+            assert(block.includes('Previously attached image'), 'image context');
+        },
+    ],
 
     // ── buildVisionAnalysisPromptBlock ────────────────────────────────────
 
-    ['buildVisionAnalysisPromptBlock: with analysis and model', () => {
-        const block = buildVisionAnalysisPromptBlock(
-            'The image shows a terminal window with code.',
-            'llama3.2-vision'
-        );
-        assert(block.includes('llama3.2-vision'), 'model name included');
-        assert(block.includes('terminal window'), 'analysis text included');
-        assert(block.includes('Vision analysis'), 'vision label');
-    }],
+    [
+        'buildVisionAnalysisPromptBlock: with analysis and model',
+        () => {
+            const block = buildVisionAnalysisPromptBlock(
+                'The image shows a terminal window with code.',
+                'llama3.2-vision',
+            );
+            assert(block.includes('llama3.2-vision'), 'model name included');
+            assert(block.includes('terminal window'), 'analysis text included');
+            assert(block.includes('Vision analysis'), 'vision label');
+        },
+    ],
 
-    ['buildVisionAnalysisPromptBlock: empty analysis', () => {
-        const block = buildVisionAnalysisPromptBlock('', 'ollama-vision');
-        assert(block.includes('unavailable'), 'unavailable message');
-    }],
+    [
+        'buildVisionAnalysisPromptBlock: empty analysis',
+        () => {
+            const block = buildVisionAnalysisPromptBlock('', 'ollama-vision');
+            assert(block.includes('unavailable'), 'unavailable message');
+        },
+    ],
 
-    ['buildVisionAnalysisPromptBlock: empty analysis returns unavailable', () => {
-        const block = buildVisionAnalysisPromptBlock('', 'test-model');
-        assert(block.includes('unavailable'), 'empty string → unavailable');
-    }],
+    [
+        'buildVisionAnalysisPromptBlock: empty analysis returns unavailable',
+        () => {
+            const block = buildVisionAnalysisPromptBlock('', 'test-model');
+            assert(block.includes('unavailable'), 'empty string → unavailable');
+        },
+    ],
 
     // ── getDocumentToolCapabilities ────────────────────────────────────────
 
-    ['getDocumentToolCapabilities: built-in capabilities always available', () => {
-        const caps = getDocumentToolCapabilities();
-        assert(caps.text.available, 'text always available');
-        assert(caps.image.available, 'image always available');
-        assertEqual(caps.text.status, 'builtin', 'text is builtin');
-        assertEqual(caps.image.status, 'builtin', 'image is builtin');
-    }],
+    [
+        'getDocumentToolCapabilities: built-in capabilities always available',
+        () => {
+            const caps = getDocumentToolCapabilities();
+            assert(caps.text.available, 'text always available');
+            assert(caps.image.available, 'image always available');
+            assertEqual(caps.text.status, 'builtin', 'text is builtin');
+            assertEqual(caps.image.status, 'builtin', 'image is builtin');
+        },
+    ],
 
-    ['getDocumentToolCapabilities: all capability keys present', () => {
-        const caps = getDocumentToolCapabilities();
-        const expectedKeys = ['text', 'image', 'pdf', 'docx'];
-        for (const key of expectedKeys) {
-            assert(caps[key] !== undefined, `${key} capability exists`);
-            assert(typeof caps[key].label === 'string', `${key} has label`);
-            assert(typeof caps[key].available === 'boolean', `${key} has available flag`);
-        }
-    }],
+    [
+        'getDocumentToolCapabilities: all capability keys present',
+        () => {
+            const caps = getDocumentToolCapabilities();
+            const expectedKeys = ['text', 'image', 'pdf', 'docx'];
+            for (const key of expectedKeys) {
+                assert(caps[key] !== undefined, `${key} capability exists`);
+                assert(typeof caps[key].label === 'string', `${key} has label`);
+                assert(typeof caps[key].available === 'boolean', `${key} has available flag`);
+            }
+        },
+    ],
 
     // ── Constants ──────────────────────────────────────────────────────────
 
-    ['document tools: constants defined', () => {
-        assertEqual(DOCUMENT_TOOL_COMMAND, '/doc', 'command constant');
-        assertEqual(typeof DOCUMENT_TOOL_MAX_CHARS, 'number', 'max chars is number');
-        assert(DOCUMENT_TOOL_MAX_CHARS > 0, 'max chars positive');
-    }],
+    [
+        'document tools: constants defined',
+        () => {
+            assertEqual(DOCUMENT_TOOL_COMMAND, '/doc', 'command constant');
+            assertEqual(typeof DOCUMENT_TOOL_MAX_CHARS, 'number', 'max chars is number');
+            assert(DOCUMENT_TOOL_MAX_CHARS > 0, 'max chars positive');
+        },
+    ],
 
     // ── EML capability ─────────────────────────────────────────────────────
 
-    ['getDocumentToolCapabilities: eml is built in', () => {
-        const caps = getDocumentToolCapabilities();
-        assert(caps.eml !== undefined, 'eml capability exists');
-        assert(caps.eml.available, 'eml always available (pure JS parser)');
-        assertEqual(caps.eml.status, 'builtin', 'eml is builtin');
-        assertEqual(caps.eml.kind, 'document', 'eml is a document kind');
-    }],
+    [
+        'getDocumentToolCapabilities: eml is built in',
+        () => {
+            const caps = getDocumentToolCapabilities();
+            assert(caps.eml !== undefined, 'eml capability exists');
+            assert(caps.eml.available, 'eml always available (pure JS parser)');
+            assertEqual(caps.eml.status, 'builtin', 'eml is builtin');
+            assertEqual(caps.eml.kind, 'document', 'eml is a document kind');
+        },
+    ],
 
     // ── parseEmlText ───────────────────────────────────────────────────────
 
-    ['parseEmlText: plain text email', () => {
-        const parsed = parseEmlText(PLAIN_EML);
-        assertEqual(parsed.subject, 'Weekly Report', 'subject');
-        assert(parsed.from.includes('jane@example.com'), 'from');
-        assert(parsed.to.includes('john@example.com'), 'to');
-        assert(parsed.body.includes('weekly report'), 'body text');
-        assert(!parsed.hasHtml, 'no html');
-        assertEqual(parsed.attachments.length, 0, 'no attachments');
-    }],
+    [
+        'parseEmlText: plain text email',
+        () => {
+            const parsed = parseEmlText(PLAIN_EML);
+            assertEqual(parsed.subject, 'Weekly Report', 'subject');
+            assert(parsed.from.includes('jane@example.com'), 'from');
+            assert(parsed.to.includes('john@example.com'), 'to');
+            assert(parsed.body.includes('weekly report'), 'body text');
+            assert(!parsed.hasHtml, 'no html');
+            assertEqual(parsed.attachments.length, 0, 'no attachments');
+        },
+    ],
 
-    ['parseEmlText: multipart/alternative prefers plain part', () => {
-        const parsed = parseEmlText(ALT_BASE64_EML);
-        assertEqual(parsed.subject, 'Quarterly Update', 'encoded-word subject decoded');
-        assertEqual(parsed.body, 'Hello from the plain part.', 'plain part chosen over html');
-        assert(!parsed.hasHtml, 'html branch not emitted when plain exists');
-        assertEqual(parsed.attachments.length, 0, 'no attachments');
-    }],
+    [
+        'parseEmlText: multipart/alternative prefers plain part',
+        () => {
+            const parsed = parseEmlText(ALT_BASE64_EML);
+            assertEqual(parsed.subject, 'Quarterly Update', 'encoded-word subject decoded');
+            assertEqual(parsed.body, 'Hello from the plain part.', 'plain part chosen over html');
+            assert(!parsed.hasHtml, 'html branch not emitted when plain exists');
+            assertEqual(parsed.attachments.length, 0, 'no attachments');
+        },
+    ],
 
-    ['parseEmlText: encoded-word from header (base64)', () => {
-        const parsed = parseEmlText(ALT_BASE64_EML);
-        assert(parsed.from.includes('Jane Doe'), 'base64 encoded-word from header decoded');
-    }],
+    [
+        'parseEmlText: encoded-word from header (base64)',
+        () => {
+            const parsed = parseEmlText(ALT_BASE64_EML);
+            assert(parsed.from.includes('Jane Doe'), 'base64 encoded-word from header decoded');
+        },
+    ],
 
-    ['parseEmlText: multipart/mixed lists attachments', () => {
-        const parsed = parseEmlText(MIXED_EML);
-        assertEqual(parsed.body, 'The body text goes here.', 'body extracted');
-        assertEqual(parsed.attachments.length, 2, 'two attachments found');
-        const pdf = parsed.attachments[0];
-        assertEqual(pdf.filename, 'report.pdf', 'pdf filename');
-        assertEqual(pdf.mimeType, 'application/pdf', 'pdf mime type');
-        assert(pdf.size > 0, 'pdf size estimated');
-        const png = parsed.attachments[1];
-        assertEqual(png.filename, 'logo.png', 'png filename');
-        assertEqual(png.mimeType, 'image/png', 'png mime type');
-    }],
+    [
+        'parseEmlText: multipart/mixed lists attachments',
+        () => {
+            const parsed = parseEmlText(MIXED_EML);
+            assertEqual(parsed.body, 'The body text goes here.', 'body extracted');
+            assertEqual(parsed.attachments.length, 2, 'two attachments found');
+            const pdf = parsed.attachments[0];
+            assertEqual(pdf.filename, 'report.pdf', 'pdf filename');
+            assertEqual(pdf.mimeType, 'application/pdf', 'pdf mime type');
+            assert(pdf.size > 0, 'pdf size estimated');
+            const png = parsed.attachments[1];
+            assertEqual(png.filename, 'logo.png', 'png filename');
+            assertEqual(png.mimeType, 'image/png', 'png mime type');
+        },
+    ],
 
-    ['parseEmlText: html-only email converts to text', () => {
-        const parsed = parseEmlText(HTML_ONLY_EML);
-        assert(parsed.hasHtml, 'html flagged');
-        assert(parsed.body.includes('Title'), 'heading text');
-        assert(parsed.body.includes('bold'), 'strong text');
-        assert(parsed.body.includes('&'), 'entity decoded');
-        assert(parsed.body.includes('nbsp here'), 'nbsp decoded to space');
-    }],
+    [
+        'parseEmlText: html-only email converts to text',
+        () => {
+            const parsed = parseEmlText(HTML_ONLY_EML);
+            assert(parsed.hasHtml, 'html flagged');
+            assert(parsed.body.includes('Title'), 'heading text');
+            assert(parsed.body.includes('bold'), 'strong text');
+            assert(parsed.body.includes('&'), 'entity decoded');
+            assert(parsed.body.includes('nbsp here'), 'nbsp decoded to space');
+        },
+    ],
 
-    ['parseEmlText: quoted-printable decodes UTF-8 bytes', () => {
-        const parsed = parseEmlText(QP_UTF8_EML);
-        assert(parsed.body.includes('é'), '=C3=A9 decoded as UTF-8 é');
-        assert(parsed.body.includes('softbreak'), 'soft line break removed');
-    }],
+    [
+        'parseEmlText: quoted-printable decodes UTF-8 bytes',
+        () => {
+            const parsed = parseEmlText(QP_UTF8_EML);
+            assert(parsed.body.includes('é'), '=C3=A9 decoded as UTF-8 é');
+            assert(parsed.body.includes('softbreak'), 'soft line break removed');
+        },
+    ],
 
-    ['parseEmlText: handles empty input', () => {
-        const parsed = parseEmlText('');
-        assertEqual(parsed.subject, '', 'empty subject');
-        assertEqual(parsed.body, '', 'empty body');
-        assertEqual(parsed.attachments.length, 0, 'no attachments');
-    }],
+    [
+        'parseEmlText: handles empty input',
+        () => {
+            const parsed = parseEmlText('');
+            assertEqual(parsed.subject, '', 'empty subject');
+            assertEqual(parsed.body, '', 'empty body');
+            assertEqual(parsed.attachments.length, 0, 'no attachments');
+        },
+    ],
 
     // ── formatEmlDocument ──────────────────────────────────────────────────
 
-    ['formatEmlDocument: renders headers, body and attachments', () => {
-        const formatted = formatEmlDocument(parseEmlText(MIXED_EML));
-        assert(formatted.includes('Subject: With attachment'), 'subject line');
-        assert(formatted.includes('From: a@b.c'), 'from line');
-        assert(formatted.includes('Date: Wed'), 'date line');
-        assert(formatted.includes('The body text goes here.'), 'body');
-        assert(formatted.includes('[Attachments: report.pdf'), 'attachment list');
-        assert(formatted.includes('logo.png'), 'second attachment');
-    }],
+    [
+        'formatEmlDocument: renders headers, body and attachments',
+        () => {
+            const formatted = formatEmlDocument(parseEmlText(MIXED_EML));
+            assert(formatted.includes('Subject: With attachment'), 'subject line');
+            assert(formatted.includes('From: a@b.c'), 'from line');
+            assert(formatted.includes('Date: Wed'), 'date line');
+            assert(formatted.includes('The body text goes here.'), 'body');
+            assert(formatted.includes('[Attachments: report.pdf'), 'attachment list');
+            assert(formatted.includes('logo.png'), 'second attachment');
+        },
+    ],
 
-    ['formatEmlDocument: renders missing body gracefully', () => {
-        const formatted = formatEmlDocument(parseEmlText('Subject: No body\n'));
-        assert(formatted.includes('No readable text body'), 'fallback message');
-    }],
+    [
+        'formatEmlDocument: renders missing body gracefully',
+        () => {
+            const formatted = formatEmlDocument(parseEmlText('Subject: No body\n'));
+            assert(formatted.includes('No readable text body'), 'fallback message');
+        },
+    ],
 ];
 
 await runTests(tests);

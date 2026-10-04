@@ -96,7 +96,7 @@ export function getUniqueSources(tracker) {
     // each citation number wins (previously an O(sources × entries) find()
     // ran per source).
     const numToUrl = new Map();
-    for (const entry of (tracker.entries || [])) {
+    for (const entry of tracker.entries || []) {
         if (numToUrl.has(entry.citationNum)) continue;
         const url = Array.isArray(entry.urls) && entry.urls.length > 0 ? entry.urls[0] : null;
         if (url) {
@@ -156,15 +156,19 @@ export function annotateCitations(tracker, text) {
         if (idx >= 0) {
             const endIdx = idx + entry.claim.length;
             // Collect unique citation numbers for this claim
-            const nums = [...new Set(
-                entry.urls.map(u => {
-                    const normalized = String(u).trim().replace(/\/+$/, '').toLowerCase();
-                    return tracker.urlToNumber.get(normalized);
-                }).filter(Boolean)
-            )].sort((a, b) => a - b);
+            const nums = [
+                ...new Set(
+                    entry.urls
+                        .map((u) => {
+                            const normalized = String(u).trim().replace(/\/+$/, '').toLowerCase();
+                            return tracker.urlToNumber.get(normalized);
+                        })
+                        .filter(Boolean),
+                ),
+            ].sort((a, b) => a - b);
 
             if (nums.length > 0) {
-                const marker = nums.map(n => `[${n}]`).join('');
+                const marker = nums.map((n) => `[${n}]`).join('');
                 // Only insert if there isn't already a citation marker right after
                 const after = annotated.slice(endIdx, endIdx + 20);
                 if (!/^(\s*\[(\d+)\])+/.test(after)) {

@@ -21,7 +21,14 @@
  * @param {number} [options.maxTokens]
  * @returns {{ url: string, headers: Record<string,string>, payload: object }}
  */
-export function buildNonStreamingChatRequest({ provider, baseUrl, model, apiKey = '', messages, maxTokens = 256 }) {
+export function buildNonStreamingChatRequest({
+    provider,
+    baseUrl,
+    model,
+    apiKey = '',
+    messages,
+    maxTokens = 256,
+}) {
     let endpoint = String(baseUrl ?? '').replace(/\/+$/, '');
 
     const headers = { 'Content-Type': 'application/json' };
@@ -36,7 +43,7 @@ export function buildNonStreamingChatRequest({ provider, baseUrl, model, apiKey 
         payload = {
             model,
             max_tokens: maxTokens,
-            messages: messages.filter(message => message.role !== 'system'),
+            messages: messages.filter((message) => message.role !== 'system'),
         };
     } else if (provider === 'ollama') {
         if (!endpoint.endsWith('api/chat')) {
@@ -49,7 +56,11 @@ export function buildNonStreamingChatRequest({ provider, baseUrl, model, apiKey 
         payload = { model, messages, stream: false, think: false };
     } else {
         // openai / unsloth / deepseek (OpenAI-compatible chat completions)
-        if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions') && !endpoint.includes('v1/chat')) {
+        if (
+            !endpoint.endsWith('chat/completions') &&
+            !endpoint.includes('chat/completions') &&
+            !endpoint.includes('v1/chat')
+        ) {
             endpoint += '/chat/completions';
         }
         if (apiKey) {
@@ -72,8 +83,8 @@ export function extractNonStreamingText(provider, parsed) {
     if (provider === 'anthropic') {
         if (Array.isArray(parsed.content)) {
             return parsed.content
-                .filter(block => block && block.type === 'text' && typeof block.text === 'string')
-                .map(block => block.text)
+                .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
+                .map((block) => block.text)
                 .join('');
         }
         return '';

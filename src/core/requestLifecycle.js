@@ -16,13 +16,13 @@
 
 export const REQUEST_STATES = Object.freeze({
     IDLE: 'idle',
-    ENRICHING: 'enriching',           // KB/RAG enrichment + pre-send work
+    ENRICHING: 'enriching', // KB/RAG enrichment + pre-send work
     AWAITING_MODEL: 'awaiting-model', // request sent, awaiting stream chunks
-    TOOL_LOOP: 'tool-loop',           // executing local tools / research branches
-    SYNTHESIS: 'synthesis',           // final answer synthesis after tools
-    STOPPING: 'stopping',             // user pressed stop; finalisation in progress
-    DONE: 'done',                     // completed (settled; next begin starts fresh)
-    ERROR: 'error',                   // failed (settled)
+    TOOL_LOOP: 'tool-loop', // executing local tools / research branches
+    SYNTHESIS: 'synthesis', // final answer synthesis after tools
+    STOPPING: 'stopping', // user pressed stop; finalisation in progress
+    DONE: 'done', // completed (settled; next begin starts fresh)
+    ERROR: 'error', // failed (settled)
 });
 
 const ACTIVE_STATES = new Set([
@@ -56,11 +56,7 @@ const RESPONDING_STATES = new Set([
     REQUEST_STATES.STOPPING,
 ]);
 
-const SETTLED_STATES = new Set([
-    REQUEST_STATES.IDLE,
-    REQUEST_STATES.DONE,
-    REQUEST_STATES.ERROR,
-]);
+const SETTLED_STATES = new Set([REQUEST_STATES.IDLE, REQUEST_STATES.DONE, REQUEST_STATES.ERROR]);
 
 /**
  * Create a request lifecycle recorder.
@@ -171,7 +167,11 @@ export function createRequestLifecycle() {
 
         markPhase(phase) {
             const previous = state;
-            if (!PHASE_STATES.has(phase) || !ACTIVE_STATES.has(previous) || previous === REQUEST_STATES.STOPPING) {
+            if (
+                !PHASE_STATES.has(phase) ||
+                !ACTIVE_STATES.has(previous) ||
+                previous === REQUEST_STATES.STOPPING
+            ) {
                 return { ok: false, previous, reason: 'illegal-transition' };
             }
             state = phase;
@@ -191,7 +191,8 @@ export function createRequestLifecycle() {
         },
 
         finish(outcome = REQUEST_STATES.DONE) {
-            const target = outcome === REQUEST_STATES.ERROR ? REQUEST_STATES.ERROR : REQUEST_STATES.DONE;
+            const target =
+                outcome === REQUEST_STATES.ERROR ? REQUEST_STATES.ERROR : REQUEST_STATES.DONE;
             return settle(target);
         },
     };

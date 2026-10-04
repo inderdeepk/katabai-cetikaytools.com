@@ -31,7 +31,7 @@ export const PLANNER_MAX_ATTEMPTS = 2;
  * @returns {Array<{sub_task: string, search_query: string, hypothesis?: string, evidence_needed?: string}>}
  */
 export function buildPlanSnapshot(currentPlan) {
-    return (currentPlan || []).map(task => ({
+    return (currentPlan || []).map((task) => ({
         sub_task: task.sub_task,
         search_query: task.search_query,
         ...(task.hypothesis ? { hypothesis: task.hypothesis } : {}),
@@ -68,7 +68,8 @@ export async function runPlannerAgent(host, query) {
         if (attempt > 1) {
             messages.push({
                 role: 'user',
-                content: 'The previous response was not a valid JSON array. Return ONLY the plan as a JSON array in the specified format, with no other text.',
+                content:
+                    'The previous response was not a valid JSON array. Return ONLY the plan as a JSON array in the specified format, with no other text.',
             });
         }
         try {
@@ -82,10 +83,14 @@ export async function runPlannerAgent(host, query) {
                 return plan;
             }
             // Log a truncated sample of the raw response for diagnosis.
-            log(`[Katab:planner] Planner returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`);
+            log(
+                `[Katab:planner] Planner returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`,
+            );
         } catch (e) {
             if (isCancelled(e)) throw e;
-            log(`[Katab:planner] Planner agent failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`);
+            log(
+                `[Katab:planner] Planner agent failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`,
+            );
         }
     }
     return null;
@@ -133,7 +138,8 @@ export async function reviseResearchPlan(host, originalQuery, currentPlan, feedb
         if (attempt > 1) {
             messages.push({
                 role: 'user',
-                content: 'The previous response was not a valid JSON array. Return ONLY the updated plan as a JSON array in the specified format, with no other text.',
+                content:
+                    'The previous response was not a valid JSON array. Return ONLY the updated plan as a JSON array in the specified format, with no other text.',
             });
         }
         try {
@@ -146,10 +152,14 @@ export async function reviseResearchPlan(host, originalQuery, currentPlan, feedb
             if (plan && plan.length > 0) {
                 return plan;
             }
-            log(`[Katab:planner] Plan revision returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`);
+            log(
+                `[Katab:planner] Plan revision returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`,
+            );
         } catch (e) {
             if (isCancelled(e)) throw e;
-            log(`[Katab:planner] Plan revision failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`);
+            log(
+                `[Katab:planner] Plan revision failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`,
+            );
         }
     }
     return null;

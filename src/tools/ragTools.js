@@ -78,25 +78,42 @@ RagError.prototype.constructor = RagError;
  */
 export function readRagConfig(settings) {
     const getBool = (key, fallback = false) => {
-        try { return settings.get_boolean(key); } catch (_) { return fallback; }
+        try {
+            return settings.get_boolean(key);
+        } catch (_) {
+            return fallback;
+        }
     };
     const getString = (key, fallback = '') => {
-        try { return settings.get_string(key); } catch (_) { return fallback; }
+        try {
+            return settings.get_string(key);
+        } catch (_) {
+            return fallback;
+        }
     };
     const getInt = (key, fallback = 0) => {
-        try { return settings.get_int(key); } catch (_) { return fallback; }
+        try {
+            return settings.get_int(key);
+        } catch (_) {
+            return fallback;
+        }
     };
     const getDouble = (key, fallback = 0.0) => {
-        try { return settings.get_double(key); } catch (_) { return fallback; }
+        try {
+            return settings.get_double(key);
+        } catch (_) {
+            return fallback;
+        }
     };
 
     // Fallback: if rag-ollama-url is unset or still at its GSettings default,
     // use the main ollama-url so users don't need to configure two URLs.
     const ragOllamaUrl = getString('rag-ollama-url', 'http://localhost:11434');
     const mainOllamaUrl = getString('ollama-url', 'http://localhost:11434');
-    const effectiveOllamaUrl = (ragOllamaUrl && ragOllamaUrl !== 'http://localhost:11434')
-        ? ragOllamaUrl
-        : (mainOllamaUrl || 'http://localhost:11434');
+    const effectiveOllamaUrl =
+        ragOllamaUrl && ragOllamaUrl !== 'http://localhost:11434'
+            ? ragOllamaUrl
+            : mainOllamaUrl || 'http://localhost:11434';
 
     return {
         enabled: getBool('rag-enabled', false),
@@ -120,7 +137,10 @@ export function readRagConfig(settings) {
         fallbackThreshold: getDouble('rag-fallback-threshold', RAG_DEFAULT_FALLBACK_THRESHOLD),
         rerankEnabled: getBool('rag-rerank-enabled', false),
         rerankModel: getString('rag-rerank-model', RAG_DEFAULT_RERANK_MODEL),
-        rerankCandidateMultiplier: getInt('rag-rerank-candidate-multiplier', RAG_DEFAULT_RERANK_CANDIDATE_MULTIPLIER),
+        rerankCandidateMultiplier: getInt(
+            'rag-rerank-candidate-multiplier',
+            RAG_DEFAULT_RERANK_CANDIDATE_MULTIPLIER,
+        ),
         hybridEnabled: getBool('rag-hybrid-enabled', true),
     };
 }
@@ -175,12 +195,14 @@ export function buildRagToolSchema({ provider } = {}) {
         properties: {
             query: {
                 type: 'string',
-                description: 'The search query to find semantically relevant information in the local knowledge base (past documents, conversations, and research).',
+                description:
+                    'The search query to find semantically relevant information in the local knowledge base (past documents, conversations, and research).',
             },
             collection: {
                 type: 'string',
                 enum: ['conversations', 'documents', 'research_cache'],
-                description: 'Optional. Restrict the search to one knowledge base collection. Omit to search all collections.',
+                description:
+                    'Optional. Restrict the search to one knowledge base collection. Omit to search all collections.',
             },
         },
         required: ['query'],
@@ -189,7 +211,8 @@ export function buildRagToolSchema({ provider } = {}) {
     if (provider === 'anthropic') {
         return {
             name: RAG_TOOL_NAME,
-            description: 'Search the local knowledge base for semantically relevant information from past documents, conversations, and research cache.',
+            description:
+                'Search the local knowledge base for semantically relevant information from past documents, conversations, and research cache.',
             input_schema: params,
         };
     }
@@ -198,7 +221,8 @@ export function buildRagToolSchema({ provider } = {}) {
         type: 'function',
         function: {
             name: RAG_TOOL_NAME,
-            description: 'Search the local knowledge base for semantically relevant information from past documents, conversations, and research cache.',
+            description:
+                'Search the local knowledge base for semantically relevant information from past documents, conversations, and research cache.',
             parameters: params,
         },
     };
@@ -223,7 +247,9 @@ function getLocalDateStamp() {
  * @returns {string}
  */
 function fitMarkdown(s) {
-    return String(s || '').replace(/\s+/g, ' ').trim();
+    return String(s || '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 /**
@@ -257,9 +283,7 @@ export function buildRagResultBlock(query, payload, { includeGuard = true, mode 
         return `Knowledge base search${modeTag} on ${searchDate} for "${query}" returned no results.`;
     }
 
-    const lines = [
-        `Knowledge base results${modeTag} for "${query}" (searched ${searchDate}):`,
-    ];
+    const lines = [`Knowledge base results${modeTag} for "${query}" (searched ${searchDate}):`];
     if (includeGuard) {
         lines.push('');
         lines.push('IMPORTANT: The information below is from YOUR personal knowledge base — past');
@@ -335,10 +359,7 @@ export class RagRuntime {
 
         if (bodyJson !== null) {
             const jsonStr = JSON.stringify(bodyJson);
-            message.set_request_body_from_bytes(
-                'application/json',
-                GLib.Bytes.new(jsonStr)
-            );
+            message.set_request_body_from_bytes('application/json', GLib.Bytes.new(jsonStr));
         }
 
         // Cancel the in-flight message when the caller's cancellable fires, and
@@ -347,13 +368,21 @@ export class RagRuntime {
         let cancelHandlerId = 0;
         const disconnectCancelHandler = () => {
             if (cancelHandlerId && cancellable) {
-                try { cancellable.disconnect(cancelHandlerId); } catch (_e) { /* ignore */ }
+                try {
+                    cancellable.disconnect(cancelHandlerId);
+                } catch (_e) {
+                    /* ignore */
+                }
                 cancelHandlerId = 0;
             }
         };
         if (cancellable) {
             cancelHandlerId = cancellable.connect(() => {
-                try { message.cancel(); } catch (_e) { /* ignore */ }
+                try {
+                    message.cancel();
+                } catch (_e) {
+                    /* ignore */
+                }
             });
         }
 
@@ -376,7 +405,7 @@ export class RagRuntime {
                         this._readCappedBytes(inputStream, RAG_MAX_RESPONSE_BYTES, cancellable)
                             .then(resolve)
                             .catch(reject);
-                    }
+                    },
                 );
             });
             disconnectCancelHandler();
@@ -393,8 +422,14 @@ export class RagRuntime {
             }
 
             if (status !== Soup.Status.OK && status !== Soup.Status.CREATED) {
-                const detail = typeof body === 'object' ? (body.detail || body.message || text.slice(0, 500)) : text.slice(0, 500);
-                throw new RagError(`RAG service returned HTTP ${status}`, { code: 'http-error', detail });
+                const detail =
+                    typeof body === 'object'
+                        ? body.detail || body.message || text.slice(0, 500)
+                        : text.slice(0, 500);
+                throw new RagError(`RAG service returned HTTP ${status}`, {
+                    code: 'http-error',
+                    detail,
+                });
             }
 
             return { status, body };
@@ -402,13 +437,19 @@ export class RagRuntime {
             disconnectCancelHandler();
             if (e instanceof RagError) throw e;
             if (String(e?.message || '').includes('safety limit')) {
-                throw new RagError(`RAG service response was too large to read safely: ${e.message}`, { code: 'response-too-large', detail: e?.message });
+                throw new RagError(
+                    `RAG service response was too large to read safely: ${e.message}`,
+                    { code: 'response-too-large', detail: e?.message },
+                );
             }
             const msg = String(e?.message || e || '');
             if (msg.includes('cancelled') || msg.includes('cancellable')) {
                 throw new RagError('RAG request cancelled', { code: 'cancelled', detail: msg });
             }
-            throw new RagError(`RAG service connection failed: ${msg}`, { code: 'connection-failed', detail: msg });
+            throw new RagError(`RAG service connection failed: ${msg}`, {
+                code: 'connection-failed',
+                detail: msg,
+            });
         }
     }
 
@@ -435,9 +476,12 @@ export class RagRuntime {
         try {
             const params = [];
             if (config.ollamaUrl) params.push(`ollama_url=${encodeURIComponent(config.ollamaUrl)}`);
-            if (config.embeddingModel) params.push(`embedding_model=${encodeURIComponent(config.embeddingModel)}`);
+            if (config.embeddingModel)
+                params.push(`embedding_model=${encodeURIComponent(config.embeddingModel)}`);
             if (params.length) url += `?${params.join('&')}`;
-        } catch (_) { /* keep the base URL on any encoding failure */ }
+        } catch (_) {
+            /* keep the base URL on any encoding failure */
+        }
         try {
             const { body } = await this._request('GET', url, null, cancellable);
             return {
@@ -472,7 +516,7 @@ export class RagRuntime {
 
         const url = `${config.serviceUrl.replace(/\/+$/, '')}/index`;
         const payload = {
-            texts: texts.map(t => ({
+            texts: texts.map((t) => ({
                 id: String(t.id || ''),
                 content: String(t.content || ''),
                 metadata: t.metadata || {},
@@ -486,7 +530,7 @@ export class RagRuntime {
             max_total_size_mb: config.maxTotalSizeMb ?? 500,
             auto_prune: config.autoPrune ?? true,
             // Replace old chunks when re-indexing the same document IDs
-            replace_ids: texts.map(t => String(t.id || '')),
+            replace_ids: texts.map((t) => String(t.id || '')),
         };
 
         const { body } = await this._request('POST', url, payload, cancellable);
@@ -534,7 +578,8 @@ export class RagRuntime {
         }
 
         const url = `${config.serviceUrl.replace(/\/+$/, '')}/search`;
-        const rerankK = topK * (config.rerankCandidateMultiplier || RAG_DEFAULT_RERANK_CANDIDATE_MULTIPLIER);
+        const rerankK =
+            topK * (config.rerankCandidateMultiplier || RAG_DEFAULT_RERANK_CANDIDATE_MULTIPLIER);
 
         const payload = {
             query: q,
@@ -574,7 +619,9 @@ export class RagRuntime {
             scoreSpace: String(body?.score_space || ''),
         };
         if (elapsedMs > 1500) {
-            log(`[Katab:rag] slow search: ${elapsedMs}ms for "${q.substring(0, 60)}" (mode=${outcome.mode})`);
+            log(
+                `[Katab:rag] slow search: ${elapsedMs}ms for "${q.substring(0, 60)}" (mode=${outcome.mode})`,
+            );
         }
 
         this._searchCache.set(cacheKey, {
@@ -602,14 +649,23 @@ export class RagRuntime {
      * @param {Gio.Cancellable|null} [cancellable]
      * @returns {Promise<{ ok: boolean, deleted: number }>}
      */
-    async deleteData({ collection = '', ids = [], prefixes = [], sourceIds = [] } = {}, config, cancellable = null) {
+    async deleteData(
+        { collection = '', ids = [], prefixes = [], sourceIds = [] } = {},
+        config,
+        cancellable = null,
+    ) {
         const url = `${config.serviceUrl.replace(/\/+$/, '')}/delete`;
-        const { body } = await this._request('POST', url, {
-            collection: collection || null,
-            ids: ids.map(String),
-            prefixes: prefixes.map(String),
-            source_ids: sourceIds.map(String),
-        }, cancellable);
+        const { body } = await this._request(
+            'POST',
+            url,
+            {
+                collection: collection || null,
+                ids: ids.map(String),
+                prefixes: prefixes.map(String),
+                source_ids: sourceIds.map(String),
+            },
+            cancellable,
+        );
         this._searchCache.clear();
         return { ok: Boolean(body?.ok), deleted: Number(body?.deleted || 0) };
     }

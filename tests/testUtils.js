@@ -11,7 +11,9 @@ export function assert(condition, message = 'assertion failed') {
 
 export function assertEqual(actual, expected, message = 'assertEqual') {
     if (actual !== expected) {
-        throw new Error(`${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+        throw new Error(
+            `${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+        );
     }
 }
 
@@ -31,7 +33,7 @@ export function assertThrows(fn, expectedSubstring = '', message = 'assertThrows
         threw = true;
         if (expectedSubstring && !String(e.message || e).includes(expectedSubstring)) {
             throw new Error(
-                `${message}: exception did not contain "${expectedSubstring}". Got: ${e.message || e}`
+                `${message}: exception did not contain "${expectedSubstring}". Got: ${e.message || e}`,
             );
         }
     }
@@ -58,14 +60,22 @@ export function createMockSettings(overrides = {}) {
     };
 
     return {
-        get_string: key => read(key, ''),
-        get_boolean: key => read(key, false),
-        get_int: key => read(key, 0),
-        get_double: key => read(key, 0.0),
-        set_string: (key, val) => { store[key] = val; },
-        set_boolean: (key, val) => { store[key] = val; },
-        set_int: (key, val) => { store[key] = val; },
-        set_double: (key, val) => { store[key] = val; },
+        get_string: (key) => read(key, ''),
+        get_boolean: (key) => read(key, false),
+        get_int: (key) => read(key, 0),
+        get_double: (key) => read(key, 0.0),
+        set_string: (key, val) => {
+            store[key] = val;
+        },
+        set_boolean: (key, val) => {
+            store[key] = val;
+        },
+        set_int: (key, val) => {
+            store[key] = val;
+        },
+        set_double: (key, val) => {
+            store[key] = val;
+        },
         connect: () => 0,
         // Expose store for direct inspection
         _store: store,

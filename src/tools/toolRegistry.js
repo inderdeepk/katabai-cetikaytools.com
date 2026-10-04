@@ -92,7 +92,7 @@ export function getAllTools() {
  * @returns {ToolDefinition[]}
  */
 export function getToolsByDanger(dangerLevel) {
-    return getAllTools().filter(t => t.dangerLevel === dangerLevel);
+    return getAllTools().filter((t) => t.dangerLevel === dangerLevel);
 }
 
 /**

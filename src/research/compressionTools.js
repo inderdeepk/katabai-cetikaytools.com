@@ -309,7 +309,9 @@ function _safeParseJson(text) {
         // Extract JSON array from possible markdown wrapping
         const clean = String(text || '').trim();
         // Try direct parse first
-        try { return JSON.parse(clean); } catch (_) { }
+        try {
+            return JSON.parse(clean);
+        } catch (_) {}
         // Try to find a JSON array in the response (non-greedy)
         const match = clean.match(/\[\s*\{[\s\S]*?\}\s*\]/);
         if (match) return JSON.parse(match[0]);
@@ -333,7 +335,14 @@ function _safeParseJson(text) {
  * @param {string} [options.priorPageFacts] - Facts already covered by earlier pages (carry-forward context)
  * @returns {Promise<Array<{claim: string, url: string, anchor_text: string}>>}
  */
-export async function compressPage({ rawText, sourceUrl, llmCall, cancellable = null, researchContext = null, priorPageFacts = null } = {}) {
+export async function compressPage({
+    rawText,
+    sourceUrl,
+    llmCall,
+    cancellable = null,
+    researchContext = null,
+    priorPageFacts = null,
+} = {}) {
     if (!rawText || !sourceUrl || !llmCall) return [];
 
     const truncated = _truncateForPrompt(rawText, MAX_PAGE_CHARS);
@@ -364,31 +373,38 @@ export async function compressPage({ rawText, sourceUrl, llmCall, cancellable = 
     ];
 
     try {
-        const response = await llmCall(messages, { cancellable, maxTokens: DEFAULT_MAX_TOKENS_COMPRESS });
+        const response = await llmCall(messages, {
+            cancellable,
+            maxTokens: DEFAULT_MAX_TOKENS_COMPRESS,
+        });
         const parsed = _safeParseJson(response);
         if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.map(item => ({
-                claim: String(item.claim || '').trim(),
-                url: String(item.url || sourceUrl).trim(),
-                // Verbatim supporting sentence from the source page, used by the
-                // groundedness check to verify claims against the actual evidence.
-                anchor_text: String(item.anchor || item.anchor_text || item.quote || '').trim(),
-            })).filter(item => item.claim.length > 0);
+            return parsed
+                .map((item) => ({
+                    claim: String(item.claim || '').trim(),
+                    url: String(item.url || sourceUrl).trim(),
+                    // Verbatim supporting sentence from the source page, used by the
+                    // groundedness check to verify claims against the actual evidence.
+                    anchor_text: String(item.anchor || item.anchor_text || item.quote || '').trim(),
+                }))
+                .filter((item) => item.claim.length > 0);
         }
         // Fallback: treat response as a bullet list
         const bullets = String(response || '')
             .split('\n')
-            .filter(line => line.trim().startsWith('-') || line.trim().startsWith('*'))
-            .map(line => line.replace(/^[-*]\s*/, '').trim())
+            .filter((line) => line.trim().startsWith('-') || line.trim().startsWith('*'))
+            .map((line) => line.replace(/^[-*]\s*/, '').trim())
             .filter(Boolean);
         if (bullets.length > 0) {
-            return bullets.slice(0, 5).map(claim => ({ claim, url: sourceUrl, anchor_text: '' }));
+            return bullets.slice(0, 5).map((claim) => ({ claim, url: sourceUrl, anchor_text: '' }));
         }
         return [];
     } catch (e) {
         // Never swallow silently — an auth failure or provider outage must be
         // distinguishable from "the page had no facts".
-        log(`[Katab:compress] Page compression failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
+        log(
+            `[Katab:compress] Page compression failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
+        );
         return [];
     }
 }
@@ -411,7 +427,10 @@ export async function mergePageSummaries({ summaries, topic, llmCall, cancellabl
 
     const combined = summaries.map((s, i) => `--- Page ${i + 1} ---\n${s}`).join('\n\n');
     // Truncate if excessively long
-    const truncated = combined.length > 24000 ? combined.slice(0, 24000) + '\n\n[...additional pages trimmed...]' : combined;
+    const truncated =
+        combined.length > 24000
+            ? combined.slice(0, 24000) + '\n\n[...additional pages trimmed...]'
+            : combined;
 
     const messages = [
         { role: 'system', content: MERGE_PAGE_SYSTEM },
@@ -419,10 +438,15 @@ export async function mergePageSummaries({ summaries, topic, llmCall, cancellabl
     ];
 
     try {
-        const response = await llmCall(messages, { cancellable, maxTokens: DEFAULT_MAX_TOKENS_MERGE });
+        const response = await llmCall(messages, {
+            cancellable,
+            maxTokens: DEFAULT_MAX_TOKENS_MERGE,
+        });
         return String(response || '').trim();
     } catch (e) {
-        log(`[Katab:compress] Summary merge failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
+        log(
+            `[Katab:compress] Summary merge failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
+        );
         // Fallback: simple concatenation
         return summaries.join('\n\n');
     }
@@ -440,11 +464,14 @@ export async function mergePageSummaries({ summaries, topic, llmCall, cancellabl
 export async function clusterThemes({ topicSummaries, llmCall, cancellable = null } = {}) {
     if (!topicSummaries || topicSummaries.length === 0 || !llmCall) return '';
 
-    const combined = topicSummaries.map(ts =>
-        `### ${ts.topic}\n${ts.findings}`
-    ).join('\n\n---\n\n');
+    const combined = topicSummaries
+        .map((ts) => `### ${ts.topic}\n${ts.findings}`)
+        .join('\n\n---\n\n');
 
-    const truncated = combined.length > 32000 ? combined.slice(0, 32000) + '\n\n[...additional topics trimmed...]' : combined;
+    const truncated =
+        combined.length > 32000
+            ? combined.slice(0, 32000) + '\n\n[...additional topics trimmed...]'
+            : combined;
 
     const messages = [
         { role: 'system', content: CLUSTER_THEMES_SYSTEM },
@@ -452,10 +479,15 @@ export async function clusterThemes({ topicSummaries, llmCall, cancellable = nul
     ];
 
     try {
-        const response = await llmCall(messages, { cancellable, maxTokens: DEFAULT_MAX_TOKENS_CLUSTER });
+        const response = await llmCall(messages, {
+            cancellable,
+            maxTokens: DEFAULT_MAX_TOKENS_CLUSTER,
+        });
         return String(response || '').trim();
     } catch (e) {
-        log(`[Katab:compress] Theme clustering failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
+        log(
+            `[Katab:compress] Theme clustering failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
+        );
         return combined;
     }
 }
@@ -470,23 +502,37 @@ export async function clusterThemes({ topicSummaries, llmCall, cancellable = nul
  * @param {Object} [options.cancellable] - Gio.Cancellable
  * @returns {Promise<string>} Section prose in markdown
  */
-export async function buildSectionDraft({ themedParagraphs, sectionTitle, llmCall, cancellable = null } = {}) {
+export async function buildSectionDraft({
+    themedParagraphs,
+    sectionTitle,
+    llmCall,
+    cancellable = null,
+} = {}) {
     if (!themedParagraphs || !sectionTitle || !llmCall) return themedParagraphs || '';
 
-    const truncated = themedParagraphs.length > 24000
-        ? themedParagraphs.slice(0, 24000) + '\n\n[...content trimmed...]'
-        : themedParagraphs;
+    const truncated =
+        themedParagraphs.length > 24000
+            ? themedParagraphs.slice(0, 24000) + '\n\n[...content trimmed...]'
+            : themedParagraphs;
 
     const messages = [
         { role: 'system', content: DRAFT_SECTION_SYSTEM },
-        { role: 'user', content: `SECTION TITLE: ${sectionTitle}\n\nTHEMED PARAGRAPHS:\n${truncated}` },
+        {
+            role: 'user',
+            content: `SECTION TITLE: ${sectionTitle}\n\nTHEMED PARAGRAPHS:\n${truncated}`,
+        },
     ];
 
     try {
-        const response = await llmCall(messages, { cancellable, maxTokens: DEFAULT_MAX_TOKENS_DRAFT });
+        const response = await llmCall(messages, {
+            cancellable,
+            maxTokens: DEFAULT_MAX_TOKENS_DRAFT,
+        });
         return String(response || '').trim();
     } catch (e) {
-        log(`[Katab:compress] Section draft failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`);
+        log(
+            `[Katab:compress] Section draft failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
+        );
         return themedParagraphs;
     }
 }
@@ -503,7 +549,13 @@ export async function buildSectionDraft({ themedParagraphs, sectionTitle, llmCal
  * @param {Object} [options.researchContext] - { originalQuery, subTask } for question-aware extraction
  * @returns {Promise<{findings: string, facts: Array<{claim: string, url: string, anchor_text: string}>, sources: string[]}>}
  */
-export async function compressResearchBranch({ pages, topic, llmCall, cancellable = null, researchContext = null } = {}) {
+export async function compressResearchBranch({
+    pages,
+    topic,
+    llmCall,
+    cancellable = null,
+    researchContext = null,
+} = {}) {
     if (!pages || pages.length === 0 || !llmCall) {
         return { findings: '', facts: [], sources: [] };
     }
@@ -526,12 +578,15 @@ export async function compressResearchBranch({ pages, topic, llmCall, cancellabl
         });
         if (facts.length > 0) {
             allFacts.push(...facts);
-            const summaryText = facts.map(f => `- ${f.claim} [source](${f.url})`).join('\n');
+            const summaryText = facts.map((f) => `- ${f.claim} [source](${f.url})`).join('\n');
             pageSummaries.push(summaryText);
             sources.add(page.url);
             // Grow the carry-forward context with the newly extracted facts,
             // bounded so the prompt never explodes for long page sets.
-            const newFacts = facts.slice(0, 3).map(f => `- ${f.claim}`).join('\n');
+            const newFacts = facts
+                .slice(0, 3)
+                .map((f) => `- ${f.claim}`)
+                .join('\n');
             priorPageFacts = (priorPageFacts ? priorPageFacts + '\n' : '') + newFacts;
             if (priorPageFacts.length > 4000) {
                 priorPageFacts = priorPageFacts.slice(-4000);

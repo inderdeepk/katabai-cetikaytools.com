@@ -13,7 +13,7 @@ export function isPrivateIPv4(host) {
     }
 
     const octets = match.slice(1).map(Number);
-    if (octets.some(value => value > 255)) {
+    if (octets.some((value) => value > 255)) {
         return false;
     }
 
@@ -60,7 +60,12 @@ export function isBlockedIPv6(host) {
     if (value.startsWith('fc') || value.startsWith('fd')) {
         return true; // unique local fc00::/7
     }
-    if (value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb')) {
+    if (
+        value.startsWith('fe8') ||
+        value.startsWith('fe9') ||
+        value.startsWith('fea') ||
+        value.startsWith('feb')
+    ) {
         return true; // link-local fe80::/10
     }
     const mapped = value.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);

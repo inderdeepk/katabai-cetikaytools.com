@@ -24,11 +24,7 @@ import {
     TOKEN_USAGE_RANGES,
     TokenUsageManager,
 } from './src/usage/tokenUsageManager.js';
-import {
-    getPetDefinition,
-    parsePetForm,
-    PET_SELECTION_MODES,
-} from './src/pets/petCollection.js';
+import { getPetDefinition, parsePetForm, PET_SELECTION_MODES } from './src/pets/petCollection.js';
 import { PROVIDER_DETAILS } from './src/providers/catalog.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
@@ -60,7 +56,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 Gtk.StyleContext.add_provider_for_display(
                     display,
                     cssProvider,
-                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
                 );
                 this._prefsCssLoaded = true;
             }
@@ -71,7 +67,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                     const isDark = styleManager.get_dark();
                     window.remove_css_class('katab-prefs-theme-dark');
                     window.remove_css_class('katab-prefs-theme-light');
-                    window.add_css_class(isDark ? 'katab-prefs-theme-dark' : 'katab-prefs-theme-light');
+                    window.add_css_class(
+                        isDark ? 'katab-prefs-theme-dark' : 'katab-prefs-theme-light',
+                    );
                 } catch (_e) {
                     window.add_css_class('katab-prefs-theme-dark');
                 }
@@ -81,7 +79,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                 const styleManager = Adw.StyleManager.get_default();
                 const themeHandlerId = styleManager.connect('notify::dark', applyPrefsTheme);
                 window.connect('destroy', () => styleManager.disconnect(themeHandlerId));
-            } catch (_e) { /* StyleManager unavailable */ }
+            } catch (_e) {
+                /* StyleManager unavailable */
+            }
         }
 
         const addCssClasses = (widget, ...cssClasses) => {
@@ -94,26 +94,17 @@ export default class KatabPreferences extends ExtensionPreferences {
             return widget;
         };
 
-        const createPreferencesPage = params => addCssClasses(
-            new Adw.PreferencesPage(params),
-            'katab-prefs-page'
-        );
+        const createPreferencesPage = (params) =>
+            addCssClasses(new Adw.PreferencesPage(params), 'katab-prefs-page');
 
-        const createPreferencesGroup = params => addCssClasses(
-            new Adw.PreferencesGroup(params),
-            'katab-prefs-group'
-        );
+        const createPreferencesGroup = (params) =>
+            addCssClasses(new Adw.PreferencesGroup(params), 'katab-prefs-group');
 
-        const stylePreferenceRow = (row, ...cssClasses) => addCssClasses(
-            row,
-            'katab-prefs-row',
-            ...cssClasses
-        );
+        const stylePreferenceRow = (row, ...cssClasses) =>
+            addCssClasses(row, 'katab-prefs-row', ...cssClasses);
 
-        const createExpanderRow = params => stylePreferenceRow(
-            new Adw.ExpanderRow(params),
-            'katab-prefs-expander'
-        );
+        const createExpanderRow = (params) =>
+            stylePreferenceRow(new Adw.ExpanderRow(params), 'katab-prefs-expander');
 
         const page = createPreferencesPage({
             title: 'General',
@@ -122,83 +113,83 @@ export default class KatabPreferences extends ExtensionPreferences {
         window.add(page);
 
         const ollamaSettingTypes = {
-            'format': 'string',
+            format: 'string',
             'frequency-penalty': 'double',
             'min-p': 'double',
-            'mirostat': 'int',
+            mirostat: 'int',
             'mirostat-eta': 'double',
             'mirostat-tau': 'double',
             'presence-penalty': 'double',
-            'raw': 'boolean',
+            raw: 'boolean',
             'repeat-penalty': 'double',
-            'temperature': 'double',
+            temperature: 'double',
             'tfs-z': 'double',
-            'think': 'boolean',
+            think: 'boolean',
             'top-k': 'int',
             'top-p': 'double',
         };
 
         const presetDefinitions = {
             balanced: {
-                'format': '',
-                'raw': false,
-                'temperature': 0.7,
+                format: '',
+                raw: false,
+                temperature: 0.7,
                 'top-k': 40,
                 'top-p': 0.9,
                 'min-p': 0.05,
-                'mirostat': 0,
+                mirostat: 0,
                 'repeat-penalty': 1.1,
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
             },
             code: {
-                'format': '',
-                'raw': false,
-                'temperature': 0.1,
+                format: '',
+                raw: false,
+                temperature: 0.1,
                 'top-k': 40,
                 'top-p': 1.0,
                 'min-p': 0.05,
-                'mirostat': 0,
+                mirostat: 0,
                 'repeat-penalty': 1.0,
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
             },
             factual: {
-                'format': '',
-                'raw': false,
-                'temperature': 0.3,
+                format: '',
+                raw: false,
+                temperature: 0.3,
                 'top-k': 40,
                 'top-p': 0.9,
                 'min-p': 0.05,
-                'mirostat': 0,
+                mirostat: 0,
                 'repeat-penalty': 1.05,
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
             },
             creative: {
-                'format': '',
-                'raw': false,
-                'temperature': 1.1,
+                format: '',
+                raw: false,
+                temperature: 1.1,
                 'top-k': 40,
                 'top-p': 0.95,
                 'min-p': 0.05,
-                'mirostat': 0,
+                mirostat: 0,
                 'repeat-penalty': 1.1,
                 'presence-penalty': 0.2,
                 'frequency-penalty': 0.0,
                 'tfs-z': 1.0,
             },
             json: {
-                'format': 'json',
-                'raw': false,
-                'temperature': 0.0,
+                format: 'json',
+                raw: false,
+                temperature: 0.0,
                 'top-k': 40,
                 'top-p': 1.0,
                 'min-p': 0.05,
-                'mirostat': 0,
+                mirostat: 0,
                 'repeat-penalty': 1.05,
                 'presence-penalty': 0.0,
                 'frequency-penalty': 0.0,
@@ -220,37 +211,43 @@ export default class KatabPreferences extends ExtensionPreferences {
         // General Provider Selection
         const generalGroup = createPreferencesGroup({
             title: 'Active Provider',
-            description: 'Choose which AI backend powers your conversations. Click a provider to switch; your settings for each are kept separately.',
+            description:
+                'Choose which AI backend powers your conversations. Click a provider to switch; your settings for each are kept separately.',
         });
         page.add(generalGroup);
 
         const accessibilityGroup = createPreferencesGroup({
             title: 'Keyboard Shortcut',
-            description: 'Set a global shortcut to open or hide the chat from anywhere on the desktop.',
+            description:
+                'Set a global shortcut to open or hide the chat from anywhere on the desktop.',
         });
         page.add(accessibilityGroup);
 
         const tokenUsageGroup = createPreferencesGroup({
             title: 'AI Token Breakdown',
-            description: 'Control the local-only usage ledger, companion celebrations, default range, retention, reset, and export.',
+            description:
+                'Control the local-only usage ledger, companion celebrations, default range, retention, reset, and export.',
         });
         page.add(tokenUsageGroup);
 
         const petCompanionGroup = createPreferencesGroup({
             title: 'Pet Companion',
-            description: 'Choose whether the visible companion follows the active provider or stays pinned to a form selected in the Pet Collection.',
+            description:
+                'Choose whether the visible companion follows the active provider or stays pinned to a form selected in the Pet Collection.',
         });
         page.add(petCompanionGroup);
 
         const notificationGroup = createPreferencesGroup({
             title: 'Notifications',
-            description: 'Control desktop alerts and sounds for chat activity that happens while the window is closed.',
+            description:
+                'Control desktop alerts and sounds for chat activity that happens while the window is closed.',
         });
         page.add(notificationGroup);
 
         const appearanceGroup = createPreferencesGroup({
             title: 'Appearance',
-            description: 'Control how chat text is sized and how the glass dialog renders over your desktop.',
+            description:
+                'Control how chat text is sized and how the glass dialog renders over your desktop.',
         });
         page.add(appearanceGroup);
 
@@ -276,13 +273,20 @@ export default class KatabPreferences extends ExtensionPreferences {
             }
         };
 
-        const syncRowWithSetting = (key, row, property, getter, setter, signal, normalize = value => value) => {
+        const syncRowWithSetting = (
+            key,
+            row,
+            property,
+            getter,
+            setter,
+            signal,
+            normalize = (value) => value,
+        ) => {
             let syncing = false;
 
             const syncFromSettings = () => {
                 const nextValue = getter(key);
-                if (row[property] === nextValue)
-                    return;
+                if (row[property] === nextValue) return;
 
                 syncing = true;
                 row[property] = nextValue;
@@ -293,12 +297,10 @@ export default class KatabPreferences extends ExtensionPreferences {
             settings.connect(`changed::${key}`, syncFromSettings);
 
             row.connect(signal, () => {
-                if (syncing)
-                    return;
+                if (syncing) return;
 
                 const nextValue = normalize(row[property]);
-                if (getter(key) === nextValue)
-                    return;
+                if (getter(key) === nextValue) return;
 
                 setter(key, nextValue);
             });
@@ -306,16 +308,18 @@ export default class KatabPreferences extends ExtensionPreferences {
             return row;
         };
 
-        const formatShortcutValue = shortcuts => {
-            const labels = (shortcuts || []).map(shortcut => {
-                const [, keyval, modifierMask] = Gtk.accelerator_parse(shortcut);
-                return Gtk.accelerator_get_label(keyval, modifierMask);
-            }).filter(Boolean);
+        const formatShortcutValue = (shortcuts) => {
+            const labels = (shortcuts || [])
+                .map((shortcut) => {
+                    const [, keyval, modifierMask] = Gtk.accelerator_parse(shortcut);
+                    return Gtk.accelerator_get_label(keyval, modifierMask);
+                })
+                .filter(Boolean);
 
             return labels.join(' / ') || 'Disabled';
         };
 
-        const isShortcutKeyvalForbidden = keyval => {
+        const isShortcutKeyvalForbidden = (keyval) => {
             const forbiddenKeyvals = [
                 Gdk.KEY_Home,
                 Gdk.KEY_Left,
@@ -362,7 +366,9 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             shortcutCaptureState.active = false;
             if (shortcutCaptureState.button) {
-                shortcutCaptureState.button.set_label(formatShortcutValue(settings.get_strv('toggle-current-chat')));
+                shortcutCaptureState.button.set_label(
+                    formatShortcutValue(settings.get_strv('toggle-current-chat')),
+                );
             }
         };
 
@@ -388,7 +394,10 @@ export default class KatabPreferences extends ExtensionPreferences {
                 }
             }
 
-            if (!isShortcutBindingValid({ mask, keycode, keyval }) || !Gtk.accelerator_valid(keyval, mask)) {
+            if (
+                !isShortcutBindingValid({ mask, keycode, keyval }) ||
+                !Gtk.accelerator_valid(keyval, mask)
+            ) {
                 return Gdk.EVENT_STOP;
             }
 
@@ -398,18 +407,16 @@ export default class KatabPreferences extends ExtensionPreferences {
             return Gdk.EVENT_STOP;
         });
 
-        const getOllamaValue = suffix => {
+        const getOllamaValue = (suffix) => {
             const type = ollamaSettingTypes[suffix];
-            if (!type)
-                throw new Error(`Unknown Ollama setting: ${suffix}`);
+            if (!type) throw new Error(`Unknown Ollama setting: ${suffix}`);
 
             return settings[`get_${type}`](`ollama-${suffix}`);
         };
 
         const setOllamaValue = (suffix, value) => {
             const type = ollamaSettingTypes[suffix];
-            if (!type)
-                throw new Error(`Unknown Ollama setting: ${suffix}`);
+            if (!type) throw new Error(`Unknown Ollama setting: ${suffix}`);
 
             settings[`set_${type}`](`ollama-${suffix}`, value);
         };
@@ -423,10 +430,13 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const createChoiceRow = (title, subtitle, group) => {
-            const row = stylePreferenceRow(new Adw.ComboRow({
-                title,
-                ...(subtitle && { subtitle }),
-            }), 'katab-prefs-choice-row');
+            const row = stylePreferenceRow(
+                new Adw.ComboRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                }),
+                'katab-prefs-choice-row',
+            );
 
             addPreferenceRow(group, row);
             return row;
@@ -435,21 +445,27 @@ export default class KatabPreferences extends ExtensionPreferences {
         const createProviderImage = (provider, pixelSize = 26) => {
             const iconFile = providerDetails[provider]?.iconFile;
             if (!iconFile) {
-                return addCssClasses(new Gtk.Image({
-                    icon_name: 'applications-science-symbolic',
-                    pixel_size: pixelSize,
-                    valign: Gtk.Align.CENTER,
-                }), 'katab-prefs-provider-image');
+                return addCssClasses(
+                    new Gtk.Image({
+                        icon_name: 'applications-science-symbolic',
+                        pixel_size: pixelSize,
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-provider-image',
+                );
             }
 
-            return addCssClasses(new Gtk.Image({
-                gicon: Gio.icon_new_for_string(`${extensionPath}/icons/${iconFile}`),
-                pixel_size: pixelSize,
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-provider-image');
+            return addCssClasses(
+                new Gtk.Image({
+                    gicon: Gio.icon_new_for_string(`${extensionPath}/icons/${iconFile}`),
+                    pixel_size: pixelSize,
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-provider-image',
+            );
         };
 
-        const getProviderThemeIconName = provider => {
+        const getProviderThemeIconName = (provider) => {
             const iconFile = providerDetails[provider]?.iconFile;
             if (!iconFile) {
                 return 'applications-science-symbolic';
@@ -459,20 +475,29 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const createProviderActiveBadge = () => {
-            const badge = addCssClasses(new Gtk.Box({
-                orientation: Gtk.Orientation.HORIZONTAL,
-                spacing: 6,
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-provider-badge');
+            const badge = addCssClasses(
+                new Gtk.Box({
+                    orientation: Gtk.Orientation.HORIZONTAL,
+                    spacing: 6,
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-provider-badge',
+            );
 
-            const checkIcon = addCssClasses(new Gtk.Image({
-                icon_name: 'object-select-symbolic',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-provider-badge-icon');
-            const badgeLabel = addCssClasses(new Gtk.Label({
-                label: 'Active',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-provider-badge-label');
+            const checkIcon = addCssClasses(
+                new Gtk.Image({
+                    icon_name: 'object-select-symbolic',
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-provider-badge-icon',
+            );
+            const badgeLabel = addCssClasses(
+                new Gtk.Label({
+                    label: 'Active',
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-provider-badge-label',
+            );
             badgeLabel.add_css_class('dim-label');
 
             badge.append(checkIcon);
@@ -486,11 +511,15 @@ export default class KatabPreferences extends ExtensionPreferences {
             'katab-prefs-status-install',
         ];
 
-        const createStatusBadge = (label = 'Checking') => addCssClasses(new Gtk.Label({
-            label,
-            valign: Gtk.Align.CENTER,
-            xalign: 0.5,
-        }), 'katab-prefs-status-badge');
+        const createStatusBadge = (label = 'Checking') =>
+            addCssClasses(
+                new Gtk.Label({
+                    label,
+                    valign: Gtk.Align.CENTER,
+                    xalign: 0.5,
+                }),
+                'katab-prefs-status-badge',
+            );
 
         const setStatusBadge = (badge, label, statusClass) => {
             badge.label = label;
@@ -504,11 +533,14 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const createInfoRow = (title, subtitle, group, suffix = null) => {
-            const row = stylePreferenceRow(new Adw.ActionRow({
-                title,
-                ...(subtitle && { subtitle }),
-                activatable: false,
-            }), 'katab-prefs-info-row');
+            const row = stylePreferenceRow(
+                new Adw.ActionRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                    activatable: false,
+                }),
+                'katab-prefs-info-row',
+            );
 
             if (suffix) {
                 row.add_suffix(suffix);
@@ -547,20 +579,26 @@ export default class KatabPreferences extends ExtensionPreferences {
             body.append(titleLabel);
             body.append(bodyLabel);
 
-            const row = stylePreferenceRow(new Adw.PreferencesRow({
-                child: body,
-                activatable: false,
-            }), 'katab-prefs-instruction-row');
+            const row = stylePreferenceRow(
+                new Adw.PreferencesRow({
+                    child: body,
+                    activatable: false,
+                }),
+                'katab-prefs-instruction-row',
+            );
 
             addPreferenceRow(group, row);
             return row;
         };
 
         const createButtonRow = (title, subtitle, buttonLabel, callback, group) => {
-            const button = addCssClasses(new Gtk.Button({
-                label: buttonLabel,
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-button');
+            const button = addCssClasses(
+                new Gtk.Button({
+                    label: buttonLabel,
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-button',
+            );
             button.connect('clicked', callback);
 
             const row = createInfoRow(title, subtitle, group, button);
@@ -576,11 +614,14 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const createProviderCardRow = (provider, group, subtitle = null) => {
             const detail = providerDetails[provider];
-            const row = stylePreferenceRow(new Adw.ActionRow({
-                title: detail.label,
-                subtitle: subtitle || detail.description,
-                activatable: true,
-            }), 'katab-prefs-provider-row');
+            const row = stylePreferenceRow(
+                new Adw.ActionRow({
+                    title: detail.label,
+                    subtitle: subtitle || detail.description,
+                    activatable: true,
+                }),
+                'katab-prefs-provider-row',
+            );
 
             row.add_prefix(createProviderImage(provider));
 
@@ -617,13 +658,20 @@ export default class KatabPreferences extends ExtensionPreferences {
             return providerPage;
         };
 
-        const bindChoiceRow = (row, key, choices, getter, setter, formatUnknown = value => `Custom (${value})`) => {
+        const bindChoiceRow = (
+            row,
+            key,
+            choices,
+            getter,
+            setter,
+            formatUnknown = (value) => `Custom (${value})`,
+        ) => {
             let syncing = false;
 
             const syncFromSettings = () => {
                 const currentValue = getter(key);
-                const values = choices.map(choice => choice.value);
-                const labels = choices.map(choice => choice.label);
+                const values = choices.map((choice) => choice.value);
+                const labels = choices.map((choice) => choice.label);
 
                 if (!values.includes(currentValue)) {
                     values.push(currentValue);
@@ -641,12 +689,10 @@ export default class KatabPreferences extends ExtensionPreferences {
             settings.connect(`changed::${key}`, syncFromSettings);
 
             row.connect('notify::selected', () => {
-                if (syncing)
-                    return;
+                if (syncing) return;
 
                 const nextValue = row._choiceValues?.[row.selected];
-                if (nextValue === undefined || getter(key) === nextValue)
-                    return;
+                if (nextValue === undefined || getter(key) === nextValue) return;
 
                 setter(key, nextValue);
             });
@@ -656,28 +702,43 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         // Helper to create string input rows binding to GSettings
         const createStringRow = (title, subtitle, key, group, isPassword = false) => {
-            const row = stylePreferenceRow(new Adw.ActionRow({
-                title,
-                ...(subtitle && { subtitle }),
-            }), 'katab-prefs-input-row');
+            const row = stylePreferenceRow(
+                new Adw.ActionRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                }),
+                'katab-prefs-input-row',
+            );
 
-            const entry = addCssClasses(new Gtk.Entry({
-                hexpand: true,
-                valign: Gtk.Align.CENTER,
-                visibility: !isPassword,
-                input_purpose: isPassword ? Gtk.InputPurpose.PASSWORD : Gtk.InputPurpose.FREE_FORM,
-                width_chars: 24,
-            }), 'katab-prefs-entry');
+            const entry = addCssClasses(
+                new Gtk.Entry({
+                    hexpand: true,
+                    valign: Gtk.Align.CENTER,
+                    visibility: !isPassword,
+                    input_purpose: isPassword
+                        ? Gtk.InputPurpose.PASSWORD
+                        : Gtk.InputPurpose.FREE_FORM,
+                    width_chars: 24,
+                }),
+                'katab-prefs-entry',
+            );
 
             row.add_suffix(entry);
             row.activatable_widget = entry;
 
             addPreferenceRow(group, row);
-            syncRowWithSetting(key, entry, 'text', settings.get_string.bind(settings), settings.set_string.bind(settings), 'notify::text');
+            syncRowWithSetting(
+                key,
+                entry,
+                'text',
+                settings.get_string.bind(settings),
+                settings.set_string.bind(settings),
+                'notify::text',
+            );
             return row;
         };
 
-        const getTextBufferContents = buffer => {
+        const getTextBufferContents = (buffer) => {
             const [startIter, endIter] = buffer.get_bounds();
             return buffer.get_text(startIter, endIter, false);
         };
@@ -686,18 +747,21 @@ export default class KatabPreferences extends ExtensionPreferences {
             const row = stylePreferenceRow(
                 new Adw.PreferencesRow(),
                 'katab-prefs-input-row',
-                'katab-prefs-multiline-row'
+                'katab-prefs-multiline-row',
             );
 
-            const box = addCssClasses(new Gtk.Box({
-                orientation: Gtk.Orientation.VERTICAL,
-                spacing: 10,
-                margin_top: 12,
-                margin_bottom: 12,
-                margin_start: 12,
-                margin_end: 12,
-                hexpand: true,
-            }), 'katab-prefs-multiline-box');
+            const box = addCssClasses(
+                new Gtk.Box({
+                    orientation: Gtk.Orientation.VERTICAL,
+                    spacing: 10,
+                    margin_top: 12,
+                    margin_bottom: 12,
+                    margin_start: 12,
+                    margin_end: 12,
+                    hexpand: true,
+                }),
+                'katab-prefs-multiline-box',
+            );
 
             if (title) {
                 const titleLabel = new Gtk.Label({
@@ -711,35 +775,45 @@ export default class KatabPreferences extends ExtensionPreferences {
             }
 
             if (subtitle) {
-                const subtitleLabel = addCssClasses(new Gtk.Label({
-                    label: subtitle,
-                    xalign: 0,
-                    wrap: true,
-                    halign: Gtk.Align.START,
-                    hexpand: true,
-                }), 'dim-label', 'caption');
+                const subtitleLabel = addCssClasses(
+                    new Gtk.Label({
+                        label: subtitle,
+                        xalign: 0,
+                        wrap: true,
+                        halign: Gtk.Align.START,
+                        hexpand: true,
+                    }),
+                    'dim-label',
+                    'caption',
+                );
                 box.append(subtitleLabel);
             }
 
-            const scroller = addCssClasses(new Gtk.ScrolledWindow({
-                hexpand: true,
-                min_content_height: minHeight,
-                propagate_natural_height: true,
-                hscrollbar_policy: Gtk.PolicyType.NEVER,
-                vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
-            }), 'katab-prefs-textarea');
+            const scroller = addCssClasses(
+                new Gtk.ScrolledWindow({
+                    hexpand: true,
+                    min_content_height: minHeight,
+                    propagate_natural_height: true,
+                    hscrollbar_policy: Gtk.PolicyType.NEVER,
+                    vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
+                }),
+                'katab-prefs-textarea',
+            );
 
-            const textView = addCssClasses(new Gtk.TextView({
-                wrap_mode: Gtk.WrapMode.WORD_CHAR,
-                accepts_tab: true,
-                monospace: false,
-                top_margin: 10,
-                bottom_margin: 10,
-                left_margin: 10,
-                right_margin: 10,
-                hexpand: true,
-                vexpand: true,
-            }), 'katab-prefs-textview');
+            const textView = addCssClasses(
+                new Gtk.TextView({
+                    wrap_mode: Gtk.WrapMode.WORD_CHAR,
+                    accepts_tab: true,
+                    monospace: false,
+                    top_margin: 10,
+                    bottom_margin: 10,
+                    left_margin: 10,
+                    right_margin: 10,
+                    hexpand: true,
+                    vexpand: true,
+                }),
+                'katab-prefs-textview',
+            );
             scroller.set_child(textView);
             box.append(scroller);
 
@@ -780,66 +854,107 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         const createIntRow = (title, subtitle, key, group, min, max, step) => {
-            const row = stylePreferenceRow(new Adw.SpinRow({
-                title,
-                ...(subtitle && { subtitle }),
-                adjustment: new Gtk.Adjustment({
-                    lower: min,
-                    upper: max,
-                    step_increment: step,
-                    page_increment: Math.max(step, step * 4),
+            const row = stylePreferenceRow(
+                new Adw.SpinRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                    adjustment: new Gtk.Adjustment({
+                        lower: min,
+                        upper: max,
+                        step_increment: step,
+                        page_increment: Math.max(step, step * 4),
+                    }),
+                    numeric: true,
                 }),
-                numeric: true,
-            }), 'katab-prefs-spin-row');
+                'katab-prefs-spin-row',
+            );
 
             addPreferenceRow(group, row);
-            return syncRowWithSetting(key, row, 'value', settings.get_int.bind(settings), settings.set_int.bind(settings), 'notify::value', value => Math.round(value));
+            return syncRowWithSetting(
+                key,
+                row,
+                'value',
+                settings.get_int.bind(settings),
+                settings.set_int.bind(settings),
+                'notify::value',
+                (value) => Math.round(value),
+            );
         };
 
         const createDoubleRow = (title, subtitle, key, group, min, max, step, digits = 2) => {
-            const row = stylePreferenceRow(new Adw.SpinRow({
-                title,
-                ...(subtitle && { subtitle }),
-                adjustment: new Gtk.Adjustment({
-                    lower: min,
-                    upper: max,
-                    step_increment: step,
-                    page_increment: Math.max(step, step * 5),
+            const row = stylePreferenceRow(
+                new Adw.SpinRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                    adjustment: new Gtk.Adjustment({
+                        lower: min,
+                        upper: max,
+                        step_increment: step,
+                        page_increment: Math.max(step, step * 5),
+                    }),
+                    numeric: true,
+                    digits,
                 }),
-                numeric: true,
-                digits,
-            }), 'katab-prefs-spin-row');
+                'katab-prefs-spin-row',
+            );
 
             addPreferenceRow(group, row);
-            return syncRowWithSetting(key, row, 'value', settings.get_double.bind(settings), settings.set_double.bind(settings), 'notify::value');
+            return syncRowWithSetting(
+                key,
+                row,
+                'value',
+                settings.get_double.bind(settings),
+                settings.set_double.bind(settings),
+                'notify::value',
+            );
         };
 
         const createBooleanRow = (title, subtitle, key, group) => {
-            const row = stylePreferenceRow(new Adw.SwitchRow({
-                title,
-                ...(subtitle && { subtitle }),
-            }), 'katab-prefs-switch-row');
+            const row = stylePreferenceRow(
+                new Adw.SwitchRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                }),
+                'katab-prefs-switch-row',
+            );
 
             addPreferenceRow(group, row);
-            return syncRowWithSetting(key, row, 'active', settings.get_boolean.bind(settings), settings.set_boolean.bind(settings), 'notify::active');
+            return syncRowWithSetting(
+                key,
+                row,
+                'active',
+                settings.get_boolean.bind(settings),
+                settings.set_boolean.bind(settings),
+                'notify::active',
+            );
         };
 
         const createShortcutRow = (title, subtitle, key, group) => {
-            const row = stylePreferenceRow(new Adw.ActionRow({
-                title,
-                ...(subtitle && { subtitle }),
-            }), 'katab-prefs-shortcut-row');
+            const row = stylePreferenceRow(
+                new Adw.ActionRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                }),
+                'katab-prefs-shortcut-row',
+            );
 
-            const buttonBox = addCssClasses(new Gtk.Box({
-                orientation: Gtk.Orientation.HORIZONTAL,
-                spacing: 6,
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-button-box');
+            const buttonBox = addCssClasses(
+                new Gtk.Box({
+                    orientation: Gtk.Orientation.HORIZONTAL,
+                    spacing: 6,
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-button-box',
+            );
 
-            const shortcutButton = addCssClasses(new Gtk.Button({
-                label: formatShortcutValue(settings.get_strv(key)),
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-button', 'katab-prefs-shortcut-button');
+            const shortcutButton = addCssClasses(
+                new Gtk.Button({
+                    label: formatShortcutValue(settings.get_strv(key)),
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-button',
+                'katab-prefs-shortcut-button',
+            );
             shortcutButton.connect('clicked', () => {
                 shortcutCaptureState.active = true;
                 shortcutCaptureState.button = shortcutButton;
@@ -847,11 +962,15 @@ export default class KatabPreferences extends ExtensionPreferences {
             });
             buttonBox.append(shortcutButton);
 
-            const clearButton = addCssClasses(new Gtk.Button({
-                icon_name: 'edit-clear-symbolic',
-                valign: Gtk.Align.CENTER,
-                tooltip_text: 'Clear shortcut',
-            }), 'katab-prefs-button', 'katab-prefs-clear-button');
+            const clearButton = addCssClasses(
+                new Gtk.Button({
+                    icon_name: 'edit-clear-symbolic',
+                    valign: Gtk.Align.CENTER,
+                    tooltip_text: 'Clear shortcut',
+                }),
+                'katab-prefs-button',
+                'katab-prefs-clear-button',
+            );
             clearButton.connect('clicked', () => {
                 settings.set_strv(key, []);
                 stopShortcutCapture();
@@ -859,7 +978,10 @@ export default class KatabPreferences extends ExtensionPreferences {
             buttonBox.append(clearButton);
 
             const syncShortcutRow = () => {
-                if (!shortcutCaptureState.active || shortcutCaptureState.button !== shortcutButton) {
+                if (
+                    !shortcutCaptureState.active ||
+                    shortcutCaptureState.button !== shortcutButton
+                ) {
                     shortcutButton.set_label(formatShortcutValue(settings.get_strv(key)));
                 }
                 clearButton.set_sensitive(settings.get_strv(key).length > 0);
@@ -883,13 +1005,13 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Toggle Chat',
             'Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it.',
             'toggle-current-chat',
-            accessibilityGroup
+            accessibilityGroup,
         );
 
         const chatTextScaleRow = createChoiceRow(
             'Chat Text Size',
             'Comfortable is the recommended default for general readability. Compact fits more text on screen; Large is easier to read from a distance.',
-            appearanceGroup
+            appearanceGroup,
         );
         bindChoiceRow(
             chatTextScaleRow,
@@ -901,48 +1023,48 @@ export default class KatabPreferences extends ExtensionPreferences {
             ],
             settings.get_string.bind(settings),
             settings.set_string.bind(settings),
-            value => `Custom (${value})`
+            (value) => `Custom (${value})`,
         );
 
         createBooleanRow(
             'Glassy Translucent Dialog',
             'Makes the chat dialog slightly see-through for the glass look. Turn this off for maximum text readability — the dialog then uses a more opaque surface.',
             'ui-glass-translucent',
-            appearanceGroup
+            appearanceGroup,
         );
 
         createBooleanRow(
             'Completion Sound',
             'Play a short sound when a response finishes while the chat is closed. Uses a different tone when the request fails.',
             'completion-sound-enabled',
-            notificationGroup
+            notificationGroup,
         );
 
         createBooleanRow(
             'Track Token Usage',
             'Record local-only token totals for the Tokens panel. Existing data stays on disk when this is off.',
             'token-usage-enabled',
-            tokenUsageGroup
+            tokenUsageGroup,
         );
 
         const tokenRangeRow = createChoiceRow(
             'Default Range',
             'Initial range shown when opening the AI Token Breakdown panel or top-bar snapshot.',
-            tokenUsageGroup
+            tokenUsageGroup,
         );
         bindChoiceRow(
             tokenRangeRow,
             'token-usage-default-range',
-            TOKEN_USAGE_RANGES.map(range => ({ label: range.label, value: range.key })),
+            TOKEN_USAGE_RANGES.map((range) => ({ label: range.label, value: range.key })),
             settings.get_string.bind(settings),
             settings.set_string.bind(settings),
-            value => `Custom (${value})`
+            (value) => `Custom (${value})`,
         );
 
         const retentionRow = createChoiceRow(
             'Retention',
             'How long to keep daily token buckets before pruning. Forever keeps the local ledger until you reset it.',
-            tokenUsageGroup
+            tokenUsageGroup,
         );
         bindChoiceRow(
             retentionRow,
@@ -954,21 +1076,21 @@ export default class KatabPreferences extends ExtensionPreferences {
             ],
             settings.get_int.bind(settings),
             settings.set_int.bind(settings),
-            value => `${value} days`
+            (value) => `${value} days`,
         );
 
         createBooleanRow(
             'Companion Celebrations',
             'Show in-chat messages for pet hatches and growth stages.',
             'token-usage-celebrations-enabled',
-            tokenUsageGroup
+            tokenUsageGroup,
         );
 
         createBooleanRow(
             'Monthly Budget',
             'Show a monthly spend budget card in the Token Breakdown panel and warn as spending approaches the limit.',
             'token-budget-enabled',
-            tokenUsageGroup
+            tokenUsageGroup,
         );
 
         const budgetAmountRow = createDoubleRow(
@@ -978,7 +1100,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             tokenUsageGroup,
             1,
             10000,
-            1
+            1,
         );
 
         const budgetWarningRow = createIntRow(
@@ -988,7 +1110,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             tokenUsageGroup,
             10,
             100,
-            5
+            5,
         );
 
         // Amount + threshold only matter while the budget switch is on.
@@ -1004,13 +1126,13 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Desktop Notifications',
             'Show a desktop notification when a response finishes while the chat is closed.',
             'token-desktop-notifications-enabled',
-            notificationGroup
+            notificationGroup,
         );
 
         const petSelectionRow = createChoiceRow(
             'Active Companion',
             'Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection.',
-            petCompanionGroup
+            petCompanionGroup,
         );
         bindChoiceRow(
             petSelectionRow,
@@ -1021,13 +1143,13 @@ export default class KatabPreferences extends ExtensionPreferences {
             ],
             settings.get_string.bind(settings),
             settings.set_string.bind(settings),
-            value => `Custom (${value})`
+            (value) => `Custom (${value})`,
         );
 
         const { badge: activePetBadge } = createStatusRow(
             'Current Form',
             'Pinned forms are selected from the Pet Collection inside the Token Breakdown panel.',
-            petCompanionGroup
+            petCompanionGroup,
         );
         const refreshActivePetBadge = () => {
             try {
@@ -1040,9 +1162,10 @@ export default class KatabPreferences extends ExtensionPreferences {
                     pinnedForm,
                 });
                 const parsedPinned = parsePetForm(pinnedForm);
-                const isValidPin = selectionMode === PET_SELECTION_MODES.PINNED
-                    && parsedPinned
-                    && companion.id === pinnedForm;
+                const isValidPin =
+                    selectionMode === PET_SELECTION_MODES.PINNED &&
+                    parsedPinned &&
+                    companion.id === pinnedForm;
                 if (selectionMode === PET_SELECTION_MODES.PINNED && !isValidPin) {
                     settings.set_string('pet-selection-mode', PET_SELECTION_MODES.FOLLOW_PROVIDER);
                     return;
@@ -1063,12 +1186,16 @@ export default class KatabPreferences extends ExtensionPreferences {
         const { badge: tokenUsageBadge } = createStatusRow(
             'Usage Ledger',
             'Private JSON ledger stored under ~/.local/share/katabai/token-usage.json.',
-            tokenUsageGroup
+            tokenUsageGroup,
         );
         const refreshTokenUsageBadge = () => {
             try {
                 const summary = TokenUsageManager.getSummary('all');
-                setStatusBadge(tokenUsageBadge, `${formatTokenCount(summary.totalTokens)} tokens`, 'katab-prefs-status-detected');
+                setStatusBadge(
+                    tokenUsageBadge,
+                    `${formatTokenCount(summary.totalTokens)} tokens`,
+                    'katab-prefs-status-detected',
+                );
             } catch (_e) {
                 setStatusBadge(tokenUsageBadge, 'Unavailable', 'katab-prefs-status-install');
             }
@@ -1089,7 +1216,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                     log(`Katab: failed to export token usage ledger: ${e.message || e}`);
                 }
             },
-            tokenUsageGroup
+            tokenUsageGroup,
         );
 
         createButtonRow(
@@ -1103,30 +1230,38 @@ export default class KatabPreferences extends ExtensionPreferences {
                 refreshTokenUsageBadge();
                 refreshActivePetBadge();
             },
-            tokenUsageGroup
+            tokenUsageGroup,
         );
 
         // --- Ollama Page ---
         const ollamaPage = createProviderPage(
             'ollama',
-            'Local inference with fine-grained hardware, memory, and sampling controls.'
+            'Local inference with fine-grained hardware, memory, and sampling controls.',
         );
 
         // ── Model Presets section ──────────────────────────────────────────────
         const modelPresetsGroup = createPreferencesGroup({
             title: 'Model Presets',
-            description: 'Save named snapshots of all current Ollama settings (model, context, sampling, etc.). Load a preset to instantly switch configurations.',
+            description:
+                'Save named snapshots of all current Ollama settings (model, context, sampling, etc.). Load a preset to instantly switch configurations.',
         });
         ollamaPage.add(modelPresetsGroup);
 
         // Entry row for the new preset name
-        const newPresetNameRow = addCssClasses(new Adw.EntryRow({
-            title: 'New Preset Name',
-        }), 'katab-prefs-row');
-        const saveCurrentBtn = addCssClasses(new Gtk.Button({
-            label: 'Save Current Settings',
-            valign: Gtk.Align.CENTER,
-        }), 'katab-prefs-button', 'suggested-action');
+        const newPresetNameRow = addCssClasses(
+            new Adw.EntryRow({
+                title: 'New Preset Name',
+            }),
+            'katab-prefs-row',
+        );
+        const saveCurrentBtn = addCssClasses(
+            new Gtk.Button({
+                label: 'Save Current Settings',
+                valign: Gtk.Align.CENTER,
+            }),
+            'katab-prefs-button',
+            'suggested-action',
+        );
         newPresetNameRow.add_suffix(saveCurrentBtn);
         addPreferenceRow(modelPresetsGroup, newPresetNameRow);
 
@@ -1136,11 +1271,12 @@ export default class KatabPreferences extends ExtensionPreferences {
         let presetDriftCheckTimeoutId = 0;
         let pendingPresetChangeId = '';
         let lastChangedPresetSettingKey = '';
-        const presetSettingKeyMap = new Map(PRESET_SETTINGS.map(({ settingKey, key }) => [settingKey, key]));
+        const presetSettingKeyMap = new Map(
+            PRESET_SETTINGS.map(({ settingKey, key }) => [settingKey, key]),
+        );
 
-        const applySavedPreset = preset => {
-            if (!preset)
-                return;
+        const applySavedPreset = (preset) => {
+            if (!preset) return;
 
             applyingSavedPreset = true;
             pendingPresetChangeId = '';
@@ -1151,9 +1287,8 @@ export default class KatabPreferences extends ExtensionPreferences {
             applyingSavedPreset = false;
         };
 
-        const queuePresetDriftCheck = settingKey => {
-            if (applyingSavedPreset)
-                return;
+        const queuePresetDriftCheck = (settingKey) => {
+            if (applyingSavedPreset) return;
 
             lastChangedPresetSettingKey = settingKey || '';
 
@@ -1181,8 +1316,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 }
 
                 const activePresetId = settings.get_string('ollama-active-preset');
-                if (!activePresetId)
-                    return GLib.SOURCE_REMOVE;
+                if (!activePresetId) return GLib.SOURCE_REMOVE;
 
                 const activePreset = getPresetById(activePresetId);
                 if (!activePreset) {
@@ -1192,8 +1326,10 @@ export default class KatabPreferences extends ExtensionPreferences {
                 }
 
                 const changedPresetKey = presetSettingKeyMap.get(lastChangedPresetSettingKey);
-                const changedMissingField = changedPresetKey
-                    && (activePreset[changedPresetKey] === undefined || activePreset[changedPresetKey] === null);
+                const changedMissingField =
+                    changedPresetKey &&
+                    (activePreset[changedPresetKey] === undefined ||
+                        activePreset[changedPresetKey] === null);
 
                 if (changedMissingField || !settingsMatchPreset(settings, activePreset)) {
                     pendingPresetChangeId = activePreset.id;
@@ -1206,8 +1342,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         window.connect('destroy', () => {
-            if (!presetDriftCheckTimeoutId)
-                return;
+            if (!presetDriftCheckTimeoutId) return;
 
             GLib.source_remove(presetDriftCheckTimeoutId);
             presetDriftCheckTimeoutId = 0;
@@ -1216,7 +1351,9 @@ export default class KatabPreferences extends ExtensionPreferences {
         const refreshSavedPresetRows = () => {
             // Remove stale rows
             for (const row of _savedPresetRows) {
-                try { modelPresetsGroup.remove(row); } catch (_e) { }
+                try {
+                    modelPresetsGroup.remove(row);
+                } catch (_e) {}
             }
             _savedPresetRows = [];
 
@@ -1231,33 +1368,49 @@ export default class KatabPreferences extends ExtensionPreferences {
             }
 
             if (presets.length === 0) {
-                const emptyRow = stylePreferenceRow(new Adw.ActionRow({
-                    title: 'No presets saved yet',
-                    subtitle: 'Fill in a name above and click "Save Current Settings" to create your first preset.',
-                    activatable: false,
-                }), 'katab-prefs-info-row');
+                const emptyRow = stylePreferenceRow(
+                    new Adw.ActionRow({
+                        title: 'No presets saved yet',
+                        subtitle:
+                            'Fill in a name above and click "Save Current Settings" to create your first preset.',
+                        activatable: false,
+                    }),
+                    'katab-prefs-info-row',
+                );
                 addPreferenceRow(modelPresetsGroup, emptyRow);
                 _savedPresetRows.push(emptyRow);
                 return;
             }
 
             if (pendingPreset) {
-                const pendingRow = stylePreferenceRow(new Adw.ActionRow({
-                    title: `${pendingPreset.name || 'Unnamed Preset'} has unsaved changes`,
-                    subtitle: 'Save changes to update this preset, or discard changes to restore its saved values.',
-                    activatable: false,
-                }), 'katab-prefs-row', 'katab-prefs-info-row');
+                const pendingRow = stylePreferenceRow(
+                    new Adw.ActionRow({
+                        title: `${pendingPreset.name || 'Unnamed Preset'} has unsaved changes`,
+                        subtitle:
+                            'Save changes to update this preset, or discard changes to restore its saved values.',
+                        activatable: false,
+                    }),
+                    'katab-prefs-row',
+                    'katab-prefs-info-row',
+                );
 
-                const pendingBtnBox = addCssClasses(new Gtk.Box({
-                    orientation: Gtk.Orientation.HORIZONTAL,
-                    spacing: 6,
-                    valign: Gtk.Align.CENTER,
-                }), 'katab-prefs-button-box');
+                const pendingBtnBox = addCssClasses(
+                    new Gtk.Box({
+                        orientation: Gtk.Orientation.HORIZONTAL,
+                        spacing: 6,
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-button-box',
+                );
 
-                const saveChangesBtn = addCssClasses(new Gtk.Button({
-                    label: 'Save Changes',
-                    valign: Gtk.Align.CENTER,
-                }), 'katab-prefs-button', 'suggested-action');
+                const saveChangesBtn = addCssClasses(
+                    new Gtk.Button({
+                        label: 'Save Changes',
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-button',
+                    'suggested-action',
+                );
                 saveChangesBtn.connect('clicked', () => {
                     const updatedPreset = updatePresetFromSettings(settings, pendingPreset.id);
                     pendingPresetChangeId = '';
@@ -1269,10 +1422,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                 });
                 pendingBtnBox.append(saveChangesBtn);
 
-                const discardChangesBtn = addCssClasses(new Gtk.Button({
-                    label: 'Discard Changes',
-                    valign: Gtk.Align.CENTER,
-                }), 'katab-prefs-button');
+                const discardChangesBtn = addCssClasses(
+                    new Gtk.Button({
+                        label: 'Discard Changes',
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-button',
+                );
                 discardChangesBtn.connect('clicked', () => {
                     const presetToRestore = getPresetById(pendingPreset.id);
                     pendingPresetChangeId = '';
@@ -1290,32 +1446,45 @@ export default class KatabPreferences extends ExtensionPreferences {
             const hasPendingPresetChanges = Boolean(pendingPresetChangeId);
 
             for (const preset of presets) {
-                const isActive = preset.id === activePresetId
-                    && (applyingSavedPreset || settingsMatchPreset(settings, preset));
+                const isActive =
+                    preset.id === activePresetId &&
+                    (applyingSavedPreset || settingsMatchPreset(settings, preset));
                 const modelName = preset['model'] || '—';
                 const ctx = preset['num-ctx'] ? `${preset['num-ctx']} ctx` : '';
-                const temp = preset['temperature'] !== undefined
-                    ? `temp ${Number(preset['temperature']).toFixed(2)}`
-                    : '';
+                const temp =
+                    preset['temperature'] !== undefined
+                        ? `temp ${Number(preset['temperature']).toFixed(2)}`
+                        : '';
                 const subtitleParts = [modelName, ctx, temp].filter(Boolean);
 
-                const presetRow = stylePreferenceRow(new Adw.ActionRow({
-                    title: preset.name || 'Unnamed Preset',
-                    subtitle: subtitleParts.join('  ·  '),
-                    activatable: false,
-                }), 'katab-prefs-row', isActive ? 'katab-prefs-preset-row-active' : '');
+                const presetRow = stylePreferenceRow(
+                    new Adw.ActionRow({
+                        title: preset.name || 'Unnamed Preset',
+                        subtitle: subtitleParts.join('  ·  '),
+                        activatable: false,
+                    }),
+                    'katab-prefs-row',
+                    isActive ? 'katab-prefs-preset-row-active' : '',
+                );
 
-                const rowBtnBox = addCssClasses(new Gtk.Box({
-                    orientation: Gtk.Orientation.HORIZONTAL,
-                    spacing: 6,
-                    valign: Gtk.Align.CENTER,
-                }), 'katab-prefs-button-box');
+                const rowBtnBox = addCssClasses(
+                    new Gtk.Box({
+                        orientation: Gtk.Orientation.HORIZONTAL,
+                        spacing: 6,
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-button-box',
+                );
 
-                const applyBtn = addCssClasses(new Gtk.Button({
-                    label: isActive ? 'Active' : 'Load',
-                    valign: Gtk.Align.CENTER,
-                    sensitive: !isActive && !hasPendingPresetChanges,
-                }), 'katab-prefs-button', isActive ? '' : 'suggested-action');
+                const applyBtn = addCssClasses(
+                    new Gtk.Button({
+                        label: isActive ? 'Active' : 'Load',
+                        valign: Gtk.Align.CENTER,
+                        sensitive: !isActive && !hasPendingPresetChanges,
+                    }),
+                    'katab-prefs-button',
+                    isActive ? '' : 'suggested-action',
+                );
                 applyBtn.connect('clicked', () => {
                     // Set ID first so drift observers keep the preset marked
                     // active while each saved key is being written.
@@ -1324,15 +1493,18 @@ export default class KatabPreferences extends ExtensionPreferences {
                 });
                 rowBtnBox.append(applyBtn);
 
-                const deleteBtn = addCssClasses(new Gtk.Button({
-                    icon_name: 'edit-delete-symbolic',
-                    valign: Gtk.Align.CENTER,
-                    tooltip_text: 'Delete this preset',
-                }), 'katab-prefs-button', 'destructive-action');
+                const deleteBtn = addCssClasses(
+                    new Gtk.Button({
+                        icon_name: 'edit-delete-symbolic',
+                        valign: Gtk.Align.CENTER,
+                        tooltip_text: 'Delete this preset',
+                    }),
+                    'katab-prefs-button',
+                    'destructive-action',
+                );
                 deleteBtn.connect('clicked', () => {
                     deletePreset(preset.id);
-                    if (pendingPresetChangeId === preset.id)
-                        pendingPresetChangeId = '';
+                    if (pendingPresetChangeId === preset.id) pendingPresetChangeId = '';
                     if (isActive) settings.set_string('ollama-active-preset', '');
                     refreshSavedPresetRows();
                 });
@@ -1376,14 +1548,15 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const presetGroup = createPreferencesGroup({
             title: 'Workload Preset',
-            description: 'Start from recommended Ollama settings for the kind of output you want Katab to produce.',
+            description:
+                'Start from recommended Ollama settings for the kind of output you want Katab to produce.',
         });
         ollamaPage.add(presetGroup);
 
         const presetRow = createChoiceRow(
             'Workload Preset',
             'Applies recommended settings for desktop assistant chat, coding, factual answers, creativity, or JSON extraction.',
-            presetGroup
+            presetGroup,
         );
         let syncingPresetRow = false;
         let applyingPreset = false;
@@ -1398,8 +1571,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                     }
                 }
 
-                if (matches)
-                    return presetId;
+                if (matches) return presetId;
             }
 
             return 'custom';
@@ -1415,16 +1587,18 @@ export default class KatabPreferences extends ExtensionPreferences {
             }
 
             syncingPresetRow = true;
-            setStringList(presetRow, presetOptions.map(option => option.label));
-            presetRow._choiceValues = presetOptions.map(option => option.value);
+            setStringList(
+                presetRow,
+                presetOptions.map((option) => option.label),
+            );
+            presetRow._choiceValues = presetOptions.map((option) => option.value);
             presetRow.selected = Math.max(0, presetRow._choiceValues.indexOf(selectedPreset));
             syncingPresetRow = false;
         };
 
-        const applyPreset = presetId => {
+        const applyPreset = (presetId) => {
             const presetValues = presetDefinitions[presetId];
-            if (!presetValues)
-                return;
+            if (!presetValues) return;
 
             applyingPreset = true;
             for (const [suffix, value] of Object.entries(presetValues)) {
@@ -1436,8 +1610,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         presetRow.connect('notify::selected', () => {
-            if (syncingPresetRow)
-                return;
+            if (syncingPresetRow) return;
 
             const presetId = presetRow._choiceValues?.[presetRow.selected];
             if (!presetId || presetId === 'custom') {
@@ -1451,8 +1624,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         settings.connect('changed::ollama-preset', syncPresetRow);
         for (const suffix of Object.keys(ollamaSettingTypes)) {
             settings.connect(`changed::ollama-${suffix}`, () => {
-                if (applyingPreset)
-                    return;
+                if (applyingPreset) return;
 
                 syncPresetRow();
             });
@@ -1462,13 +1634,23 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         // Connection & Model
         const connectionGroup = createPreferencesGroup({ title: 'Connection & Request Shape' });
-        createStringRow('Base URL', 'The HTTP address where Ollama is hosted.', 'ollama-url', connectionGroup);
-        createStringRow('Model', 'The exact Ollama model tag to load for this provider.', 'ollama-model', connectionGroup);
+        createStringRow(
+            'Base URL',
+            'The HTTP address where Ollama is hosted.',
+            'ollama-url',
+            connectionGroup,
+        );
+        createStringRow(
+            'Model',
+            'The exact Ollama model tag to load for this provider.',
+            'ollama-model',
+            connectionGroup,
+        );
 
         const formatRow = createChoiceRow(
             'Response Format',
             'Keep standard text for chat. Switch to JSON mode when another app needs machine-readable output.',
-            connectionGroup
+            connectionGroup,
         );
         bindChoiceRow(
             formatRow,
@@ -1479,33 +1661,41 @@ export default class KatabPreferences extends ExtensionPreferences {
             ],
             settings.get_string.bind(settings),
             settings.set_string.bind(settings),
-            value => value === '' ? 'Standard Text' : `Custom (${value})`
+            (value) => (value === '' ? 'Standard Text' : `Custom (${value})`),
         );
 
         createBooleanRow(
             'Raw Prompt Mode',
             'Bypass Ollama chat templating. Leave this off unless your prompt is already fully structured.',
             'ollama-raw',
-            connectionGroup
+            connectionGroup,
         );
         createBooleanRow(
             'Thinking Mode',
             'Enable reasoning traces for models that support hybrid-thinking (Qwen3, DeepSeek-R1, etc.). When off, the model answers directly without a thinking step.',
             'ollama-think',
-            connectionGroup
+            connectionGroup,
         );
-        createStringRow('Keep Alive', 'How long to keep the model loaded between requests. Must include a time unit (s, m, h), e.g. 5m, 0, or 999999h for indefinite.', 'ollama-keep-alive', connectionGroup);
+        createStringRow(
+            'Keep Alive',
+            'How long to keep the model loaded between requests. Must include a time unit (s, m, h), e.g. 5m, 0, or 999999h for indefinite.',
+            'ollama-keep-alive',
+            connectionGroup,
+        );
 
         const contextGroup = createPreferencesGroup({ title: 'Context Limits' });
         const ctxRow = createChoiceRow(
             'Context Window Size',
             'Choose a standard context size. If a custom value is already saved, it stays visible instead of snapping back to 4096.',
-            contextGroup
+            contextGroup,
         );
-        const ctxValues = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 147456, 163840, 196608, 229376, 262144, 524288, 1048576];
+        const ctxValues = [
+            1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 147456, 163840, 196608, 229376,
+            262144, 524288, 1048576,
+        ];
         let syncingContextRow = false;
 
-        const fmtCtx = v => {
+        const fmtCtx = (v) => {
             if (v >= 1048576 && v % 1048576 === 0) return `${v} (${v / 1048576}M)`;
             if (v >= 1024 && v % 1024 === 0) return `${v} (${v / 1024}K)`;
             return `${v}`;
@@ -1514,7 +1704,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         const syncContextRow = () => {
             const currentCtx = settings.get_int('ollama-num-ctx');
             const values = [...ctxValues];
-            const labels = ctxValues.map(value => fmtCtx(value));
+            const labels = ctxValues.map((value) => fmtCtx(value));
 
             if (!values.includes(currentCtx) && currentCtx > 0) {
                 values.push(currentCtx);
@@ -1532,31 +1722,40 @@ export default class KatabPreferences extends ExtensionPreferences {
         syncContextRow();
 
         ctxRow.connect('notify::selected', () => {
-            if (syncingContextRow)
-                return;
+            if (syncingContextRow) return;
 
             const nextValue = ctxRow._choiceValues?.[ctxRow.selected];
-            if (nextValue === undefined || nextValue === settings.get_int('ollama-num-ctx'))
-                return;
+            if (nextValue === undefined || nextValue === settings.get_int('ollama-num-ctx')) return;
 
             settings.set_int('ollama-num-ctx', nextValue);
         });
 
-        createIntRow('Predict Tokens', 'Maximum number of tokens Ollama may generate for a reply. Use -1 for no hard cap.', 'ollama-num-predict', contextGroup, -1, 128000, 100);
-        createIntRow('Keep Tokens', 'Preserve this many leading tokens when the context window rolls over so core instructions stay anchored.', 'ollama-num-keep', contextGroup, 0, 1048576, 100);
+        createIntRow(
+            'Predict Tokens',
+            'Maximum number of tokens Ollama may generate for a reply. Use -1 for no hard cap.',
+            'ollama-num-predict',
+            contextGroup,
+            -1,
+            128000,
+            100,
+        );
+        createIntRow(
+            'Keep Tokens',
+            'Preserve this many leading tokens when the context window rolls over so core instructions stay anchored.',
+            'ollama-num-keep',
+            contextGroup,
+            0,
+            1048576,
+            100,
+        );
         ollamaPage.add(connectionGroup);
 
         const ollamaPromptGroup = createPreferencesGroup({
             title: 'System Prompt',
-            description: 'Katab prepends this system prompt to Ollama requests and always appends the current date so the model knows what "today" is. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey. This value is captured by presets.',
+            description:
+                'Katab prepends this system prompt to Ollama requests and always appends the current date so the model knows what "today" is. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey. This value is captured by presets.',
         });
-        createMultilineStringRow(
-            '',
-            '',
-            'ollama-system-prompt',
-            ollamaPromptGroup,
-            160
-        );
+        createMultilineStringRow('', '', 'ollama-system-prompt', ollamaPromptGroup, 160);
         ollamaPage.add(ollamaPromptGroup);
 
         ollamaPage.add(contextGroup);
@@ -1566,10 +1765,36 @@ export default class KatabPreferences extends ExtensionPreferences {
             title: 'Advanced Hardware Settings',
             subtitle: 'Control how aggressively Ollama uses RAM, CPU, and GPU resources.',
         });
-        createBooleanRow('Use MMAP', 'Map model weights through virtual memory so the kernel can page them in on demand.', 'ollama-use-mmap', hardwareExpander);
-        createBooleanRow('Use MLOCK', 'Lock model pages in RAM to avoid swap latency. Leave this off unless you are certain your system has headroom.', 'ollama-use-mlock', hardwareExpander);
-        createIntRow('GPU Layers', 'Number of transformer layers to offload to the GPU. Use -1 for all layers or 0 for CPU-only runs.', 'ollama-num-gpu', hardwareExpander, -1, 500, 1);
-        createIntRow('CPU Threads', 'Worker threads for inference. Staying near your physical core count usually gives the best latency.', 'ollama-num-thread', hardwareExpander, 1, 128, 1);
+        createBooleanRow(
+            'Use MMAP',
+            'Map model weights through virtual memory so the kernel can page them in on demand.',
+            'ollama-use-mmap',
+            hardwareExpander,
+        );
+        createBooleanRow(
+            'Use MLOCK',
+            'Lock model pages in RAM to avoid swap latency. Leave this off unless you are certain your system has headroom.',
+            'ollama-use-mlock',
+            hardwareExpander,
+        );
+        createIntRow(
+            'GPU Layers',
+            'Number of transformer layers to offload to the GPU. Use -1 for all layers or 0 for CPU-only runs.',
+            'ollama-num-gpu',
+            hardwareExpander,
+            -1,
+            500,
+            1,
+        );
+        createIntRow(
+            'CPU Threads',
+            'Worker threads for inference. Staying near your physical core count usually gives the best latency.',
+            'ollama-num-thread',
+            hardwareExpander,
+            1,
+            128,
+            1,
+        );
         const hardwareGroup = createPreferencesGroup();
         hardwareGroup.add(hardwareExpander);
         ollamaPage.add(hardwareGroup);
@@ -1577,19 +1802,55 @@ export default class KatabPreferences extends ExtensionPreferences {
         // Generation Options
         const generationGroup = createPreferencesGroup({ title: 'Model Behavior & Sampling' });
 
-        const tempRow = createDoubleRow('Temperature', 'Controls randomness. Lower values stay focused and predictable; higher values explore more unusual tokens.', 'ollama-temperature', generationGroup, 0.0, 2.0, 0.05, 2);
-        const topKRow = createIntRow('Top-K', 'Keep only the K most likely next tokens before sampling. Lower values are stricter.', 'ollama-top-k', generationGroup, 0, 150, 1);
-        const topPRow = createDoubleRow('Top-P', 'Nucleus sampling. Keeps the smallest token set whose combined probability reaches this value.', 'ollama-top-p', generationGroup, 0.0, 1.0, 0.05, 2);
-        const minPRow = createDoubleRow('Min-P', 'Alternative to Top-P. Filters out tokens that fall too far below the most likely option.', 'ollama-min-p', generationGroup, 0.0, 1.0, 0.01, 2);
+        const tempRow = createDoubleRow(
+            'Temperature',
+            'Controls randomness. Lower values stay focused and predictable; higher values explore more unusual tokens.',
+            'ollama-temperature',
+            generationGroup,
+            0.0,
+            2.0,
+            0.05,
+            2,
+        );
+        const topKRow = createIntRow(
+            'Top-K',
+            'Keep only the K most likely next tokens before sampling. Lower values are stricter.',
+            'ollama-top-k',
+            generationGroup,
+            0,
+            150,
+            1,
+        );
+        const topPRow = createDoubleRow(
+            'Top-P',
+            'Nucleus sampling. Keeps the smallest token set whose combined probability reaches this value.',
+            'ollama-top-p',
+            generationGroup,
+            0.0,
+            1.0,
+            0.05,
+            2,
+        );
+        const minPRow = createDoubleRow(
+            'Min-P',
+            'Alternative to Top-P. Filters out tokens that fall too far below the most likely option.',
+            'ollama-min-p',
+            generationGroup,
+            0.0,
+            1.0,
+            0.01,
+            2,
+        );
 
         const mirostatExpander = createExpanderRow({
             title: 'Dynamic Entropy (Mirostat)',
-            subtitle: 'Let Ollama adjust sampling on the fly to keep responses near a target creativity level.',
+            subtitle:
+                'Let Ollama adjust sampling on the fly to keep responses near a target creativity level.',
         });
         const mirostatRow = createChoiceRow(
             'Mirostat Mode',
             'When enabled, Ollama dynamically manages entropy and the static temperature and top-p controls become advisory only.',
-            mirostatExpander
+            mirostatExpander,
         );
         bindChoiceRow(
             mirostatRow,
@@ -1601,10 +1862,28 @@ export default class KatabPreferences extends ExtensionPreferences {
             ],
             settings.get_int.bind(settings),
             settings.set_int.bind(settings),
-            value => `Custom (${value})`
+            (value) => `Custom (${value})`,
         );
-        const mirostatTauRow = createDoubleRow('Target Entropy (tau)', 'Higher values allow more surprise. Lower values keep text tighter and more predictable.', 'ollama-mirostat-tau', mirostatExpander, 0.0, 10.0, 0.5, 2);
-        const mirostatEtaRow = createDoubleRow('Learning Rate (eta)', 'How aggressively Mirostat corrects drift from the target entropy.', 'ollama-mirostat-eta', mirostatExpander, 0.0, 1.0, 0.05, 2);
+        const mirostatTauRow = createDoubleRow(
+            'Target Entropy (tau)',
+            'Higher values allow more surprise. Lower values keep text tighter and more predictable.',
+            'ollama-mirostat-tau',
+            mirostatExpander,
+            0.0,
+            10.0,
+            0.5,
+            2,
+        );
+        const mirostatEtaRow = createDoubleRow(
+            'Learning Rate (eta)',
+            'How aggressively Mirostat corrects drift from the target entropy.',
+            'ollama-mirostat-eta',
+            mirostatExpander,
+            0.0,
+            1.0,
+            0.05,
+            2,
+        );
 
         const syncMirostatState = () => {
             const active = settings.get_int('ollama-mirostat') > 0;
@@ -1625,17 +1904,62 @@ export default class KatabPreferences extends ExtensionPreferences {
             title: 'Advanced Statistical Sampling',
             subtitle: 'Extra distribution-shaping controls for power users.',
         });
-        createDoubleRow('Tail Free Sampling (tfs_z)', 'Cuts off the low-value tail of the distribution where choices stop being meaningfully distinct. Set 1.0 to disable it.', 'ollama-tfs-z', advancedSamplingExpander, 0.0, 1.0, 0.05, 2);
+        createDoubleRow(
+            'Tail Free Sampling (tfs_z)',
+            'Cuts off the low-value tail of the distribution where choices stop being meaningfully distinct. Set 1.0 to disable it.',
+            'ollama-tfs-z',
+            advancedSamplingExpander,
+            0.0,
+            1.0,
+            0.05,
+            2,
+        );
         generationGroup.add(advancedSamplingExpander);
 
         const loopMitigationExpander = createExpanderRow({
             title: 'Degeneration and Loop Mitigation',
-            subtitle: 'Penalize repetition when the model starts circling the same words or phrases.',
+            subtitle:
+                'Penalize repetition when the model starts circling the same words or phrases.',
         });
-        createIntRow('Repeat Last N', 'How far back Ollama should look for repetition. Use -1 to scan the full active context.', 'ollama-repeat-last-n', loopMitigationExpander, -1, 128000, 64);
-        createDoubleRow('Repeat Penalty', 'Multiplicative repetition penalty. Keep this near 1.0 for code and raise it gently for chat if loops appear.', 'ollama-repeat-penalty', loopMitigationExpander, 1.0, 2.0, 0.05, 2);
-        createDoubleRow('Presence Penalty', 'Encourages fresh vocabulary by penalizing any token that has appeared at least once.', 'ollama-presence-penalty', loopMitigationExpander, 0.0, 2.0, 0.05, 2);
-        createDoubleRow('Frequency Penalty', 'Penalizes tokens in proportion to how often they have already appeared.', 'ollama-frequency-penalty', loopMitigationExpander, 0.0, 2.0, 0.05, 2);
+        createIntRow(
+            'Repeat Last N',
+            'How far back Ollama should look for repetition. Use -1 to scan the full active context.',
+            'ollama-repeat-last-n',
+            loopMitigationExpander,
+            -1,
+            128000,
+            64,
+        );
+        createDoubleRow(
+            'Repeat Penalty',
+            'Multiplicative repetition penalty. Keep this near 1.0 for code and raise it gently for chat if loops appear.',
+            'ollama-repeat-penalty',
+            loopMitigationExpander,
+            1.0,
+            2.0,
+            0.05,
+            2,
+        );
+        createDoubleRow(
+            'Presence Penalty',
+            'Encourages fresh vocabulary by penalizing any token that has appeared at least once.',
+            'ollama-presence-penalty',
+            loopMitigationExpander,
+            0.0,
+            2.0,
+            0.05,
+            2,
+        );
+        createDoubleRow(
+            'Frequency Penalty',
+            'Penalizes tokens in proportion to how often they have already appeared.',
+            'ollama-frequency-penalty',
+            loopMitigationExpander,
+            0.0,
+            2.0,
+            0.05,
+            2,
+        );
         generationGroup.add(loopMitigationExpander);
 
         ollamaPage.add(generationGroup);
@@ -1644,45 +1968,46 @@ export default class KatabPreferences extends ExtensionPreferences {
         const deepseekPage = createProviderPage('deepseek');
 
         const deepseekConnectionGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', 'The DeepSeek API endpoint. Change only when routing through a compatible proxy.', 'deepseek-url', deepseekConnectionGroup);
+        createStringRow(
+            'Base URL',
+            'The DeepSeek API endpoint. Change only when routing through a compatible proxy.',
+            'deepseek-url',
+            deepseekConnectionGroup,
+        );
         createStringRow(
             'API Key',
             'Enter your DeepSeek API key. Ensure your account holds a positive prepaid balance — the API operates exclusively on a pre-funded model.',
             'deepseek-api-key',
             deepseekConnectionGroup,
-            true
+            true,
         );
         createStringRow(
             'Model',
             'Use deepseek-flash (V4.1) for general tasks, rapid coding, and image input, or deepseek-v4-pro for complex reasoning and multi-step workflows.',
             'deepseek-model',
-            deepseekConnectionGroup
+            deepseekConnectionGroup,
         );
         deepseekPage.add(deepseekConnectionGroup);
 
         const deepseekPromptGroup = createPreferencesGroup({
             title: 'System Prompt',
-            description: 'Katab prepends this system prompt to DeepSeek requests. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey.',
+            description:
+                'Katab prepends this system prompt to DeepSeek requests. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey.',
         });
-        createMultilineStringRow(
-            '',
-            '',
-            'deepseek-system-prompt',
-            deepseekPromptGroup,
-            160
-        );
+        createMultilineStringRow('', '', 'deepseek-system-prompt', deepseekPromptGroup, 160);
         deepseekPage.add(deepseekPromptGroup);
 
         const deepseekReasoningGroup = createPreferencesGroup({
             title: 'Reasoning',
-            description: 'DeepSeek can perform extended chain-of-thought reasoning before responding. Thinking content is shown in a collapsible panel in chat.',
+            description:
+                'DeepSeek can perform extended chain-of-thought reasoning before responding. Thinking content is shown in a collapsible panel in chat.',
         });
 
         const deepseekThinkingRow = createBooleanRow(
             'Thinking Mode',
             'Enable extended reasoning. Increases response time but significantly improves quality on complex tasks.',
             'deepseek-thinking-enabled',
-            deepseekReasoningGroup
+            deepseekReasoningGroup,
         );
 
         const effortValues = ['high', 'max'];
@@ -1690,7 +2015,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         const effortRow = createChoiceRow(
             'Reasoning Effort',
             'Computational budget for the thinking phase. \u2018High\u2019 is the recommended default; \u2018Max\u2019 allocates the deepest analysis.',
-            deepseekReasoningGroup
+            deepseekReasoningGroup,
         );
         setStringList(effortRow, effortLabels);
         effortRow._choiceValues = effortValues;
@@ -1726,7 +2051,8 @@ export default class KatabPreferences extends ExtensionPreferences {
         // model (local Ollama or any OpenAI-compatible endpoint).
         const deepseekVisionGroup = createPreferencesGroup({
             title: 'Image Support (Vision Model)',
-            description: 'deepseek-flash (V4.1) handles images natively — no setup needed. This section only applies to deepseek-v4-pro, which cannot see images: Katab analyzes attached images with the vision model below, then passes the analysis to Pro, which writes the reply. Text-only DeepSeek models (pro) cannot be used here as the vision model.',
+            description:
+                'deepseek-flash (V4.1) handles images natively — no setup needed. This section only applies to deepseek-v4-pro, which cannot see images: Katab analyzes attached images with the vision model below, then passes the analysis to Pro, which writes the reply. Text-only DeepSeek models (pro) cannot be used here as the vision model.',
         });
 
         // Routing mode: preprocess (default) vs direct.
@@ -1738,7 +2064,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         const visionModeRow = createChoiceRow(
             'Routing Mode',
             'In the default mode the vision model describes the image(s) and DeepSeek writes the final answer. In direct mode the whole request is sent to the vision model, which replies directly (no tools or thinking).',
-            deepseekVisionGroup
+            deepseekVisionGroup,
         );
         setStringList(visionModeRow, visionModeLabels);
         visionModeRow._choiceValues = visionModeValues;
@@ -1762,7 +2088,7 @@ export default class KatabPreferences extends ExtensionPreferences {
         const visionBackendRow = createChoiceRow(
             'Vision Backend',
             'Ollama reuses your existing Ollama URL, sampling settings (including loaded presets), and installed models. OpenAI-compatible uses any vision-capable endpoint with a URL and optional API key.',
-            deepseekVisionGroup
+            deepseekVisionGroup,
         );
         setStringList(visionBackendRow, visionBackendLabels);
         visionBackendRow._choiceValues = visionBackendValues;
@@ -1818,8 +2144,12 @@ export default class KatabPreferences extends ExtensionPreferences {
                     let models = [];
                     try {
                         const bytes = s.send_and_read_finish(result);
-                        const body = JSON.parse(new TextDecoder('utf-8').decode(bytes.get_data() || new Uint8Array()));
-                        models = Array.isArray(body?.models) ? body.models.map(m => m.name).filter(Boolean) : [];
+                        const body = JSON.parse(
+                            new TextDecoder('utf-8').decode(bytes.get_data() || new Uint8Array()),
+                        );
+                        models = Array.isArray(body?.models)
+                            ? body.models.map((m) => m.name).filter(Boolean)
+                            : [];
                     } catch (_e) {
                         models = [];
                     }
@@ -1830,7 +2160,8 @@ export default class KatabPreferences extends ExtensionPreferences {
                             message_type: Gtk.MessageType.ERROR,
                             buttons: Gtk.ButtonsType.CLOSE,
                             text: 'No models found',
-                            secondary_text: 'Could not list models from the Ollama instance. Is it running and reachable at the configured URL?',
+                            secondary_text:
+                                'Could not list models from the Ollama instance. Is it running and reachable at the configured URL?',
                         });
                         dlg.connect('response', () => dlg.destroy());
                         dlg.present();
@@ -1856,8 +2187,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                     dialog.connect('response', (dlg, responseId) => {
                         if (responseId === Gtk.ResponseType.OK) {
                             const selectedStr = list.get_string(dropdown.selected);
-                            const selectedName = (typeof selectedStr === 'object' && selectedStr !== null) ? selectedStr.string : selectedStr;
-                            if (selectedName && settings.get_string('deepseek-vision-model') !== selectedName) {
+                            const selectedName =
+                                typeof selectedStr === 'object' && selectedStr !== null
+                                    ? selectedStr.string
+                                    : selectedStr;
+                            if (
+                                selectedName &&
+                                settings.get_string('deepseek-vision-model') !== selectedName
+                            ) {
                                 settings.set_string('deepseek-vision-model', selectedName);
                             }
                         }
@@ -1866,7 +2203,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                     dialog.present();
                 });
             },
-            deepseekVisionGroup
+            deepseekVisionGroup,
         );
 
         // Vision model name (shared by both backends).
@@ -1874,7 +2211,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Vision Model',
             'A vision-capable model. For Ollama: llama3.2-vision, qwen2.5vl, llava, janus-pro, deepseek-vl2, minicpm-v. For OpenAI-compatible: any vision model. DeepSeek text models are rejected.',
             'deepseek-vision-model',
-            deepseekVisionGroup
+            deepseekVisionGroup,
         );
 
         // Optional fallback model (same backend).
@@ -1882,14 +2219,14 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Vision Fallback Model',
             'Optional. Tried if the primary vision model is unavailable or times out. Uses the same backend.',
             'deepseek-vision-fallback-model',
-            deepseekVisionGroup
+            deepseekVisionGroup,
         );
 
         // DeepSeek text-model guard notice.
         const visionGuardRow = createInstructionRow(
             'DeepSeek text models cannot see images',
             'The Vision Model is set to a text-only DeepSeek model, which cannot analyze images. Choose a vision-capable model instead (e.g. deepseek-flash).',
-            deepseekVisionGroup
+            deepseekVisionGroup,
         );
 
         // OpenAI-compatible: URL + API key (only when backend=openai).
@@ -1897,14 +2234,14 @@ export default class KatabPreferences extends ExtensionPreferences {
             'Vision Base URL',
             'OpenAI-compatible endpoint root. Leave empty to fall back to the DeepSeek base URL (useful behind a compatible proxy).',
             'deepseek-vision-url',
-            deepseekVisionGroup
+            deepseekVisionGroup,
         );
         const visionKeyRow = createStringRow(
             'Vision API Key',
             'Optional bearer token for the vision endpoint.',
             'deepseek-vision-api-key',
             deepseekVisionGroup,
-            true
+            true,
         );
 
         // Visibility: only show the rows relevant to the selected backend.
@@ -1915,7 +2252,8 @@ export default class KatabPreferences extends ExtensionPreferences {
             // Mirror extension.js::_isDeepSeekNativeVisionModel — the Flash
             // family (V4.1+) accepts images natively; only other deepseek-*
             // models are text-only.
-            const isFlashFamily = model.startsWith('deepseek-flash') || model.startsWith('deepseek-v4-flash');
+            const isFlashFamily =
+                model.startsWith('deepseek-flash') || model.startsWith('deepseek-v4-flash');
             visionModelRow.visible = enabled;
             visionFallbackRow.visible = enabled;
             visionGuardRow.visible = enabled && model.startsWith('deepseek-') && !isFlashFamily;
@@ -1931,38 +2269,46 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const deepseekOutputGroup = createPreferencesGroup({
             title: 'Output',
-            description: 'Control structured output mode. When JSON mode is on, Katab automatically injects a JSON reminder into the system prompt if needed to satisfy the DeepSeek API requirement.',
+            description:
+                'Control structured output mode. When JSON mode is on, Katab automatically injects a JSON reminder into the system prompt if needed to satisfy the DeepSeek API requirement.',
         });
         createBooleanRow(
             'JSON Output Mode',
             'Force the model to return a valid JSON object. Useful for structured data extraction tasks.',
             'deepseek-json-mode',
-            deepseekOutputGroup
+            deepseekOutputGroup,
         );
         deepseekPage.add(deepseekOutputGroup);
 
         // --- DeepSeek Account Balance ---
         const deepseekBalanceGroup = createPreferencesGroup({
             title: 'Account Balance',
-            description: 'Current DeepSeek account balance. Refreshed automatically by the provider health check every 30 seconds while the extension is running.',
+            description:
+                'Current DeepSeek account balance. Refreshed automatically by the provider health check every 30 seconds while the extension is running.',
         });
 
         const balanceSyncers = [];
 
         const createBalanceDisplayRow = (title, subtitle, getter) => {
-            const valueLabel = addCssClasses(new Gtk.Label({
-                label: '\u2014',
-                xalign: 0,
-                halign: Gtk.Align.START,
-                valign: Gtk.Align.CENTER,
-                selectable: true,
-            }), 'katab-prefs-balance-value');
+            const valueLabel = addCssClasses(
+                new Gtk.Label({
+                    label: '\u2014',
+                    xalign: 0,
+                    halign: Gtk.Align.START,
+                    valign: Gtk.Align.CENTER,
+                    selectable: true,
+                }),
+                'katab-prefs-balance-value',
+            );
 
-            const row = stylePreferenceRow(new Adw.ActionRow({
-                title,
-                ...(subtitle && { subtitle }),
-                activatable: false,
-            }), 'katab-prefs-info-row');
+            const row = stylePreferenceRow(
+                new Adw.ActionRow({
+                    title,
+                    ...(subtitle && { subtitle }),
+                    activatable: false,
+                }),
+                'katab-prefs-info-row',
+            );
 
             const syncFromSettings = () => {
                 valueLabel.set_text(getter() || '\u2014');
@@ -1982,15 +2328,17 @@ export default class KatabPreferences extends ExtensionPreferences {
             () => {
                 let ts = settings.get_int64('deepseek-balance-last-checked');
                 if (!ts) return 'Not checked yet';
-                return settings.get_boolean('deepseek-balance-available') ? 'Yes' : 'No \u2014 top up needed';
-            }
+                return settings.get_boolean('deepseek-balance-available')
+                    ? 'Yes'
+                    : 'No \u2014 top up needed';
+            },
         );
 
         // Currency
         createBalanceDisplayRow(
             'Currency',
             'The currency of your DeepSeek account balance.',
-            () => settings.get_string('deepseek-balance-currency') || '\u2014'
+            () => settings.get_string('deepseek-balance-currency') || '\u2014',
         );
 
         // Total Balance
@@ -2002,7 +2350,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 let currency = settings.get_string('deepseek-balance-currency');
                 if (!total) return '\u2014';
                 return currency ? `${currency} ${total}` : total;
-            }
+            },
         );
 
         // Granted Balance
@@ -2014,20 +2362,16 @@ export default class KatabPreferences extends ExtensionPreferences {
                 let currency = settings.get_string('deepseek-balance-currency');
                 if (!granted) return '\u2014';
                 return currency ? `${currency} ${granted}` : granted;
-            }
+            },
         );
 
         // Topped-Up Balance
-        createBalanceDisplayRow(
-            'Topped Up',
-            'Funds added via top-up that do not expire.',
-            () => {
-                let toppedUp = settings.get_string('deepseek-balance-topped-up');
-                let currency = settings.get_string('deepseek-balance-currency');
-                if (!toppedUp) return '\u2014';
-                return currency ? `${currency} ${toppedUp}` : toppedUp;
-            }
-        );
+        createBalanceDisplayRow('Topped Up', 'Funds added via top-up that do not expire.', () => {
+            let toppedUp = settings.get_string('deepseek-balance-topped-up');
+            let currency = settings.get_string('deepseek-balance-currency');
+            if (!toppedUp) return '\u2014';
+            return currency ? `${currency} ${toppedUp}` : toppedUp;
+        });
 
         // Last Checked
         createBalanceDisplayRow(
@@ -2042,15 +2386,20 @@ export default class KatabPreferences extends ExtensionPreferences {
                 } catch (_e) {
                     return 'Unknown';
                 }
-            }
+            },
         );
 
         // One shared set of six GSettings watchers refreshes every balance row
         // (each getter may depend on several keys — total/granted rows show the
         // currency, the Available row reads last-checked).
-        for (const key of ['deepseek-balance-available', 'deepseek-balance-currency',
-            'deepseek-balance-total', 'deepseek-balance-granted',
-            'deepseek-balance-topped-up', 'deepseek-balance-last-checked']) {
+        for (const key of [
+            'deepseek-balance-available',
+            'deepseek-balance-currency',
+            'deepseek-balance-total',
+            'deepseek-balance-granted',
+            'deepseek-balance-topped-up',
+            'deepseek-balance-last-checked',
+        ]) {
             settings.connect(`changed::${key}`, () => {
                 for (const sync of balanceSyncers) {
                     sync();
@@ -2059,16 +2408,24 @@ export default class KatabPreferences extends ExtensionPreferences {
         }
 
         // Refresh Balance button
-        const refreshBalanceBtn = addCssClasses(new Gtk.Button({
-            label: 'Refresh Balance',
-            valign: Gtk.Align.CENTER,
-            halign: Gtk.Align.START,
-        }), 'katab-prefs-button', 'suggested-action');
-        const refreshBtnRow = stylePreferenceRow(new Adw.ActionRow({
-            title: 'Check Balance Now',
-            subtitle: 'Makes a direct request to the DeepSeek /user/balance endpoint and updates the display above.',
-            activatable: false,
-        }), 'katab-prefs-info-row');
+        const refreshBalanceBtn = addCssClasses(
+            new Gtk.Button({
+                label: 'Refresh Balance',
+                valign: Gtk.Align.CENTER,
+                halign: Gtk.Align.START,
+            }),
+            'katab-prefs-button',
+            'suggested-action',
+        );
+        const refreshBtnRow = stylePreferenceRow(
+            new Adw.ActionRow({
+                title: 'Check Balance Now',
+                subtitle:
+                    'Makes a direct request to the DeepSeek /user/balance endpoint and updates the display above.',
+                activatable: false,
+            }),
+            'katab-prefs-info-row',
+        );
         refreshBtnRow.add_suffix(refreshBalanceBtn);
         refreshBtnRow.activatable_widget = refreshBalanceBtn;
         addPreferenceRow(deepseekBalanceGroup, refreshBtnRow);
@@ -2087,35 +2444,92 @@ export default class KatabPreferences extends ExtensionPreferences {
         // --- Unsloth Settings ---
         const unslothPage = createProviderPage('unsloth');
         const unslothGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', 'e.g. http://localhost:8888/v1 — the Unsloth Studio API root.', 'unsloth-url', unslothGroup);
-        createStringRow('API Key', 'Leave blank for local instances running without authentication.', 'unsloth-api-key', unslothGroup, true);
-        createStringRow('Model', 'The model identifier served by your Unsloth Studio instance.', 'unsloth-model', unslothGroup);
-        createIntRow('Context Window Size', 'Maximum tokens per request. Match this to your loaded model capacity.', 'unsloth-num-ctx', unslothGroup, 1024, 1048576, 1024);
+        createStringRow(
+            'Base URL',
+            'e.g. http://localhost:8888/v1 — the Unsloth Studio API root.',
+            'unsloth-url',
+            unslothGroup,
+        );
+        createStringRow(
+            'API Key',
+            'Leave blank for local instances running without authentication.',
+            'unsloth-api-key',
+            unslothGroup,
+            true,
+        );
+        createStringRow(
+            'Model',
+            'The model identifier served by your Unsloth Studio instance.',
+            'unsloth-model',
+            unslothGroup,
+        );
+        createIntRow(
+            'Context Window Size',
+            'Maximum tokens per request. Match this to your loaded model capacity.',
+            'unsloth-num-ctx',
+            unslothGroup,
+            1024,
+            1048576,
+            1024,
+        );
         unslothPage.add(unslothGroup);
 
         const unslothToolsGroup = createPreferencesGroup({
             title: 'Tools',
-            description: 'Unsloth Studio runs web search, Python, and terminal as server-side tools on its own backend.',
+            description:
+                'Unsloth Studio runs web search, Python, and terminal as server-side tools on its own backend.',
         });
         unslothPage.add(unslothToolsGroup);
         createInfoRow(
             'Server-side tools',
             'When Unsloth is the active provider, tool calls are executed by Unsloth Studio, not by Katab. The local SearxNG Web Search tool on the Tools page applies to the Ollama, OpenAI, Anthropic, and DeepSeek providers instead.',
-            unslothToolsGroup
+            unslothToolsGroup,
         );
         const openaiPage = createProviderPage('openai');
         const openaiGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', 'e.g. https://api.openai.com/v1 — change only when using a proxy or compatible endpoint.', 'openai-url', openaiGroup);
-        createStringRow('API Key', 'Your OpenAI secret key starting with sk-. Never share or commit this value.', 'openai-api-key', openaiGroup, true);
-        createStringRow('Model', 'The model ID from your OpenAI account, such as gpt-4o or gpt-4o-mini.', 'openai-model', openaiGroup);
+        createStringRow(
+            'Base URL',
+            'e.g. https://api.openai.com/v1 — change only when using a proxy or compatible endpoint.',
+            'openai-url',
+            openaiGroup,
+        );
+        createStringRow(
+            'API Key',
+            'Your OpenAI secret key starting with sk-. Never share or commit this value.',
+            'openai-api-key',
+            openaiGroup,
+            true,
+        );
+        createStringRow(
+            'Model',
+            'The model ID from your OpenAI account, such as gpt-4o or gpt-4o-mini.',
+            'openai-model',
+            openaiGroup,
+        );
         openaiPage.add(openaiGroup);
 
         // --- Anthropic Settings ---
         const anthropicPage = createProviderPage('anthropic');
         const anthropicGroup = createPreferencesGroup({ title: 'Connection & Model' });
-        createStringRow('Base URL', 'e.g. https://api.anthropic.com — change only when using a proxy.', 'anthropic-url', anthropicGroup);
-        createStringRow('API Key', 'Your Anthropic key starting with sk-ant-. Never share or commit this value.', 'anthropic-api-key', anthropicGroup, true);
-        createStringRow('Model', 'The Claude model ID from your account, such as claude-opus-4-5.', 'anthropic-model', anthropicGroup);
+        createStringRow(
+            'Base URL',
+            'e.g. https://api.anthropic.com — change only when using a proxy.',
+            'anthropic-url',
+            anthropicGroup,
+        );
+        createStringRow(
+            'API Key',
+            'Your Anthropic key starting with sk-ant-. Never share or commit this value.',
+            'anthropic-api-key',
+            anthropicGroup,
+            true,
+        );
+        createStringRow(
+            'Model',
+            'The Claude model ID from your account, such as claude-opus-4-5.',
+            'anthropic-model',
+            anthropicGroup,
+        );
         anthropicPage.add(anthropicGroup);
 
         // --- Tools Settings ---
@@ -2127,24 +2541,32 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         const toolsIndexGroup = createPreferencesGroup({
             title: 'Available Tools',
-            description: 'Optional capabilities Katab can offer the model. Select a tool to open its dedicated settings. Normal chat does not depend on any of these.',
+            description:
+                'Optional capabilities Katab can offer the model. Select a tool to open its dedicated settings. Normal chat does not depend on any of these.',
         });
         toolsPage.add(toolsIndexGroup);
 
         // Build an empty detail subpage: a PreferencesPage wrapped in a NavigationPage.
-        const createToolSubpage = subpageTitle => {
+        const createToolSubpage = (subpageTitle) => {
             const detailPage = createPreferencesPage({ title: subpageTitle });
             const backGroup = createPreferencesGroup({});
-            const backButton = addCssClasses(new Gtk.Button({
-                icon_name: 'go-previous-symbolic',
-                valign: Gtk.Align.CENTER,
-                tooltip_text: 'Back to Tools',
-            }), 'katab-prefs-button', 'katab-prefs-tool-back-button');
-            const backRow = stylePreferenceRow(new Adw.ActionRow({
-                title: 'Back to Tools',
-                subtitle: subpageTitle,
-                activatable: true,
-            }), 'katab-prefs-tool-back-row');
+            const backButton = addCssClasses(
+                new Gtk.Button({
+                    icon_name: 'go-previous-symbolic',
+                    valign: Gtk.Align.CENTER,
+                    tooltip_text: 'Back to Tools',
+                }),
+                'katab-prefs-button',
+                'katab-prefs-tool-back-button',
+            );
+            const backRow = stylePreferenceRow(
+                new Adw.ActionRow({
+                    title: 'Back to Tools',
+                    subtitle: subpageTitle,
+                    activatable: true,
+                }),
+                'katab-prefs-tool-back-row',
+            );
             backButton.connect('clicked', () => {
                 window.pop_subpage();
             });
@@ -2161,12 +2583,18 @@ export default class KatabPreferences extends ExtensionPreferences {
         };
 
         // Build a navigable index row that opens a tool's detail subpage when activated.
-        const createToolIndexRow = (group, { title, subtitle, iconName, enabledKey, navPage, gicon }) => {
-            const row = stylePreferenceRow(new Adw.ActionRow({
-                title,
-                subtitle,
-                activatable: true,
-            }), 'katab-prefs-tool-row');
+        const createToolIndexRow = (
+            group,
+            { title, subtitle, iconName, enabledKey, navPage, gicon },
+        ) => {
+            const row = stylePreferenceRow(
+                new Adw.ActionRow({
+                    title,
+                    subtitle,
+                    activatable: true,
+                }),
+                'katab-prefs-tool-row',
+            );
 
             const iconImage = new Gtk.Image({
                 valign: Gtk.Align.CENTER,
@@ -2179,17 +2607,25 @@ export default class KatabPreferences extends ExtensionPreferences {
             row.add_prefix(addCssClasses(iconImage, 'katab-prefs-tool-icon'));
 
             if (enabledKey) {
-                const toggle = addCssClasses(new Gtk.Switch({
-                    valign: Gtk.Align.CENTER,
-                }), 'katab-prefs-tool-switch');
+                const toggle = addCssClasses(
+                    new Gtk.Switch({
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-tool-switch',
+                );
                 settings.bind(enabledKey, toggle, 'active', Gio.SettingsBindFlags.DEFAULT);
                 row.add_suffix(toggle);
             }
 
-            row.add_suffix(addCssClasses(new Gtk.Image({
-                icon_name: 'go-next-symbolic',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-tool-chevron'));
+            row.add_suffix(
+                addCssClasses(
+                    new Gtk.Image({
+                        icon_name: 'go-next-symbolic',
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-tool-chevron',
+                ),
+            );
 
             row.connect('activated', () => {
                 window.push_subpage(navPage);
@@ -2206,7 +2642,8 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             const documentToolGroup = createPreferencesGroup({
                 title: 'Document Tool',
-                description: 'Optional local file support for chat. Documents are parsed locally, and images can be sent to Ollama vision models.',
+                description:
+                    'Optional local file support for chat. Documents are parsed locally, and images can be sent to Ollama vision models.',
             });
             detailPage.add(documentToolGroup);
 
@@ -2214,7 +2651,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Enable Document Tool',
                 'Show the chat attachment button and enable the /doc command for local files.',
                 'document-tool-enabled',
-                documentToolGroup
+                documentToolGroup,
             );
 
             const documentUsageRow = createInfoRow('How it works', '', documentToolGroup);
@@ -2228,34 +2665,35 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             const capabilityGroup = createPreferencesGroup({
                 title: 'Detected Capabilities',
-                description: 'Katab scans the local system at runtime. Text, Markdown, PNG/JPG, and EML support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
+                description:
+                    'Katab scans the local system at runtime. Text, Markdown, PNG/JPG, and EML support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
             });
             detailPage.add(capabilityGroup);
 
             const textStatusRow = createStatusRow(
                 'Text and Markdown',
                 'Plain text and Markdown are handled directly through native Gio file reads.',
-                capabilityGroup
+                capabilityGroup,
             );
             const imageStatusRow = createStatusRow(
                 'Images (PNG/JPG)',
                 'PNG and JPG attachments are base64-encoded locally and sent only to Ollama vision-capable models.',
-                capabilityGroup
+                capabilityGroup,
             );
             const pdfStatusRow = createStatusRow(
                 'PDF Documents',
                 'Install poppler-utils to expose pdftotext for fast PDF text extraction.',
-                capabilityGroup
+                capabilityGroup,
             );
             const docxStatusRow = createStatusRow(
                 'Word Documents (.docx)',
                 'Install pandoc to convert DOCX files into plain text before sending them to the model.',
-                capabilityGroup
+                capabilityGroup,
             );
             const emlStatusRow = createStatusRow(
                 'Email Messages (.eml)',
-                'EML email files are parsed locally with Katab\'s built-in MIME reader — headers, body text, and attachment names are extracted without any external tool.',
-                capabilityGroup
+                "EML email files are parsed locally with Katab's built-in MIME reader — headers, body text, and attachment names are extracted without any external tool.",
+                capabilityGroup,
             );
 
             const refreshDocumentToolStatus = () => {
@@ -2268,7 +2706,8 @@ export default class KatabPreferences extends ExtensionPreferences {
                     pdfStatusRow.row.subtitle = `Detected pdftotext at ${pdfPath}. PDF parsing is ready.`;
                     setStatusBadge(pdfStatusRow.badge, 'Detected', 'katab-prefs-status-detected');
                 } else {
-                    pdfStatusRow.row.subtitle = 'Install poppler-utils to expose pdftotext for fast PDF text extraction.';
+                    pdfStatusRow.row.subtitle =
+                        'Install poppler-utils to expose pdftotext for fast PDF text extraction.';
                     setStatusBadge(pdfStatusRow.badge, 'Install', 'katab-prefs-status-install');
                 }
 
@@ -2277,7 +2716,8 @@ export default class KatabPreferences extends ExtensionPreferences {
                     docxStatusRow.row.subtitle = `Detected pandoc at ${pandocPath}. DOCX parsing is ready.`;
                     setStatusBadge(docxStatusRow.badge, 'Detected', 'katab-prefs-status-detected');
                 } else {
-                    docxStatusRow.row.subtitle = 'Install pandoc to convert DOCX files into plain text before sending them to the model.';
+                    docxStatusRow.row.subtitle =
+                        'Install pandoc to convert DOCX files into plain text before sending them to the model.';
                     setStatusBadge(docxStatusRow.badge, 'Install', 'katab-prefs-status-install');
                 }
             };
@@ -2287,7 +2727,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Re-scan the local system after installing or removing parser packages.',
                 'Refresh',
                 refreshDocumentToolStatus,
-                capabilityGroup
+                capabilityGroup,
             );
 
             refreshDocumentToolStatus();
@@ -2303,16 +2743,22 @@ export default class KatabPreferences extends ExtensionPreferences {
             const noticeRow = createInfoRow(
                 'How web search works per provider',
                 'When Unsloth Studio is the active provider, web search, Python, and terminal run on Unsloth\u2019s own servers. This local SearxNG-powered tool applies to the Ollama, OpenAI, Anthropic, and DeepSeek providers.',
-                noticeGroup
+                noticeGroup,
             );
-            noticeRow.add_prefix(addCssClasses(new Gtk.Image({
-                icon_name: 'dialog-information-symbolic',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-tool-icon'));
+            noticeRow.add_prefix(
+                addCssClasses(
+                    new Gtk.Image({
+                        icon_name: 'dialog-information-symbolic',
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-tool-icon',
+                ),
+            );
 
             const connectionGroup = createPreferencesGroup({
                 title: 'Connection',
-                description: 'Katab queries your own self-hosted SearxNG instance over its JSON API. No third-party search keys are required.',
+                description:
+                    'Katab queries your own self-hosted SearxNG instance over its JSON API. No third-party search keys are required.',
             });
             detailPage.add(connectionGroup);
 
@@ -2320,20 +2766,20 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Enable Web Search',
                 'Allow the /search command and let supported models look things up on the web.',
                 'web-search-enabled',
-                connectionGroup
+                connectionGroup,
             );
 
             createStringRow(
                 'SearxNG Instance URL',
                 'Base URL of your SearxNG instance, e.g. http://localhost:8080.',
                 'web-search-url',
-                connectionGroup
+                connectionGroup,
             );
 
             const { row: connStatusRow, badge: connBadge } = createStatusRow(
                 'Connection Status',
                 'Run a test query to confirm the instance is reachable and JSON output is enabled.',
-                connectionGroup
+                connectionGroup,
             );
             setStatusBadge(connBadge, 'Untested', null);
 
@@ -2346,25 +2792,33 @@ export default class KatabPreferences extends ExtensionPreferences {
                     setStatusBadge(connBadge, 'Testing', null);
                     connStatusRow.subtitle = 'Contacting the SearxNG instance\u2026';
                     const config = readWebSearchConfig(settings);
-                    webSearchTestRuntime.testConnection(config).then(result => {
-                        if (result.ok) {
-                            setStatusBadge(connBadge, 'Connected', 'katab-prefs-status-detected');
-                            connStatusRow.subtitle = `Reachable. Sample query returned ${result.resultCount} result(s).`;
-                        } else {
+                    webSearchTestRuntime
+                        .testConnection(config)
+                        .then((result) => {
+                            if (result.ok) {
+                                setStatusBadge(
+                                    connBadge,
+                                    'Connected',
+                                    'katab-prefs-status-detected',
+                                );
+                                connStatusRow.subtitle = `Reachable. Sample query returned ${result.resultCount} result(s).`;
+                            } else {
+                                setStatusBadge(connBadge, 'Failed', 'katab-prefs-status-install');
+                                connStatusRow.subtitle = result.message;
+                            }
+                        })
+                        .catch((error) => {
                             setStatusBadge(connBadge, 'Failed', 'katab-prefs-status-install');
-                            connStatusRow.subtitle = result.message;
-                        }
-                    }).catch(error => {
-                        setStatusBadge(connBadge, 'Failed', 'katab-prefs-status-install');
-                        connStatusRow.subtitle = error?.message || 'Connection test failed.';
-                    });
+                            connStatusRow.subtitle = error?.message || 'Connection test failed.';
+                        });
                 },
-                connectionGroup
+                connectionGroup,
             );
 
             const behaviorGroup = createPreferencesGroup({
                 title: 'Search Behavior',
-                description: 'Tune how Katab queries SearxNG and how much content it returns to the model.',
+                description:
+                    'Tune how Katab queries SearxNG and how much content it returns to the model.',
             });
             detailPage.add(behaviorGroup);
 
@@ -2375,13 +2829,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                 behaviorGroup,
                 1,
                 20,
-                1
+                1,
             );
 
             const timeRangeRow = createChoiceRow(
                 'Time Range',
                 'Restrict results to a recent time window.',
-                behaviorGroup
+                behaviorGroup,
             );
             bindChoiceRow(
                 timeRangeRow,
@@ -2394,13 +2848,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                     { value: 'year', label: 'Past year' },
                 ],
                 settings.get_string.bind(settings),
-                settings.set_string.bind(settings)
+                settings.set_string.bind(settings),
             );
 
             const safesearchRow = createChoiceRow(
                 'Safe Search',
                 'Content filtering level forwarded to SearxNG.',
-                behaviorGroup
+                behaviorGroup,
             );
             bindChoiceRow(
                 safesearchRow,
@@ -2412,13 +2866,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                 ],
                 settings.get_int.bind(settings),
                 settings.set_int.bind(settings),
-                value => `Level ${value}`
+                (value) => `Level ${value}`,
             );
 
             const categoriesRow = createChoiceRow(
                 'Category',
                 'Primary SearxNG category to search within.',
-                behaviorGroup
+                behaviorGroup,
             );
             bindChoiceRow(
                 categoriesRow,
@@ -2432,13 +2886,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                     { value: 'social media', label: 'Social Media' },
                 ],
                 settings.get_string.bind(settings),
-                settings.set_string.bind(settings)
+                settings.set_string.bind(settings),
             );
 
             const languageRow = createChoiceRow(
                 'Language',
                 'Preferred result language.',
-                behaviorGroup
+                behaviorGroup,
             );
             bindChoiceRow(
                 languageRow,
@@ -2457,14 +2911,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                 ],
                 settings.get_string.bind(settings),
                 settings.set_string.bind(settings),
-                value => `Custom (${value})`
+                (value) => `Custom (${value})`,
             );
 
             createStringRow(
                 'Preferred Engines',
                 'Optional comma-separated SearxNG engine names, e.g. google,bing,duckduckgo. Leave blank for the instance default.',
                 'web-search-engines',
-                behaviorGroup
+                behaviorGroup,
             );
 
             createStringRow(
@@ -2472,7 +2926,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Optional value sent as the Authorization header if your instance is protected.',
                 'web-search-api-key',
                 behaviorGroup,
-                true
+                true,
             );
 
             const advancedGroup = createPreferencesGroup({
@@ -2485,28 +2939,28 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Read Page Content',
                 'Let the model open a result link and extract the readable text of that page (HTML and PDF).',
                 'web-search-fetch-page-enabled',
-                advancedGroup
+                advancedGroup,
             );
 
             createBooleanRow(
                 'Multi-Query Expansion',
                 'Generate a few related queries from your prompt and merge the results. Off by default for faster, cheaper searches.',
                 'web-search-multiquery-enabled',
-                advancedGroup
+                advancedGroup,
             );
 
             createBooleanRow(
                 'Autonomous Tool Use',
                 'Advertise web search to supported models so they can decide when to look things up. With this off, only the manual /search command runs.',
                 'web-search-autonomous-enabled',
-                advancedGroup
+                advancedGroup,
             );
 
             createBooleanRow(
                 'Allow Local Addresses',
                 'Permit fetching localhost and private LAN addresses when reading page content. Leave off unless you fully trust your network.',
                 'web-search-allow-local-addresses',
-                advancedGroup
+                advancedGroup,
             );
 
             createIntRow(
@@ -2514,24 +2968,27 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Rounds of sequential tool calls the model may trigger per message before being forced to answer. Raise if the model needs more search/read steps.',
                 'web-search-max-tool-iterations',
                 advancedGroup,
-                1, 50, 1
+                1,
+                50,
+                1,
             );
 
             const setupGroup = createPreferencesGroup({
                 title: 'SearxNG Setup',
-                description: 'Katab does not bundle a search engine. Run your own SearxNG instance and enable its JSON API.',
+                description:
+                    'Katab does not bundle a search engine. Run your own SearxNG instance and enable its JSON API.',
             });
             detailPage.add(setupGroup);
 
             createInstructionRow(
                 'Run SearxNG with Docker',
                 'docker run -d --name searxng -p 8080:8080 searxng/searxng',
-                setupGroup
+                setupGroup,
             );
             createInstructionRow(
                 'Enable the JSON API',
                 'In settings.yml add "json" to the search.formats list, then restart the container. Without it SearxNG returns HTTP 403 to API calls.',
-                setupGroup
+                setupGroup,
             );
         }
 
@@ -2545,172 +3002,199 @@ export default class KatabPreferences extends ExtensionPreferences {
             const noticeRow = createInfoRow(
                 'How web scraping works',
                 'Crawl4AI is a high-performance, LLM-friendly web crawler that renders pages in a real browser (Chromium), executes JavaScript, and extracts clean Markdown. Katab uses it to deep-scrape page content after SearxNG discovers URLs. Deploy your own Crawl4AI v0.9.x Docker container on any machine with sufficient RAM for Chromium.',
-                noticeGroup
+                noticeGroup,
             );
-            noticeRow.add_prefix(addCssClasses(new Gtk.Image({
-                icon_name: 'dialog-information-symbolic',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-tool-icon'));
+            noticeRow.add_prefix(
+                addCssClasses(
+                    new Gtk.Image({
+                        icon_name: 'dialog-information-symbolic',
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-tool-icon',
+                ),
+            );
 
             // ---- Setup (collapsible) ----
             const crawlSetupExpander = createExpanderRow({});
-            crawlSetupExpander.add_prefix(addCssClasses(new Gtk.Label({
-                label: 'Setup \u2014 Deploy Crawl4AI with Docker',
-                xalign: 0,
-                halign: Gtk.Align.START,
-            }), 'katab-prefs-expander-title'));
-            crawlSetupExpander.subtitle = 'Crawl4AI must be running in Docker for Katab to deep-scrape web pages.';
+            crawlSetupExpander.add_prefix(
+                addCssClasses(
+                    new Gtk.Label({
+                        label: 'Setup \u2014 Deploy Crawl4AI with Docker',
+                        xalign: 0,
+                        halign: Gtk.Align.START,
+                    }),
+                    'katab-prefs-expander-title',
+                ),
+            );
+            crawlSetupExpander.subtitle =
+                'Crawl4AI must be running in Docker for Katab to deep-scrape web pages.';
             noticeGroup.add(crawlSetupExpander);
 
-            createInstructionRow('Docker Compose (Recommended)', [
-                'The official docker-compose.yml is the simplest way to deploy Crawl4AI.',
-                '',
-                '1. Clone the repository',
-                '',
-                '   git clone https://github.com/unclecode/crawl4ai.git',
-                '   cd crawl4ai',
-                '',
-                '2. Create the environment file with all required variables',
-                '',
-                '   cp deploy/docker/.llm.env.example .llm.env',
-                '   nano .llm.env',
-                '',
-                '   Add these lines (the compose file reads from .llm.env):',
-                '',
-                '   # Required — Crawl4AI API authentication token',
-                '   # Generate one with: openssl rand -hex 32',
-                '   CRAWL4AI_API_TOKEN=your-secret-token-here',
-                '',
-                '   # Recommended — prevents issued tokens from',
-                '   # being invalidated on container restart',
-                '   SECRET_KEY=another-strong-random-string',
-                '',
-                '   # Optional — Redis password for the internal cache',
-                '   # (auto-generated if left unset)',
-                '   REDIS_PASSWORD=your-redis-password',
-                '',
-                '   # Optional — LLM provider for AI extraction',
-                '   # Katab defaults to DeepSeek V4.1 Flash, so set the',
-                '   # provider and its key here (the compose file reads',
-                '   # all variables from .llm.env):',
-                '   LLM_PROVIDER=deepseek/deepseek-flash',
-                '   DEEPSEEK_API_KEY=sk-...',
-                '   # Other providers work too — change LLM_PROVIDER and',
-                '   # add that provider\'s key, e.g. OPENAI_API_KEY,',
-                '   # ANTHROPIC_API_KEY, etc.',
-                '',
-                '   The docker-compose.yml reads ALL environment',
-                '   variables from .llm.env via the env_file directive.',
-                '   Enter the same CRAWL4AI_API_TOKEN value in the',
-                '   API Token field in the Connection section below.',
-                '',
-                '3. Fix a known docker-compose.yml conflict (if needed)',
-                '',
-                '   The official docker-compose.yml may define pids_limit',
-                '   in two places, causing a Compose error:',
-                '',
-                '   "can\'t set distinct values on pids_limit and',
-                '    deploy.resources.limits.pids"',
-                '',
-                '   Fix: open docker-compose.yml and remove the line',
-                '   "pids_limit: 512" from the x-base-config section.',
-                '   (The deploy.resources.limits.pids setting is sufficient.)',
-                '',
-                '   The "version is obsolete" warning is harmless',
-                '   and can be ignored.',
-                '',
-                '4. Start Crawl4AI',
-                '',
-                '   docker compose up -d',
-                '',
-                '   The server will be available at http://localhost:11235.',
-                '',
-                '5. Verify it\'s running',
-                '',
-                '   curl http://localhost:11235/health',
-                '',
-                '   Check the logs to confirm the token was picked up:',
-                '',
-                '   docker compose logs',
-                '',
-                '   (Compose names the container after the folder you',
-                '   cloned into, e.g. crawl4ai-crawl4ai-1 here. Using',
-                '   "docker compose logs" works no matter the name. To',
-                '   target a container directly, list them first with:',
-                '   docker ps)',
-                '',
-                '   Look for: "CRAWL4AI_API_TOKEN is set"',
-                '   If you see "CRAWL4AI_API_TOKEN is not set"',
-                '   double-check your .llm.env file.',
-                '',
-                '   You can also visit http://localhost:11235/playground',
-                '   for an interactive testing interface.',
-                '',
-                '6. Stop when done',
-                '',
-                '   docker compose down',
-            ].join('\n'), crawlSetupExpander);
+            createInstructionRow(
+                'Docker Compose (Recommended)',
+                [
+                    'The official docker-compose.yml is the simplest way to deploy Crawl4AI.',
+                    '',
+                    '1. Clone the repository',
+                    '',
+                    '   git clone https://github.com/unclecode/crawl4ai.git',
+                    '   cd crawl4ai',
+                    '',
+                    '2. Create the environment file with all required variables',
+                    '',
+                    '   cp deploy/docker/.llm.env.example .llm.env',
+                    '   nano .llm.env',
+                    '',
+                    '   Add these lines (the compose file reads from .llm.env):',
+                    '',
+                    '   # Required — Crawl4AI API authentication token',
+                    '   # Generate one with: openssl rand -hex 32',
+                    '   CRAWL4AI_API_TOKEN=your-secret-token-here',
+                    '',
+                    '   # Recommended — prevents issued tokens from',
+                    '   # being invalidated on container restart',
+                    '   SECRET_KEY=another-strong-random-string',
+                    '',
+                    '   # Optional — Redis password for the internal cache',
+                    '   # (auto-generated if left unset)',
+                    '   REDIS_PASSWORD=your-redis-password',
+                    '',
+                    '   # Optional — LLM provider for AI extraction',
+                    '   # Katab defaults to DeepSeek V4.1 Flash, so set the',
+                    '   # provider and its key here (the compose file reads',
+                    '   # all variables from .llm.env):',
+                    '   LLM_PROVIDER=deepseek/deepseek-flash',
+                    '   DEEPSEEK_API_KEY=sk-...',
+                    '   # Other providers work too — change LLM_PROVIDER and',
+                    "   # add that provider's key, e.g. OPENAI_API_KEY,",
+                    '   # ANTHROPIC_API_KEY, etc.',
+                    '',
+                    '   The docker-compose.yml reads ALL environment',
+                    '   variables from .llm.env via the env_file directive.',
+                    '   Enter the same CRAWL4AI_API_TOKEN value in the',
+                    '   API Token field in the Connection section below.',
+                    '',
+                    '3. Fix a known docker-compose.yml conflict (if needed)',
+                    '',
+                    '   The official docker-compose.yml may define pids_limit',
+                    '   in two places, causing a Compose error:',
+                    '',
+                    '   "can\'t set distinct values on pids_limit and',
+                    '    deploy.resources.limits.pids"',
+                    '',
+                    '   Fix: open docker-compose.yml and remove the line',
+                    '   "pids_limit: 512" from the x-base-config section.',
+                    '   (The deploy.resources.limits.pids setting is sufficient.)',
+                    '',
+                    '   The "version is obsolete" warning is harmless',
+                    '   and can be ignored.',
+                    '',
+                    '4. Start Crawl4AI',
+                    '',
+                    '   docker compose up -d',
+                    '',
+                    '   The server will be available at http://localhost:11235.',
+                    '',
+                    "5. Verify it's running",
+                    '',
+                    '   curl http://localhost:11235/health',
+                    '',
+                    '   Check the logs to confirm the token was picked up:',
+                    '',
+                    '   docker compose logs',
+                    '',
+                    '   (Compose names the container after the folder you',
+                    '   cloned into, e.g. crawl4ai-crawl4ai-1 here. Using',
+                    '   "docker compose logs" works no matter the name. To',
+                    '   target a container directly, list them first with:',
+                    '   docker ps)',
+                    '',
+                    '   Look for: "CRAWL4AI_API_TOKEN is set"',
+                    '   If you see "CRAWL4AI_API_TOKEN is not set"',
+                    '   double-check your .llm.env file.',
+                    '',
+                    '   You can also visit http://localhost:11235/playground',
+                    '   for an interactive testing interface.',
+                    '',
+                    '6. Stop when done',
+                    '',
+                    '   docker compose down',
+                ].join('\n'),
+                crawlSetupExpander,
+            );
 
-            createInstructionRow('Minimal Setup (Single Container)', [
-                'If you prefer not to clone the repository, you can run',
-                'the official Docker image directly:',
-                '',
-                '   docker run -d \\',
-                '     --name crawl4ai \\',
-                '     -p 11235:11235 \\',
-                '     -e CRAWL4AI_API_TOKEN=your-secret-token \\',
-                '     -e SECRET_KEY=another-strong-random-string \\',
-                '     --shm-size=1g \\',
-                '     unclecode/crawl4ai:latest',
-                '',
-                'Generate secure tokens with: openssl rand -hex 32',
-                'The --shm-size=1g flag is required for Chromium to work.',
-                'Plan for at least 4 GB RAM dedicated to this container,',
-                'especially when crawling JavaScript-heavy pages.',
-                '',
-                'Check logs to confirm the token was picked up:',
-                '',
-                '   docker logs crawl4ai',
-                '',
-                'Look for: "CRAWL4AI_API_TOKEN is set"',
-            ].join('\n'), crawlSetupExpander);
+            createInstructionRow(
+                'Minimal Setup (Single Container)',
+                [
+                    'If you prefer not to clone the repository, you can run',
+                    'the official Docker image directly:',
+                    '',
+                    '   docker run -d \\',
+                    '     --name crawl4ai \\',
+                    '     -p 11235:11235 \\',
+                    '     -e CRAWL4AI_API_TOKEN=your-secret-token \\',
+                    '     -e SECRET_KEY=another-strong-random-string \\',
+                    '     --shm-size=1g \\',
+                    '     unclecode/crawl4ai:latest',
+                    '',
+                    'Generate secure tokens with: openssl rand -hex 32',
+                    'The --shm-size=1g flag is required for Chromium to work.',
+                    'Plan for at least 4 GB RAM dedicated to this container,',
+                    'especially when crawling JavaScript-heavy pages.',
+                    '',
+                    'Check logs to confirm the token was picked up:',
+                    '',
+                    '   docker logs crawl4ai',
+                    '',
+                    'Look for: "CRAWL4AI_API_TOKEN is set"',
+                ].join('\n'),
+                crawlSetupExpander,
+            );
 
-            createInstructionRow('API Token Authentication', [
-                'Crawl4AI v0.9.x requires an API token for all requests.',
-                '',
-                'For Docker Compose: add CRAWL4AI_API_TOKEN to the',
-                '.llm.env file — the compose file reads all variables',
-                'from there via the env_file directive.',
-                '',
-                'For single-container: pass it with -e as shown above.',
-                '',
-                'Generate a secure token:',
-                '',
-                '   openssl rand -hex 32',
-                '',
-                'Enter the same token in the API Token field in the',
-                'Connection section below. Katab sends it as a Bearer',
-                'token in the Authorization header.',
-                '',
-                'If your instance was started without a token, Crawl4AI',
-                'auto-generates an ephemeral one and prints it in the logs.',
-                'Leave the API Token field empty for unauthenticated instances',
-                '(older versions or local dev mode).',
-            ].join('\n'), crawlSetupExpander);
+            createInstructionRow(
+                'API Token Authentication',
+                [
+                    'Crawl4AI v0.9.x requires an API token for all requests.',
+                    '',
+                    'For Docker Compose: add CRAWL4AI_API_TOKEN to the',
+                    '.llm.env file — the compose file reads all variables',
+                    'from there via the env_file directive.',
+                    '',
+                    'For single-container: pass it with -e as shown above.',
+                    '',
+                    'Generate a secure token:',
+                    '',
+                    '   openssl rand -hex 32',
+                    '',
+                    'Enter the same token in the API Token field in the',
+                    'Connection section below. Katab sends it as a Bearer',
+                    'token in the Authorization header.',
+                    '',
+                    'If your instance was started without a token, Crawl4AI',
+                    'auto-generates an ephemeral one and prints it in the logs.',
+                    'Leave the API Token field empty for unauthenticated instances',
+                    '(older versions or local dev mode).',
+                ].join('\n'),
+                crawlSetupExpander,
+            );
 
-            createInstructionRow('Security Notes', [
-                'The Docker Compose setup is security-hardened:',
-                '\u2022 Runs as non-root user (appuser)',
-                '\u2022 Drops all Linux capabilities',
-                '\u2022 Read-only root filesystem',
-                '\u2022 No privilege escalation',
-                '\u2022 PID limit of 512',
-                '\u2022 Health check with auto-restart',
-                '',
-                'Katab connects to Crawl4AI over HTTP by default.',
-                'For remote deployments, place a reverse proxy',
-                '(nginx / Caddy) with TLS in front, or use a VPN tunnel.',
-            ].join('\n'), crawlSetupExpander);
+            createInstructionRow(
+                'Security Notes',
+                [
+                    'The Docker Compose setup is security-hardened:',
+                    '\u2022 Runs as non-root user (appuser)',
+                    '\u2022 Drops all Linux capabilities',
+                    '\u2022 Read-only root filesystem',
+                    '\u2022 No privilege escalation',
+                    '\u2022 PID limit of 512',
+                    '\u2022 Health check with auto-restart',
+                    '',
+                    'Katab connects to Crawl4AI over HTTP by default.',
+                    'For remote deployments, place a reverse proxy',
+                    '(nginx / Caddy) with TLS in front, or use a VPN tunnel.',
+                ].join('\n'),
+                crawlSetupExpander,
+            );
 
             // ---- Connection ----
             const connectionGroup = createPreferencesGroup({
@@ -2723,14 +3207,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Enable Web Scraper',
                 'Allow the /crawl command and let supported models deep-scrape web pages through Crawl4AI.',
                 'crawl4ai-enabled',
-                connectionGroup
+                connectionGroup,
             );
 
             createStringRow(
                 'Crawl4AI Instance URL',
                 'Base URL of your Crawl4AI v0.9.x instance, e.g. http://localhost:11235.',
                 'crawl4ai-url',
-                connectionGroup
+                connectionGroup,
             );
 
             createStringRow(
@@ -2738,13 +3222,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'JWT Bearer token set via CRAWL4AI_API_TOKEN when deploying the container. Required only when the instance has security enabled.',
                 'crawl4ai-api-token',
                 connectionGroup,
-                true
+                true,
             );
 
             const { row: crawlConnStatusRow, badge: crawlConnBadge } = createStatusRow(
                 'Connection Status',
                 'Run a health check to confirm the instance is reachable.',
-                connectionGroup
+                connectionGroup,
             );
             setStatusBadge(crawlConnBadge, 'Untested', null);
 
@@ -2757,35 +3241,49 @@ export default class KatabPreferences extends ExtensionPreferences {
                     setStatusBadge(crawlConnBadge, 'Testing', null);
                     crawlConnStatusRow.subtitle = 'Contacting the Crawl4AI instance\u2026';
                     const config = readCrawl4AIConfig(settings);
-                    crawlTestRuntime.testConnection(config).then(result => {
-                        if (result.ok) {
-                            setStatusBadge(crawlConnBadge, 'Connected', 'katab-prefs-status-detected');
-                            crawlConnStatusRow.subtitle = result.version
-                                ? `Reachable. Server: ${result.version}`
-                                : 'Reachable.';
-                        } else {
+                    crawlTestRuntime
+                        .testConnection(config)
+                        .then((result) => {
+                            if (result.ok) {
+                                setStatusBadge(
+                                    crawlConnBadge,
+                                    'Connected',
+                                    'katab-prefs-status-detected',
+                                );
+                                crawlConnStatusRow.subtitle = result.version
+                                    ? `Reachable. Server: ${result.version}`
+                                    : 'Reachable.';
+                            } else {
+                                setStatusBadge(
+                                    crawlConnBadge,
+                                    'Failed',
+                                    'katab-prefs-status-install',
+                                );
+                                crawlConnStatusRow.subtitle =
+                                    result.message || 'Connection test failed.';
+                            }
+                        })
+                        .catch((error) => {
                             setStatusBadge(crawlConnBadge, 'Failed', 'katab-prefs-status-install');
-                            crawlConnStatusRow.subtitle = result.message || 'Connection test failed.';
-                        }
-                    }).catch(error => {
-                        setStatusBadge(crawlConnBadge, 'Failed', 'katab-prefs-status-install');
-                        crawlConnStatusRow.subtitle = error?.message || 'Connection test failed.';
-                    });
+                            crawlConnStatusRow.subtitle =
+                                error?.message || 'Connection test failed.';
+                        });
                 },
-                connectionGroup
+                connectionGroup,
             );
 
             // ---- Extraction ----
             const extractionGroup = createPreferencesGroup({
                 title: 'Extraction',
-                description: 'How Crawl4AI filters and formats page content before sending it to the model.',
+                description:
+                    'How Crawl4AI filters and formats page content before sending it to the model.',
             });
             detailPage.add(extractionGroup);
 
             const fitMarkdownRow = createChoiceRow(
                 'Content Filter',
                 'Algorithm used to strip boilerplate and extract the core page content.',
-                extractionGroup
+                extractionGroup,
             );
             bindChoiceRow(
                 fitMarkdownRow,
@@ -2795,13 +3293,13 @@ export default class KatabPreferences extends ExtensionPreferences {
                     { value: 'bm25', label: 'BM25 (Query-Focused)' },
                 ],
                 settings.get_string.bind(settings),
-                settings.set_string.bind(settings)
+                settings.set_string.bind(settings),
             );
 
             const cacheRow = createChoiceRow(
                 'Cache Mode',
                 'Controls Crawl4AI\u2019s internal cache behavior.',
-                extractionGroup
+                extractionGroup,
             );
             bindChoiceRow(
                 cacheRow,
@@ -2812,7 +3310,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                     { value: 'read_only', label: 'Read-Only (No Network)' },
                 ],
                 settings.get_string.bind(settings),
-                settings.set_string.bind(settings)
+                settings.set_string.bind(settings),
             );
 
             createIntRow(
@@ -2822,7 +3320,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 extractionGroup,
                 1,
                 200,
-                1
+                1,
             );
 
             createIntRow(
@@ -2832,7 +3330,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 extractionGroup,
                 10,
                 300,
-                5
+                5,
             );
 
             createIntRow(
@@ -2842,32 +3340,33 @@ export default class KatabPreferences extends ExtensionPreferences {
                 extractionGroup,
                 500,
                 100000,
-                500
+                500,
             );
 
             // ---- LLM Extraction (Optional) ----
             const llmGroup = createPreferencesGroup({
                 title: 'LLM Extraction (Optional)',
-                description: 'Ask an LLM running on your Crawl4AI server to extract structured JSON or a freeform answer instead of raw Markdown. Fully optional \u2014 the default Markdown pipeline is unchanged.',
+                description:
+                    'Ask an LLM running on your Crawl4AI server to extract structured JSON or a freeform answer instead of raw Markdown. Fully optional \u2014 the default Markdown pipeline is unchanged.',
             });
             detailPage.add(llmGroup);
 
             createInstructionRow(
                 'How to enable AI extraction',
                 'Pick an Extraction Mode below (Schema for structured JSON, Block for a freeform answer). ' +
-                'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
-                'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
-                'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
-                'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
-                '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
-                'different fields. Katab never sees or stores your API key.',
-                llmGroup
+                    'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
+                    'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
+                    'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
+                    'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
+                    '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
+                    'different fields. Katab never sees or stores your API key.',
+                llmGroup,
             );
 
             const llmModeRow = createChoiceRow(
                 'Extraction Mode',
                 'How Crawl4AI should format page content.',
-                llmGroup
+                llmGroup,
             );
             bindChoiceRow(
                 llmModeRow,
@@ -2878,14 +3377,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                     { value: 'llm-block', label: 'LLM Freeform Answer (Block)' },
                 ],
                 settings.get_string.bind(settings),
-                settings.set_string.bind(settings)
+                settings.set_string.bind(settings),
             );
 
             const llmProviderRow = createStringRow(
                 'LLM Provider',
                 'LiteLLM model identifier. Defaults to DeepSeek V4.1 Flash (deepseek/deepseek-flash). Must match the provider allowed on your Crawl4AI server — set LLM_PROVIDER=<same value> and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
                 'crawl4ai-llm-provider',
-                llmGroup
+                llmGroup,
             );
 
             const llmInstructionRow = createMultilineStringRow(
@@ -2893,7 +3392,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Freeform instruction for Block mode. A default summary instruction is prefilled \u2014 edit it to suit the page type.',
                 'crawl4ai-llm-instruction',
                 llmGroup,
-                100
+                100,
             );
 
             const llmSchemaRow = createMultilineStringRow(
@@ -2901,7 +3400,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'JSON Schema object for Schema mode. A general-purpose schema is prefilled \u2014 edit it to match the fields you want.',
                 'crawl4ai-llm-schema-json',
                 llmGroup,
-                140
+                140,
             );
 
             const validateSchemaRow = createButtonRow(
@@ -2917,7 +3416,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                         validateSchemaRow.subtitle = `Invalid JSON: ${error?.message || 'parse error'}`;
                     }
                 },
-                llmGroup
+                llmGroup,
             );
 
             createIntRow(
@@ -2927,7 +3426,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 llmGroup,
                 500,
                 16000,
-                500
+                500,
             );
 
             createDoubleRow(
@@ -2938,7 +3437,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 0.0,
                 0.5,
                 0.05,
-                2
+                2,
             );
 
             // Visibility: only show LLM rows when an LLM mode is selected.
@@ -2956,7 +3455,8 @@ export default class KatabPreferences extends ExtensionPreferences {
             // ---- Advanced ----
             const advancedGroup = createPreferencesGroup({
                 title: 'Advanced',
-                description: 'Anti-bot stealth, autonomous model use, and network address restrictions.',
+                description:
+                    'Anti-bot stealth, autonomous model use, and network address restrictions.',
             });
             detailPage.add(advancedGroup);
 
@@ -2964,21 +3464,21 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Stealth Mode',
                 'Mimic human mouse movements, scrolls, and timing to reduce CAPTCHA and bot-detection challenges. Slower but more reliable for protected sites.',
                 'crawl4ai-simulate-user',
-                advancedGroup
+                advancedGroup,
             );
 
             createBooleanRow(
                 'Autonomous Tool Use',
                 'Advertise the crawl_url tool to supported models so they can decide when to deep-scrape a page. With this off, only the manual /crawl command runs.',
                 'crawl4ai-autonomous-enabled',
-                advancedGroup
+                advancedGroup,
             );
 
             createBooleanRow(
                 'Allow Local Addresses',
                 'Permit scraping of private, loopback, and link-local addresses. Leave off unless you fully trust your network.',
                 'crawl4ai-allow-local-addresses',
-                advancedGroup
+                advancedGroup,
             );
 
             createIntRow(
@@ -2988,9 +3488,8 @@ export default class KatabPreferences extends ExtensionPreferences {
                 advancedGroup,
                 500,
                 10000,
-                500
+                500,
             );
-
         }
 
         // ── Knowledge Base (Local RAG) ───────────────────────────────────────
@@ -3003,116 +3502,145 @@ export default class KatabPreferences extends ExtensionPreferences {
             const noticeRow = createInfoRow(
                 'How the Knowledge Base works',
                 'Your documents, conversations, and research results are chunked, embedded with Ollama\u2019s nomic-embed-text model, and stored in a local ChromaDB vector database. When you ask a question, Katab finds the most semantically similar chunks and feeds them as context. Everything runs locally \u2014 no data leaves your machine.\n\nPhase 3 adds hybrid BM25 keyword matching, cross-encoder reranking (bge-reranker-v2-m3), and automatic web search fallback when knowledge base results are low-quality. Use the Service section above for one-click setup, or see the Setup section below for manual instructions.',
-                noticeGroup
+                noticeGroup,
             );
-            noticeRow.add_prefix(addCssClasses(new Gtk.Image({
-                gicon: Gio.icon_new_for_string(`${extensionPath}/icons/katab-knowledge-symbolic.svg`),
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-tool-icon'));
+            noticeRow.add_prefix(
+                addCssClasses(
+                    new Gtk.Image({
+                        gicon: Gio.icon_new_for_string(
+                            `${extensionPath}/icons/katab-knowledge-symbolic.svg`,
+                        ),
+                        valign: Gtk.Align.CENTER,
+                    }),
+                    'katab-prefs-tool-icon',
+                ),
+            );
 
             // ---- Setup (collapsible) ----
             const setupExpander = createExpanderRow({});
-            setupExpander.add_prefix(addCssClasses(new Gtk.Label({
-                label: 'Setup \u2014 Install & Run the RAG Service',
-                xalign: 0,
-                halign: Gtk.Align.START,
-            }), 'katab-prefs-expander-title'));
-            setupExpander.subtitle = 'Prefer one-click? Use Set Up & Start in the Service section above. The steps below are the manual alternative.';
+            setupExpander.add_prefix(
+                addCssClasses(
+                    new Gtk.Label({
+                        label: 'Setup \u2014 Install & Run the RAG Service',
+                        xalign: 0,
+                        halign: Gtk.Align.START,
+                    }),
+                    'katab-prefs-expander-title',
+                ),
+            );
+            setupExpander.subtitle =
+                'Prefer one-click? Use Set Up & Start in the Service section above. The steps below are the manual alternative.';
             noticeGroup.add(setupExpander);
 
-            createInstructionRow('One-Click Setup (Recommended)', [
-                'Use the Service section above to install and start the RAG service automatically.',
-                '',
-                'The steps below are only needed for a manual or custom installation.',
-            ].join('\n'), setupExpander);
+            createInstructionRow(
+                'One-Click Setup (Recommended)',
+                [
+                    'Use the Service section above to install and start the RAG service automatically.',
+                    '',
+                    'The steps below are only needed for a manual or custom installation.',
+                ].join('\n'),
+                setupExpander,
+            );
 
-            createInstructionRow('Installation', [
-                '1. Create a virtual environment for the RAG service',
-                '',
-                '   cd ~/.local/share/katabai/rag-service',
-                '   python3 -m venv .venv',
-                '',
-                '2. Install the Python dependencies inside the venv',
-                '',
-                '   .venv/bin/pip install chromadb ollama fastapi "uvicorn[standard]" rank-bm25',
-                '',
-                '   Or use the bundled requirements file:',
-                '',
-                '   .venv/bin/pip install -r requirements.txt',
-                '',
-                '   The rank-bm25 package enables hybrid keyword+semantic search',
-                '   (optional but recommended — the service works without it).',
-                '',
-                '3. Pull the Ollama embedding model on your Ollama host',
-                '   (Auto-pulled on first use if skipped)',
-                '',
-                '   ollama pull nomic-embed-text',
-                '',
-                '4. (Optional) Pull the reranker model for improved precision',
-                '   Only needed if you enable Cross-Encoder Reranking in Advanced Retrieval.',
-                '   Adds ~200ms per search. Skip this step if you don\'t need reranking.',
-                '',
-                '   ollama pull bge-reranker-v2-m3',
-            ].join('\n'), setupExpander);
+            createInstructionRow(
+                'Installation',
+                [
+                    '1. Create a virtual environment for the RAG service',
+                    '',
+                    '   cd ~/.local/share/katabai/rag-service',
+                    '   python3 -m venv .venv',
+                    '',
+                    '2. Install the Python dependencies inside the venv',
+                    '',
+                    '   .venv/bin/pip install chromadb ollama fastapi "uvicorn[standard]" rank-bm25',
+                    '',
+                    '   Or use the bundled requirements file:',
+                    '',
+                    '   .venv/bin/pip install -r requirements.txt',
+                    '',
+                    '   The rank-bm25 package enables hybrid keyword+semantic search',
+                    '   (optional but recommended — the service works without it).',
+                    '',
+                    '3. Pull the Ollama embedding model on your Ollama host',
+                    '   (Auto-pulled on first use if skipped)',
+                    '',
+                    '   ollama pull nomic-embed-text',
+                    '',
+                    '4. (Optional) Pull the reranker model for improved precision',
+                    '   Only needed if you enable Cross-Encoder Reranking in Advanced Retrieval.',
+                    "   Adds ~200ms per search. Skip this step if you don't need reranking.",
+                    '',
+                    '   ollama pull bge-reranker-v2-m3',
+                ].join('\n'),
+                setupExpander,
+            );
 
-            createInstructionRow('Running the Service', [
-                '5. Start the RAG service from a terminal',
-                '',
-                '   cd ~/.local/share/katabai/rag-service',
-                '   .venv/bin/python3 server.py',
-                '',
-                '   Once started you will see:',
-                '',
-                '   Service URL:  http://127.0.0.1:11435',
-                '   Data stored:  ~/.local/share/katabai/chroma/',
-                '',
-                '   At startup the service rebuilds BM25 keyword indices from',
-                '   existing ChromaDB data and checks for the reranker model.',
-                '   Keep this terminal open to keep the service alive.',
-                '   Press Ctrl+C to stop it when done.',
-            ].join('\n'), setupExpander);
+            createInstructionRow(
+                'Running the Service',
+                [
+                    '5. Start the RAG service from a terminal',
+                    '',
+                    '   cd ~/.local/share/katabai/rag-service',
+                    '   .venv/bin/python3 server.py',
+                    '',
+                    '   Once started you will see:',
+                    '',
+                    '   Service URL:  http://127.0.0.1:11435',
+                    '   Data stored:  ~/.local/share/katabai/chroma/',
+                    '',
+                    '   At startup the service rebuilds BM25 keyword indices from',
+                    '   existing ChromaDB data and checks for the reranker model.',
+                    '   Keep this terminal open to keep the service alive.',
+                    '   Press Ctrl+C to stop it when done.',
+                ].join('\n'),
+                setupExpander,
+            );
 
-            createInstructionRow('Auto-Start with systemd (Recommended)', [
-                '6. Create a user systemd service so the RAG backend',
-                '   starts automatically on login.',
-                '',
-                '   a) Create the service file:',
-                '',
-                '      mkdir -p ~/.config/systemd/user',
-                '      nano ~/.config/systemd/user/katabai-rag.service',
-                '',
-                '   b) Paste this content into the file:',
-                '',
-                '[Unit]',
-                'Description=Katabai RAG Service',
-                'After=network.target',
-                '',
-                '[Service]',
-                'Type=simple',
-                'ExecStart=%h/.local/share/katabai/rag-service/.venv/bin/python3 %h/.local/share/katabai/rag-service/server.py',
-                'WorkingDirectory=%h/.local/share/katabai/rag-service',
-                'Restart=on-failure',
-                'RestartSec=5',
-                '',
-                '[Install]',
-                'WantedBy=default.target',
-                '',
-                '   c) Enable and start the service:',
-                '',
-                '      systemctl --user daemon-reload',
-                '      systemctl --user enable katabai-rag.service',
-                '      systemctl --user start katabai-rag.service',
-                '',
-                '   d) Verify everything is working:',
-                '',
-                '      systemctl --user status katabai-rag.service',
-                '      curl http://127.0.0.1:11435/health',
-                '',
-                '   If curl returns {"status":"ok"} the service is ready.',
-                '   If it fails, run the command below to see error details:',
-                '',
-                '      journalctl --user -u katabai-rag.service --no-pager -n 30',
-            ].join('\n'), setupExpander);
+            createInstructionRow(
+                'Auto-Start with systemd (Recommended)',
+                [
+                    '6. Create a user systemd service so the RAG backend',
+                    '   starts automatically on login.',
+                    '',
+                    '   a) Create the service file:',
+                    '',
+                    '      mkdir -p ~/.config/systemd/user',
+                    '      nano ~/.config/systemd/user/katabai-rag.service',
+                    '',
+                    '   b) Paste this content into the file:',
+                    '',
+                    '[Unit]',
+                    'Description=Katabai RAG Service',
+                    'After=network.target',
+                    '',
+                    '[Service]',
+                    'Type=simple',
+                    'ExecStart=%h/.local/share/katabai/rag-service/.venv/bin/python3 %h/.local/share/katabai/rag-service/server.py',
+                    'WorkingDirectory=%h/.local/share/katabai/rag-service',
+                    'Restart=on-failure',
+                    'RestartSec=5',
+                    '',
+                    '[Install]',
+                    'WantedBy=default.target',
+                    '',
+                    '   c) Enable and start the service:',
+                    '',
+                    '      systemctl --user daemon-reload',
+                    '      systemctl --user enable katabai-rag.service',
+                    '      systemctl --user start katabai-rag.service',
+                    '',
+                    '   d) Verify everything is working:',
+                    '',
+                    '      systemctl --user status katabai-rag.service',
+                    '      curl http://127.0.0.1:11435/health',
+                    '',
+                    '   If curl returns {"status":"ok"} the service is ready.',
+                    '   If it fails, run the command below to see error details:',
+                    '',
+                    '      journalctl --user -u katabai-rag.service --no-pager -n 30',
+                ].join('\n'),
+                setupExpander,
+            );
 
             // ---- Connection ----
             const connectionGroup = createPreferencesGroup({
@@ -3125,41 +3653,41 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Enable Knowledge Base',
                 'Allow the /kb command, Knowledge footer button, and autonomous knowledge searching by supported models.',
                 'rag-enabled',
-                connectionGroup
+                connectionGroup,
             );
 
             createBooleanRow(
                 'Enable Memory',
                 'Master switch for automatic indexing. When enabled, Katab indexes documents, conversations, and research results (respecting the per-type toggles below). When disabled, no new content is indexed but existing knowledge remains searchable.',
                 'rag-memory-enabled',
-                connectionGroup
+                connectionGroup,
             );
 
             createStringRow(
                 'RAG Service URL',
                 'Base URL of your local Katabai RAG service, e.g. http://localhost:11435.',
                 'rag-service-url',
-                connectionGroup
+                connectionGroup,
             );
 
             createStringRow(
                 'Ollama URL for Embeddings',
                 'The Ollama instance used for generating text embeddings. Can be remote (e.g. http://192.168.1.100:11434) if Ollama runs on a separate AI PC.',
                 'rag-ollama-url',
-                connectionGroup
+                connectionGroup,
             );
 
             createStringRow(
                 'Embedding Model',
                 'Ollama model used for generating text embeddings. Must be pulled first with: ollama pull nomic-embed-text.',
                 'rag-embedding-model',
-                connectionGroup
+                connectionGroup,
             );
 
             const { row: ragConnStatusRow, badge: ragConnBadge } = createStatusRow(
                 'Connection Status',
                 'Run a health check to confirm the RAG service is reachable.',
-                connectionGroup
+                connectionGroup,
             );
             setStatusBadge(ragConnBadge, 'Untested', null);
 
@@ -3183,43 +3711,69 @@ export default class KatabPreferences extends ExtensionPreferences {
                         const message = Soup.Message.new('GET', url);
                         message.request_headers.append('Accept', 'application/json');
 
-                        session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
-                            try {
-                                const bytes = s.send_and_read_finish(result);
-                                const decoder = new TextDecoder('utf-8');
-                                const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
-                                if (body?.ok) {
-                                    const colCount = Object.keys(body.collections || {}).length;
-                                    const limits = body?.limits || {};
-                                    const rerankerOk = limits.reranker_available ? ' reranker✓' : '';
-                                    const bm25Ok = limits.bm25_available ? ' BM25✓' : '';
-                                    const features = `${rerankerOk}${bm25Ok}`.trim();
-                                    setStatusBadge(ragConnBadge, 'Connected', 'katab-prefs-status-detected');
-                                    ragConnStatusRow.subtitle = body.version
-                                        ? `Reachable. v${body.version}, ${colCount} collection${colCount !== 1 ? 's' : ''}.${features ? ` Features: ${features}` : ''}`
-                                        : `Reachable.${features ? ` Features: ${features}` : ''}`;
-                                } else {
-                                    setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
-                                    ragConnStatusRow.subtitle = 'Service returned an error.';
+                        session.send_and_read_async(
+                            message,
+                            GLib.PRIORITY_DEFAULT,
+                            null,
+                            (s, result) => {
+                                try {
+                                    const bytes = s.send_and_read_finish(result);
+                                    const decoder = new TextDecoder('utf-8');
+                                    const body = JSON.parse(
+                                        decoder.decode(bytes.get_data() || new Uint8Array()),
+                                    );
+                                    if (body?.ok) {
+                                        const colCount = Object.keys(body.collections || {}).length;
+                                        const limits = body?.limits || {};
+                                        const rerankerOk = limits.reranker_available
+                                            ? ' reranker✓'
+                                            : '';
+                                        const bm25Ok = limits.bm25_available ? ' BM25✓' : '';
+                                        const features = `${rerankerOk}${bm25Ok}`.trim();
+                                        setStatusBadge(
+                                            ragConnBadge,
+                                            'Connected',
+                                            'katab-prefs-status-detected',
+                                        );
+                                        ragConnStatusRow.subtitle = body.version
+                                            ? `Reachable. v${body.version}, ${colCount} collection${colCount !== 1 ? 's' : ''}.${features ? ` Features: ${features}` : ''}`
+                                            : `Reachable.${features ? ` Features: ${features}` : ''}`;
+                                    } else {
+                                        setStatusBadge(
+                                            ragConnBadge,
+                                            'Failed',
+                                            'katab-prefs-status-install',
+                                        );
+                                        ragConnStatusRow.subtitle = 'Service returned an error.';
+                                    }
+                                } catch (e) {
+                                    setStatusBadge(
+                                        ragConnBadge,
+                                        'Failed',
+                                        'katab-prefs-status-install',
+                                    );
+                                    ragConnStatusRow.subtitle =
+                                        e?.message || 'Connection test failed.';
                                 }
-                            } catch (e) {
-                                setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
-                                ragConnStatusRow.subtitle = e?.message || 'Connection test failed.';
-                            }
-                        });
+                            },
+                        );
                     } catch (e) {
                         setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
                         ragConnStatusRow.subtitle = e?.message || 'Connection test failed.';
                     }
                 },
-                connectionGroup
+                connectionGroup,
             );
 
             // ---- Service ----
             const RAG_SERVICE_UNIT = 'katabai-rag.service';
             const systemctlPath = GLib.find_program_in_path('systemctl') || 'systemctl';
             const python3Path = GLib.find_program_in_path('python3') || 'python3';
-            const serviceDir = GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai', 'rag-service']);
+            const serviceDir = GLib.build_filenamev([
+                GLib.get_user_data_dir(),
+                'katabai',
+                'rag-service',
+            ]);
             const venvDir = GLib.build_filenamev([serviceDir, '.venv']);
             const venvPython = GLib.build_filenamev([venvDir, 'bin', 'python3']);
 
@@ -3229,7 +3783,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 try {
                     proc = Gio.Subprocess.new(
                         argv,
-                        Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+                        Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
                     );
                 } catch (e) {
                     onDone({ success: false, stdout: '', stderr: e?.message || String(e) });
@@ -3243,7 +3797,11 @@ export default class KatabPreferences extends ExtensionPreferences {
                         // the process exits non-zero. Use get_successful() for the
                         // actual exit status (e.g. `systemctl is-active` exits 3 when
                         // a unit is stopped).
-                        onDone({ success: source.get_successful(), stdout: stdout || '', stderr: stderr || '' });
+                        onDone({
+                            success: source.get_successful(),
+                            stdout: stdout || '',
+                            stderr: stderr || '',
+                        });
                     } catch (e) {
                         onDone({ success: false, stdout: '', stderr: e?.message || String(e) });
                     }
@@ -3251,14 +3809,17 @@ export default class KatabPreferences extends ExtensionPreferences {
             };
 
             // Runs `systemctl --user <args...>`.
-            const runSystemctlRaw = (args, onDone) => runCommand([systemctlPath, '--user', ...args], onDone);
+            const runSystemctlRaw = (args, onDone) =>
+                runCommand([systemctlPath, '--user', ...args], onDone);
 
             // Runs a verb against the katabai-rag.service unit.
-            const runSystemctl = (verb, onDone) => runSystemctlRaw([verb, RAG_SERVICE_UNIT], onDone);
+            const runSystemctl = (verb, onDone) =>
+                runSystemctlRaw([verb, RAG_SERVICE_UNIT], onDone);
 
             const serviceGroup = createPreferencesGroup({
                 title: 'Service',
-                description: 'Control the local RAG service (the systemd user unit katabai-rag.service). "Set Up & Start" performs the default install \u2014 create the Python venv, install dependencies, write the unit file, and start the service \u2014 skipping any step already done and leaving an existing (custom) unit file untouched. Start, Restart, and Stop manage an already-installed unit.',
+                description:
+                    'Control the local RAG service (the systemd user unit katabai-rag.service). "Set Up & Start" performs the default install \u2014 create the Python venv, install dependencies, write the unit file, and start the service \u2014 skipping any step already done and leaving an existing (custom) unit file untouched. Start, Restart, and Stop manage an already-installed unit.',
             });
             detailPage.add(serviceGroup);
 
@@ -3271,7 +3832,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             const { row: ragServiceStatusRow, badge: ragServiceBadge } = createStatusRow(
                 'Service Status',
                 'Checking the systemd unit\u2026',
-                serviceGroup
+                serviceGroup,
             );
             setStatusBadge(ragServiceBadge, 'Checking', null);
 
@@ -3285,22 +3846,36 @@ export default class KatabPreferences extends ExtensionPreferences {
                 spacing: 6,
             });
 
-            const setupBtn = addCssClasses(new Gtk.Button({
-                label: 'Set Up & Start',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-button', 'suggested-action');
-            const startBtn = addCssClasses(new Gtk.Button({
-                label: 'Start',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-button');
-            const restartBtn = addCssClasses(new Gtk.Button({
-                label: 'Restart',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-button');
-            const stopBtn = addCssClasses(new Gtk.Button({
-                label: 'Stop',
-                valign: Gtk.Align.CENTER,
-            }), 'katab-prefs-button', 'destructive-action');
+            const setupBtn = addCssClasses(
+                new Gtk.Button({
+                    label: 'Set Up & Start',
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-button',
+                'suggested-action',
+            );
+            const startBtn = addCssClasses(
+                new Gtk.Button({
+                    label: 'Start',
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-button',
+            );
+            const restartBtn = addCssClasses(
+                new Gtk.Button({
+                    label: 'Restart',
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-button',
+            );
+            const stopBtn = addCssClasses(
+                new Gtk.Button({
+                    label: 'Stop',
+                    valign: Gtk.Align.CENTER,
+                }),
+                'katab-prefs-button',
+                'destructive-action',
+            );
 
             for (const btn of [setupBtn, startBtn, restartBtn, stopBtn]) {
                 serviceButtons.append(btn);
@@ -3327,18 +3902,32 @@ export default class KatabPreferences extends ExtensionPreferences {
                     const installed = catResult.success;
                     runSystemctl('is-active', ({ success: active }) => {
                         if (!installed) {
-                            setStatusBadge(ragServiceBadge, 'Not installed', 'katab-prefs-status-install');
+                            setStatusBadge(
+                                ragServiceBadge,
+                                'Not installed',
+                                'katab-prefs-status-install',
+                            );
                             ragServiceStatusRow.subtitle = venvReady
                                 ? 'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up & Start" to create it and launch the service.'
                                 : 'No service is set up yet. Use "Set Up & Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).';
                             updateServiceButtons(false, false);
                         } else if (active) {
-                            setStatusBadge(ragServiceBadge, 'Running', 'katab-prefs-status-detected');
-                            ragServiceStatusRow.subtitle = 'The katabai-rag.service unit is running.';
+                            setStatusBadge(
+                                ragServiceBadge,
+                                'Running',
+                                'katab-prefs-status-detected',
+                            );
+                            ragServiceStatusRow.subtitle =
+                                'The katabai-rag.service unit is running.';
                             updateServiceButtons(true, true);
                         } else {
-                            setStatusBadge(ragServiceBadge, 'Stopped', 'katab-prefs-status-install');
-                            ragServiceStatusRow.subtitle = 'The service is installed but stopped. Use Start to launch it.';
+                            setStatusBadge(
+                                ragServiceBadge,
+                                'Stopped',
+                                'katab-prefs-status-install',
+                            );
+                            ragServiceStatusRow.subtitle =
+                                'The service is installed but stopped. Use Start to launch it.';
                             updateServiceButtons(true, false);
                         }
                     });
@@ -3379,9 +3968,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                     '',
                 ].join('\n');
 
-                const unitDir = Gio.File.new_for_path(GLib.build_filenamev([
-                    GLib.get_user_config_dir(), 'systemd', 'user',
-                ]));
+                const unitDir = Gio.File.new_for_path(
+                    GLib.build_filenamev([GLib.get_user_config_dir(), 'systemd', 'user']),
+                );
                 if (!unitDir.query_exists(null)) {
                     unitDir.make_directory_with_parents(null);
                 }
@@ -3394,7 +3983,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                     null,
                     false,
                     Gio.FileCreateFlags.REPLACE_DESTINATION,
-                    null
+                    null,
                 );
             };
 
@@ -3407,11 +3996,16 @@ export default class KatabPreferences extends ExtensionPreferences {
                 const venvReady = Gio.File.new_for_path(venvPython).query_exists(null);
 
                 const ensureVenv = (done) => {
-                    if (venvReady) { done(); return; }
+                    if (venvReady) {
+                        done();
+                        return;
+                    }
                     ragServiceStatusRow.subtitle = 'Creating the Python virtual environment\u2026';
                     runCommand([python3Path, '-m', 'venv', venvDir], (res) => {
                         if (!res.success) {
-                            showServiceError('Could not create the Python venv. Install python3-venv and retry, or follow the Setup section below.');
+                            showServiceError(
+                                'Could not create the Python venv. Install python3-venv and retry, or follow the Setup section below.',
+                            );
                             return;
                         }
                         done();
@@ -3420,23 +4014,53 @@ export default class KatabPreferences extends ExtensionPreferences {
 
                 const ensureDeps = (done) => {
                     ragServiceStatusRow.subtitle = 'Checking Python dependencies\u2026';
-                    runCommand([venvPython, '-c', 'import chromadb, ollama, uvicorn, fastapi, pydantic, rank_bm25'], (check) => {
-                        if (check.success) { done(); return; }
-                        ragServiceStatusRow.subtitle = 'Installing Python dependencies (this can take a minute)\u2026';
-                        runCommand([venvPython, '-m', 'pip', 'install', 'chromadb', 'ollama', 'fastapi', 'uvicorn[standard]', 'rank-bm25'], (install) => {
-                            if (!install.success) {
-                                showServiceError(install.stderr?.trim() || 'Dependency installation failed \u2014 install them manually from the Setup section below.');
+                    runCommand(
+                        [
+                            venvPython,
+                            '-c',
+                            'import chromadb, ollama, uvicorn, fastapi, pydantic, rank_bm25',
+                        ],
+                        (check) => {
+                            if (check.success) {
+                                done();
                                 return;
                             }
-                            done();
-                        });
-                    });
+                            ragServiceStatusRow.subtitle =
+                                'Installing Python dependencies (this can take a minute)\u2026';
+                            runCommand(
+                                [
+                                    venvPython,
+                                    '-m',
+                                    'pip',
+                                    'install',
+                                    'chromadb',
+                                    'ollama',
+                                    'fastapi',
+                                    'uvicorn[standard]',
+                                    'rank-bm25',
+                                ],
+                                (install) => {
+                                    if (!install.success) {
+                                        showServiceError(
+                                            install.stderr?.trim() ||
+                                                'Dependency installation failed \u2014 install them manually from the Setup section below.',
+                                        );
+                                        return;
+                                    }
+                                    done();
+                                },
+                            );
+                        },
+                    );
                 };
 
                 const ensureUnit = (done) => {
                     // Only write a unit when none exists (custom installs are respected).
                     runSystemctl('cat', (cat) => {
-                        if (cat.success) { done(); return; }
+                        if (cat.success) {
+                            done();
+                            return;
+                        }
                         ragServiceStatusRow.subtitle = 'Writing the systemd unit file\u2026';
                         try {
                             writeDefaultUnitFile();
@@ -3451,17 +4075,23 @@ export default class KatabPreferences extends ExtensionPreferences {
                     ragServiceStatusRow.subtitle = 'Enabling and starting the service\u2026';
                     runSystemctlRaw(['daemon-reload'], (reload) => {
                         if (!reload.success) {
-                            showServiceError(reload.stderr?.trim() || 'systemctl daemon-reload failed.');
+                            showServiceError(
+                                reload.stderr?.trim() || 'systemctl daemon-reload failed.',
+                            );
                             return;
                         }
                         runSystemctl('enable', (enable) => {
                             if (!enable.success) {
-                                showServiceError(enable.stderr?.trim() || 'systemctl enable failed.');
+                                showServiceError(
+                                    enable.stderr?.trim() || 'systemctl enable failed.',
+                                );
                                 return;
                             }
                             runSystemctl('start', (start) => {
                                 if (!start.success) {
-                                    showServiceError(start.stderr?.trim() || 'systemctl start failed.');
+                                    showServiceError(
+                                        start.stderr?.trim() || 'systemctl start failed.',
+                                    );
                                     return;
                                 }
                                 done();
@@ -3470,24 +4100,36 @@ export default class KatabPreferences extends ExtensionPreferences {
                     });
                 };
 
-                ensureVenv(() => ensureDeps(() => ensureUnit(() => enableAndStart(() => {
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
-                        refreshServiceStatus();
-                        return GLib.SOURCE_REMOVE;
-                    });
-                }))));
+                ensureVenv(() =>
+                    ensureDeps(() =>
+                        ensureUnit(() =>
+                            enableAndStart(() => {
+                                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+                                    refreshServiceStatus();
+                                    return GLib.SOURCE_REMOVE;
+                                });
+                            }),
+                        ),
+                    ),
+                );
             };
 
             setupBtn.connect('clicked', autoSetupService);
-            startBtn.connect('clicked', () => runServiceAction('start', 'Starting the service\u2026'));
-            restartBtn.connect('clicked', () => runServiceAction('restart', 'Restarting the service\u2026'));
-            stopBtn.connect('clicked', () => runServiceAction('stop', 'Stopping the service\u2026'));
+            startBtn.connect('clicked', () =>
+                runServiceAction('start', 'Starting the service\u2026'),
+            );
+            restartBtn.connect('clicked', () =>
+                runServiceAction('restart', 'Restarting the service\u2026'),
+            );
+            stopBtn.connect('clicked', () =>
+                runServiceAction('stop', 'Stopping the service\u2026'),
+            );
 
             createInfoRow(
                 'Service Controls',
                 'Set Up & Start performs the default install (Python venv, dependencies, and unit file) and starts the service, adapting to what is already present. Start, Restart, and Stop manage the installed unit.',
                 serviceGroup,
-                serviceButtons
+                serviceButtons,
             );
 
             GLib.idle_add(GLib.PRIORITY_LOW, () => {
@@ -3507,7 +4149,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Characters per text chunk. Larger chunks preserve context but reduce precision. (200–4000)',
                 'rag-chunk-size',
                 indexingGroup,
-                200, 4000, 50
+                200,
+                4000,
+                50,
             );
 
             createIntRow(
@@ -3515,7 +4159,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Character overlap between chunks. Prevents information loss at boundaries. (0–500)',
                 'rag-chunk-overlap',
                 indexingGroup,
-                0, 500, 10
+                0,
+                500,
+                10,
             );
 
             createIntRow(
@@ -3523,13 +4169,16 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Number of top results to retrieve per query. (1–20)',
                 'rag-top-k',
                 indexingGroup,
-                1, 20, 1
+                1,
+                20,
+                1,
             );
 
             // ---- Storage Limits ----
             const limitsGroup = createPreferencesGroup({
                 title: 'Storage Limits',
-                description: 'Prevent the knowledge base from growing beyond your disk budget. Set to 0 to disable a cap.',
+                description:
+                    'Prevent the knowledge base from growing beyond your disk budget. Set to 0 to disable a cap.',
             });
             detailPage.add(limitsGroup);
 
@@ -3538,7 +4187,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Hard cap on chunks in any single collection. 0 = unlimited. (0–100000)',
                 'rag-max-chunks-per-collection',
                 limitsGroup,
-                0, 100000, 1000
+                0,
+                100000,
+                1000,
             );
 
             createIntRow(
@@ -3546,41 +4197,44 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Estimated maximum disk usage for the ChromaDB directory. 0 = unlimited. (0–10000)',
                 'rag-max-total-size-mb',
                 limitsGroup,
-                0, 10000, 50
+                0,
+                10000,
+                50,
             );
 
             createBooleanRow(
                 'Auto-Prune Oldest Chunks',
                 'When a collection hits its size cap, automatically remove the oldest chunks to make room. When disabled, new indexing is rejected at the cap.',
                 'rag-auto-prune',
-                limitsGroup
+                limitsGroup,
             );
 
             createBooleanRow(
                 'Index Document Attachments',
                 'Automatically add attached documents (txt, md, pdf, docx) to the knowledge base.',
                 'rag-index-documents',
-                indexingGroup
+                indexingGroup,
             );
 
             createBooleanRow(
                 'Index Conversations',
                 'Automatically add past conversation turns to the knowledge base for cross-session retrieval.',
                 'rag-index-conversations',
-                indexingGroup
+                indexingGroup,
             );
 
             createBooleanRow(
                 'Index Research Cache',
                 'Automatically add web search and scraping results to the knowledge base.',
                 'rag-index-research-cache',
-                indexingGroup
+                indexingGroup,
             );
 
             // ---- Autonomous ----
             const autonomousGroup = createPreferencesGroup({
                 title: 'Autonomous Tool Use',
-                description: 'Let supported models call knowledge_search on their own when they think it would help.',
+                description:
+                    'Let supported models call knowledge_search on their own when they think it would help.',
             });
             detailPage.add(autonomousGroup);
 
@@ -3588,20 +4242,21 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Allow Model-Triggered Knowledge Search',
                 'Advertise the knowledge_search tool to capable models. When disabled, only the manual /kb command works.',
                 'rag-autonomous-enabled',
-                autonomousGroup
+                autonomousGroup,
             );
 
             createBooleanRow(
                 'Auto-Update Knowledge Base',
-                'When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you\'ll be asked to confirm each update.',
+                "When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you'll be asked to confirm each update.",
                 'rag-auto-update-enabled',
-                autonomousGroup
+                autonomousGroup,
             );
 
             // ---- Advanced Retrieval (Phase 3) ----
             const advancedGroup = createPreferencesGroup({
                 title: 'Advanced Retrieval',
-                description: 'Fine-tune how the knowledge base finds and ranks results. These features require additional models and add latency, but significantly improve result quality.',
+                description:
+                    'Fine-tune how the knowledge base finds and ranks results. These features require additional models and add latency, but significantly improve result quality.',
             });
             detailPage.add(advancedGroup);
 
@@ -3610,20 +4265,23 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Auto-Fallback to Web Search',
                 'When knowledge base results are low-quality, automatically trigger a web search as a supplement. This is the reverse direction of the existing suppression for high-confidence KB results.',
                 'rag-fallback-enabled',
-                advancedGroup
+                advancedGroup,
             );
 
             const fallbackThresholds = [
                 [0.35, 'Strict (only fallback when KB is very poor)'],
-                [0.60, 'Moderate (recommended)'],
-                [0.80, 'Aggressive (fallback frequently)'],
+                [0.6, 'Moderate (recommended)'],
+                [0.8, 'Aggressive (fallback frequently)'],
             ];
             const { row: fallbackThreshRow } = createDoubleRow(
                 'Fallback Threshold',
                 'Minimum best-result score (0.0–1.0) before auto-triggering web search.',
                 'rag-fallback-threshold',
                 advancedGroup,
-                0.0, 1.0, 0.05, 2
+                0.0,
+                1.0,
+                0.05,
+                2,
             );
 
             // Update the threshold subtitle based on current value
@@ -3632,11 +4290,16 @@ export default class KatabPreferences extends ExtensionPreferences {
                     const val = settings.get_double('rag-fallback-threshold');
                     let desc = '';
                     for (const [threshold, label] of fallbackThresholds) {
-                        if (val < threshold) { desc = label; break; }
+                        if (val < threshold) {
+                            desc = label;
+                            break;
+                        }
                     }
                     if (!desc) desc = fallbackThresholds[fallbackThresholds.length - 1][1];
                     fallbackThreshRow.subtitle = `Current: ${val.toFixed(2)} — ${desc}`;
-                } catch (_) { /* settings may not be ready */ }
+                } catch (_) {
+                    /* settings may not be ready */
+                }
             };
             updateFallbackSubtitle();
             settings.connect('changed::rag-fallback-threshold', updateFallbackSubtitle);
@@ -3646,14 +4309,14 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Reranking',
                 'Re-rank top candidate chunks with a local scoring model (bge-reranker-v2-m3 or similar) on your Ollama host. Chunks are scored in one batched call per 10 candidates. Requires the model to be pulled first.',
                 'rag-rerank-enabled',
-                advancedGroup
+                advancedGroup,
             );
 
             createStringRow(
                 'Reranker Model',
                 'Ollama model used for cross-encoder reranking. Must be pulled first.',
                 'rag-rerank-model',
-                advancedGroup
+                advancedGroup,
             );
 
             createIntRow(
@@ -3661,7 +4324,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)',
                 'rag-rerank-candidate-multiplier',
                 advancedGroup,
-                1, 10, 1
+                1,
+                10,
+                1,
             );
 
             // -- Hybrid BM25 --
@@ -3669,7 +4334,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Hybrid BM25 + Dense Retrieval',
                 'Combine keyword matching (BM25) with semantic search (dense embeddings) for better recall. Enabled by default — the service falls back to dense-only if rank-bm25 is not installed.',
                 'rag-hybrid-enabled',
-                advancedGroup
+                advancedGroup,
             );
 
             // ---- Maintenance ----
@@ -3683,7 +4348,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             const { row: ragUsageRow, badge: ragUsageBadge } = createStatusRow(
                 'Current Usage',
                 'Click "Refresh" to check usage against your storage limits.',
-                maintenanceGroup
+                maintenanceGroup,
             );
             setStatusBadge(ragUsageBadge, 'Unknown', null);
 
@@ -3698,46 +4363,69 @@ export default class KatabPreferences extends ExtensionPreferences {
                     const message = Soup.Message.new('GET', url);
                     message.request_headers.append('Accept', 'application/json');
 
-                    session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
-                        try {
-                            const bytes = s.send_and_read_finish(result);
-                            const decoder = new TextDecoder('utf-8');
-                            const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
-                            const limits = body?.limits || {};
-                            const totalChunks = limits.total_chunks || 0;
-                            const estMb = limits.estimated_size_mb || 0;
-                            const maxChunks = limits.max_chunks_per_collection || 0;
-                            const maxMb = limits.max_total_size_mb || 0;
+                    session.send_and_read_async(
+                        message,
+                        GLib.PRIORITY_DEFAULT,
+                        null,
+                        (s, result) => {
+                            try {
+                                const bytes = s.send_and_read_finish(result);
+                                const decoder = new TextDecoder('utf-8');
+                                const body = JSON.parse(
+                                    decoder.decode(bytes.get_data() || new Uint8Array()),
+                                );
+                                const limits = body?.limits || {};
+                                const totalChunks = limits.total_chunks || 0;
+                                const estMb = limits.estimated_size_mb || 0;
+                                const maxChunks = limits.max_chunks_per_collection || 0;
+                                const maxMb = limits.max_total_size_mb || 0;
 
-                            let pctText = '';
-                            if (maxMb > 0 && estMb > 0) {
-                                const pct = Math.round((estMb / maxMb) * 100);
-                                pctText = ` (${pct}% of cap)`;
+                                let pctText = '';
+                                if (maxMb > 0 && estMb > 0) {
+                                    const pct = Math.round((estMb / maxMb) * 100);
+                                    pctText = ` (${pct}% of cap)`;
+                                }
+
+                                const colNames =
+                                    Object.keys(body?.collections || {}).join(', ') || '(none)';
+
+                                // Phase 3: feature availability
+                                const rerankerOk = limits.reranker_available ? '✓rerank' : '';
+                                const bm25Info =
+                                    limits.bm25_collections > 0
+                                        ? `✓bm25(${limits.bm25_collections})`
+                                        : '';
+                                const features = [rerankerOk, bm25Info].filter(Boolean).join(' ');
+                                const featureStr = features ? ` [${features}]` : '';
+
+                                if (totalChunks === 0) {
+                                    setStatusBadge(ragUsageBadge, 'Empty', null);
+                                    ragUsageRow.subtitle = `Knowledge base is empty.${featureStr}`;
+                                } else if (maxMb > 0 && estMb >= maxMb * 0.9) {
+                                    setStatusBadge(
+                                        ragUsageBadge,
+                                        'Near Limit',
+                                        'katab-prefs-status-install',
+                                    );
+                                    ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
+                                } else {
+                                    setStatusBadge(
+                                        ragUsageBadge,
+                                        'Healthy',
+                                        'katab-prefs-status-detected',
+                                    );
+                                    ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
+                                }
+                            } catch (e) {
+                                setStatusBadge(
+                                    ragUsageBadge,
+                                    'Unavailable',
+                                    'katab-prefs-status-install',
+                                );
+                                ragUsageRow.subtitle = 'Cannot reach RAG service.';
                             }
-
-                            const colNames = Object.keys(body?.collections || {}).join(', ') || '(none)';
-
-                            // Phase 3: feature availability
-                            const rerankerOk = limits.reranker_available ? '✓rerank' : '';
-                            const bm25Info = limits.bm25_collections > 0 ? `✓bm25(${limits.bm25_collections})` : '';
-                            const features = [rerankerOk, bm25Info].filter(Boolean).join(' ');
-                            const featureStr = features ? ` [${features}]` : '';
-
-                            if (totalChunks === 0) {
-                                setStatusBadge(ragUsageBadge, 'Empty', null);
-                                ragUsageRow.subtitle = `Knowledge base is empty.${featureStr}`;
-                            } else if (maxMb > 0 && estMb >= maxMb * 0.9) {
-                                setStatusBadge(ragUsageBadge, 'Near Limit', 'katab-prefs-status-install');
-                                ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
-                            } else {
-                                setStatusBadge(ragUsageBadge, 'Healthy', 'katab-prefs-status-detected');
-                                ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
-                            }
-                        } catch (e) {
-                            setStatusBadge(ragUsageBadge, 'Unavailable', 'katab-prefs-status-install');
-                            ragUsageRow.subtitle = 'Cannot reach RAG service.';
-                        }
-                    });
+                        },
+                    );
                 } catch (e) {
                     setStatusBadge(ragUsageBadge, 'Unavailable', 'katab-prefs-status-install');
                     ragUsageRow.subtitle = 'Cannot reach RAG service.';
@@ -3749,7 +4437,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Query the RAG service for current chunk counts and estimated disk usage.',
                 'Refresh',
                 refreshUsage,
-                maintenanceGroup
+                maintenanceGroup,
             );
 
             // Auto-refresh on first open
@@ -3762,7 +4450,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             const { row: ragMaintStatusRow, badge: ragMaintBadge } = createStatusRow(
                 'Operation Status',
                 'Idle.',
-                maintenanceGroup
+                maintenanceGroup,
             );
             setStatusBadge(ragMaintBadge, 'Idle', null);
 
@@ -3781,51 +4469,75 @@ export default class KatabPreferences extends ExtensionPreferences {
                         const message = Soup.Message.new('GET', url);
                         message.request_headers.append('Accept', 'application/json');
 
-                        session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
-                            try {
-                                const bytes = s.send_and_read_finish(result);
-                                const decoder = new TextDecoder('utf-8');
-                                const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
-                                const collections = body?.collections || {};
+                        session.send_and_read_async(
+                            message,
+                            GLib.PRIORITY_DEFAULT,
+                            null,
+                            (s, result) => {
+                                try {
+                                    const bytes = s.send_and_read_finish(result);
+                                    const decoder = new TextDecoder('utf-8');
+                                    const body = JSON.parse(
+                                        decoder.decode(bytes.get_data() || new Uint8Array()),
+                                    );
+                                    const collections = body?.collections || {};
 
-                                let totalEntries = 0;
-                                for (const entries of Object.values(collections)) {
-                                    totalEntries += Array.isArray(entries) ? entries.length : 0;
+                                    let totalEntries = 0;
+                                    for (const entries of Object.values(collections)) {
+                                        totalEntries += Array.isArray(entries) ? entries.length : 0;
+                                    }
+
+                                    if (totalEntries === 0) {
+                                        setStatusBadge(ragMaintBadge, 'Empty', null);
+                                        ragMaintStatusRow.subtitle =
+                                            'Knowledge base is empty — nothing to export.';
+                                        return;
+                                    }
+
+                                    // Save to ~/Documents/katabai-rag-export-<date>.json
+                                    const now = GLib.DateTime.new_now_local();
+                                    const dateStr = now ? now.format('%Y-%m-%d') : 'unknown';
+                                    const filename = `katabai-rag-export-${dateStr}.json`;
+                                    const docsDir = GLib.get_user_special_dir(
+                                        GLib.UserDirectory.DIRECTORY_DOCUMENTS,
+                                    );
+                                    const filePath = GLib.build_filenamev([docsDir, filename]);
+
+                                    const file = Gio.File.new_for_path(filePath);
+                                    const outStream = file.replace(
+                                        null,
+                                        false,
+                                        Gio.FileCreateFlags.NONE,
+                                        null,
+                                    );
+                                    const jsonStr = JSON.stringify(collections, null, 2);
+                                    outStream.write(jsonStr, null);
+                                    outStream.close(null);
+
+                                    const colNames = Object.keys(collections).join(', ');
+                                    setStatusBadge(
+                                        ragMaintBadge,
+                                        'Done',
+                                        'katab-prefs-status-detected',
+                                    );
+                                    ragMaintStatusRow.subtitle = `Exported ${totalEntries} entries (${colNames}) to ${filePath}`;
+                                } catch (e) {
+                                    setStatusBadge(
+                                        ragMaintBadge,
+                                        'Failed',
+                                        'katab-prefs-status-install',
+                                    );
+                                    ragMaintStatusRow.subtitle =
+                                        e?.message || 'Export failed — is the RAG service running?';
                                 }
-
-                                if (totalEntries === 0) {
-                                    setStatusBadge(ragMaintBadge, 'Empty', null);
-                                    ragMaintStatusRow.subtitle = 'Knowledge base is empty — nothing to export.';
-                                    return;
-                                }
-
-                                // Save to ~/Documents/katabai-rag-export-<date>.json
-                                const now = GLib.DateTime.new_now_local();
-                                const dateStr = now ? now.format('%Y-%m-%d') : 'unknown';
-                                const filename = `katabai-rag-export-${dateStr}.json`;
-                                const docsDir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS);
-                                const filePath = GLib.build_filenamev([docsDir, filename]);
-
-                                const file = Gio.File.new_for_path(filePath);
-                                const outStream = file.replace(null, false, Gio.FileCreateFlags.NONE, null);
-                                const jsonStr = JSON.stringify(collections, null, 2);
-                                outStream.write(jsonStr, null);
-                                outStream.close(null);
-
-                                const colNames = Object.keys(collections).join(', ');
-                                setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
-                                ragMaintStatusRow.subtitle = `Exported ${totalEntries} entries (${colNames}) to ${filePath}`;
-                            } catch (e) {
-                                setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
-                                ragMaintStatusRow.subtitle = e?.message || 'Export failed — is the RAG service running?';
-                            }
-                        });
+                            },
+                        );
                     } catch (e) {
                         setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
                         ragMaintStatusRow.subtitle = e?.message || 'Export failed.';
                     }
                 },
-                maintenanceGroup
+                maintenanceGroup,
             );
 
             createButtonRow(
@@ -3839,37 +4551,48 @@ export default class KatabPreferences extends ExtensionPreferences {
                         message_type: Gtk.MessageType.WARNING,
                         buttons: Gtk.ButtonsType.OK_CANCEL,
                         text: 'Re-index the entire knowledge base?',
-                        secondary_text: 'This will clear all existing index state and re-process your documents, conversations, and research cache on the next chat message.',
+                        secondary_text:
+                            'This will clear all existing index state and re-process your documents, conversations, and research cache on the next chat message.',
                     });
                     dialog.connect('response', (dlg, responseId) => {
                         if (responseId === Gtk.ResponseType.OK) {
                             // Delete the sentinel file to force re-indexing
                             const path = GLib.build_filenamev([
                                 GLib.get_home_dir(),
-                                '.local', 'share', 'katabai', 'rag-index-state.json',
+                                '.local',
+                                'share',
+                                'katabai',
+                                'rag-index-state.json',
                             ]);
                             try {
                                 const file = Gio.File.new_for_path(path);
                                 if (file.query_exists(null)) file.delete(null);
-                            } catch (_) { /* best effort */ }
+                            } catch (_) {
+                                /* best effort */
+                            }
                             // Signal the running extension to reset its in-memory
                             // index tracking immediately (otherwise the next
                             // debounced sentinel save resurrects the stale data
                             // and the re-index never happens without a reload).
                             try {
                                 settings.set_string('rag-maintenance-action', 'reindex');
-                                settings.set_int('rag-maintenance-generation',
-                                    settings.get_int('rag-maintenance-generation') + 1);
-                            } catch (_) { /* schema may be stale */ }
+                                settings.set_int(
+                                    'rag-maintenance-generation',
+                                    settings.get_int('rag-maintenance-generation') + 1,
+                                );
+                            } catch (_) {
+                                /* schema may be stale */
+                            }
 
                             setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
-                            ragMaintStatusRow.subtitle = 'Index state cleared — re-indexing will start now.';
+                            ragMaintStatusRow.subtitle =
+                                'Index state cleared — re-indexing will start now.';
                         }
                         dlg.destroy();
                     });
                     dialog.present();
                 },
-                maintenanceGroup
+                maintenanceGroup,
             );
 
             // ── Manual imports (processed by the running extension) ──────
@@ -3879,14 +4602,18 @@ export default class KatabPreferences extends ExtensionPreferences {
             const queueKbImport = (paths) => {
                 try {
                     const queuePath = GLib.build_filenamev([
-                        GLib.get_user_data_dir(), 'katabai', 'rag-import-queue.json',
+                        GLib.get_user_data_dir(),
+                        'katabai',
+                        'rag-import-queue.json',
                     ]);
                     GLib.file_set_contents(queuePath, JSON.stringify({ paths, ts: Date.now() }));
                     // Action first so the extension sees the right intent when
                     // the generation change arrives.
                     settings.set_string('rag-maintenance-action', 'import');
-                    settings.set_int('rag-maintenance-generation',
-                        settings.get_int('rag-maintenance-generation') + 1);
+                    settings.set_int(
+                        'rag-maintenance-generation',
+                        settings.get_int('rag-maintenance-generation') + 1,
+                    );
                     setStatusBadge(ragMaintBadge, 'Queued', 'katab-prefs-status-detected');
                     ragMaintStatusRow.subtitle = `Queued ${paths.length} path(s) — the running extension will import them now.`;
                 } catch (e) {
@@ -3900,7 +4627,9 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Add files (txt, md, pdf, docx, eml) from disk to the knowledge base. Up to 50 files per import.',
                 'Select Files…',
                 () => {
-                    const dialog = new Gtk.FileDialog({ title: 'Import files into the knowledge base' });
+                    const dialog = new Gtk.FileDialog({
+                        title: 'Import files into the knowledge base',
+                    });
                     dialog.open_multiple(window, null, (dlg, result) => {
                         try {
                             const model = dlg.open_multiple_finish(result);
@@ -3912,10 +4641,12 @@ export default class KatabPreferences extends ExtensionPreferences {
                                 if (p) paths.push(p);
                             }
                             if (paths.length > 0) queueKbImport(paths);
-                        } catch (_) { /* cancelled */ }
+                        } catch (_) {
+                            /* cancelled */
+                        }
                     });
                 },
-                maintenanceGroup
+                maintenanceGroup,
             );
 
             createButtonRow(
@@ -3923,16 +4654,20 @@ export default class KatabPreferences extends ExtensionPreferences {
                 'Import every supported file in a folder (and up to 3 levels of subfolders).',
                 'Select Folder…',
                 () => {
-                    const dialog = new Gtk.FileDialog({ title: 'Import a folder into the knowledge base' });
+                    const dialog = new Gtk.FileDialog({
+                        title: 'Import a folder into the knowledge base',
+                    });
                     dialog.select_folder(window, null, (dlg, result) => {
                         try {
                             const f = dlg.select_folder_finish(result);
                             const p = f?.get_path?.();
                             if (p) queueKbImport([p]);
-                        } catch (_) { /* cancelled */ }
+                        } catch (_) {
+                            /* cancelled */
+                        }
                     });
                 },
-                maintenanceGroup
+                maintenanceGroup,
             );
 
             createButtonRow(
@@ -3946,7 +4681,8 @@ export default class KatabPreferences extends ExtensionPreferences {
                         message_type: Gtk.MessageType.WARNING,
                         buttons: Gtk.ButtonsType.OK_CANCEL,
                         text: 'Delete the entire knowledge base?',
-                        secondary_text: 'All indexed documents, conversations, and research cache will be permanently removed from the ChromaDB database. This cannot be undone.',
+                        secondary_text:
+                            'All indexed documents, conversations, and research cache will be permanently removed from the ChromaDB database. This cannot be undone.',
                     });
                     dialog.connect('response', (dlg, responseId) => {
                         if (responseId === Gtk.ResponseType.OK) {
@@ -3960,45 +4696,82 @@ export default class KatabPreferences extends ExtensionPreferences {
                                 const message = Soup.Message.new('POST', url);
                                 message.request_headers.append('Accept', 'application/json');
 
-                                session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
-                                    try {
-                                        const bytes = s.send_and_read_finish(result);
-                                        const decoder = new TextDecoder('utf-8');
-                                        const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
-                                        const dropped = body?.dropped || [];
-
-                                        // Also clear the sentinel file
-                                        const sentinelPath = GLib.build_filenamev([
-                                            GLib.get_home_dir(),
-                                            '.local', 'share', 'katabai', 'rag-index-state.json',
-                                        ]);
+                                session.send_and_read_async(
+                                    message,
+                                    GLib.PRIORITY_DEFAULT,
+                                    null,
+                                    (s, result) => {
                                         try {
-                                            const f = Gio.File.new_for_path(sentinelPath);
-                                            if (f.query_exists(null)) f.delete(null);
-                                        } catch (_) { /* best effort */ }
-                                        // Tell the running extension to drop its
-                                        // in-memory sentinel too (it would otherwise
-                                        // rewrite stale ids to disk on the next save).
-                                        try {
-                                            settings.set_string('rag-maintenance-action', 'clear');
-                                            settings.set_int('rag-maintenance-generation',
-                                                settings.get_int('rag-maintenance-generation') + 1);
-                                        } catch (_) { /* schema may be stale */ }
+                                            const bytes = s.send_and_read_finish(result);
+                                            const decoder = new TextDecoder('utf-8');
+                                            const body = JSON.parse(
+                                                decoder.decode(
+                                                    bytes.get_data() || new Uint8Array(),
+                                                ),
+                                            );
+                                            const dropped = body?.dropped || [];
 
-                                        if (dropped.length > 0) {
-                                            setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
-                                            ragMaintStatusRow.subtitle = `Cleared ${dropped.length} collection(s): ${dropped.join(', ')}.`;
-                                        } else {
-                                            setStatusBadge(ragMaintBadge, 'Empty', null);
-                                            ragMaintStatusRow.subtitle = 'Knowledge base was already empty.';
+                                            // Also clear the sentinel file
+                                            const sentinelPath = GLib.build_filenamev([
+                                                GLib.get_home_dir(),
+                                                '.local',
+                                                'share',
+                                                'katabai',
+                                                'rag-index-state.json',
+                                            ]);
+                                            try {
+                                                const f = Gio.File.new_for_path(sentinelPath);
+                                                if (f.query_exists(null)) f.delete(null);
+                                            } catch (_) {
+                                                /* best effort */
+                                            }
+                                            // Tell the running extension to drop its
+                                            // in-memory sentinel too (it would otherwise
+                                            // rewrite stale ids to disk on the next save).
+                                            try {
+                                                settings.set_string(
+                                                    'rag-maintenance-action',
+                                                    'clear',
+                                                );
+                                                settings.set_int(
+                                                    'rag-maintenance-generation',
+                                                    settings.get_int('rag-maintenance-generation') +
+                                                        1,
+                                                );
+                                            } catch (_) {
+                                                /* schema may be stale */
+                                            }
+
+                                            if (dropped.length > 0) {
+                                                setStatusBadge(
+                                                    ragMaintBadge,
+                                                    'Done',
+                                                    'katab-prefs-status-detected',
+                                                );
+                                                ragMaintStatusRow.subtitle = `Cleared ${dropped.length} collection(s): ${dropped.join(', ')}.`;
+                                            } else {
+                                                setStatusBadge(ragMaintBadge, 'Empty', null);
+                                                ragMaintStatusRow.subtitle =
+                                                    'Knowledge base was already empty.';
+                                            }
+                                        } catch (e) {
+                                            setStatusBadge(
+                                                ragMaintBadge,
+                                                'Failed',
+                                                'katab-prefs-status-install',
+                                            );
+                                            ragMaintStatusRow.subtitle =
+                                                e?.message ||
+                                                'Clear failed — is the RAG service running?';
                                         }
-                                    } catch (e) {
-                                        setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
-                                        ragMaintStatusRow.subtitle = e?.message || 'Clear failed — is the RAG service running?';
-                                    }
-                                });
+                                    },
+                                );
                             } catch (e) {
-                                setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
+                                setStatusBadge(
+                                    ragMaintBadge,
+                                    'Failed',
+                                    'katab-prefs-status-install',
+                                );
                                 ragMaintStatusRow.subtitle = e?.message || 'Clear failed.';
                             }
                         }
@@ -4006,7 +4779,7 @@ export default class KatabPreferences extends ExtensionPreferences {
                     });
                     dialog.present();
                 },
-                maintenanceGroup
+                maintenanceGroup,
             );
         }
 
@@ -4017,13 +4790,14 @@ export default class KatabPreferences extends ExtensionPreferences {
 
             const drIntroGroup = createPreferencesGroup({
                 title: 'Deep Research',
-                description: 'Deep Research runs a multi-phase pipeline (plan → branches → gap analysis → refinement → two-pass synthesis). Enable Web Search or Web Scraper to use it, then start a run from the chat footer Research button or the /research command.',
+                description:
+                    'Deep Research runs a multi-phase pipeline (plan → branches → gap analysis → refinement → two-pass synthesis). Enable Web Search or Web Scraper to use it, then start a run from the chat footer Research button or the /research command.',
             });
 
             const drDepthRow = createChoiceRow(
                 'Research Depth',
                 'Standard keeps the current pipeline. Deep adds automatic quality retries and more gap queries. Max raises the quality bar and synthesis context budget further — more tokens and longer runs.',
-                drIntroGroup
+                drIntroGroup,
             );
             bindChoiceRow(
                 drDepthRow,
@@ -4035,26 +4809,27 @@ export default class KatabPreferences extends ExtensionPreferences {
                 ],
                 settings.get_string.bind(settings),
                 settings.set_string.bind(settings),
-                value => `Custom (${value})`
+                (value) => `Custom (${value})`,
             );
 
             const drModelsGroup = createPreferencesGroup({
                 title: 'Model Overrides',
-                description: 'Optional per-role model overrides — leave empty to use the active provider model. Compression runs on every scraped page (high volume); synthesis covers planning, critique, gap analysis, outline, and the final report.',
+                description:
+                    'Optional per-role model overrides — leave empty to use the active provider model. Compression runs on every scraped page (high volume); synthesis covers planning, critique, gap analysis, outline, and the final report.',
             });
 
             createStringRow(
                 'Compression Model',
                 'Cheap/fast model for high-volume page compression. Leave empty for the active model.',
                 'deep-research-compression-model',
-                drModelsGroup
+                drModelsGroup,
             );
 
             createStringRow(
                 'Synthesis Model',
                 'Stronger model for planning and the final report. Leave empty for the active model.',
                 'deep-research-synthesis-model',
-                drModelsGroup
+                drModelsGroup,
             );
 
             detailPage.add(drIntroGroup);
@@ -4080,7 +4855,8 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createToolIndexRow(toolsIndexGroup, {
             title: 'Web Scraper',
-            subtitle: 'Deep-scrape web pages into clean Markdown through your self-hosted Crawl4AI instance.',
+            subtitle:
+                'Deep-scrape web pages into clean Markdown through your self-hosted Crawl4AI instance.',
             iconName: 'document-open-symbolic',
             enabledKey: 'crawl4ai-enabled',
             navPage: crawl4aiSubpage.navPage,
@@ -4088,7 +4864,8 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createToolIndexRow(toolsIndexGroup, {
             title: 'Knowledge Base',
-            subtitle: 'Semantically search across documents, conversations, and research using local RAG.',
+            subtitle:
+                'Semantically search across documents, conversations, and research using local RAG.',
             iconName: 'drive-harddisk-symbolic',
             gicon: Gio.icon_new_for_string(`${extensionPath}/icons/katab-knowledge-symbolic.svg`),
             enabledKey: 'rag-enabled',
@@ -4097,7 +4874,8 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         createToolIndexRow(toolsIndexGroup, {
             title: 'Deep Research',
-            subtitle: 'Multi-phase research reports: plan, search, gap analysis, refinement, and two-pass synthesis.',
+            subtitle:
+                'Multi-phase research reports: plan, search, gap analysis, refinement, and two-pass synthesis.',
             iconName: 'content-loading-symbolic',
             navPage: deepResearchSubpage.navPage,
         });
@@ -4118,7 +4896,7 @@ export default class KatabPreferences extends ExtensionPreferences {
 
         try {
             let session = new Soup.Session();
-            session.timeout = 8;  // seconds, same as health monitor probe
+            session.timeout = 8; // seconds, same as health monitor probe
 
             let message = Soup.Message.new('GET', url);
             message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);

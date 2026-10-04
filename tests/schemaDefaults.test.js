@@ -16,16 +16,24 @@ function resolveSchemaPath() {
         if (import.meta && import.meta.url) {
             const [modulePath] = GLib.filename_from_uri(import.meta.url);
             const repoRoot = GLib.path_get_dirname(GLib.path_get_dirname(modulePath));
-            candidates.push(GLib.build_filenamev([
-                repoRoot, 'schemas', 'org.gnome.shell.extensions.katabai.gschema.xml',
-            ]));
+            candidates.push(
+                GLib.build_filenamev([
+                    repoRoot,
+                    'schemas',
+                    'org.gnome.shell.extensions.katabai.gschema.xml',
+                ]),
+            );
         }
     } catch (_e) {
         // Fall through to the cwd-based candidate.
     }
-    candidates.push(GLib.build_filenamev([
-        GLib.get_current_dir(), 'schemas', 'org.gnome.shell.extensions.katabai.gschema.xml',
-    ]));
+    candidates.push(
+        GLib.build_filenamev([
+            GLib.get_current_dir(),
+            'schemas',
+            'org.gnome.shell.extensions.katabai.gschema.xml',
+        ]),
+    );
     for (const candidate of candidates) {
         if (GLib.file_test(candidate, GLib.FileTest.EXISTS)) {
             return candidate;
@@ -52,7 +60,9 @@ function escapeRegExp(text) {
 
 /** Extract the <default> value for a schema key (string defaults are single-quoted). */
 function schemaDefault(key) {
-    const pattern = new RegExp(`<key name="${escapeRegExp(key)}"[^>]*>[\\s\\S]*?<default>([\\s\\S]*?)</default>`);
+    const pattern = new RegExp(
+        `<key name="${escapeRegExp(key)}"[^>]*>[\\s\\S]*?<default>([\\s\\S]*?)</default>`,
+    );
     const match = SCHEMA_XML.match(pattern);
     if (!match) {
         throw new Error(`Schema key not found (or has no default): ${key}`);
@@ -70,16 +80,27 @@ function schemaDefault(key) {
 }
 
 function assertStringMatches(actual, schemaKey) {
-    assertEqual(actual, schemaDefault(schemaKey), `${schemaKey}: module fallback matches schema default`);
+    assertEqual(
+        actual,
+        schemaDefault(schemaKey),
+        `${schemaKey}: module fallback matches schema default`,
+    );
 }
 
 function assertIntMatches(actual, schemaKey) {
-    assertEqual(actual, Number(schemaDefault(schemaKey)), `${schemaKey}: module fallback matches schema default`);
+    assertEqual(
+        actual,
+        Number(schemaDefault(schemaKey)),
+        `${schemaKey}: module fallback matches schema default`,
+    );
 }
 
 function assertDoubleMatches(actual, schemaKey) {
     const expected = Number(schemaDefault(schemaKey));
-    assert(Math.abs(actual - expected) < 1e-9, `${schemaKey}: module fallback ${actual} != schema default ${expected}`);
+    assert(
+        Math.abs(actual - expected) < 1e-9,
+        `${schemaKey}: module fallback ${actual} != schema default ${expected}`,
+    );
 }
 
 // The crawl4ai reader applies `||` fallbacks when getters return empty values,
@@ -90,69 +111,95 @@ const crawl = readCrawl4AIConfig(emptySettings);
 // The rag reader applies fallbacks in its try/catch blocks, so the settings
 // mock must throw to exercise the duplicated defaults.
 const throwingSettings = {
-    get_string: () => { throw new Error('unset'); },
-    get_boolean: () => { throw new Error('unset'); },
-    get_int: () => { throw new Error('unset'); },
-    get_double: () => { throw new Error('unset'); },
+    get_string: () => {
+        throw new Error('unset');
+    },
+    get_boolean: () => {
+        throw new Error('unset');
+    },
+    get_int: () => {
+        throw new Error('unset');
+    },
+    get_double: () => {
+        throw new Error('unset');
+    },
 };
 const rag = readRagConfig(throwingSettings);
 
 const tests = [
-    ['schema file is readable and contains expected keys', () => {
-        assert(SCHEMA_XML.includes('crawl4ai-llm-provider'), 'schema contains crawl4ai keys');
-        assert(SCHEMA_XML.includes('rag-service-url'), 'schema contains rag keys');
-    }],
+    [
+        'schema file is readable and contains expected keys',
+        () => {
+            assert(SCHEMA_XML.includes('crawl4ai-llm-provider'), 'schema contains crawl4ai keys');
+            assert(SCHEMA_XML.includes('rag-service-url'), 'schema contains rag keys');
+        },
+    ],
 
     // ── Crawl4AI: reader fallbacks vs schema defaults ──────────────────────
 
-    ['crawl4ai: string fallbacks match schema defaults', () => {
-        assertStringMatches(crawl.fitMarkdownMode, 'crawl4ai-fit-markdown-mode');
-        assertStringMatches(crawl.cacheMode, 'crawl4ai-cache-mode');
-        assertStringMatches(crawl.extractionMode, 'crawl4ai-extraction-mode');
-        assertStringMatches(crawl.llmProvider, 'crawl4ai-llm-provider');
-        assertStringMatches(crawl.llmInstruction, 'crawl4ai-llm-instruction');
-        assertStringMatches(crawl.llmSchemaJson, 'crawl4ai-llm-schema-json');
-    }],
+    [
+        'crawl4ai: string fallbacks match schema defaults',
+        () => {
+            assertStringMatches(crawl.fitMarkdownMode, 'crawl4ai-fit-markdown-mode');
+            assertStringMatches(crawl.cacheMode, 'crawl4ai-cache-mode');
+            assertStringMatches(crawl.extractionMode, 'crawl4ai-extraction-mode');
+            assertStringMatches(crawl.llmProvider, 'crawl4ai-llm-provider');
+            assertStringMatches(crawl.llmInstruction, 'crawl4ai-llm-instruction');
+            assertStringMatches(crawl.llmSchemaJson, 'crawl4ai-llm-schema-json');
+        },
+    ],
 
-    ['crawl4ai: numeric fallbacks match schema defaults', () => {
-        assertIntMatches(crawl.wordCountThreshold, 'crawl4ai-word-count-threshold');
-        assertIntMatches(crawl.pageTimeout, 'crawl4ai-page-timeout');
-        assertIntMatches(crawl.maxChars, 'crawl4ai-max-chars');
-        assertIntMatches(crawl.jobPollMs, 'crawl4ai-job-poll-ms');
-        assertIntMatches(crawl.llmChunkTokenThreshold, 'crawl4ai-llm-chunk-token-threshold');
-        assertDoubleMatches(crawl.llmOverlapRate, 'crawl4ai-llm-overlap-rate');
-    }],
+    [
+        'crawl4ai: numeric fallbacks match schema defaults',
+        () => {
+            assertIntMatches(crawl.wordCountThreshold, 'crawl4ai-word-count-threshold');
+            assertIntMatches(crawl.pageTimeout, 'crawl4ai-page-timeout');
+            assertIntMatches(crawl.maxChars, 'crawl4ai-max-chars');
+            assertIntMatches(crawl.jobPollMs, 'crawl4ai-job-poll-ms');
+            assertIntMatches(crawl.llmChunkTokenThreshold, 'crawl4ai-llm-chunk-token-threshold');
+            assertDoubleMatches(crawl.llmOverlapRate, 'crawl4ai-llm-overlap-rate');
+        },
+    ],
 
     // ── RAG: reader fallbacks vs schema defaults ───────────────────────────
 
-    ['rag: string fallbacks match schema defaults', () => {
-        assertStringMatches(rag.serviceUrl, 'rag-service-url');
-        assertStringMatches(rag.ollamaUrl, 'rag-ollama-url');
-        assertStringMatches(rag.embeddingModel, 'rag-embedding-model');
-        assertStringMatches(rag.rerankModel, 'rag-rerank-model');
-    }],
+    [
+        'rag: string fallbacks match schema defaults',
+        () => {
+            assertStringMatches(rag.serviceUrl, 'rag-service-url');
+            assertStringMatches(rag.ollamaUrl, 'rag-ollama-url');
+            assertStringMatches(rag.embeddingModel, 'rag-embedding-model');
+            assertStringMatches(rag.rerankModel, 'rag-rerank-model');
+        },
+    ],
 
-    ['rag: numeric fallbacks match schema defaults', () => {
-        assertIntMatches(rag.chunkSize, 'rag-chunk-size');
-        assertIntMatches(rag.chunkOverlap, 'rag-chunk-overlap');
-        assertIntMatches(rag.topK, 'rag-top-k');
-        assertIntMatches(rag.maxChunksPerCollection, 'rag-max-chunks-per-collection');
-        assertIntMatches(rag.maxTotalSizeMb, 'rag-max-total-size-mb');
-        assertIntMatches(rag.rerankCandidateMultiplier, 'rag-rerank-candidate-multiplier');
-        assertDoubleMatches(rag.fallbackThreshold, 'rag-fallback-threshold');
-    }],
+    [
+        'rag: numeric fallbacks match schema defaults',
+        () => {
+            assertIntMatches(rag.chunkSize, 'rag-chunk-size');
+            assertIntMatches(rag.chunkOverlap, 'rag-chunk-overlap');
+            assertIntMatches(rag.topK, 'rag-top-k');
+            assertIntMatches(rag.maxChunksPerCollection, 'rag-max-chunks-per-collection');
+            assertIntMatches(rag.maxTotalSizeMb, 'rag-max-total-size-mb');
+            assertIntMatches(rag.rerankCandidateMultiplier, 'rag-rerank-candidate-multiplier');
+            assertDoubleMatches(rag.fallbackThreshold, 'rag-fallback-threshold');
+        },
+    ],
 
     // ── Parser self-check ──────────────────────────────────────────────────
 
-    ['schema parser throws for a missing key', () => {
-        let threw = false;
-        try {
-            schemaDefault('definitely-not-a-key');
-        } catch (_e) {
-            threw = true;
-        }
-        assert(threw, 'missing key must throw');
-    }],
+    [
+        'schema parser throws for a missing key',
+        () => {
+            let threw = false;
+            try {
+                schemaDefault('definitely-not-a-key');
+            } catch (_e) {
+                threw = true;
+            }
+            assert(threw, 'missing key must throw');
+        },
+    ],
 ];
 
 await runTests(tests);

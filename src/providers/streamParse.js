@@ -63,12 +63,20 @@ export function splitThinkingTags(deltaText, isThinking = false) {
  *             toolCalls: object[]|null, done: boolean, metrics: object|null }}
  */
 export function parseOllamaChunk(parsed) {
-    const result = { error: null, text: '', think: '', toolCalls: null, done: false, metrics: null };
+    const result = {
+        error: null,
+        text: '',
+        think: '',
+        toolCalls: null,
+        done: false,
+        metrics: null,
+    };
 
     if (parsed.error) {
-        result.error = typeof parsed.error === 'string'
-            ? parsed.error
-            : (parsed.error.message || 'Unknown Ollama error');
+        result.error =
+            typeof parsed.error === 'string'
+                ? parsed.error
+                : parsed.error.message || 'Unknown Ollama error';
         return result;
     }
 
@@ -104,7 +112,13 @@ export function parseOllamaChunk(parsed) {
  *             toolCallFragments: object[]|null, usage: object|null }}
  */
 export function parseOpenAiCompatChunk(parsed) {
-    const result = { serverToolResult: null, text: '', think: '', toolCallFragments: null, usage: null };
+    const result = {
+        serverToolResult: null,
+        text: '',
+        think: '',
+        toolCallFragments: null,
+        usage: null,
+    };
 
     if (parsed.type === 'tool_result') {
         const toolContent = parsed.content || 'No output.';
@@ -239,7 +253,7 @@ export function extractOllamaMetrics(payload) {
         eval_duration: numberOrNull(payload.eval_duration),
     };
 
-    return Object.values(metrics).some(value => value !== null) ? metrics : null;
+    return Object.values(metrics).some((value) => value !== null) ? metrics : null;
 }
 
 /**
@@ -255,10 +269,12 @@ export function extractDeepSeekMetrics(usageChunk) {
         prompt_tokens: numberOrNull(usageChunk.prompt_tokens),
         completion_tokens: numberOrNull(usageChunk.completion_tokens),
         total_tokens: numberOrNull(usageChunk.total_tokens),
-        reasoning_tokens: numberOrNull(usageChunk.completion_tokens_details?.reasoning_tokens ?? null),
+        reasoning_tokens: numberOrNull(
+            usageChunk.completion_tokens_details?.reasoning_tokens ?? null,
+        ),
         cached_tokens_hit: numberOrNull(usageChunk.prompt_cache_hit_tokens ?? null),
         cached_tokens_miss: numberOrNull(usageChunk.prompt_cache_miss_tokens ?? null),
     };
 
-    return Object.values(metrics).some(value => value !== null) ? metrics : null;
+    return Object.values(metrics).some((value) => value !== null) ? metrics : null;
 }

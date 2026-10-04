@@ -24,149 +24,202 @@ await import('../src/tools/toolDefinitions.js');
 const tests = [
     // ── Tool count ─────────────────────────────────────────────────────────
 
-    ['toolDefinitions: all expected tools registered', () => {
-        const names = getAllToolNames();
-        // toolDefinitions.js registers: web_search, read_url, crawl_url, document,
-        // deep_research, knowledge_search. Additionally, ragTools.js may register
-        // update_knowledge if imported transitively.
-        const expected = ['web_search', 'read_url', 'crawl_url', 'document', 'deep_research', 'knowledge_search', 'forget_knowledge'];
-        for (const name of expected) {
-            assert(names.includes(name), `${name} is registered`);
-        }
-        assert(names.length >= 6, 'at least 6 tools');
-    }],
+    [
+        'toolDefinitions: all expected tools registered',
+        () => {
+            const names = getAllToolNames();
+            // toolDefinitions.js registers: web_search, read_url, crawl_url, document,
+            // deep_research, knowledge_search. Additionally, ragTools.js may register
+            // update_knowledge if imported transitively.
+            const expected = [
+                'web_search',
+                'read_url',
+                'crawl_url',
+                'document',
+                'deep_research',
+                'knowledge_search',
+                'forget_knowledge',
+            ];
+            for (const name of expected) {
+                assert(names.includes(name), `${name} is registered`);
+            }
+            assert(names.length >= 6, 'at least 6 tools');
+        },
+    ],
 
     // ── Individual tool verification ───────────────────────────────────────
 
-    ['toolDefinitions: web_search', () => {
-        const tool = lookupTool('web_search');
-        assert(tool !== undefined, 'web_search exists');
-        assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
-        assertEqual(tool.isMeta, false, 'not meta');
-        assertEqual(tool.uiLabel, 'Search', 'ui label');
-        assertEqual(tool.command, '/search', 'slash command');
-        assert(tool.parameters !== null, 'has parameters');
-        assert(tool.parameters.required.includes('query'), 'requires query');
-    }],
+    [
+        'toolDefinitions: web_search',
+        () => {
+            const tool = lookupTool('web_search');
+            assert(tool !== undefined, 'web_search exists');
+            assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
+            assertEqual(tool.isMeta, false, 'not meta');
+            assertEqual(tool.uiLabel, 'Search', 'ui label');
+            assertEqual(tool.command, '/search', 'slash command');
+            assert(tool.parameters !== null, 'has parameters');
+            assert(tool.parameters.required.includes('query'), 'requires query');
+        },
+    ],
 
-    ['toolDefinitions: read_url', () => {
-        const tool = lookupTool('read_url');
-        assert(tool !== undefined, 'read_url exists');
-        assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
-        assertEqual(tool.command, null, 'no slash command');
-        assert(tool.parameters.required.includes('url'), 'requires url');
-    }],
+    [
+        'toolDefinitions: read_url',
+        () => {
+            const tool = lookupTool('read_url');
+            assert(tool !== undefined, 'read_url exists');
+            assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
+            assertEqual(tool.command, null, 'no slash command');
+            assert(tool.parameters.required.includes('url'), 'requires url');
+        },
+    ],
 
-    ['toolDefinitions: crawl_url', () => {
-        const tool = lookupTool('crawl_url');
-        assert(tool !== undefined, 'crawl_url exists');
-        assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
-        assertEqual(tool.uiLabel, 'Scrape', 'ui label');
-        assertEqual(tool.command, '/crawl', 'slash command');
-        assert(tool.parameters.required.includes('url'), 'requires url');
-    }],
+    [
+        'toolDefinitions: crawl_url',
+        () => {
+            const tool = lookupTool('crawl_url');
+            assert(tool !== undefined, 'crawl_url exists');
+            assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
+            assertEqual(tool.uiLabel, 'Scrape', 'ui label');
+            assertEqual(tool.command, '/crawl', 'slash command');
+            assert(tool.parameters.required.includes('url'), 'requires url');
+        },
+    ],
 
-    ['toolDefinitions: document', () => {
-        const tool = lookupTool('document');
-        assert(tool !== undefined, 'document exists');
-        assertEqual(tool.dangerLevel, DANGER_POTENTIALLY_UNSAFE, 'potentially_unsafe');
-        assertEqual(tool.parameters, null, 'no API schema (pre-send tool)');
-        assertEqual(tool.uiLabel, 'Docs', 'ui label');
-        assertEqual(tool.command, '/doc', 'slash command');
-    }],
+    [
+        'toolDefinitions: document',
+        () => {
+            const tool = lookupTool('document');
+            assert(tool !== undefined, 'document exists');
+            assertEqual(tool.dangerLevel, DANGER_POTENTIALLY_UNSAFE, 'potentially_unsafe');
+            assertEqual(tool.parameters, null, 'no API schema (pre-send tool)');
+            assertEqual(tool.uiLabel, 'Docs', 'ui label');
+            assertEqual(tool.command, '/doc', 'slash command');
+        },
+    ],
 
-    ['toolDefinitions: deep_research', () => {
-        const tool = lookupTool('deep_research');
-        assert(tool !== undefined, 'deep_research exists');
-        assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
-        assertEqual(tool.isMeta, true, 'is meta tool');
-        assertEqual(tool.parameters, null, 'no API schema (meta tool)');
-        assertEqual(tool.uiLabel, 'Research', 'ui label');
-        assertEqual(tool.command, '/research', 'slash command');
-    }],
+    [
+        'toolDefinitions: deep_research',
+        () => {
+            const tool = lookupTool('deep_research');
+            assert(tool !== undefined, 'deep_research exists');
+            assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
+            assertEqual(tool.isMeta, true, 'is meta tool');
+            assertEqual(tool.parameters, null, 'no API schema (meta tool)');
+            assertEqual(tool.uiLabel, 'Research', 'ui label');
+            assertEqual(tool.command, '/research', 'slash command');
+        },
+    ],
 
-    ['toolDefinitions: knowledge_search (RAG)', () => {
-        const tool = lookupTool('knowledge_search');
-        assert(tool !== undefined, 'knowledge_search exists');
-        assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
-        assertEqual(tool.isMeta, false, 'not meta');
-        assert(tool.parameters !== null, 'has parameters');
-        assert(tool.parameters.required.includes('query'), 'requires query');
-        assertEqual(tool.uiLabel, 'Knowledge', 'ui label');
-    }],
+    [
+        'toolDefinitions: knowledge_search (RAG)',
+        () => {
+            const tool = lookupTool('knowledge_search');
+            assert(tool !== undefined, 'knowledge_search exists');
+            assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
+            assertEqual(tool.isMeta, false, 'not meta');
+            assert(tool.parameters !== null, 'has parameters');
+            assert(tool.parameters.required.includes('query'), 'requires query');
+            assertEqual(tool.uiLabel, 'Knowledge', 'ui label');
+        },
+    ],
 
-    ['toolDefinitions: explore_docs', () => {
-        const tool = lookupTool('explore_docs');
-        assert(tool !== undefined, 'explore_docs exists');
-        assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
-        assertEqual(tool.isMeta, false, 'not meta');
-        assert(tool.parameters !== null, 'has parameters');
-        assert(tool.parameters.required.includes('url'), 'requires url');
-        assertEqual(tool.uiLabel, null, 'agent-only (no footer button)');
-        assertEqual(tool.command, null, 'no slash command');
-    }],
+    [
+        'toolDefinitions: explore_docs',
+        () => {
+            const tool = lookupTool('explore_docs');
+            assert(tool !== undefined, 'explore_docs exists');
+            assertEqual(tool.dangerLevel, DANGER_READ_ONLY, 'read_only');
+            assertEqual(tool.isMeta, false, 'not meta');
+            assert(tool.parameters !== null, 'has parameters');
+            assert(tool.parameters.required.includes('url'), 'requires url');
+            assertEqual(tool.uiLabel, null, 'agent-only (no footer button)');
+            assertEqual(tool.command, null, 'no slash command');
+        },
+    ],
 
-    ['toolDefinitions: forget_knowledge registration', () => {
-        const tool = lookupTool('forget_knowledge');
-        assert(tool !== undefined, 'forget_knowledge exists');
-        assertEqual(tool.dangerLevel, DANGER_POTENTIALLY_UNSAFE, 'potentially_unsafe');
-        assertEqual(tool.isMeta, false, 'not meta');
-        assert(tool.parameters !== null, 'has parameters');
-        assert(tool.parameters.required.includes('about'), 'requires about');
-        assertEqual(tool.uiLabel, null, 'agent-only (no footer button)');
-        assertEqual(tool.command, null, 'no slash command');
-    }],
+    [
+        'toolDefinitions: forget_knowledge registration',
+        () => {
+            const tool = lookupTool('forget_knowledge');
+            assert(tool !== undefined, 'forget_knowledge exists');
+            assertEqual(tool.dangerLevel, DANGER_POTENTIALLY_UNSAFE, 'potentially_unsafe');
+            assertEqual(tool.isMeta, false, 'not meta');
+            assert(tool.parameters !== null, 'has parameters');
+            assert(tool.parameters.required.includes('about'), 'requires about');
+            assertEqual(tool.uiLabel, null, 'agent-only (no footer button)');
+            assertEqual(tool.command, null, 'no slash command');
+        },
+    ],
 
     // ── Danger level partitioning ──────────────────────────────────────────
 
-    ['toolDefinitions: danger level partitioning', () => {
-        const readOnly = getToolsByDanger(DANGER_READ_ONLY);
-        const unsafe = getToolsByDanger(DANGER_POTENTIALLY_UNSAFE);
+    [
+        'toolDefinitions: danger level partitioning',
+        () => {
+            const readOnly = getToolsByDanger(DANGER_READ_ONLY);
+            const unsafe = getToolsByDanger(DANGER_POTENTIALLY_UNSAFE);
 
-        // web_search, read_url, crawl_url, deep_research, knowledge_search, explore_docs
-        assertEqual(readOnly.length, 6, '6 read_only tools');
-        // document + update_knowledge + forget_knowledge are potentially_unsafe
-        assertEqual(unsafe.length, 3, '3 potentially_unsafe tools');
-        const unsafeNames = unsafe.map(t => t.name);
-        assert(unsafeNames.includes('document'), 'document is unsafe');
-        assert(unsafeNames.includes('update_knowledge'), 'update_knowledge is unsafe');
-        assert(unsafeNames.includes('forget_knowledge'), 'forget_knowledge is unsafe');
-    }],
+            // web_search, read_url, crawl_url, deep_research, knowledge_search, explore_docs
+            assertEqual(readOnly.length, 6, '6 read_only tools');
+            // document + update_knowledge + forget_knowledge are potentially_unsafe
+            assertEqual(unsafe.length, 3, '3 potentially_unsafe tools');
+            const unsafeNames = unsafe.map((t) => t.name);
+            assert(unsafeNames.includes('document'), 'document is unsafe');
+            assert(unsafeNames.includes('update_knowledge'), 'update_knowledge is unsafe');
+            assert(unsafeNames.includes('forget_knowledge'), 'forget_knowledge is unsafe');
+        },
+    ],
 
     // ── No duplicate names ────────────────────────────────────────────────
 
-    ['toolDefinitions: no duplicate tool names', () => {
-        const names = getAllToolNames();
-        const unique = new Set(names);
-        assertEqual(names.length, unique.size, 'all names unique');
-    }],
+    [
+        'toolDefinitions: no duplicate tool names',
+        () => {
+            const names = getAllToolNames();
+            const unique = new Set(names);
+            assertEqual(names.length, unique.size, 'all names unique');
+        },
+    ],
 
     // ── Schema completeness ────────────────────────────────────────────────
 
-    ['toolDefinitions: all non-meta, non-document tools have parameters', () => {
-        const toolNames = getAllToolNames();
-        for (const name of toolNames) {
-            const tool = lookupTool(name);
-            if (tool.isMeta) continue;      // meta tools don't need schemas
-            if (name === 'document') continue; // pre-send tool, no API schema
-            assert(tool.parameters !== null, `${name} has parameters`);
-            assert(tool.parameters.type === 'object', `${name} params is object type`);
-        }
-    }],
+    [
+        'toolDefinitions: all non-meta, non-document tools have parameters',
+        () => {
+            const toolNames = getAllToolNames();
+            for (const name of toolNames) {
+                const tool = lookupTool(name);
+                if (tool.isMeta) continue; // meta tools don't need schemas
+                if (name === 'document') continue; // pre-send tool, no API schema
+                assert(tool.parameters !== null, `${name} has parameters`);
+                assert(tool.parameters.type === 'object', `${name} params is object type`);
+            }
+        },
+    ],
 
-    ['toolDefinitions: all tools have uiLabel and uiIcon', () => {
-        const toolNames = getAllToolNames();
-        for (const name of toolNames) {
-            const tool = lookupTool(name);
-            // update_knowledge / forget_knowledge intentionally have null
-            // uiLabel/uiIcon (agent-only memory tools)
-            if (name === 'update_knowledge' || name === 'forget_knowledge') continue;
-            // explore_docs is agent-only — no footer button / slash command
-            if (name === 'explore_docs') continue;
-            assert(typeof tool.uiLabel === 'string' && tool.uiLabel.length > 0, `${name} has uiLabel`);
-            assert(typeof tool.uiIcon === 'string' && tool.uiIcon.length > 0, `${name} has uiIcon`);
-        }
-    }],
+    [
+        'toolDefinitions: all tools have uiLabel and uiIcon',
+        () => {
+            const toolNames = getAllToolNames();
+            for (const name of toolNames) {
+                const tool = lookupTool(name);
+                // update_knowledge / forget_knowledge intentionally have null
+                // uiLabel/uiIcon (agent-only memory tools)
+                if (name === 'update_knowledge' || name === 'forget_knowledge') continue;
+                // explore_docs is agent-only — no footer button / slash command
+                if (name === 'explore_docs') continue;
+                assert(
+                    typeof tool.uiLabel === 'string' && tool.uiLabel.length > 0,
+                    `${name} has uiLabel`,
+                );
+                assert(
+                    typeof tool.uiIcon === 'string' && tool.uiIcon.length > 0,
+                    `${name} has uiIcon`,
+                );
+            }
+        },
+    ],
 ];
 
 await runTests(tests);

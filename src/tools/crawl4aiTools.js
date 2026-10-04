@@ -59,8 +59,8 @@ const CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE = 0.1;
 const CRAWL4AI_DEFAULT_LLM_INSTRUCTION =
     'Extract the key facts, claims, and arguments from this page and summarize them concisely.';
 const CRAWL4AI_DEFAULT_LLM_SCHEMA_JSON =
-    '{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},'
-    + '"key_points":{"type":"array","items":{"type":"string"}}},"required":["title","summary"]}';
+    '{"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},' +
+    '"key_points":{"type":"array","items":{"type":"string"}}},"required":["title","summary"]}';
 
 // ── Error class ───────────────────────────────────────────────────────────────
 
@@ -76,18 +76,34 @@ export class Crawl4AIError extends Error {
 // ── Settings helpers ──────────────────────────────────────────────────────────
 
 export function readCrawl4AIConfig(settings) {
-    const getString = key => {
-        try { return settings.get_string(key); } catch (_error) { return ''; }
+    const getString = (key) => {
+        try {
+            return settings.get_string(key);
+        } catch (_error) {
+            return '';
+        }
     };
-    const getBoolean = key => {
-        try { return settings.get_boolean(key); } catch (_error) { return false; }
+    const getBoolean = (key) => {
+        try {
+            return settings.get_boolean(key);
+        } catch (_error) {
+            return false;
+        }
     };
-    const getInt = key => {
-        try { return settings.get_int(key); } catch (_error) { return 0; }
+    const getInt = (key) => {
+        try {
+            return settings.get_int(key);
+        } catch (_error) {
+            return 0;
+        }
     };
 
-    const getDouble = key => {
-        try { return settings.get_double(key); } catch (_error) { return 0.5; }
+    const getDouble = (key) => {
+        try {
+            return settings.get_double(key);
+        } catch (_error) {
+            return 0.5;
+        }
     };
 
     return {
@@ -110,7 +126,9 @@ export function readCrawl4AIConfig(settings) {
         llmProvider: getString('crawl4ai-llm-provider') || CRAWL4AI_DEFAULT_LLM_PROVIDER,
         llmInstruction: getString('crawl4ai-llm-instruction') || CRAWL4AI_DEFAULT_LLM_INSTRUCTION,
         llmSchemaJson: getString('crawl4ai-llm-schema-json') || CRAWL4AI_DEFAULT_LLM_SCHEMA_JSON,
-        llmChunkTokenThreshold: getInt('crawl4ai-llm-chunk-token-threshold') || CRAWL4AI_DEFAULT_LLM_CHUNK_TOKEN_THRESHOLD,
+        llmChunkTokenThreshold:
+            getInt('crawl4ai-llm-chunk-token-threshold') ||
+            CRAWL4AI_DEFAULT_LLM_CHUNK_TOKEN_THRESHOLD,
         llmOverlapRate: getDouble('crawl4ai-llm-overlap-rate') || CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE,
     };
 }
@@ -237,7 +255,8 @@ export function buildCrawlResultBlock(result) {
     }
 
     const capturedNote = result.networkCaptureCount
-        ? `\n(${result.networkCaptureCount} API response(s) captured from background XHR/Fetch calls)` : '';
+        ? `\n(${result.networkCaptureCount} API response(s) captured from background XHR/Fetch calls)`
+        : '';
     const truncatedNote = result.truncated
         ? `\n(Content truncated at ${result.fitMarkdown?.length || 0} characters.)`
         : '';
@@ -271,8 +290,10 @@ export function buildCrawlResultBlock(result) {
     // (schema mode) or a freeform answer (block mode).  If the server returned
     // nothing (empty schema, no API key, LLM produced no output), fall through
     // to the plain markdown rendering so the header stays accurate.
-    const hasStructured = result.structuredJson !== null && result.structuredJson !== undefined
-        && !(typeof result.structuredJson === 'string' && result.structuredJson.trim() === '');
+    const hasStructured =
+        result.structuredJson !== null &&
+        result.structuredJson !== undefined &&
+        !(typeof result.structuredJson === 'string' && result.structuredJson.trim() === '');
     const hasFreeform = typeof result.llmResponse === 'string' && result.llmResponse.trim() !== '';
     if (result.llmExtractionUsed && (hasStructured || hasFreeform)) {
         const modeLine = hasStructured
@@ -333,26 +354,33 @@ export function buildLLMExtractionStrategy(config) {
 
     const params = {
         provider: config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER,
-        chunk_token_threshold: config.llmChunkTokenThreshold || CRAWL4AI_DEFAULT_LLM_CHUNK_TOKEN_THRESHOLD,
+        chunk_token_threshold:
+            config.llmChunkTokenThreshold || CRAWL4AI_DEFAULT_LLM_CHUNK_TOKEN_THRESHOLD,
         overlap_rate: config.llmOverlapRate || CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE,
     };
 
     if (mode === 'llm-schema') {
         const schemaJson = String(config.llmSchemaJson || '').trim();
         if (!schemaJson) {
-            log('[Katab:crawl4ai] LLM schema extraction requested but crawl4ai-llm-schema-json is empty — falling back to markdown.');
+            log(
+                '[Katab:crawl4ai] LLM schema extraction requested but crawl4ai-llm-schema-json is empty — falling back to markdown.',
+            );
             return null;
         }
         try {
             params.schema = JSON.parse(schemaJson);
         } catch (error) {
-            log(`[Katab:crawl4ai] Invalid LLM extraction schema JSON — falling back to markdown: ${error.message}`);
+            log(
+                `[Katab:crawl4ai] Invalid LLM extraction schema JSON — falling back to markdown: ${error.message}`,
+            );
             return null;
         }
     } else if (mode === 'llm-block') {
         const instruction = String(config.llmInstruction || '').trim();
         if (!instruction) {
-            log('[Katab:crawl4ai] LLM block extraction requested but crawl4ai-llm-instruction is empty — falling back to markdown.');
+            log(
+                '[Katab:crawl4ai] LLM block extraction requested but crawl4ai-llm-instruction is empty — falling back to markdown.',
+            );
             return null;
         }
         params.instruction = instruction;
@@ -369,13 +397,13 @@ export function buildLLMExtractionStrategy(config) {
  * @returns {object} The JSON body for POST /crawl.
  */
 export function buildCrawlPayload(urls, config) {
-    const filterType = config.fitMarkdownMode === 'bm25'
-        ? 'BM25ContentFilter'
-        : 'PruningContentFilter';
+    const filterType =
+        config.fitMarkdownMode === 'bm25' ? 'BM25ContentFilter' : 'PruningContentFilter';
 
-    const filterParams = config.fitMarkdownMode === 'bm25'
-        ? { user_query: config.query || '', threshold: config.bm25Threshold || 0.5 }
-        : { threshold: 0.48, threshold_type: 'fixed' };
+    const filterParams =
+        config.fitMarkdownMode === 'bm25'
+            ? { user_query: config.query || '', threshold: config.bm25Threshold || 0.5 }
+            : { threshold: 0.48, threshold_type: 'fixed' };
 
     // Crawl4AI v0.9.x expects flat browser_config / crawler_config objects
     // (no { type, params } wrapping — that was the older API shape).
@@ -449,7 +477,11 @@ export function parseNetworkRequests(networkRequests) {
         if (typeof req.body === 'string') {
             bodyText = req.body;
         } else if (req.body) {
-            try { bodyText = JSON.stringify(req.body); } catch (_e) { bodyText = String(req.body); }
+            try {
+                bodyText = JSON.stringify(req.body);
+            } catch (_e) {
+                bodyText = String(req.body);
+            }
         }
         if (!bodyText) continue;
         if (bodyText.length > 3000) bodyText = bodyText.slice(0, 3000) + '…';
@@ -558,7 +590,10 @@ export function normalizeInternalLinks(links, baseUrl) {
  * @returns {Array<{href: string, text: string, title: string}>}
  */
 export function getCrawlResultLinks(result, baseUrl = '', max = CRAWL4AI_MAX_TOC_LINKS) {
-    const normalized = normalizeInternalLinks(extractPageLinks(result), baseUrl || result?.url || '');
+    const normalized = normalizeInternalLinks(
+        extractPageLinks(result),
+        baseUrl || result?.url || '',
+    );
     return normalized.slice(0, max);
 }
 
@@ -579,8 +614,12 @@ export function parseCrawlResults(results, config) {
     for (const result of results) {
         if (!result) {
             parsed.push({
-                url: '', success: false, fitMarkdown: '', truncated: false,
-                errorMessage: 'Empty result.', llmExtractionUsed: llmExtractionActive,
+                url: '',
+                success: false,
+                fitMarkdown: '',
+                truncated: false,
+                errorMessage: 'Empty result.',
+                llmExtractionUsed: llmExtractionActive,
             });
             continue;
         }
@@ -607,9 +646,8 @@ export function parseCrawlResults(results, config) {
         let llmResponse = null;
         if (llmExtractionActive) {
             if (result.json !== undefined && result.json !== null) {
-                structuredJson = typeof result.json === 'string'
-                    ? parseJsonSafely(result.json)
-                    : result.json;
+                structuredJson =
+                    typeof result.json === 'string' ? parseJsonSafely(result.json) : result.json;
             }
             if (typeof result.llm === 'string' && result.llm.trim()) {
                 llmResponse = result.llm;
@@ -779,15 +817,20 @@ export function looksLikePdf(bytes) {
     if (n >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
         i = 3;
     }
-    while (i < n && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0d || bytes[i] === 0x0a)) {
+    while (
+        i < n &&
+        (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0d || bytes[i] === 0x0a)
+    ) {
         i++;
     }
-    return i + 4 < n
-        && bytes[i] === 0x25      // %
-        && bytes[i + 1] === 0x50  // P
-        && bytes[i + 2] === 0x44  // D
-        && bytes[i + 3] === 0x46  // F
-        && bytes[i + 4] === 0x2d; // -
+    return (
+        i + 4 < n &&
+        bytes[i] === 0x25 && // %
+        bytes[i + 1] === 0x50 && // P
+        bytes[i + 2] === 0x44 && // D
+        bytes[i + 3] === 0x46 && // F
+        bytes[i + 4] === 0x2d
+    ); // -
 }
 
 // Crawl4AI's headless Chromium fails to navigate to PDFs with this signature.
@@ -795,9 +838,11 @@ export function looksLikePdf(bytes) {
 // crawl comes back failed.
 export function looksLikePdfFailure(errorMessage) {
     const message = String(errorMessage || '').toLowerCase();
-    return message.includes('net::err_failed')
-        || message.includes('failed on navigating')
-        || message.includes('page.goto');
+    return (
+        message.includes('net::err_failed') ||
+        message.includes('failed on navigating') ||
+        message.includes('page.goto')
+    );
 }
 
 // ── Crawl4AIRuntime ───────────────────────────────────────────────────────────
@@ -808,10 +853,16 @@ export class Crawl4AIRuntime {
             this._session = session;
         } else {
             this._session = new Soup.Session();
-            this._session.timeout = Math.max(5, Math.trunc(timeoutSeconds) || CRAWL4AI_DEFAULT_TIMEOUT_SECONDS);
+            this._session.timeout = Math.max(
+                5,
+                Math.trunc(timeoutSeconds) || CRAWL4AI_DEFAULT_TIMEOUT_SECONDS,
+            );
             this._session.user_agent = CRAWL4AI_USER_AGENT;
         }
-        this._timeoutSeconds = Math.max(5, Math.trunc(timeoutSeconds) || CRAWL4AI_DEFAULT_TIMEOUT_SECONDS);
+        this._timeoutSeconds = Math.max(
+            5,
+            Math.trunc(timeoutSeconds) || CRAWL4AI_DEFAULT_TIMEOUT_SECONDS,
+        );
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -866,17 +917,21 @@ export class Crawl4AIRuntime {
             }
         }
 
-        log(`[Katab:crawl4ai] Scraping ${validatedUrls.length} URL(s) — mode=${config.extractionMode}`
-            + (llmExtractionActive ? `, provider=${config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER}` : '')
-            + `: ${validatedUrls.join(', ')}`);
+        log(
+            `[Katab:crawl4ai] Scraping ${validatedUrls.length} URL(s) — mode=${config.extractionMode}` +
+                (llmExtractionActive
+                    ? `, provider=${config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER}`
+                    : '') +
+                `: ${validatedUrls.join(', ')}`,
+        );
 
         // ── PDF URLs: native download + pdftotext extraction ───────────
         // Crawl4AI's headless browser cannot navigate to PDFs (Playwright
         // `page.goto` fails with net::ERR_FAILED), so Katab downloads the PDF
         // directly and extracts its text layer with poppler-utils' `pdftotext`
         // — a standard GNOME dependency, no Docker/container changes needed.
-        const pdfUrls = validatedUrls.filter(url => isPdfUrl(url));
-        const webUrls = validatedUrls.filter(url => !isPdfUrl(url));
+        const pdfUrls = validatedUrls.filter((url) => isPdfUrl(url));
+        const webUrls = validatedUrls.filter((url) => !isPdfUrl(url));
 
         const results = [];
         for (const url of pdfUrls) {
@@ -886,7 +941,9 @@ export class Crawl4AIRuntime {
             } else {
                 // URL ends in .pdf but didn't download as one — retry via the
                 // normal web pipeline rather than failing the whole request.
-                log(`[Katab:crawl4ai] ${url} is not a real PDF (${pdfResult.errorMessage}) — falling back to web scrape.`);
+                log(
+                    `[Katab:crawl4ai] ${url} is not a real PDF (${pdfResult.errorMessage}) — falling back to web scrape.`,
+                );
                 results.push(...(await this._crawlWeb([url], config, cancellable)));
             }
         }
@@ -903,9 +960,16 @@ export class Crawl4AIRuntime {
         // so retrying would just re-download them pointlessly.
         for (let i = 0; i < results.length; i++) {
             const result = results[i];
-            if (result && !result.success && result.url && !isPdfUrl(result.url)
-                && looksLikePdfFailure(result.errorMessage)) {
-                log(`[Katab:crawl4ai] ${result.url} web crawl failed with a navigation error — attempting PDF extraction...`);
+            if (
+                result &&
+                !result.success &&
+                result.url &&
+                !isPdfUrl(result.url) &&
+                looksLikePdfFailure(result.errorMessage)
+            ) {
+                log(
+                    `[Katab:crawl4ai] ${result.url} web crawl failed with a navigation error — attempting PDF extraction...`,
+                );
                 const pdfResult = await this._scrapePdf(result.url, config, cancellable);
                 if (pdfResult.success) {
                     results[i] = pdfResult;
@@ -950,7 +1014,9 @@ export class Crawl4AIRuntime {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
                 }
-                log(`[Katab:crawl4ai] LLM extraction via /llm failed (${error.message}) \u2014 falling back to markdown.`);
+                log(
+                    `[Katab:crawl4ai] LLM extraction via /llm failed (${error.message}) \u2014 falling back to markdown.`,
+                );
                 const markdownOnlyConfig = { ...config, extractionMode: 'markdown' };
                 const results = await this._crawlMarkdown(urls, markdownOnlyConfig, cancellable);
                 for (const result of results) {
@@ -990,7 +1056,10 @@ export class Crawl4AIRuntime {
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) throw error;
             return {
-                url, success: false, fitMarkdown: '', truncated: false,
+                url,
+                success: false,
+                fitMarkdown: '',
+                truncated: false,
                 errorMessage: `Could not download the PDF: ${error.message}`,
                 llmExtractionUsed: false,
             };
@@ -999,20 +1068,28 @@ export class Crawl4AIRuntime {
         const bytes = downloaded.bytes || new Uint8Array();
         if (!looksLikePdf(bytes)) {
             return {
-                url, success: false, fitMarkdown: '', truncated: false,
+                url,
+                success: false,
+                fitMarkdown: '',
+                truncated: false,
                 errorMessage: 'The URL did not return a PDF document.',
                 llmExtractionUsed: false,
             };
         }
 
-        log(`[Katab:crawl4ai] Downloaded PDF (${bytes.length} bytes) — extracting text with pdftotext...`);
+        log(
+            `[Katab:crawl4ai] Downloaded PDF (${bytes.length} bytes) — extracting text with pdftotext...`,
+        );
         let text = '';
         try {
             text = await this._extractPdfText(bytes, cancellable);
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) throw error;
             return {
-                url, success: false, fitMarkdown: '', truncated: false,
+                url,
+                success: false,
+                fitMarkdown: '',
+                truncated: false,
                 errorMessage: `PDF text extraction failed: ${error.message}`,
                 llmExtractionUsed: false,
             };
@@ -1029,7 +1106,9 @@ export class Crawl4AIRuntime {
             // No text layer (scanned/image-only PDF, or pdftotext found nothing).
             // Keep success:true so callers don't trigger the web-pipeline fallback
             // loop; they already render "(No text extracted.)" for empty content.
-            log(`[Katab:crawl4ai] PDF extracted for ${url} — 0 chars (scanned/image-only PDF? no text layer).`);
+            log(
+                `[Katab:crawl4ai] PDF extracted for ${url} — 0 chars (scanned/image-only PDF? no text layer).`,
+            );
         }
 
         const result = {
@@ -1040,7 +1119,9 @@ export class Crawl4AIRuntime {
             errorMessage: null,
             llmExtractionUsed: false,
         };
-        log(`[Katab:crawl4ai] PDF extracted for ${url} — ${text.length} chars${truncated ? ' (truncated)' : ''}`);
+        log(
+            `[Katab:crawl4ai] PDF extracted for ${url} — ${text.length} chars${truncated ? ' (truncated)' : ''}`,
+        );
         cacheCrawlResult(url, [result]);
         return result;
     }
@@ -1058,7 +1139,9 @@ export class Crawl4AIRuntime {
             // SSRF + DNS validation for the initial URL AND every redirect hop.
             const validated = await this._validateScrapeUrls([currentUrl], config, cancellable);
             if (!validated.length) {
-                throw new Crawl4AIError(`Downloading ${url} is blocked by the network guard.`, { code: 'blocked-host' });
+                throw new Crawl4AIError(`Downloading ${url} is blocked by the network guard.`, {
+                    code: 'blocked-host',
+                });
             }
             currentUrl = validated[0];
 
@@ -1069,13 +1152,13 @@ export class Crawl4AIRuntime {
                     // problem — report the actual protocol failure.
                     throw new Crawl4AIError(
                         `Downloading ${url} failed: the server returned a redirect (HTTP ${response.status}) without a Location header.`,
-                        { code: 'http-error', detail: `${response.status}` }
+                        { code: 'http-error', detail: `${response.status}` },
                     );
                 }
                 if (redirects === maxRedirects) {
                     throw new Crawl4AIError(
                         `Downloading ${url} failed: the PDF URL redirected too many times.`,
-                        { code: 'too-many-redirects' }
+                        { code: 'too-many-redirects' },
                     );
                 }
                 currentUrl = resolveRedirectUrl(currentUrl, response.location);
@@ -1084,12 +1167,15 @@ export class Crawl4AIRuntime {
             if (response.status !== 200) {
                 throw new Crawl4AIError(
                     `Failed to download ${url}: HTTP ${response.status} ${response.reasonPhrase || ''}`,
-                    { code: 'http-error', detail: `${response.status}` }
+                    { code: 'http-error', detail: `${response.status}` },
                 );
             }
             return { bytes: response.bytes };
         }
-        throw new Crawl4AIError(`Downloading ${url} failed: the PDF URL redirected too many times.`, { code: 'too-many-redirects' });
+        throw new Crawl4AIError(
+            `Downloading ${url} failed: the PDF URL redirected too many times.`,
+            { code: 'too-many-redirects' },
+        );
     }
 
     // Single no-redirect GET used by _downloadBytes' manual redirect loop.
@@ -1100,16 +1186,25 @@ export class Crawl4AIRuntime {
         return new Promise((resolve, reject) => {
             const message = Soup.Message.new('GET', url);
             if (!message) {
-                reject(new Crawl4AIError(`Could not create request for ${url}.`, { code: 'bad-url' }));
+                reject(
+                    new Crawl4AIError(`Could not create request for ${url}.`, { code: 'bad-url' }),
+                );
                 return;
             }
             message.set_flags(message.get_flags() | Soup.MessageFlags.NO_REDIRECT);
             message.request_headers.append('User-Agent', CRAWL4AI_USER_AGENT);
-            message.request_headers.append('Accept', 'application/pdf, application/octet-stream, */*');
+            message.request_headers.append(
+                'Accept',
+                'application/pdf, application/octet-stream, */*',
+            );
 
             if (cancellable) {
                 cancellable.connect(() => {
-                    try { message.cancel(); } catch (_e) { /* ignore */ }
+                    try {
+                        message.cancel();
+                    } catch (_e) {
+                        /* ignore */
+                    }
                 });
             }
 
@@ -1126,65 +1221,97 @@ export class Crawl4AIRuntime {
 
                         if (status >= 300 && status < 400) {
                             const location = headers?.get_one('location') || '';
-                            try { inputStream.close(null); } catch (_e) { /* ignore */ }
+                            try {
+                                inputStream.close(null);
+                            } catch (_e) {
+                                /* ignore */
+                            }
                             resolve({ status, location, bytes: new Uint8Array() });
                             return;
                         }
                         if (status !== 200) {
-                            try { inputStream.close(null); } catch (_e) { /* ignore */ }
+                            try {
+                                inputStream.close(null);
+                            } catch (_e) {
+                                /* ignore */
+                            }
                             const reasonPhrase = Soup.Status.get_phrase(status);
-                            reject(new Crawl4AIError(
-                                `Failed to download ${url}: HTTP ${status} ${reasonPhrase}`,
-                                { code: 'http-error', detail: reasonPhrase || `${status}` }
-                            ));
+                            reject(
+                                new Crawl4AIError(
+                                    `Failed to download ${url}: HTTP ${status} ${reasonPhrase}`,
+                                    { code: 'http-error', detail: reasonPhrase || `${status}` },
+                                ),
+                            );
                             return;
                         }
 
                         // Reject up front when Content-Length already exceeds the cap.
                         const contentLengthText = headers?.get_one('content-length') || '';
                         const contentLength = Number.parseInt(contentLengthText, 10);
-                        if (Number.isFinite(contentLength) && contentLength > CRAWL4AI_PDF_MAX_BYTES) {
-                            try { inputStream.close(null); } catch (_e) { /* ignore */ }
-                            reject(new Crawl4AIError(
-                                `The PDF at ${url} is too large to read safely (${(contentLength / (1024 * 1024)).toFixed(1)} MB).`,
-                                { code: 'response-too-large', detail: `${contentLength} bytes` }
-                            ));
+                        if (
+                            Number.isFinite(contentLength) &&
+                            contentLength > CRAWL4AI_PDF_MAX_BYTES
+                        ) {
+                            try {
+                                inputStream.close(null);
+                            } catch (_e) {
+                                /* ignore */
+                            }
+                            reject(
+                                new Crawl4AIError(
+                                    `The PDF at ${url} is too large to read safely (${(contentLength / (1024 * 1024)).toFixed(1)} MB).`,
+                                    {
+                                        code: 'response-too-large',
+                                        detail: `${contentLength} bytes`,
+                                    },
+                                ),
+                            );
                             return;
                         }
 
                         this._readCappedBytes(inputStream, CRAWL4AI_PDF_MAX_BYTES, cancellable)
-                            .then(bytes => resolve({ status, bytes }))
-                            .catch(err => {
+                            .then((bytes) => resolve({ status, bytes }))
+                            .catch((err) => {
                                 if (cancellable && cancellable.is_cancelled()) {
                                     reject(err);
                                     return;
                                 }
                                 if (String(err?.message || '').includes('safety limit')) {
-                                    reject(new Crawl4AIError(
-                                        `The PDF at ${url} is too large to read safely (${err.message}).`,
-                                        { code: 'response-too-large', detail: err?.message }
-                                    ));
+                                    reject(
+                                        new Crawl4AIError(
+                                            `The PDF at ${url} is too large to read safely (${err.message}).`,
+                                            { code: 'response-too-large', detail: err?.message },
+                                        ),
+                                    );
                                     return;
                                 }
-                                reject(new Crawl4AIError(
-                                    `Network error downloading ${url}: ${err.message}`,
-                                    { code: 'network-error', detail: err?.message }
-                                ));
+                                reject(
+                                    new Crawl4AIError(
+                                        `Network error downloading ${url}: ${err.message}`,
+                                        { code: 'network-error', detail: err?.message },
+                                    ),
+                                );
                             });
                     } catch (error) {
                         if (inputStream) {
-                            try { inputStream.close(null); } catch (_e) { /* ignore */ }
+                            try {
+                                inputStream.close(null);
+                            } catch (_e) {
+                                /* ignore */
+                            }
                         }
                         if (cancellable && cancellable.is_cancelled()) {
                             reject(error);
                             return;
                         }
-                        reject(new Crawl4AIError(
-                            `Network error downloading ${url}: ${error.message}`,
-                            { code: 'network-error', detail: error?.message }
-                        ));
+                        reject(
+                            new Crawl4AIError(
+                                `Network error downloading ${url}: ${error.message}`,
+                                { code: 'network-error', detail: error?.message },
+                            ),
+                        );
                     }
-                }
+                },
             );
         });
     }
@@ -1208,9 +1335,11 @@ export class Crawl4AIRuntime {
     // out of scope for this fix).
     _extractPdfText(bytes, cancellable) {
         if (!GLib.find_program_in_path('pdftotext')) {
-            return Promise.reject(new Error(
-                'This page is a PDF. Install poppler-utils (pdftotext) to let Katab read PDF pages.'
-            ));
+            return Promise.reject(
+                new Error(
+                    'This page is a PDF. Install poppler-utils (pdftotext) to let Katab read PDF pages.',
+                ),
+            );
         }
 
         return new Promise((resolve, reject) => {
@@ -1218,7 +1347,9 @@ export class Crawl4AIRuntime {
             try {
                 proc = Gio.Subprocess.new(
                     ['pdftotext', '-layout', '-q', '-', '-'],
-                    Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE
+                    Gio.SubprocessFlags.STDIN_PIPE |
+                        Gio.SubprocessFlags.STDOUT_PIPE |
+                        Gio.SubprocessFlags.STDERR_SILENCE,
                 );
             } catch (_error) {
                 reject(new Error('Could not launch pdftotext to read the PDF.'));
@@ -1233,7 +1364,11 @@ export class Crawl4AIRuntime {
                     resolve(data ? this._decodeBytes(data) : '');
                 } catch (error) {
                     // Cancelled or failed — make sure pdftotext isn't left running.
-                    try { process.force_exit(); } catch (_e) { /* ignore */ }
+                    try {
+                        process.force_exit();
+                    } catch (_e) {
+                        /* ignore */
+                    }
                     reject(error);
                 }
             });
@@ -1274,14 +1409,24 @@ export class Crawl4AIRuntime {
 
         let jobBytes;
         try {
-            jobBytes = await this._requestRaw('POST', jobEndpoint, JSON.stringify(payload), config.apiToken, CRAWL4AI_JSON_MAX_BYTES, cancellable);
+            jobBytes = await this._requestRaw(
+                'POST',
+                jobEndpoint,
+                JSON.stringify(payload),
+                config.apiToken,
+                CRAWL4AI_JSON_MAX_BYTES,
+                cancellable,
+            );
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw error;
             }
             throw new Crawl4AIError(
                 `Could not reach the Crawl4AI LLM endpoint at ${jobEndpoint}: ${error.message}`,
-                { code: error instanceof Crawl4AIError ? error.code : 'connection-failed', detail: error?.message }
+                {
+                    code: error instanceof Crawl4AIError ? error.code : 'connection-failed',
+                    detail: error?.message,
+                },
             );
         }
 
@@ -1289,41 +1434,60 @@ export class Crawl4AIRuntime {
         try {
             jobResponse = JSON.parse(this._decodeBytes(jobBytes));
         } catch (_error) {
-            throw new Crawl4AIError('Crawl4AI returned an unexpected response from /llm/job.', { code: 'bad-response' });
+            throw new Crawl4AIError('Crawl4AI returned an unexpected response from /llm/job.', {
+                code: 'bad-response',
+            });
         }
 
         const taskId = jobResponse.task_id;
         if (!taskId) {
-            throw new Crawl4AIError('Crawl4AI /llm/job did not return a task ID.', { code: 'no-task-id' });
+            throw new Crawl4AIError('Crawl4AI /llm/job did not return a task ID.', {
+                code: 'no-task-id',
+            });
         }
-        log(`[Katab:crawl4ai] LLM extraction job submitted for ${url} (task ${taskId}) — provider=${payload.provider}`);
+        log(
+            `[Katab:crawl4ai] LLM extraction job submitted for ${url} (task ${taskId}) — provider=${payload.provider}`,
+        );
 
         // Poll for completion.
         const pollMs = config.jobPollMs || CRAWL4AI_DEFAULT_POLL_MS;
         const startTime = Date.now();
         const pollEndpoint = `${baseUrl}/llm/job/${encodeURIComponent(taskId)}`;
-        while ((Date.now() - startTime) < CRAWL4AI_MAX_JOB_WAIT_MS) {
+        while (Date.now() - startTime < CRAWL4AI_MAX_JOB_WAIT_MS) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw new Crawl4AIError('LLM extraction cancelled.', { code: 'cancelled' });
             }
             await this._sleep(pollMs);
-            const statusBytes = await this._requestRaw('GET', pollEndpoint, null, config.apiToken, CRAWL4AI_JSON_MAX_BYTES, cancellable);
+            const statusBytes = await this._requestRaw(
+                'GET',
+                pollEndpoint,
+                null,
+                config.apiToken,
+                CRAWL4AI_JSON_MAX_BYTES,
+                cancellable,
+            );
             let statusResponse;
             try {
                 statusResponse = JSON.parse(this._decodeBytes(statusBytes));
             } catch (_error) {
-                throw new Crawl4AIError('Crawl4AI returned an unexpected status from /llm/job.', { code: 'bad-response' });
+                throw new Crawl4AIError('Crawl4AI returned an unexpected status from /llm/job.', {
+                    code: 'bad-response',
+                });
             }
             if (statusResponse.status === 'completed') {
                 const completedResult = normalizeLlmJobResult(url, statusResponse.result, config);
                 const detail = completedResult?.structuredJson
                     ? `structured JSON (${JSON.stringify(completedResult.structuredJson).length} chars)`
-                    : (completedResult?.llmResponse ? `LLM response (${completedResult.llmResponse.length} chars)` : 'no output');
+                    : completedResult?.llmResponse
+                      ? `LLM response (${completedResult.llmResponse.length} chars)`
+                      : 'no output';
                 log(`[Katab:crawl4ai] LLM extraction completed for ${url} — ${detail}`);
                 return completedResult;
             }
             if (statusResponse.status === 'failed') {
-                log(`[Katab:crawl4ai] LLM extraction job FAILED for ${url} — ${statusResponse.error || 'unknown error'}`);
+                log(
+                    `[Katab:crawl4ai] LLM extraction job FAILED for ${url} — ${statusResponse.error || 'unknown error'}`,
+                );
                 return {
                     url,
                     success: false,
@@ -1360,7 +1524,14 @@ export class Crawl4AIRuntime {
             }
 
             try {
-                const results = await this._requestCrawl(endpoint, jsonBody, config.apiToken, urls, activeConfig, cancellable);
+                const results = await this._requestCrawl(
+                    endpoint,
+                    jsonBody,
+                    config.apiToken,
+                    urls,
+                    activeConfig,
+                    cancellable,
+                );
                 // Flag results when the server's security policy forced a
                 // markdown-only fallback, so the caller can show a notice.
                 if (llmBlockedByServer) {
@@ -1381,8 +1552,12 @@ export class Crawl4AIRuntime {
                 }
                 for (const result of results) {
                     if (result && result.url) {
-                        log(`[Katab:crawl4ai] Markdown scrape ${result.success ? 'completed' : 'FAILED'} for ${result.url}`
-                            + (result.success ? ` — ${(result.fitMarkdown || '').length} chars` : ` — ${result.errorMessage || 'unknown error'}`));
+                        log(
+                            `[Katab:crawl4ai] Markdown scrape ${result.success ? 'completed' : 'FAILED'} for ${result.url}` +
+                                (result.success
+                                    ? ` — ${(result.fitMarkdown || '').length} chars`
+                                    : ` — ${result.errorMessage || 'unknown error'}`),
+                        );
                     }
                 }
                 return results;
@@ -1394,18 +1569,23 @@ export class Crawl4AIRuntime {
                 // ever sent to /crawl and rejected (untrusted request), retry
                 // as markdown-only.
                 if (!llmBlockedByServer && isUntrustedConfigRejection(error)) {
-                    log('[Katab:crawl4ai] Server rejected LLMExtractionStrategy (untrusted request) \u2014 retrying as markdown-only.');
+                    log(
+                        '[Katab:crawl4ai] Server rejected LLMExtractionStrategy (untrusted request) \u2014 retrying as markdown-only.',
+                    );
                     llmBlockedByServer = true;
                     activeConfig = { ...config, extractionMode: 'markdown' };
                     payload = buildCrawlPayload(urls, activeConfig);
                     jsonBody = JSON.stringify(payload);
                     continue;
                 }
-                const isRetryable = error instanceof Crawl4AIError
-                    && (error.code === 'connection-failed' || error.code === 'network-error');
+                const isRetryable =
+                    error instanceof Crawl4AIError &&
+                    (error.code === 'connection-failed' || error.code === 'network-error');
                 if (isRetryable && attempt < MAX_ATTEMPTS) {
                     const backoffMs = 1500 * attempt;
-                    log(`[Katab:crawl4ai] Attempt ${attempt} failed, retrying after ${backoffMs}ms: ${error.message}`);
+                    log(
+                        `[Katab:crawl4ai] Attempt ${attempt} failed, retrying after ${backoffMs}ms: ${error.message}`,
+                    );
                     await this._sleep(backoffMs);
                     continue;
                 }
@@ -1424,7 +1604,14 @@ export class Crawl4AIRuntime {
         try {
             const baseUrl = this._normalizeBaseUrl(config.url);
             const healthUrl = `${baseUrl}/health`;
-            const bytes = await this._requestRaw('GET', healthUrl, null, config.apiToken, CRAWL4AI_JSON_MAX_BYTES, cancellable);
+            const bytes = await this._requestRaw(
+                'GET',
+                healthUrl,
+                null,
+                config.apiToken,
+                CRAWL4AI_JSON_MAX_BYTES,
+                cancellable,
+            );
             const text = this._decodeBytes(bytes);
             let version = '';
             try {
@@ -1451,7 +1638,10 @@ export class Crawl4AIRuntime {
     _normalizeBaseUrl(url) {
         let base = (url || '').trim();
         if (!base) {
-            throw new Crawl4AIError('Crawl4AI instance URL is empty. Set it in Settings > Tools > Web Scraper.', { code: 'no-url' });
+            throw new Crawl4AIError(
+                'Crawl4AI instance URL is empty. Set it in Settings > Tools > Web Scraper.',
+                { code: 'no-url' },
+            );
         }
         return base.replace(/\/+$/, '');
     }
@@ -1459,7 +1649,14 @@ export class Crawl4AIRuntime {
     async _requestCrawl(endpoint, jsonBody, apiToken, validatedUrls, config, cancellable) {
         let bytes;
         try {
-            bytes = await this._requestRaw('POST', endpoint, jsonBody, apiToken, CRAWL4AI_JSON_MAX_BYTES, cancellable);
+            bytes = await this._requestRaw(
+                'POST',
+                endpoint,
+                jsonBody,
+                apiToken,
+                CRAWL4AI_JSON_MAX_BYTES,
+                cancellable,
+            );
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw error;
@@ -1470,7 +1667,7 @@ export class Crawl4AIRuntime {
             const code = origCode || 'connection-failed';
             throw new Crawl4AIError(
                 `Could not reach the Crawl4AI instance at ${endpoint}: ${error.message}`,
-                { code, detail: error?.message }
+                { code, detail: error?.message },
             );
         }
 
@@ -1480,7 +1677,7 @@ export class Crawl4AIRuntime {
         } catch (_error) {
             throw new Crawl4AIError(
                 'Crawl4AI returned an unexpected response. Check that the instance is running v0.9.x.',
-                { code: 'bad-response' }
+                { code: 'bad-response' },
             );
         }
 
@@ -1501,7 +1698,10 @@ export class Crawl4AIRuntime {
             addresses = await lookupHostAddresses(host, cancellable);
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) throw error;
-            throw new Crawl4AIError(`Could not resolve ${host}.`, { code: 'dns-failed', detail: error?.message });
+            throw new Crawl4AIError(`Could not resolve ${host}.`, {
+                code: 'dns-failed',
+                detail: error?.message,
+            });
         }
 
         if (!Array.isArray(addresses) || addresses.length === 0) {
@@ -1513,7 +1713,7 @@ export class Crawl4AIRuntime {
             if (isBlockedHost(addressText, allowLocal)) {
                 throw new Crawl4AIError(
                     `Scraping ${host} is blocked because it resolves to a private or local network address (${addressText}). Enable local addresses in Settings if you trust it.`,
-                    { code: 'blocked-host' }
+                    { code: 'blocked-host' },
                 );
             }
         }
@@ -1523,7 +1723,9 @@ export class Crawl4AIRuntime {
         return new Promise((resolve, reject) => {
             const message = Soup.Message.new(method, url);
             if (!message) {
-                reject(new Crawl4AIError(`Could not create request for ${url}.`, { code: 'bad-url' }));
+                reject(
+                    new Crawl4AIError(`Could not create request for ${url}.`, { code: 'bad-url' }),
+                );
                 return;
             }
 
@@ -1545,13 +1747,21 @@ export class Crawl4AIRuntime {
             let cancelHandlerId = 0;
             const disconnectCancelHandler = () => {
                 if (cancelHandlerId) {
-                    try { cancellable.disconnect(cancelHandlerId); } catch (_e) { /* ignore */ }
+                    try {
+                        cancellable.disconnect(cancelHandlerId);
+                    } catch (_e) {
+                        /* ignore */
+                    }
                     cancelHandlerId = 0;
                 }
             };
             if (cancellable) {
                 cancelHandlerId = cancellable.connect(() => {
-                    try { message.cancel(); } catch (_e) { /* ignore */ }
+                    try {
+                        message.cancel();
+                    } catch (_e) {
+                        /* ignore */
+                    }
                 });
             }
 
@@ -1573,10 +1783,13 @@ export class Crawl4AIRuntime {
                             settle(reject, error);
                             return;
                         }
-                        settle(reject, new Crawl4AIError(
-                            `Network error contacting Crawl4AI: ${error.message}`,
-                            { code: 'network-error', detail: error?.message }
-                        ));
+                        settle(
+                            reject,
+                            new Crawl4AIError(
+                                `Network error contacting Crawl4AI: ${error.message}`,
+                                { code: 'network-error', detail: error?.message },
+                            ),
+                        );
                         return;
                     }
 
@@ -1588,16 +1801,23 @@ export class Crawl4AIRuntime {
                         // used to be silently ignored).
                         let responseBytes;
                         try {
-                            responseBytes = await this._readCappedBytes(inputStream, maxBytes, cancellable);
+                            responseBytes = await this._readCappedBytes(
+                                inputStream,
+                                maxBytes,
+                                cancellable,
+                            );
                         } catch (readError) {
                             if (cancellable && cancellable.is_cancelled()) {
                                 settle(reject, readError);
                                 return;
                             }
-                            settle(reject, new Crawl4AIError(
-                                `Crawl4AI response was too large to read safely: ${readError.message}`,
-                                { code: 'response-too-large', detail: readError?.message }
-                            ));
+                            settle(
+                                reject,
+                                new Crawl4AIError(
+                                    `Crawl4AI response was too large to read safely: ${readError.message}`,
+                                    { code: 'response-too-large', detail: readError?.message },
+                                ),
+                            );
                             return;
                         }
 
@@ -1606,18 +1826,26 @@ export class Crawl4AIRuntime {
                             let bodyPreview = '';
                             try {
                                 bodyPreview = this._decodeBytes(responseBytes).slice(0, 500);
-                            } catch (_e) { /* ignore */ }
+                            } catch (_e) {
+                                /* ignore */
+                            }
 
                             if (status === Soup.Status.UNAUTHORIZED) {
-                                settle(reject, new Crawl4AIError(
-                                    'Crawl4AI rejected the API token (HTTP 401). Check the token in Settings > Tools > Web Scraper.',
-                                    { code: 'unauthorized', detail: bodyPreview }
-                                ));
+                                settle(
+                                    reject,
+                                    new Crawl4AIError(
+                                        'Crawl4AI rejected the API token (HTTP 401). Check the token in Settings > Tools > Web Scraper.',
+                                        { code: 'unauthorized', detail: bodyPreview },
+                                    ),
+                                );
                             } else {
-                                settle(reject, new Crawl4AIError(
-                                    `Crawl4AI returned HTTP ${status} ${reason}.${bodyPreview ? ` Details: ${bodyPreview}` : ''}`,
-                                    { code: 'http-error', detail: bodyPreview }
-                                ));
+                                settle(
+                                    reject,
+                                    new Crawl4AIError(
+                                        `Crawl4AI returned HTTP ${status} ${reason}.${bodyPreview ? ` Details: ${bodyPreview}` : ''}`,
+                                        { code: 'http-error', detail: bodyPreview },
+                                    ),
+                                );
                             }
                             return;
                         }
@@ -1628,12 +1856,15 @@ export class Crawl4AIRuntime {
                             settle(reject, error);
                             return;
                         }
-                        settle(reject, new Crawl4AIError(
-                            `Network error contacting Crawl4AI: ${error.message}`,
-                            { code: 'network-error', detail: error?.message }
-                        ));
+                        settle(
+                            reject,
+                            new Crawl4AIError(
+                                `Network error contacting Crawl4AI: ${error.message}`,
+                                { code: 'network-error', detail: error?.message },
+                            ),
+                        );
                     }
-                }
+                },
             );
         });
     }
@@ -1645,7 +1876,7 @@ export class Crawl4AIRuntime {
     }
 
     _sleep(ms) {
-        return new Promise(resolve => {
+        return new Promise((resolve) => {
             GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.max(0, Math.trunc(ms)), () => {
                 resolve();
                 return GLib.SOURCE_REMOVE;

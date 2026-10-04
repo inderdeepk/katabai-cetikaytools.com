@@ -183,9 +183,12 @@ export function parseDocumentCommand(promptText) {
     }
 
     if (index > remainder.length || remainder[index - 1] !== '"') {
-        throw new DocumentToolError('Use /doc "path/to/file" so Katab can tell the document path apart from your prompt.', {
-            code: 'invalid-command',
-        });
+        throw new DocumentToolError(
+            'Use /doc "path/to/file" so Katab can tell the document path apart from your prompt.',
+            {
+                code: 'invalid-command',
+            },
+        );
     }
 
     return {
@@ -259,10 +262,9 @@ export function buildVisionAnalysisPromptBlock(analysisText, modelName) {
     if (!analysis) {
         return '[Vision analysis unavailable — the attached image was not analyzed.]';
     }
-    return [
-        `[Vision analysis of the attached image(s), provided by ${source}]:`,
-        analysis,
-    ].join('\n');
+    return [`[Vision analysis of the attached image(s), provided by ${source}]:`, analysis].join(
+        '\n',
+    );
 }
 
 export function getAttachmentInfoForPath(path) {
@@ -362,7 +364,7 @@ function queryFileInfoAsync(file, cancellable = null) {
                 } catch (error) {
                     reject(error);
                 }
-            }
+            },
         );
     });
 }
@@ -397,13 +399,18 @@ function runCommandAsync(argv, cancellable = null, installLabel = null) {
         try {
             subprocess = Gio.Subprocess.new(
                 argv,
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             );
         } catch (_error) {
-            reject(new DocumentToolError(`Katab could not start ${argv[0]}. Install ${installLabel || argv[0]} and try again.`, {
-                code: 'spawn-failed',
-                installLabel,
-            }));
+            reject(
+                new DocumentToolError(
+                    `Katab could not start ${argv[0]}. Install ${installLabel || argv[0]} and try again.`,
+                    {
+                        code: 'spawn-failed',
+                        installLabel,
+                    },
+                ),
+            );
             return;
         }
 
@@ -411,17 +418,22 @@ function runCommandAsync(argv, cancellable = null, installLabel = null) {
             try {
                 const [, stdout, stderr] = source.communicate_utf8_finish(result);
                 if (!source.get_successful()) {
-                    throw new DocumentToolError(stderr?.trim() || `${argv[0]} returned a non-zero exit status.`, {
-                        code: 'command-failed',
-                        installLabel,
-                    });
+                    throw new DocumentToolError(
+                        stderr?.trim() || `${argv[0]} returned a non-zero exit status.`,
+                        {
+                            code: 'command-failed',
+                            installLabel,
+                        },
+                    );
                 }
 
                 resolve(stdout || '');
             } catch (error) {
                 // Cancelling the request must not leave the helper (e.g.
                 // pdftotext/pandoc) running to completion.
-                try { subprocess.force_exit(); } catch (_e) { }
+                try {
+                    subprocess.force_exit();
+                } catch (_e) {}
                 reject(error);
             }
         });
@@ -537,7 +549,10 @@ function decodeHeaderFilename(value) {
 
 function htmlToText(html) {
     let text = String(html ?? '');
-    text = text.replace(/<\/(p|div|h[1-6]|li|tr|table|thead|tbody|ul|ol|blockquote|section|article|header|footer)[^>]*>/gi, '\n');
+    text = text.replace(
+        /<\/(p|div|h[1-6]|li|tr|table|thead|tbody|ul|ol|blockquote|section|article|header|footer)[^>]*>/gi,
+        '\n',
+    );
     text = text.replace(/<(br|hr)[^>]*\/?>/gi, '\n');
     text = text.replace(/<[^>]+>/g, '');
     return text
@@ -549,7 +564,11 @@ function htmlToText(html) {
         .replace(/&#39;/gi, "'")
         .replace(/&apos;/gi, "'")
         .replace(/&#(\d+);/g, (_, n) => {
-            try { return String.fromCodePoint(parseInt(n, 10)); } catch (_e) { return ''; }
+            try {
+                return String.fromCodePoint(parseInt(n, 10));
+            } catch (_e) {
+                return '';
+            }
         })
         .replace(/&[a-zA-Z]+;/g, '');
 }
@@ -588,7 +607,11 @@ function splitByBoundary(body, boundary) {
 //   { type: 'html', content }
 //   { type: 'attachment', filename, mimeType, size }
 //   { type: 'alternative', children }
-function parseMimePart(raw, fallbackContentType, { hasOwnHeaders = false, inheritedHeaders = {} } = {}) {
+function parseMimePart(
+    raw,
+    fallbackContentType,
+    { hasOwnHeaders = false, inheritedHeaders = {} } = {},
+) {
     const partHeaders = { ...inheritedHeaders };
     let partBody;
     if (hasOwnHeaders) {
@@ -634,12 +657,14 @@ function parseMimePart(raw, fallbackContentType, { hasOwnHeaders = false, inheri
     // Anything else is an attachment (or an inline resource we list).
     const disposition = parseContentType(partHeaders['content-disposition'] || '');
     const filename = decodeHeaderFilename(disposition.params.filename || params.name || '');
-    return [{
-        type: 'attachment',
-        filename,
-        mimeType: type || null,
-        size: estimatePartSize(partBody, cte),
-    }];
+    return [
+        {
+            type: 'attachment',
+            filename,
+            mimeType: type || null,
+            size: estimatePartSize(partBody, cte),
+        },
+    ];
 }
 
 function decodePartBody(partBody, cte, charset) {
@@ -656,7 +681,11 @@ function estimatePartSize(partBody, cte) {
     const body = String(partBody ?? '');
     if (cte === 'base64') {
         const compact = body.replace(/\s+/g, '');
-        return Math.max(0, Math.floor((compact.length * 3) / 4) - (compact.endsWith('==') ? 2 : compact.endsWith('=') ? 1 : 0));
+        return Math.max(
+            0,
+            Math.floor((compact.length * 3) / 4) -
+                (compact.endsWith('==') ? 2 : compact.endsWith('=') ? 1 : 0),
+        );
     }
     if (cte === 'quoted-printable') {
         return body.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, 'X').length;
@@ -675,8 +704,8 @@ function flattenEmlSegments(segments, out = { textParts: [], attachments: [], ha
             out.attachments.push(seg);
         } else if (seg.type === 'alternative') {
             // Prefer the text/plain branch; fall back to the HTML branch.
-            const plain = seg.children.find(s => s.type === 'text');
-            const chosen = plain || seg.children.find(s => s.type === 'html');
+            const plain = seg.children.find((s) => s.type === 'text');
+            const chosen = plain || seg.children.find((s) => s.type === 'html');
             if (chosen) {
                 flattenEmlSegments([chosen], out);
             } else {
@@ -739,7 +768,10 @@ export function formatEmlDocument(parsed) {
         ['To', parsed.to],
         ['Date', parsed.date],
         ['Cc', parsed.headers.cc ? decodeHeaderValue(parsed.headers.cc) : ''],
-        ['Reply-To', parsed.headers['reply-to'] ? decodeHeaderValue(parsed.headers['reply-to']) : ''],
+        [
+            'Reply-To',
+            parsed.headers['reply-to'] ? decodeHeaderValue(parsed.headers['reply-to']) : '',
+        ],
     ];
     let wroteHeader = false;
     for (const [label, value] of headerFields) {
@@ -758,7 +790,7 @@ export function formatEmlDocument(parsed) {
 
     if (parsed.attachments.length > 0) {
         const list = parsed.attachments
-            .map(a => {
+            .map((a) => {
                 const size = a.size ? ` (${a.size} bytes)` : '';
                 return `${a.filename || a.mimeType || 'file'}${size}`;
             })
@@ -767,7 +799,10 @@ export function formatEmlDocument(parsed) {
         lines.push(`[Attachments: ${list}]`);
     }
 
-    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    return lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 // EML files are usually UTF-8, but some older ones use a legacy charset.
@@ -811,16 +846,22 @@ export class DocumentToolRuntime {
     async parseDocument(rawPath, cancellable = null) {
         const resolvedPath = resolveDocumentPath(rawPath);
         if (!resolvedPath) {
-            throw new DocumentToolError('Use an absolute path, a ~/path, or the picker when attaching a file.', {
-                code: 'invalid-path',
-            });
+            throw new DocumentToolError(
+                'Use an absolute path, a ~/path, or the picker when attaching a file.',
+                {
+                    code: 'invalid-path',
+                },
+            );
         }
 
         const file = Gio.File.new_for_path(resolvedPath);
         if (!file.is_native()) {
-            throw new DocumentToolError('Katab only supports local native files for attachments right now.', {
-                code: 'non-native-file',
-            });
+            throw new DocumentToolError(
+                'Katab only supports local native files for attachments right now.',
+                {
+                    code: 'non-native-file',
+                },
+            );
         }
 
         let info;
@@ -830,34 +871,43 @@ export class DocumentToolRuntime {
             if (e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND)) {
                 throw new DocumentToolError(
                     `The file "${resolvedPath}" no longer exists. It may have been moved, deleted, or the clipboard image could not be saved. Try pasting the image again.`,
-                    { code: 'file-not-found' }
+                    { code: 'file-not-found' },
                 );
             }
             throw new DocumentToolError(
                 `Could not read "${resolvedPath}": ${e.message || 'unknown error'}`,
-                { code: 'file-read-error' }
+                { code: 'file-read-error' },
             );
         }
         if (info.get_file_type() !== Gio.FileType.REGULAR) {
-            throw new DocumentToolError('Katab can only attach regular files, not folders or special paths.', {
-                code: 'not-regular-file',
-            });
+            throw new DocumentToolError(
+                'Katab can only attach regular files, not folders or special paths.',
+                {
+                    code: 'not-regular-file',
+                },
+            );
         }
 
         const displayName = info.get_display_name() || GLib.path_get_basename(resolvedPath);
         const attachmentInfo = getAttachmentInfoForPath(resolvedPath);
         const { capability, extension, kind, mimeType } = attachmentInfo;
         if (!capability) {
-            throw new DocumentToolError('Unsupported file format. Use .txt, .md, .pdf, .docx, .png, .jpg, .jpeg, or .eml.', {
-                code: 'unsupported-format',
-            });
+            throw new DocumentToolError(
+                'Unsupported file format. Use .txt, .md, .pdf, .docx, .png, .jpg, .jpeg, or .eml.',
+                {
+                    code: 'unsupported-format',
+                },
+            );
         }
 
         if (!capability.available) {
-            throw new DocumentToolError(`Install ${capability.installLabel} to parse ${displayName}.`, {
-                code: 'missing-tool',
-                installLabel: capability.installLabel,
-            });
+            throw new DocumentToolError(
+                `Install ${capability.installLabel} to parse ${displayName}.`,
+                {
+                    code: 'missing-tool',
+                    installLabel: capability.installLabel,
+                },
+            );
         }
 
         const cacheKey = this._buildCacheKey(resolvedPath, info);
@@ -871,9 +921,12 @@ export class DocumentToolRuntime {
         if (kind === 'image') {
             const contents = await loadBinaryContentsAsync(file, cancellable);
             if (!contents || contents.length === 0) {
-                throw new DocumentToolError(`Katab could not read any image data from ${displayName}.`, {
-                    code: 'empty-image',
-                });
+                throw new DocumentToolError(
+                    `Katab could not read any image data from ${displayName}.`,
+                    {
+                        code: 'empty-image',
+                    },
+                );
             }
 
             const result = {
@@ -899,22 +952,17 @@ export class DocumentToolRuntime {
         if (TEXT_EXTENSIONS.has(extension)) {
             extractedText = await loadContentsAsync(file, cancellable);
         } else if (extension === PDF_EXTENSION) {
-            extractedText = await runCommandAsync([
-                capability.command,
-                '-layout',
-                resolvedPath,
-                '-',
-            ], cancellable, capability.installLabel);
+            extractedText = await runCommandAsync(
+                [capability.command, '-layout', resolvedPath, '-'],
+                cancellable,
+                capability.installLabel,
+            );
         } else if (extension === DOCX_EXTENSION) {
-            extractedText = await runCommandAsync([
-                capability.command,
-                '-f',
-                'docx',
-                '-t',
-                'plain',
-                '--wrap=none',
-                resolvedPath,
-            ], cancellable, capability.installLabel);
+            extractedText = await runCommandAsync(
+                [capability.command, '-f', 'docx', '-t', 'plain', '--wrap=none', resolvedPath],
+                cancellable,
+                capability.installLabel,
+            );
         } else if (extension === EML_EXTENSION) {
             // EML parsing is pure JS — no external helper needed.
             const rawBytes = await loadBinaryContentsAsync(file, cancellable);
@@ -923,10 +971,13 @@ export class DocumentToolRuntime {
 
         const normalizedText = normalizeDocumentText(extractedText);
         if (!normalizedText) {
-            throw new DocumentToolError(`Katab could not extract any readable text from ${displayName}.`, {
-                code: 'empty-document',
-                installLabel: capability.installLabel,
-            });
+            throw new DocumentToolError(
+                `Katab could not extract any readable text from ${displayName}.`,
+                {
+                    code: 'empty-document',
+                    installLabel: capability.installLabel,
+                },
+            );
         }
 
         const truncated = truncateDocumentText(normalizedText, this._maxChars);

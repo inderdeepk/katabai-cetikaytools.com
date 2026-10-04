@@ -68,28 +68,33 @@ function renderPlainMarkup(text) {
 }
 
 export function normalizeUrl(url) {
-    let trimmed = String(url ?? '').trim().replace(/[.,!?;:]+$/g, '');
+    let trimmed = String(url ?? '')
+        .trim()
+        .replace(/[.,!?;:]+$/g, '');
     return /^https?:\/\/\S+$/i.test(trimmed) ? trimmed : null;
 }
 
 function extractLinks(text) {
     let collectedLinks = [];
 
-    let transformedText = String(text ?? '').replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => {
-        let normalizedUrl = normalizeUrl(url);
-        if (normalizedUrl) {
-            collectedLinks.push({
-                label: label.trim(),
-                url: normalizedUrl,
-            });
+    let transformedText = String(text ?? '').replace(
+        /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+        (_match, label, url) => {
+            let normalizedUrl = normalizeUrl(url);
+            if (normalizedUrl) {
+                collectedLinks.push({
+                    label: label.trim(),
+                    url: normalizedUrl,
+                });
 
-            return label;
-        }
+                return label;
+            }
 
-        return _match;
-    });
+            return _match;
+        },
+    );
 
-    transformedText = transformedText.replace(/https?:\/\/[^\s<>()]+/g, match => {
+    transformedText = transformedText.replace(/https?:\/\/[^\s<>()]+/g, (match) => {
         let normalizedUrl = normalizeUrl(match);
         if (!normalizedUrl) {
             return match;
@@ -126,9 +131,7 @@ export function formatInlineMarkdown(text) {
 
     escapedText = escapedText.replace(/`([^`\n]+)`/g, (_match, code) => {
         let token = `@@KATAB_CODE_${codeTokens.length}@@`;
-        codeTokens.push(
-            `<span font_family="monospace" weight="600">${code}</span>`
-        );
+        codeTokens.push(`<span font_family="monospace" weight="600">${code}</span>`);
         return token;
     });
 
@@ -182,7 +185,7 @@ function formatMarkdownLine(line) {
 function formatMarkdownTextSegment(text) {
     return String(text ?? '')
         .split('\n')
-        .map(line => formatMarkdownLine(line))
+        .map((line) => formatMarkdownLine(line))
         .join('\n');
 }
 
@@ -200,7 +203,7 @@ function splitMarkdownTableRow(line) {
         normalized = normalized.slice(0, -1);
     }
 
-    return normalized.split('|').map(cell => cell.trim());
+    return normalized.split('|').map((cell) => cell.trim());
 }
 
 function looksLikeMarkdownTableRow(line) {
@@ -210,7 +213,7 @@ function looksLikeMarkdownTableRow(line) {
 
 function isMarkdownTableSeparator(line) {
     let cells = splitMarkdownTableRow(line);
-    return cells.length > 1 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
+    return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
 function parseMarkdownTable(lines, startIndex) {
@@ -355,7 +358,9 @@ function buildCodeBlockSegment(language, codeText) {
     return {
         type: 'code',
         language: String(language ?? '').trim(),
-        code: String(codeText ?? '').replace(/\t/g, '    ').replace(/\n$/, ''),
+        code: String(codeText ?? '')
+            .replace(/\t/g, '    ')
+            .replace(/\n$/, ''),
     };
 }
 
@@ -413,7 +418,10 @@ export function buildAssistantRenderModel(rawText, { final = false, plain = fals
     }
 
     if (trailingPlainText) {
-        for (const chunk of splitTextIntoBoundedChunks(trailingPlainText, MARKDOWN_SEGMENT_MAX_CHARS)) {
+        for (const chunk of splitTextIntoBoundedChunks(
+            trailingPlainText,
+            MARKDOWN_SEGMENT_MAX_CHARS,
+        )) {
             segments.push({
                 type: 'text',
                 markup: renderPlainMarkup(chunk),

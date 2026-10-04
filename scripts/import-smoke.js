@@ -25,7 +25,7 @@ function listJsFiles(dir) {
     const enumerator = Gio.File.new_for_path(dir).enumerate_children(
         'standard::name,standard::type',
         Gio.FileQueryInfoFlags.NONE,
-        null
+        null,
     );
     let info;
     while ((info = enumerator.next_file(null)) !== null) {
@@ -47,7 +47,7 @@ if (!GLib.file_test(`${cwd}/src`, GLib.FileTest.IS_DIR)) {
 }
 
 const modules = listJsFiles(`${cwd}/src`)
-    .map(path => path.slice(cwd.length + 1))
+    .map((path) => path.slice(cwd.length + 1))
     .sort();
 
 const failures = [];
@@ -55,7 +55,10 @@ let imported = 0;
 let skipped = 0;
 
 for (const relPath of modules) {
-    if (EXCLUDED_FILES.has(relPath) || EXCLUDED_PREFIXES.some(prefix => relPath.startsWith(prefix))) {
+    if (
+        EXCLUDED_FILES.has(relPath) ||
+        EXCLUDED_PREFIXES.some((prefix) => relPath.startsWith(prefix))
+    ) {
         skipped++;
         continue;
     }

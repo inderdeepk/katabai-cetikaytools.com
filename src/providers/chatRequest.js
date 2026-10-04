@@ -36,10 +36,16 @@ function appendDialectToolGroups(payload, advertise, toolNames, dialect) {
         payload.tools = buildToolSchemasFor(toolNames.webSearch, dialect);
     }
     if (advertise.crawl) {
-        payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(toolNames.crawl, dialect)];
+        payload.tools = [
+            ...(payload.tools || []),
+            ...buildToolSchemasFor(toolNames.crawl, dialect),
+        ];
     }
     if (advertise.exploreDocs) {
-        payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(toolNames.exploreDocs, dialect)];
+        payload.tools = [
+            ...(payload.tools || []),
+            ...buildToolSchemasFor(toolNames.exploreDocs, dialect),
+        ];
     }
     if (advertise.rag) {
         payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(toolNames.rag, dialect)];
@@ -125,7 +131,7 @@ export function buildAnthropicStreamRequest({
     headers['Content-Type'] = 'application/json';
 
     // Format Anthropic messages (remove system prompts from history or map them)
-    const anthropicMessages = messages.filter(m => m.role !== 'system');
+    const anthropicMessages = messages.filter((m) => m.role !== 'system');
 
     const payload = {
         model: model,
@@ -245,19 +251,27 @@ export function buildDeepSeekStreamRequest({
     // JSON mode: inject prompt guard if the word 'json' is absent from the system message.
     if (jsonMode) {
         payload.response_format = { type: 'json_object' };
-        const systemMsg = payload.messages.find(m => m.role === 'system');
+        const systemMsg = payload.messages.find((m) => m.role === 'system');
         if (systemMsg && !/json/i.test(systemMsg.content || '')) {
             // Clone to avoid mutating _messageHistory
-            payload.messages = payload.messages.map(m =>
+            payload.messages = payload.messages.map((m) =>
                 m === systemMsg
-                    ? { ...m, content: (m.content || '') + '\n\nEnsure the output is formatted as a valid JSON object.' }
-                    : m
+                    ? {
+                          ...m,
+                          content:
+                              (m.content || '') +
+                              '\n\nEnsure the output is formatted as a valid JSON object.',
+                      }
+                    : m,
             );
         } else if (!systemMsg) {
             // No system message — prepend a minimal one satisfying the requirement
             payload.messages = [
-                { role: 'system', content: 'Ensure the output is formatted as a valid JSON object.' },
-                ...payload.messages
+                {
+                    role: 'system',
+                    content: 'Ensure the output is formatted as a valid JSON object.',
+                },
+                ...payload.messages,
             ];
         }
     }
@@ -306,7 +320,7 @@ export function buildOllamaOptions(getOpt) {
     };
 
     // Remove nulls just in case, though GSettings should provide defaults
-    Object.keys(options).forEach(key => {
+    Object.keys(options).forEach((key) => {
         if (options[key] === null || options[key] === undefined) {
             delete options[key];
         }
@@ -317,9 +331,8 @@ export function buildOllamaOptions(getOpt) {
     // -1 historically meant "scan the full active context", so translate it
     // to num_ctx to preserve that behavior without tripping the validation.
     if (options.repeat_last_n === -1) {
-        options.repeat_last_n = (typeof options.num_ctx === 'number' && options.num_ctx > 0)
-            ? options.num_ctx
-            : 64;
+        options.repeat_last_n =
+            typeof options.num_ctx === 'number' && options.num_ctx > 0 ? options.num_ctx : 64;
     }
 
     return options;

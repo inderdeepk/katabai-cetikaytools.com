@@ -45,10 +45,10 @@ export const RESEARCH_PROGRESS_SCRAPING = 'scraping';
 export const RESEARCH_PROGRESS_COMPRESSING = 'compressing';
 export const RESEARCH_PROGRESS_DONE = 'done';
 export const RESEARCH_PROGRESS_ERROR = 'error';
-export const RESEARCH_PROGRESS_ANALYZING = 'analyzing';   // Gap analysis phase
-export const RESEARCH_PROGRESS_REFINING = 'refining';     // Refinement research phase
-export const RESEARCH_PROGRESS_OUTLINING = 'outlining';   // Synthesis outline phase
-export const RESEARCH_PROGRESS_WRITING = 'writing';       // Final report phase
+export const RESEARCH_PROGRESS_ANALYZING = 'analyzing'; // Gap analysis phase
+export const RESEARCH_PROGRESS_REFINING = 'refining'; // Refinement research phase
+export const RESEARCH_PROGRESS_OUTLINING = 'outlining'; // Synthesis outline phase
+export const RESEARCH_PROGRESS_WRITING = 'writing'; // Final report phase
 
 // ── Branch-level error recovery ──────────────────────────────────────────────
 // When a research branch fails (search timeout, crawl error, engine down),
@@ -68,7 +68,7 @@ export const REFINEMENT_CRAWL_COUNT = 2; // Fewer than branch crawl (3) — refi
 // search angles can be adjusted before execution continues.
 export const MID_RESEARCH_CRITIQUE_INTERVAL = 2;
 export const MAX_CRITIQUE_SPAWNED_BRANCHES = 2; // new angles spawned per critique
-export const MAX_TOTAL_SPAWNED_BRANCHES = 3;    // total new angles per research run
+export const MAX_TOTAL_SPAWNED_BRANCHES = 3; // total new angles per research run
 
 /**
  * Build the standardized service-down error used by the research pipeline
@@ -80,8 +80,8 @@ export function serviceDownError(cause) {
     const detail = cause?.message || String(cause || 'Connection failed.');
     const err = new Error(
         `Deep research stopped: the web search / scraping service is unreachable.\n\n` +
-        `${detail}\n\n` +
-        `Start your SearxNG (web search) and Crawl4AI (web scraper) services, then run research again.`
+            `${detail}\n\n` +
+            `Start your SearxNG (web search) and Crawl4AI (web scraper) services, then run research again.`,
     );
     err.code = 'research-service-down';
     return err;
@@ -107,9 +107,9 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
         getCitationTracker = () => null,
         getGlobalContext = () => null,
         getOriginalQuery = () => '',
-        updateProgress = () => { },
-        addSearchResultCards = () => { },
-        addPageReadProgress = () => { },
+        updateProgress = () => {},
+        addSearchResultCards = () => {},
+        addPageReadProgress = () => {},
         formatBytes = () => '',
     } = host;
 
@@ -127,7 +127,9 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
         if (isCancelled(e)) throw e;
         // Re-throw transient errors so the retry loop in runResearchBranches can act
         if (isTransient(e)) {
-            log(`[Katab:research] Branch "${sub_task}" search transient error — re-throwing for retry: ${e.message}`);
+            log(
+                `[Katab:research] Branch "${sub_task}" search transient error — re-throwing for retry: ${e.message}`,
+            );
             throw e;
         }
         log(`[Katab:research] Branch "${sub_task}" search failed: ${e.message}`);
@@ -153,11 +155,11 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
     // makes the documented cross-branch redundancy avoidance real instead
     // of dead wiring, so later branches spend crawl budget on NEW sources.
     const coveredUrls = getGlobalContext()?.coveredUrls;
-    let topUrls = searchResults.map(r => r.url).filter(Boolean);
+    let topUrls = searchResults.map((r) => r.url).filter(Boolean);
     if (coveredUrls && coveredUrls.size > 0) {
-        const novel = topUrls.filter(u => !coveredUrls.has(
-            String(u).trim().replace(/\/+$/, '').toLowerCase()
-        ));
+        const novel = topUrls.filter(
+            (u) => !coveredUrls.has(String(u).trim().replace(/\/+$/, '').toLowerCase()),
+        );
         if (novel.length > 0) topUrls = novel;
     }
     topUrls = topUrls.slice(0, 3);
@@ -194,21 +196,29 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
             if (isCancelled(e)) throw e;
             // Re-throw transient crawl errors so the retry loop can act
             if (isTransient(e)) {
-                log(`[Katab:research] Branch "${sub_task}" crawl transient error for ${url} — re-throwing: ${e.message}`);
+                log(
+                    `[Katab:research] Branch "${sub_task}" crawl transient error for ${url} — re-throwing: ${e.message}`,
+                );
                 throw e;
             }
             log(`[Katab:research] Branch "${sub_task}" — crawl failed for ${url}: ${e.message}`);
             if (entryRef) {
-                addPageReadProgress(entryRef, url, 'error', String(e.message || 'Failed').slice(0, 40));
+                addPageReadProgress(
+                    entryRef,
+                    url,
+                    'error',
+                    String(e.message || 'Failed').slice(0, 40),
+                );
             }
         }
     }
 
     if (!pages.length) {
         // No pages crawled — return search snippets as fallback
-        const snippetText = searchResults.slice(0, 5).map(r =>
-            `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`
-        ).join('\n\n');
+        const snippetText = searchResults
+            .slice(0, 5)
+            .map((r) => `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`)
+            .join('\n\n');
         updateProgress(index, RESEARCH_PROGRESS_DONE, `${searchResults.length} results (snippets)`);
 
         // Register sources in citation tracker
@@ -223,7 +233,7 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
             topic: sub_task,
             findings: `Search results for "${search_query}":\n\n${snippetText}`,
             facts: [],
-            sources: searchResults.map(r => r.url),
+            sources: searchResults.map((r) => r.url),
             pageCount: 0,
         };
     }
@@ -242,7 +252,7 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
 
     let findings;
     let facts = [];
-    const sources = pages.map(p => p.url);
+    const sources = pages.map((p) => p.url);
 
     try {
         const compressed = await compressResearchBranch({
@@ -266,9 +276,9 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
     } catch (e) {
         log(`[Katab:research] Branch "${sub_task}" compression failed: ${e.message}`);
         // Fallback: raw page summaries
-        findings = pages.map(p =>
-            `### Page: ${p.url}\n${p.text.slice(0, 3000)}...`
-        ).join('\n\n---\n\n');
+        findings = pages
+            .map((p) => `### Page: ${p.url}\n${p.text.slice(0, 3000)}...`)
+            .join('\n\n---\n\n');
     }
 
     updateProgress(index, RESEARCH_PROGRESS_DONE, `${pages.length} pages, ${facts.length} facts`);
@@ -293,16 +303,16 @@ export async function runResearchBranches(host, plan) {
     const {
         getConfig,
         getGlobalContext = () => null,
-        setGlobalContext = () => { },
+        setGlobalContext = () => {},
         getCancellable = () => null,
         isCancelled = () => false,
         isTransient = () => false,
-        sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
+        sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         getPipelineHost = () => ({}),
         getOriginalQuery = () => '',
-        updateProgress = () => { },
+        updateProgress = () => {},
         addTimelineEntry = () => null,
-        saveCheckpoint = () => { },
+        saveCheckpoint = () => {},
     } = host;
 
     const { webSearchConfig, crawl4aiConfig } = getConfig();
@@ -327,14 +337,16 @@ export async function runResearchBranches(host, plan) {
         globalContext.keyFacts = [];
     }
 
-    log(`[Katab:research] Starting ${plan.length} research branches sequentially (rate-limit friendly)...`);
+    log(
+        `[Katab:research] Starting ${plan.length} research branches sequentially (rate-limit friendly)...`,
+    );
 
     // Entries are created progressively — one at a time as each branch starts.
     // No pre-creation loop here.  See the creation inside the execution loop below.
 
     const results = [];
-    const droppedSet = new Set();   // indices dropped by the re-planning critique
-    let spawnedTotal = 0;           // total branches spawned across all critiques
+    const droppedSet = new Set(); // indices dropped by the re-planning critique
+    let spawnedTotal = 0; // total branches spawned across all critiques
     // Set when the search/scrape backend is unreachable (connection failure).
     // Once set, the whole research run aborts instead of grinding every
     // remaining branch through per-branch retries.
@@ -344,7 +356,13 @@ export async function runResearchBranches(host, plan) {
 
         // Skip branches the mid-research critique dropped as redundant/low-value.
         if (droppedSet.has(i)) {
-            results.push({ topic: task?.sub_task || '', findings: '', facts: [], sources: [], pageCount: 0 });
+            results.push({
+                topic: task?.sub_task || '',
+                findings: '',
+                facts: [],
+                sources: [],
+                pageCount: 0,
+            });
             continue;
         }
 
@@ -355,7 +373,9 @@ export async function runResearchBranches(host, plan) {
         // note was once built here but never consumed — removed so the code
         // reflects the real mechanism.
         if (i > 0 && globalContext.summaries.length > 0) {
-            log(`[Katab:research] Branch ${i + 1} received cross-branch context from ${globalContext.summaries.length} prior branches`);
+            log(
+                `[Katab:research] Branch ${i + 1} received cross-branch context from ${globalContext.summaries.length} prior branches`,
+            );
         }
 
         // ── Create timeline entry on-demand (progressive disclosure) ──
@@ -364,7 +384,7 @@ export async function runResearchBranches(host, plan) {
                 RESEARCH_PROGRESS_SEARCHING,
                 'system-search-symbolic',
                 `Angle ${i + 1}: ${task.sub_task}`,
-                `Query: "${task.search_query}"`
+                `Query: "${task.search_query}"`,
             );
             if (entryRef) {
                 task._timelineEntry = entryRef;
@@ -379,9 +399,14 @@ export async function runResearchBranches(host, plan) {
         for (let attempt = 0; attempt <= RESEARCH_BRANCH_MAX_RETRIES; attempt++) {
             if (attempt > 0) {
                 const delay = RESEARCH_BRANCH_BACKOFF_MS[attempt - 1] || 5000;
-                log(`[Katab:research] Branch "${task.sub_task}" retry ${attempt}/${RESEARCH_BRANCH_MAX_RETRIES} after ${delay}ms...`);
-                updateProgress(i, RESEARCH_PROGRESS_SEARCHING,
-                    `Retry ${attempt}/${RESEARCH_BRANCH_MAX_RETRIES}...`);
+                log(
+                    `[Katab:research] Branch "${task.sub_task}" retry ${attempt}/${RESEARCH_BRANCH_MAX_RETRIES} after ${delay}ms...`,
+                );
+                updateProgress(
+                    i,
+                    RESEARCH_PROGRESS_SEARCHING,
+                    `Retry ${attempt}/${RESEARCH_BRANCH_MAX_RETRIES}...`,
+                );
                 await sleep(delay);
             }
 
@@ -391,7 +416,7 @@ export async function runResearchBranches(host, plan) {
                     host,
                     { ...task, index: i },
                     { webSearchConfig, crawl4aiConfig },
-                    getCancellable()
+                    getCancellable(),
                 );
                 break; // Success — exit retry loop
             } catch (e) {
@@ -403,15 +428,21 @@ export async function runResearchBranches(host, plan) {
                 // dead service on this and every remaining branch.
                 if (e.code === 'connection-failed' || e.code === 'network-error') {
                     serviceDown = true;
-                    log(`[Katab:research] Research service unreachable (branch "${task.sub_task}"): ${e.message}`);
+                    log(
+                        `[Katab:research] Research service unreachable (branch "${task.sub_task}"): ${e.message}`,
+                    );
                     break;
                 }
                 if (!isTransient(e)) {
-                    log(`[Katab:research] Branch "${task.sub_task}" failed with non-transient error — skipping.`);
+                    log(
+                        `[Katab:research] Branch "${task.sub_task}" failed with non-transient error — skipping.`,
+                    );
                     break; // Permanent error — skip this branch
                 }
                 // Transient error — will retry on next loop iteration
-                log(`[Katab:research] Branch "${task.sub_task}" transient error (attempt ${attempt + 1}): ${e.message}`);
+                log(
+                    `[Katab:research] Branch "${task.sub_task}" transient error (attempt ${attempt + 1}): ${e.message}`,
+                );
             }
         }
 
@@ -429,9 +460,17 @@ export async function runResearchBranches(host, plan) {
         }
 
         if (branchError && !result) {
-            log(`[Katab:research] Branch "${task.sub_task}" failed after retries: ${branchError.message}`);
+            log(
+                `[Katab:research] Branch "${task.sub_task}" failed after retries: ${branchError.message}`,
+            );
             updateProgress(i, RESEARCH_PROGRESS_ERROR, 'Failed');
-            results.push({ topic: task.sub_task, findings: '', facts: [], sources: [], pageCount: 0 });
+            results.push({
+                topic: task.sub_task,
+                findings: '',
+                facts: [],
+                sources: [],
+                pageCount: 0,
+            });
             // Still save checkpoint so progress on completed branches is preserved
             saveCheckpoint(`branch ${i + 1}/${plan.length} (failed)`);
             continue;
@@ -441,9 +480,10 @@ export async function runResearchBranches(host, plan) {
 
         // ── Push completed branch summary to global context ─────────
         if (result.findings && result.findings.length > 50) {
-            const gist = result.findings.length > 300
-                ? result.findings.slice(0, 300).replace(/\n/g, ' ') + '...'
-                : result.findings.replace(/\n/g, ' ');
+            const gist =
+                result.findings.length > 300
+                    ? result.findings.slice(0, 300).replace(/\n/g, ' ') + '...'
+                    : result.findings.replace(/\n/g, ' ');
             globalContext.summaries.push({
                 topic: result.topic,
                 gist,
@@ -453,7 +493,7 @@ export async function runResearchBranches(host, plan) {
             if (result.sources) {
                 for (const url of result.sources) {
                     globalContext.coveredUrls.add(
-                        String(url).trim().replace(/\/+$/, '').toLowerCase()
+                        String(url).trim().replace(/\/+$/, '').toLowerCase(),
                     );
                 }
             }
@@ -468,9 +508,16 @@ export async function runResearchBranches(host, plan) {
         // ── Mid-research re-planning critique — every N branches ────
         if ((i + 1) % MID_RESEARCH_CRITIQUE_INTERVAL === 0 && i + 1 < plan.length) {
             const remaining = plan.slice(i + 1);
-            const critique = await runRePlanningCritique(getPipelineHost(), results, remaining, getOriginalQuery());
+            const critique = await runRePlanningCritique(
+                getPipelineHost(),
+                results,
+                remaining,
+                getOriginalQuery(),
+            );
             if (critique.sufficient) {
-                log(`[Katab:critique] Findings sufficient after ${i + 1} branches — skipping remaining ${remaining.length}.`);
+                log(
+                    `[Katab:critique] Findings sufficient after ${i + 1} branches — skipping remaining ${remaining.length}.`,
+                );
                 // Mark remaining branches as skipped
                 for (let j = i + 1; j < plan.length; j++) {
                     updateProgress(j, RESEARCH_PROGRESS_DONE, 'Skipped (sufficient)');
@@ -484,7 +531,9 @@ export async function runResearchBranches(host, plan) {
                     if (adj.index >= 0 && adj.index < remaining.length) {
                         const target = remaining[adj.index];
                         if (target && adj.new_query) {
-                            log(`[Katab:critique] Adjusted angle "${target.sub_task}" query → "${adj.new_query}" (${adj.rationale})`);
+                            log(
+                                `[Katab:critique] Adjusted angle "${target.sub_task}" query → "${adj.new_query}" (${adj.rationale})`,
+                            );
                             target.search_query = adj.new_query;
                         }
                     }
@@ -497,7 +546,9 @@ export async function runResearchBranches(host, plan) {
                     const absIdx = i + 1 + relIdx;
                     if (absIdx < plan.length) {
                         droppedSet.add(absIdx);
-                        log(`[Katab:critique] Dropping remaining angle "${plan[absIdx]?.sub_task}" (redundant/low-value).`);
+                        log(
+                            `[Katab:critique] Dropping remaining angle "${plan[absIdx]?.sub_task}" (redundant/low-value).`,
+                        );
                         updateProgress(absIdx, RESEARCH_PROGRESS_DONE, 'Skipped (redundant)');
                     }
                 }
@@ -506,8 +557,10 @@ export async function runResearchBranches(host, plan) {
             // Spawn NEW angles from discovered sub-topics (bounded).
             if (critique.new_branches && critique.new_branches.length > 0) {
                 const remainingBudget = MAX_TOTAL_SPAWNED_BRANCHES - spawnedTotal;
-                const toSpawn = critique.new_branches
-                    .slice(0, Math.min(MAX_CRITIQUE_SPAWNED_BRANCHES, remainingBudget));
+                const toSpawn = critique.new_branches.slice(
+                    0,
+                    Math.min(MAX_CRITIQUE_SPAWNED_BRANCHES, remainingBudget),
+                );
                 for (const nb of toSpawn) {
                     plan.push({
                         sub_task: String(nb.sub_task || 'New angle').slice(0, 80),
@@ -515,7 +568,9 @@ export async function runResearchBranches(host, plan) {
                         _timelineEntry: null,
                     });
                     spawnedTotal++;
-                    log(`[Katab:critique] Spawned new branch "${nb.sub_task}" (query: "${nb.search_query}")`);
+                    log(
+                        `[Katab:critique] Spawned new branch "${nb.sub_task}" (query: "${nb.search_query}")`,
+                    );
                 }
             }
         }
@@ -523,7 +578,9 @@ export async function runResearchBranches(host, plan) {
 
     const totalPages = results.reduce((sum, r) => sum + (r.pageCount || 0), 0);
     const totalFacts = results.reduce((sum, r) => sum + (r.facts?.length || 0), 0);
-    log(`[Katab:research] All branches complete — ${totalPages} pages scraped, ${totalFacts} facts extracted across ${results.length} branches.`);
+    log(
+        `[Katab:research] All branches complete — ${totalPages} pages scraped, ${totalFacts} facts extracted across ${results.length} branches.`,
+    );
 
     return results;
 }
@@ -551,8 +608,8 @@ export async function runRefinementResearch(host, gapQueries) {
         getCitationTracker = () => null,
         getOriginalQuery = () => '',
         getActivePlanLength = () => 0,
-        updateProgress = () => { },
-        extendProgressCardForRefinement = () => { },
+        updateProgress = () => {},
+        extendProgressCardForRefinement = () => {},
     } = host;
 
     const { webSearchConfig, crawl4aiConfig } = getConfig();
@@ -582,18 +639,33 @@ export async function runRefinementResearch(host, gapQueries) {
             }
             log(`[Katab:research] Refinement search "${gap.search_query}" failed: ${e.message}`);
             updateProgress(refIndex, RESEARCH_PROGRESS_ERROR, 'Search failed');
-            refinementResults.push({ topic: gap.rationale, findings: '', facts: [], sources: [], pageCount: 0 });
+            refinementResults.push({
+                topic: gap.rationale,
+                findings: '',
+                facts: [],
+                sources: [],
+                pageCount: 0,
+            });
             continue;
         }
 
         if (!searchResults.length) {
             updateProgress(refIndex, RESEARCH_PROGRESS_DONE, 'No results');
-            refinementResults.push({ topic: gap.rationale, findings: '', facts: [], sources: [], pageCount: 0 });
+            refinementResults.push({
+                topic: gap.rationale,
+                findings: '',
+                facts: [],
+                sources: [],
+                pageCount: 0,
+            });
             continue;
         }
 
         // Step 2: Crawl top results (only 2 for refinement)
-        const topUrls = searchResults.slice(0, REFINEMENT_CRAWL_COUNT).map(r => r.url).filter(Boolean);
+        const topUrls = searchResults
+            .slice(0, REFINEMENT_CRAWL_COUNT)
+            .map((r) => r.url)
+            .filter(Boolean);
         // Inject the refinement search query for BM25 relevance scoring
         crawl4aiConfig.query = gap.search_query;
         updateProgress(refIndex, RESEARCH_PROGRESS_SCRAPING, `Scraping ${topUrls.length} pages...`);
@@ -619,22 +691,31 @@ export async function runRefinementResearch(host, gapQueries) {
         }
 
         if (!pages.length) {
-            const snippetText = searchResults.slice(0, 3).map(r =>
-                `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`
-            ).join('\n\n');
-            updateProgress(refIndex, RESEARCH_PROGRESS_DONE, `${searchResults.length} results (snippets)`);
+            const snippetText = searchResults
+                .slice(0, 3)
+                .map((r) => `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`)
+                .join('\n\n');
+            updateProgress(
+                refIndex,
+                RESEARCH_PROGRESS_DONE,
+                `${searchResults.length} results (snippets)`,
+            );
             refinementResults.push({
                 topic: gap.rationale,
                 findings: `Refinement search for "${gap.search_query}":\n\n${snippetText}`,
                 facts: [],
-                sources: searchResults.map(r => r.url),
+                sources: searchResults.map((r) => r.url),
                 pageCount: 0,
             });
             continue;
         }
 
         // Step 3: Compress
-        updateProgress(refIndex, RESEARCH_PROGRESS_COMPRESSING, `Compressing ${pages.length} pages...`);
+        updateProgress(
+            refIndex,
+            RESEARCH_PROGRESS_COMPRESSING,
+            `Compressing ${pages.length} pages...`,
+        );
 
         const llmCall = async (messages, opts = {}) => {
             return await requestCompletion(messages, {
@@ -646,7 +727,7 @@ export async function runRefinementResearch(host, gapQueries) {
 
         let findings;
         let facts = [];
-        const sources = pages.map(p => p.url);
+        const sources = pages.map((p) => p.url);
 
         try {
             const compressed = await compressResearchBranch({
@@ -675,16 +756,28 @@ export async function runRefinementResearch(host, gapQueries) {
             }
         } catch (e) {
             log(`[Katab:research] Refinement compression failed: ${e.message}`);
-            findings = pages.map(p =>
-                `### Page: ${p.url}\n${p.text.slice(0, 2000)}...`
-            ).join('\n\n---\n\n');
+            findings = pages
+                .map((p) => `### Page: ${p.url}\n${p.text.slice(0, 2000)}...`)
+                .join('\n\n---\n\n');
         }
 
-        updateProgress(refIndex, RESEARCH_PROGRESS_DONE, `${pages.length} pages, ${facts.length} facts`);
-        refinementResults.push({ topic: gap.rationale, findings, facts, sources, pageCount: pages.length });
+        updateProgress(
+            refIndex,
+            RESEARCH_PROGRESS_DONE,
+            `${pages.length} pages, ${facts.length} facts`,
+        );
+        refinementResults.push({
+            topic: gap.rationale,
+            findings,
+            facts,
+            sources,
+            pageCount: pages.length,
+        });
     }
 
     const totalPages = refinementResults.reduce((sum, r) => sum + (r.pageCount || 0), 0);
-    log(`[Katab:research] Refinement complete — ${totalPages} additional pages across ${refinementResults.length} queries.`);
+    log(
+        `[Katab:research] Refinement complete — ${totalPages} additional pages across ${refinementResults.length} queries.`,
+    );
     return refinementResults;
 }

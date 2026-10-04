@@ -10,7 +10,8 @@
 // research rather than answering from training data.  (The mode itself only
 // raises iteration limits — the model needs this prompt to know it *should*
 // do research.)
-export const DEEP_RESEARCH_SYSTEM_INSTRUCTION = 'Deep Research mode is active. Conduct thorough multi-step research: use web_search to find relevant information, then read_url and crawl_url to extract details from promising pages. When a result is a documentation site (e.g. docs.example.org), use explore_docs on its landing page to get the table of contents, then crawl_url the specific pages most relevant to the question — do not crawl unrelated pages. Gather information from multiple independent sources before synthesizing a comprehensive answer. Cross-reference findings and note any conflicting information. Do not answer from your training data alone — use the tools to find current, specific information. After completing each research angle, briefly summarize what was found before moving to the next angle. Keep findings structured and concise — use clear section headings in your output.';
+export const DEEP_RESEARCH_SYSTEM_INSTRUCTION =
+    'Deep Research mode is active. Conduct thorough multi-step research: use web_search to find relevant information, then read_url and crawl_url to extract details from promising pages. When a result is a documentation site (e.g. docs.example.org), use explore_docs on its landing page to get the table of contents, then crawl_url the specific pages most relevant to the question — do not crawl unrelated pages. Gather information from multiple independent sources before synthesizing a comprehensive answer. Cross-reference findings and note any conflicting information. Do not answer from your training data alone — use the tools to find current, specific information. After completing each research angle, briefly summarize what was found before moving to the next angle. Keep findings structured and concise — use clear section headings in your output.';
 
 // ── Planner Agent ────────────────────────────────────────────────────────────
 // Deep research starts with an explicit planning phase where the LLM breaks
@@ -49,15 +50,15 @@ export const DEEP_RESEARCH_PLANNER_SYSTEM_PROMPT =
 // not be mistaken for a brand-new research query that replaces the plan.
 export const DEEP_RESEARCH_PLANNER_REVISION_SYSTEM_PROMPT =
     'You are a research planner revising an existing research plan based on the ' +
-    'user\'s feedback. You are given the user\'s ORIGINAL research query, the CURRENT ' +
-    'plan, and the user\'s requested changes. Apply ONLY the requested changes — fix ' +
+    "user's feedback. You are given the user's ORIGINAL research query, the CURRENT " +
+    "plan, and the user's requested changes. Apply ONLY the requested changes — fix " +
     'dates, versions, names, scope, or angle coverage — and preserve everything else ' +
     'that is still accurate and relevant. Do NOT treat the feedback as a brand-new ' +
     'research query and do NOT regenerate the plan from scratch.\n\n' +
     'RULES:\n' +
     '- Keep the SAME 3-5 angle structure unless the feedback explicitly asks to add, ' +
     'remove, or merge angles.\n' +
-    '- Carry the user\'s factual corrections (e.g. the current year, the exact software ' +
+    "- Carry the user's factual corrections (e.g. the current year, the exact software " +
     'version) into the affected sub_tasks and search queries.\n' +
     '- Keep each sub_task label concise (max 8 words).\n' +
     '- search_query stays an INTENT-EXPANSION (keywords that would appear on a ' +
@@ -84,7 +85,7 @@ export const CAUSAL_CHAIN_SYSTEM_PROMPT =
     '  "search_query": optimized search-engine query to source it\n\n' +
     'Return an empty array [] if every dependency is adequately covered.';
 export const GAP_ANALYSIS_SYSTEM_PROMPT =
-    'You are a research director reviewing initial findings against the user\'s ' +
+    "You are a research director reviewing initial findings against the user's " +
     'original question. Your job is to identify gaps — what critical aspects remain ' +
     'uncovered, what contradictions need resolution, what would add the most value.\n\n' +
     'Output a JSON array of 0-2 follow-up search queries. Each object must have:\n' +
@@ -96,13 +97,13 @@ export const GAP_ANALYSIS_SYSTEM_PROMPT =
     '[{"rationale": "No findings on context management strategies despite user asking about them", ' +
     '"search_query": "LLM context window management chunking strategies 2025"}, ...]';
 export const SYNTHESIS_OUTLINE_SYSTEM_PROMPT =
-    'You are a research report architect. Given the user\'s original question and ' +
+    "You are a research report architect. Given the user's original question and " +
     'all research findings, generate a structured outline for a comprehensive report.\n\n' +
     'The outline should have 4-6 sections, each with:\n' +
     '  - Section title (concrete, not generic)\n' +
     '  - 1-2 key claims that section will make (with source citation numbers)\n' +
     '  - Which research findings support this section\n\n' +
-    'CRITICAL: Structure the outline around what best answers the USER\'S QUESTION — ' +
+    "CRITICAL: Structure the outline around what best answers the USER'S QUESTION — " +
     'not around the research angles. The angles are just context providers.\n\n' +
     'Output as a JSON object:\n' +
     '{"sections": [{"title": "...", "key_claims": ["... [N]", ...], "based_on": ["topic name", ...]}, ...]}';
@@ -112,7 +113,7 @@ export const SYNTHESIS_OUTLINE_CRITIQUE_PROMPT =
     'Critique the draft against the findings:\n' +
     '1. Which sections are unsupported (no finding backs them)? Drop or rewrite them.\n' +
     '2. Which important findings have no section? Add sections for them.\n' +
-    '3. Is the structure optimal for answering the user\'s question? Reorder if needed.\n\n' +
+    "3. Is the structure optimal for answering the user's question? Reorder if needed.\n\n" +
     'Return an IMPROVED outline with the exact same JSON shape:\n' +
     '{"sections": [{"title": "...", "key_claims": ["... [N]", ...], "based_on": ["topic name", ...]}, ...]}\n\n' +
     'Make targeted changes only — do not churn sections that are already well supported.';
@@ -151,12 +152,12 @@ export const FORCE_SYNTHESIS_SYSTEM_INSTRUCTION =
     'Go back to what the user was originally asking for. Write a report that ' +
     'answers their specific question — do not just summarize your research steps. ' +
     'Structure your report around what best answers the user:\n\n' +
-    '1. EXECUTIVE SUMMARY — 2-3 sentences answering the user\'s core question.\n' +
+    "1. EXECUTIVE SUMMARY — 2-3 sentences answering the user's core question.\n" +
     '2. DETAILED ANALYSIS — Substantive sections organized around the concepts, ' +
     'mechanisms, or comparisons the user asked about. Explain, compare, and ' +
     'synthesize — do NOT structure this as a tour of your search queries.\n' +
     '3. KEY TECHNICAL DETAILS — Architecture patterns, data flows, specific ' +
-    'techniques, benchmarks, or code patterns relevant to the user\'s question.\n' +
+    "techniques, benchmarks, or code patterns relevant to the user's question.\n" +
     '4. SOURCES & REFERENCES — List URLs you drew from with brief notes on what each contributed.\n' +
     '5. RECOMMENDATIONS — Actionable suggestions grounded in the research.\n\n' +
     'CRITICAL RULES:\n' +
@@ -175,7 +176,7 @@ export const REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION =
     '\n\n[SYSTEM DIRECTIVE — HIGHEST PRIORITY — OVERRIDE ALL PREVIOUS BEHAVIOR] ' +
     'Tool-calling is now FORBIDDEN. You have no access to web_search, read_url, ' +
     'crawl_url, or any other tool.\n\n' +
-    'Answer the user\'s question directly and thoroughly based on the information ' +
+    "Answer the user's question directly and thoroughly based on the information " +
     'you gathered from the tool results above. Be substantive — explain what you ' +
     'found, cite specific sources, and give actionable guidance. Do NOT structure ' +
     'this as a formal research report or list of search queries. Just answer the ' +
@@ -195,7 +196,7 @@ export const NO_RESULTS_SYNTHESIS_SYSTEM_INSTRUCTION =
     'Web search was attempted but ALL search engines are currently unavailable ' +
     '(rate-limited, CAPTCHA-blocked, or IP-restricted). You have NO search results ' +
     'to work with — do not pretend otherwise.\n\n' +
-    'Answer the user\'s question based on your existing training knowledge. ' +
+    "Answer the user's question based on your existing training knowledge. " +
     'Be direct, honest, and substantive. If your knowledge on this topic is ' +
     'limited or dated, say so plainly. Do NOT suggest running additional searches. ' +
     'Do NOT emit tool-call syntax of any kind.\n\n' +
@@ -220,11 +221,11 @@ export const TOOL_CALL_HEALING_INSTRUCTION =
 // by targeting the missing aspects with new research — up to the retry budget.
 export const RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT =
     'You are a research quality evaluator. Rate how well the report below ' +
-    'answers the user\'s original question on TWO independent axes (1-5 each):\n\n' +
+    "answers the user's original question on TWO independent axes (1-5 each):\n\n" +
     '  coverage_score: Did the report cover ALL critical aspects of the question?\n' +
     '                  List concrete missing_aspects — angles, subtopics, or data\n' +
     '                  points the question implies that the report did not address.\n' +
-    '  groundedness_score: Do the report\'s claims trace to the provided research\n' +
+    "  groundedness_score: Do the report's claims trace to the provided research\n" +
     '                  facts, or does it fabricate or overreach beyond the evidence?\n\n' +
     'Also flag:\n' +
     '  unsupported_claims: report claims NOT supported by any provided research fact\n' +
@@ -262,9 +263,11 @@ export function parsePlannerResponse(text) {
     try {
         const parsed = JSON.parse(clean);
         if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.map(mapItem).filter(item => item.search_query);
+            return parsed.map(mapItem).filter((item) => item.search_query);
         }
-    } catch (_) { /* not pure JSON */ }
+    } catch (_) {
+        /* not pure JSON */
+    }
 
     // Try to find JSON array inside markdown code blocks
     const jsonBlock = clean.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
@@ -272,9 +275,11 @@ export function parsePlannerResponse(text) {
         try {
             const parsed = JSON.parse(jsonBlock[1].trim());
             if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed.map(mapItem).filter(item => item.search_query);
+                return parsed.map(mapItem).filter((item) => item.search_query);
             }
-        } catch (_) { /* not valid JSON in code block */ }
+        } catch (_) {
+            /* not valid JSON in code block */
+        }
     }
 
     // Try to find a JSON array anywhere in the response (non-greedy)
@@ -283,9 +288,11 @@ export function parsePlannerResponse(text) {
         try {
             const parsed = JSON.parse(arrayMatch[0]);
             if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed.map(mapItem).filter(item => item.search_query);
+                return parsed.map(mapItem).filter((item) => item.search_query);
             }
-        } catch (_) { /* not valid JSON */ }
+        } catch (_) {
+            /* not valid JSON */
+        }
     }
 
     // Fallback: parse numbered list format
@@ -318,18 +325,20 @@ export function parsePlannerResponse(text) {
  * @returns {string}
  */
 export function buildResearchPlanPrompt(plan) {
-    let prompt = '[RESEARCH PLAN — Execute these research steps in order using web_search, read_url, and crawl_url tools. '
-        + 'Search for each angle below, gather relevant pages, and synthesize findings into a comprehensive report.]\n\n';
+    let prompt =
+        '[RESEARCH PLAN — Execute these research steps in order using web_search, read_url, and crawl_url tools. ' +
+        'Search for each angle below, gather relevant pages, and synthesize findings into a comprehensive report.]\n\n';
 
     for (let i = 0; i < plan.length; i++) {
         const task = plan[i];
         prompt += `${i + 1}. ${task.sub_task}\n   Search: "${task.search_query}"\n`;
     }
 
-    prompt += '\nFor each angle, web_search the specified query, then use read_url or crawl_url on the most promising results. '
-        + 'Gather information from multiple sources per angle before moving to the next. '
-        + 'Cross-reference findings and note any conflicting information.\n\n'
-        + 'After completing all angles, synthesize a comprehensive research report with sections, citations, and a bibliography.';
+    prompt +=
+        '\nFor each angle, web_search the specified query, then use read_url or crawl_url on the most promising results. ' +
+        'Gather information from multiple sources per angle before moving to the next. ' +
+        'Cross-reference findings and note any conflicting information.\n\n' +
+        'After completing all angles, synthesize a comprehensive research report with sections, citations, and a bibliography.';
 
     return prompt;
 }
@@ -366,7 +375,7 @@ export function isSynthesisRegurgitation(content, provider) {
     // Signal 2: Content dominated by search-query-like lines.
     // Search queries look like: "keyword phrase about topic" with no
     // sentence structure.  Check ratio of query-like lines to total lines.
-    const lines = trimmed.split('\n').filter(l => l.trim());
+    const lines = trimmed.split('\n').filter((l) => l.trim());
     if (lines.length > 0) {
         let queryLikeLines = 0;
         for (const line of lines) {
@@ -374,8 +383,16 @@ export function isSynthesisRegurgitation(content, provider) {
             // Search query indicators: starts with a number, or looks like
             // a keyword phrase (no verbs, no sentence structure)
             if (/^\d+\s/.test(lt)) queryLikeLines++;
-            else if (/^(what|how|why|who|when|where)\b/i.test(lt) && !/[.!?]$/.test(lt)) queryLikeLines++;
-            else if (lt.length < 80 && !/[.!?]/.test(lt) && !/\b(is|are|was|were|has|have|can|could|should|would|will|may|might|must)\b/i.test(lt)) queryLikeLines++;
+            else if (/^(what|how|why|who|when|where)\b/i.test(lt) && !/[.!?]$/.test(lt))
+                queryLikeLines++;
+            else if (
+                lt.length < 80 &&
+                !/[.!?]/.test(lt) &&
+                !/\b(is|are|was|were|has|have|can|could|should|would|will|may|might|must)\b/i.test(
+                    lt,
+                )
+            )
+                queryLikeLines++;
         }
         if (queryLikeLines >= lines.length * 0.5) signals++;
         if (queryLikeLines >= lines.length * 0.75) signals++;
@@ -383,7 +400,7 @@ export function isSynthesisRegurgitation(content, provider) {
 
     // Signal 3: No paragraph structure — content is one block or fragmented
     // lines without double-newline separators.
-    const paragraphs = trimmed.split(/\n\n+/).filter(p => p.trim());
+    const paragraphs = trimmed.split(/\n\n+/).filter((p) => p.trim());
     const sentences = (trimmed.match(/[.!?]\s/g) || []).length;
     if (paragraphs.length < 2 && sentences < 3) signals++;
 
@@ -420,13 +437,20 @@ export function isSynthesisRegurgitation(content, provider) {
 
     // Signal 8: Very low lexical diversity — for short responses, unique
     // word count is a strong signal of regurgitation vs. real synthesis.
-    const words = new Set(trimmed.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    const words = new Set(
+        trimmed
+            .toLowerCase()
+            .split(/\s+/)
+            .filter((w) => w.length > 2),
+    );
     if (trimmed.length < 500 && words.size < 30) signals++;
     if (trimmed.length < 300 && words.size < 20) signals++;
 
     const detected = signals >= 3;
     if (detected) {
-        log(`[Katab:synth-gate] Regurgitation detected: ${signals} signal(s) — len=${trimmed.length} paras=${paragraphs.length} sents=${sentences} urls=${/https?:\/\//i.test(trimmed)} echoMatches=${echoMatches} uniqueWords=${words.size}`);
+        log(
+            `[Katab:synth-gate] Regurgitation detected: ${signals} signal(s) — len=${trimmed.length} paras=${paragraphs.length} sents=${sentences} urls=${/https?:\/\//i.test(trimmed)} echoMatches=${echoMatches} uniqueWords=${words.size}`,
+        );
     }
     return detected;
 }

@@ -26,9 +26,7 @@ function getHistoryFilePath() {
     if (_historyPathOverride) {
         return _historyPathOverride;
     }
-    return GLib.build_filenamev([
-        GLib.get_user_data_dir(), 'katabai', 'history.json'
-    ]);
+    return GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai', 'history.json']);
 }
 
 export class HistoryManager {
@@ -42,9 +40,7 @@ export class HistoryManager {
     }
 
     static ensureDir() {
-        let dir = Gio.File.new_for_path(
-            GLib.path_get_dirname(getHistoryFilePath())
-        );
+        let dir = Gio.File.new_for_path(GLib.path_get_dirname(getHistoryFilePath()));
         try {
             dir.make_directory_with_parents(null);
         } catch (_e) {
@@ -105,8 +101,7 @@ export class HistoryManager {
             this.ensureDir();
             let file = Gio.File.new_for_path(this.filePath);
             let data = new TextEncoder().encode(JSON.stringify(this._cache, null, 2));
-            file.replace_contents(data, null, false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            file.replace_contents(data, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {
             log(`Katab: failed to save history: ${e.message}`);
         }
@@ -127,18 +122,21 @@ export class HistoryManager {
     }
 
     static saveConversation(messageHistory, existingId = null) {
-        let userMsgs = messageHistory.filter(m => m.role === 'user');
+        let userMsgs = messageHistory.filter((m) => m.role === 'user');
         if (userMsgs.length === 0) return null;
 
         // Safely extract the title from the first user message, handling
         // array content (Anthropic blocks) and non-string edge cases.
         let firstContent = userMsgs[0].content;
-        let rawTitle = (typeof firstContent === 'string'
-            ? firstContent
-            : Array.isArray(firstContent)
-                ? firstContent.map(b => (b?.text || b?.content || '')).join(' ')
-                : String(firstContent ?? '')
-        ).replace(/\s*\n\s*/g, ' ').trim();
+        let rawTitle = (
+            typeof firstContent === 'string'
+                ? firstContent
+                : Array.isArray(firstContent)
+                  ? firstContent.map((b) => b?.text || b?.content || '').join(' ')
+                  : String(firstContent ?? '')
+        )
+            .replace(/\s*\n\s*/g, ' ')
+            .trim();
         let title = rawTitle.slice(0, 60);
         if (rawTitle.length > 60) title += '\u2026';
 
@@ -155,7 +153,7 @@ export class HistoryManager {
         // array, which would silently detach from this._cache.
         let arr = this.load();
         if (existingId) {
-            let idx = arr.findIndex(e => e.id === existingId);
+            let idx = arr.findIndex((e) => e.id === existingId);
             if (idx >= 0) arr.splice(idx, 1);
         }
         arr.unshift(entry);
@@ -166,7 +164,7 @@ export class HistoryManager {
 
     static deleteConversation(id) {
         let arr = this.load();
-        this._cache = arr.filter(e => e.id !== id);
+        this._cache = arr.filter((e) => e.id !== id);
         this._scheduleFlush();
     }
 }

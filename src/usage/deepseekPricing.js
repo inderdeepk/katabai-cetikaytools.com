@@ -12,12 +12,12 @@
 
 export const DEEPSEEK_TIER_PRICING = {
     'deepseek-flash': {
-        offPeak: { hit: 0.003, miss: 0.15, out: 0.60 },
-        peak: { hit: 0.006, miss: 0.30, out: 1.20 },
+        offPeak: { hit: 0.003, miss: 0.15, out: 0.6 },
+        peak: { hit: 0.006, miss: 0.3, out: 1.2 },
     },
     'deepseek-v4-flash': {
-        offPeak: { hit: 0.003, miss: 0.15, out: 0.60 },
-        peak: { hit: 0.006, miss: 0.30, out: 1.20 },
+        offPeak: { hit: 0.003, miss: 0.15, out: 0.6 },
+        peak: { hit: 0.006, miss: 0.3, out: 1.2 },
     },
     'deepseek-v4-pro': {
         offPeak: { hit: 0.022, miss: 0.66, out: 1.98 },
@@ -40,7 +40,7 @@ export function isDeepSeekPeakHour(epochMs = Date.now()) {
         return false;
     }
     const hour = d.getUTCHours();
-    return DEEPSEEK_PEAK_WINDOWS_UTC.some(w => hour >= w.startHour && hour < w.endHour);
+    return DEEPSEEK_PEAK_WINDOWS_UTC.some((w) => hour >= w.startHour && hour < w.endHour);
 }
 
 /** Resolve the effective rate card for a model id (falls back to Flash). */
@@ -57,11 +57,20 @@ export function deepseekPricingForTimestamp(model, epochMs = Date.now()) {
 }
 
 /** Cost in USD for a single request at the tier active at epochMs. */
-export function estimateDeepSeekCost(model, promptTokens, completionTokens, { epochMs = Date.now(), cachedHitTokens = 0 } = {}) {
+export function estimateDeepSeekCost(
+    model,
+    promptTokens,
+    completionTokens,
+    { epochMs = Date.now(), cachedHitTokens = 0 } = {},
+) {
     const prompt = Math.max(0, Number(promptTokens) || 0);
     const completion = Math.max(0, Number(completionTokens) || 0);
     const hit = Math.min(prompt, Math.max(0, Number(cachedHitTokens) || 0));
-    const { hit: hitRate, miss: missRate, out: outRate } = deepseekPricingForTimestamp(model, epochMs);
+    const {
+        hit: hitRate,
+        miss: missRate,
+        out: outRate,
+    } = deepseekPricingForTimestamp(model, epochMs);
     return (hit * hitRate + (prompt - hit) * missRate + completion * outRate) / 1_000_000;
 }
 
@@ -75,7 +84,8 @@ export function estimateDeepSeekCostFromTiers(model, tiers) {
         const completion = Math.max(0, Number(t.completion) || 0);
         const hit = Math.min(prompt, Math.max(0, Number(t.hit) || 0));
         const rates = pricing[tier];
-        total += (hit * rates.hit + (prompt - hit) * rates.miss + completion * rates.out) / 1_000_000;
+        total +=
+            (hit * rates.hit + (prompt - hit) * rates.miss + completion * rates.out) / 1_000_000;
     }
     return total;
 }

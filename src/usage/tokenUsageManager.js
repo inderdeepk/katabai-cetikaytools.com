@@ -51,48 +51,56 @@ const STATUS_KEYS = ['completed', 'stopped', 'tool-call-turn'];
 
 const MODEL_PRICING = {
     // OpenAI
-    'gpt-4o': { input: 2.50, output: 10.00 },
-    'gpt-4o-mini': { input: 0.15, output: 0.60 },
-    'gpt-4-turbo': { input: 10.00, output: 30.00 },
-    'gpt-4': { input: 30.00, output: 60.00 },
-    'gpt-3.5-turbo': { input: 0.50, output: 1.50 },
-    'o1': { input: 15.00, output: 60.00 },
-    'o1-mini': { input: 1.10, output: 4.40 },
-    'o3-mini': { input: 1.10, output: 4.40 },
+    'gpt-4o': { input: 2.5, output: 10.0 },
+    'gpt-4o-mini': { input: 0.15, output: 0.6 },
+    'gpt-4-turbo': { input: 10.0, output: 30.0 },
+    'gpt-4': { input: 30.0, output: 60.0 },
+    'gpt-3.5-turbo': { input: 0.5, output: 1.5 },
+    o1: { input: 15.0, output: 60.0 },
+    'o1-mini': { input: 1.1, output: 4.4 },
+    'o3-mini': { input: 1.1, output: 4.4 },
     // Anthropic
-    'claude-3-5-sonnet-20241022': { input: 3.00, output: 15.00 },
-    'claude-3-5-haiku-20241022': { input: 0.80, output: 4.00 },
-    'claude-3-opus-20240229': { input: 15.00, output: 75.00 },
-    'claude-3-sonnet-20240229': { input: 3.00, output: 15.00 },
+    'claude-3-5-sonnet-20241022': { input: 3.0, output: 15.0 },
+    'claude-3-5-haiku-20241022': { input: 0.8, output: 4.0 },
+    'claude-3-opus-20240229': { input: 15.0, output: 75.0 },
+    'claude-3-sonnet-20240229': { input: 3.0, output: 15.0 },
     'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
     // DeepSeek — representative off-peak cache-miss input / off-peak output
     // rates for the generic flat path.  The DeepSeek-specific cost path in
     // estimateSummaryCost uses tier-aware (peak/off-peak) + cache-aware
     // (hit/miss) rates instead; keep these in sync with those helpers.
-    'deepseek-flash': { input: 0.15, output: 0.60 },
-    'deepseek-v4-flash': { input: 0.15, output: 0.60 },
+    'deepseek-flash': { input: 0.15, output: 0.6 },
+    'deepseek-v4-flash': { input: 0.15, output: 0.6 },
     'deepseek-v4-pro': { input: 0.66, output: 1.98 },
-    'deepseek-chat': { input: 0.27, output: 1.10 },
+    'deepseek-chat': { input: 0.27, output: 1.1 },
     'deepseek-reasoner': { input: 0.55, output: 2.19 },
     // Ollama / Unsloth — local, effectively zero cost
-    '__local__': { input: 0, output: 0 },
+    __local__: { input: 0, output: 0 },
 };
 
-const DEFAULT_CLOUD_PRICING = { input: 1.00, output: 4.00 };
+const DEFAULT_CLOUD_PRICING = { input: 1.0, output: 4.0 };
 
 // Longest keys first so a specific model always wins over a shorter prefix:
 // 'gpt-4o-mini' must match its own entry, not the 'gpt-4o' prefix, and
 // 'o1-mini' must not inherit 'o1' rates. (Both were billed at the parent
 // model's 10-16x rate when MODEL_PRICING insertion order won.)
-const PRICING_KEYS_BY_SPECIFICITY = Object.entries(MODEL_PRICING)
-    .sort((a, b) => b[0].length - a[0].length);
+const PRICING_KEYS_BY_SPECIFICITY = Object.entries(MODEL_PRICING).sort(
+    (a, b) => b[0].length - a[0].length,
+);
 
 function pricingForModel(model, provider) {
     const key = String(model || '').trim();
-    if (!key) return provider === 'ollama' || provider === 'unsloth' ? MODEL_PRICING.__local__ : DEFAULT_CLOUD_PRICING;
+    if (!key)
+        return provider === 'ollama' || provider === 'unsloth'
+            ? MODEL_PRICING.__local__
+            : DEFAULT_CLOUD_PRICING;
     const lower = key.toLowerCase();
     for (const [pricingKey, pricing] of PRICING_KEYS_BY_SPECIFICITY) {
-        if (lower === pricingKey.toLowerCase() || lower.startsWith(pricingKey.toLowerCase() + '-') || lower.includes(pricingKey.toLowerCase())) {
+        if (
+            lower === pricingKey.toLowerCase() ||
+            lower.startsWith(pricingKey.toLowerCase() + '-') ||
+            lower.includes(pricingKey.toLowerCase())
+        ) {
             return pricing;
         }
     }
@@ -138,10 +146,17 @@ export function estimateSummaryCost(summary) {
         // Cost must consider ALL models — summary.models is display-truncated
         // to the top rows. Fall back to it for hand-built summaries, and to
         // the provider total when the provider has no model rows at all.
-        const providerModels = (summary.allModels || summary.models || []).filter(m => m.provider === provider.provider);
-        const isDeepseekTiered = provider.provider === 'deepseek'
-            && (provider.peakPrompt || provider.peakCompletion || provider.peakHit
-                || provider.offPeakPrompt || provider.offPeakCompletion || provider.offPeakHit);
+        const providerModels = (summary.allModels || summary.models || []).filter(
+            (m) => m.provider === provider.provider,
+        );
+        const isDeepseekTiered =
+            provider.provider === 'deepseek' &&
+            (provider.peakPrompt ||
+                provider.peakCompletion ||
+                provider.peakHit ||
+                provider.offPeakPrompt ||
+                provider.offPeakCompletion ||
+                provider.offPeakHit);
 
         let providerCost;
         if (isDeepseekTiered) {
@@ -149,8 +164,16 @@ export function estimateSummaryCost(summary) {
             // (peak vs off-peak), using the first model name for rate lookup.
             const modelName = providerModels[0]?.model || 'deepseek-flash';
             providerCost = estimateDeepSeekCostFromTiers(modelName, {
-                peak: { prompt: provider.peakPrompt, completion: provider.peakCompletion, hit: provider.peakHit },
-                offPeak: { prompt: provider.offPeakPrompt, completion: provider.offPeakCompletion, hit: provider.offPeakHit },
+                peak: {
+                    prompt: provider.peakPrompt,
+                    completion: provider.peakCompletion,
+                    hit: provider.peakHit,
+                },
+                offPeak: {
+                    prompt: provider.offPeakPrompt,
+                    completion: provider.offPeakCompletion,
+                    hit: provider.offPeakHit,
+                },
             });
         } else {
             providerCost = 0;
@@ -162,7 +185,12 @@ export function estimateSummaryCost(summary) {
                 const share = summary.totalTokens > 0 ? model.total / summary.totalTokens : 0;
                 const approxPrompt = Math.round((summary.promptTokens || 0) * share);
                 const approxCompletion = Math.round((summary.completionTokens || 0) * share);
-                const cost = estimateCost(model.model, model.provider, approxPrompt, approxCompletion);
+                const cost = estimateCost(
+                    model.model,
+                    model.provider,
+                    approxPrompt,
+                    approxCompletion,
+                );
                 providerCost += cost;
                 perModel.push({ ...model, cost });
             }
@@ -183,7 +211,7 @@ export function estimateSummaryCost(summary) {
         perProvider[provider.provider] = { ...provider, cost: providerCost };
     }
     // Estimate savings from local tokens
-    const avgCloudCostPerMTok = 3.00; // conservative blended rate
+    const avgCloudCostPerMTok = 3.0; // conservative blended rate
     const localSavings = ((summary.localTokens || 0) / 1_000_000) * avgCloudCostPerMTok;
     return { total, perProvider, perModel, localSavings };
 }
@@ -199,7 +227,9 @@ export function formatTokenCount(value) {
     return String(n);
 }
 
-function trimTrailingZero(text) { return text.replace(/\.0$/, ''); }
+function trimTrailingZero(text) {
+    return text.replace(/\.0$/, '');
+}
 
 // ── Locality ─────────────────────────────────────────────────────────────────
 
@@ -207,8 +237,11 @@ export function isLocalModelEndpoint(provider, rawUrl) {
     const url = (rawUrl || '').trim();
     if (!url) return provider === 'ollama' || provider === 'unsloth';
     let host = '';
-    try { host = (GLib.Uri.parse(url, GLib.UriFlags.NONE).get_host() || '').toLowerCase(); }
-    catch (_e) { return provider === 'ollama' || provider === 'unsloth'; }
+    try {
+        host = (GLib.Uri.parse(url, GLib.UriFlags.NONE).get_host() || '').toLowerCase();
+    } catch (_e) {
+        return provider === 'ollama' || provider === 'unsloth';
+    }
     if (!host) return provider === 'ollama' || provider === 'unsloth';
     if (isBlockedHost(host, false)) return true;
     if (!host.includes('.')) return true;
@@ -227,13 +260,21 @@ const COMPANION_STAGES = [
 ];
 
 const COMPANION_STAGE_RANK = Object.fromEntries(
-    COMPANION_STAGES.slice().reverse().map((s, i) => [s.key, i])
+    COMPANION_STAGES.slice()
+        .reverse()
+        .map((s, i) => [s.key, i]),
 );
 
-const COMPANION_NAMES = { ollama: 'Ollie', unsloth: 'Slothy', openai: 'Sparky', anthropic: 'Clyde', deepseek: 'Pearl' };
+const COMPANION_NAMES = {
+    ollama: 'Ollie',
+    unsloth: 'Slothy',
+    openai: 'Sparky',
+    anthropic: 'Clyde',
+    deepseek: 'Pearl',
+};
 
 function companionStageForTokens(totalTokens) {
-    return COMPANION_STAGES.find(s => totalTokens >= s.minTokens) || COMPANION_STAGES.at(-1);
+    return COMPANION_STAGES.find((s) => totalTokens >= s.minTokens) || COMPANION_STAGES.at(-1);
 }
 
 export function buildCompanionState(allSummary, recentSummary = null) {
@@ -246,7 +287,8 @@ export function buildCompanionState(allSummary, recentSummary = null) {
     if (total > 0 && top) name = COMPANION_NAMES[top.provider] || 'Byte';
 
     const localShare = allSummary?.localShare || 0;
-    const recentLocalShare = recentSummary?.totalTokens > 0 ? (recentSummary.localShare || 0) : localShare;
+    const recentLocalShare =
+        recentSummary?.totalTokens > 0 ? recentSummary.localShare || 0 : localShare;
     const localTrend = recentSummary?.localShareTrend;
     let mood, flavorText;
     if (total === 0) {
@@ -260,20 +302,28 @@ export function buildCompanionState(allSummary, recentSummary = null) {
         flavorText = 'A tasty mix of home cooking and cloud dining. Nicely balanced!';
     } else if (recentLocalShare > 0) {
         mood = localTrend !== null && localTrend > 0.05 ? 'Rooting In' : 'Cloud Curious';
-        flavorText = localTrend !== null && localTrend > 0.05
-            ? 'Local share is climbing — the little home-lab roots are showing.'
-            : 'Mostly cloud-powered. Your local models would love a visit sometime!';
+        flavorText =
+            localTrend !== null && localTrend > 0.05
+                ? 'Local share is climbing — the little home-lab roots are showing.'
+                : 'Mostly cloud-powered. Your local models would love a visit sometime!';
     } else {
         mood = 'Cloud Surfer';
-        flavorText = 'Living the full cloud life! Try a local Ollama model and watch me grow roots.';
+        flavorText =
+            'Living the full cloud life! Try a local Ollama model and watch me grow roots.';
     }
 
     return {
-        name, stageKey: stage.key, stageLabel: stage.label, face: stage.face,
-        mood, flavorText,
+        name,
+        stageKey: stage.key,
+        stageLabel: stage.label,
+        face: stage.face,
+        mood,
+        flavorText,
         primaryProvider: total > 0 && top ? top.provider : null,
         secondaryProvider: total > 0 && providers[1] ? providers[1].provider : null,
-        isBlend: false, localShare, recentLocalShare,
+        isBlend: false,
+        localShare,
+        recentLocalShare,
         stageRank: COMPANION_STAGE_RANK[stage.key] || 0,
     };
 }
@@ -287,7 +337,11 @@ export function buildUsageMilestones(allSummary) {
         { key: 'first-reply', label: 'First reply', achieved: total > 0 },
         { key: 'local-seed', label: 'First local tokens', achieved: local > 0 },
         { key: 'local-10k', label: '10k local', achieved: local >= 10_000 },
-        { key: 'mostly-local', label: 'Mostly self-hosted', achieved: total > 0 && localShare >= 0.5 },
+        {
+            key: 'mostly-local',
+            label: 'Mostly self-hosted',
+            achieved: total > 0 && localShare >= 0.5,
+        },
         { key: 'seven-days', label: '7 active days', achieved: activeDays >= 7 },
     ];
 }
@@ -300,11 +354,17 @@ export class TokenUsageManager {
     static _flushSourceId = 0;
     static FLUSH_DELAY_MS = 400;
 
-    static get filePath() { return GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai', 'token-usage.json']); }
+    static get filePath() {
+        return GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai', 'token-usage.json']);
+    }
 
     static ensureDir() {
-        const dir = Gio.File.new_for_path(GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai']));
-        try { dir.make_directory_with_parents(null); } catch (_e) { }
+        const dir = Gio.File.new_for_path(
+            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai']),
+        );
+        try {
+            dir.make_directory_with_parents(null);
+        } catch (_e) {}
     }
 
     static _freshStore() {
@@ -323,37 +383,86 @@ export class TokenUsageManager {
     static _migrateStore(store) {
         const sourceVersion = Number.isFinite(store.version) ? store.version : 0;
         let changed = false;
-        if (sourceVersion !== STORE_VERSION) { store.version = STORE_VERSION; changed = true; }
-        if (!Number.isFinite(store.trackingStartedAt)) { store.trackingStartedAt = Math.floor(Date.now() / 1000); changed = true; }
-        if (!Number.isFinite(store.lastUpdatedAt)) { store.lastUpdatedAt = store.trackingStartedAt; changed = true; }
-        if (!store.days || typeof store.days !== 'object') { store.days = {}; changed = true; }
-        if (!Array.isArray(store.recentEventIds)) { store.recentEventIds = []; changed = true; }
-        if (!Array.isArray(store.milestonesCelebrated)) { store.milestonesCelebrated = []; changed = true; }
+        if (sourceVersion !== STORE_VERSION) {
+            store.version = STORE_VERSION;
+            changed = true;
+        }
+        if (!Number.isFinite(store.trackingStartedAt)) {
+            store.trackingStartedAt = Math.floor(Date.now() / 1000);
+            changed = true;
+        }
+        if (!Number.isFinite(store.lastUpdatedAt)) {
+            store.lastUpdatedAt = store.trackingStartedAt;
+            changed = true;
+        }
+        if (!store.days || typeof store.days !== 'object') {
+            store.days = {};
+            changed = true;
+        }
+        if (!Array.isArray(store.recentEventIds)) {
+            store.recentEventIds = [];
+            changed = true;
+        }
+        if (!Array.isArray(store.milestonesCelebrated)) {
+            store.milestonesCelebrated = [];
+            changed = true;
+        }
         // Strip any v3 gamification fields that may linger
-        if (typeof store.achievements !== 'undefined') { delete store.achievements; changed = true; }
-        if (typeof store.conversations !== 'undefined') { delete store.conversations; changed = true; }
+        if (typeof store.achievements !== 'undefined') {
+            delete store.achievements;
+            changed = true;
+        }
+        if (typeof store.conversations !== 'undefined') {
+            delete store.conversations;
+            changed = true;
+        }
 
         for (const day of Object.values(store.days)) {
             if (!day || typeof day !== 'object') continue;
-            if (!day.statuses) { day.statuses = emptyStatusCounts(); changed = true; }
-            if (!day.providers || typeof day.providers !== 'object') { day.providers = {}; changed = true; }
+            if (!day.statuses) {
+                day.statuses = emptyStatusCounts();
+                changed = true;
+            }
+            if (!day.providers || typeof day.providers !== 'object') {
+                day.providers = {};
+                changed = true;
+            }
             for (const bucket of Object.values(day.providers)) {
                 if (!bucket || typeof bucket !== 'object') continue;
-                if (!bucket.statuses) { bucket.statuses = emptyStatusCounts(); changed = true; }
-                if (!bucket.sources) { bucket.sources = {}; changed = true; }
-                if (!bucket.models || typeof bucket.models !== 'object') { bucket.models = {}; changed = true; }
-                if (!bucket.tiers || typeof bucket.tiers !== 'object') { bucket.tiers = emptyDeepSeekTiers(); changed = true; }
+                if (!bucket.statuses) {
+                    bucket.statuses = emptyStatusCounts();
+                    changed = true;
+                }
+                if (!bucket.sources) {
+                    bucket.sources = {};
+                    changed = true;
+                }
+                if (!bucket.models || typeof bucket.models !== 'object') {
+                    bucket.models = {};
+                    changed = true;
+                }
+                if (!bucket.tiers || typeof bucket.tiers !== 'object') {
+                    bucket.tiers = emptyDeepSeekTiers();
+                    changed = true;
+                }
                 for (const mb of Object.values(bucket.models)) {
                     if (!mb || typeof mb !== 'object') continue;
-                    if (!Number.isFinite(mb.exact)) { mb.exact = (bucket.estimated || 0) > 0 ? 0 : (mb.total || 0); changed = true; }
-                    if (!Number.isFinite(mb.estimated)) { mb.estimated = Math.max(0, (mb.total || 0) - (mb.exact || 0)); changed = true; }
+                    if (!Number.isFinite(mb.exact)) {
+                        mb.exact = (bucket.estimated || 0) > 0 ? 0 : mb.total || 0;
+                        changed = true;
+                    }
+                    if (!Number.isFinite(mb.estimated)) {
+                        mb.estimated = Math.max(0, (mb.total || 0) - (mb.exact || 0));
+                        changed = true;
+                    }
                 }
             }
         }
 
-        const nextCollection = sourceVersion < STORE_VERSION || !store.collection
-            ? buildMigratedCollection(store)
-            : normalizeCollectionState(store.collection);
+        const nextCollection =
+            sourceVersion < STORE_VERSION || !store.collection
+                ? buildMigratedCollection(store)
+                : normalizeCollectionState(store.collection);
         if (JSON.stringify(store.collection) !== JSON.stringify(nextCollection)) changed = true;
         store.collection = nextCollection;
 
@@ -366,20 +475,36 @@ export class TokenUsageManager {
             const file = Gio.File.new_for_path(this.filePath);
             const [, bytes] = file.load_contents(null);
             const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes));
-            if (parsed && typeof parsed === 'object' && parsed.days && typeof parsed.days === 'object') {
+            if (
+                parsed &&
+                typeof parsed === 'object' &&
+                parsed.days &&
+                typeof parsed.days === 'object'
+            ) {
                 this._cache = this._migrateStore(parsed);
-            } else { this._cache = this._freshStore(); this._dirty = true; }
-        } catch (_e) { this._cache = this._freshStore(); this._dirty = true; }
+            } else {
+                this._cache = this._freshStore();
+                this._dirty = true;
+            }
+        } catch (_e) {
+            this._cache = this._freshStore();
+            this._dirty = true;
+        }
         return this._cache;
     }
 
-    static load() { if (this._cache === null) this._readFromDisk(); return this._cache; }
+    static load() {
+        if (this._cache === null) this._readFromDisk();
+        return this._cache;
+    }
 
     static _scheduleFlush() {
         this._dirty = true;
         if (this._flushSourceId) return;
         this._flushSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this.FLUSH_DELAY_MS, () => {
-            this._flushSourceId = 0; this._flushNow(); return GLib.SOURCE_REMOVE;
+            this._flushSourceId = 0;
+            this._flushNow();
+            return GLib.SOURCE_REMOVE;
         });
     }
 
@@ -391,13 +516,27 @@ export class TokenUsageManager {
             const file = Gio.File.new_for_path(this.filePath);
             const data = new TextEncoder().encode(JSON.stringify(this._cache, null, 2));
             file.replace_contents(data, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
-        } catch (e) { log(`Katab: failed to save token usage: ${e.message}`); }
+        } catch (e) {
+            log(`Katab: failed to save token usage: ${e.message}`);
+        }
     }
 
-    static flushSync() { if (this._flushSourceId) { GLib.source_remove(this._flushSourceId); this._flushSourceId = 0; } this._flushNow(); }
-    static invalidateCache() { this._cache = null; }
+    static flushSync() {
+        if (this._flushSourceId) {
+            GLib.source_remove(this._flushSourceId);
+            this._flushSourceId = 0;
+        }
+        this._flushNow();
+    }
+    static invalidateCache() {
+        this._cache = null;
+    }
 
-    static reset() { this._cache = this._freshStore(); this._dirty = true; this.flushSync(); }
+    static reset() {
+        this._cache = this._freshStore();
+        this._dirty = true;
+        this.flushSync();
+    }
 
     static getCollectionState() {
         return buildCollectionSnapshot(this.load().collection);
@@ -410,7 +549,12 @@ export class TokenUsageManager {
 
     static getActiveCompanion({ currentProvider, selectionMode, pinnedForm } = {}) {
         const collection = normalizeCollectionState(this.load().collection);
-        const form = resolveActivePetForm({ collection, currentProvider, selectionMode, pinnedForm });
+        const form = resolveActivePetForm({
+            collection,
+            currentProvider,
+            selectionMode,
+            pinnedForm,
+        });
         const baseDefinition = form.baseProvider ? getPetDefinition(form.baseProvider) : null;
         const xp = collection.pets[form.baseProvider].xp;
         const progress = getPetStageProgress(xp);
@@ -431,13 +575,26 @@ export class TokenUsageManager {
     }
 
     static exportCopy() {
-        this.load(); this._dirty = true; this.flushSync();
+        this.load();
+        this._dirty = true;
+        this.flushSync();
         const source = Gio.File.new_for_path(this.filePath);
         const [, bytes] = source.load_contents(null);
-        const documentsDir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) || GLib.get_home_dir();
+        const documentsDir =
+            GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) ||
+            GLib.get_home_dir();
         const stamp = GLib.DateTime.new_now_local().format('%Y%m%d-%H%M%S');
-        const targetPath = GLib.build_filenamev([documentsDir, `katabai-token-usage-${stamp}.json`]);
-        Gio.File.new_for_path(targetPath).replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        const targetPath = GLib.build_filenamev([
+            documentsDir,
+            `katabai-token-usage-${stamp}.json`,
+        ]);
+        Gio.File.new_for_path(targetPath).replace_contents(
+            bytes,
+            null,
+            false,
+            Gio.FileCreateFlags.REPLACE_DESTINATION,
+            null,
+        );
         return targetPath;
     }
 
@@ -445,10 +602,20 @@ export class TokenUsageManager {
         const days = Math.round(Number(retentionDays) || 0);
         if (days <= 0) return 0;
         const store = this.load();
-        const cutoffKey = GLib.DateTime.new_now_local().add_days(-(days - 1)).format('%Y-%m-%d');
+        const cutoffKey = GLib.DateTime.new_now_local()
+            .add_days(-(days - 1))
+            .format('%Y-%m-%d');
         let removed = 0;
-        for (const dayKey of Object.keys(store.days)) { if (dayKey < cutoffKey) { delete store.days[dayKey]; removed++; } }
-        if (removed > 0) { store.lastUpdatedAt = Math.floor(Date.now() / 1000); this._scheduleFlush(); }
+        for (const dayKey of Object.keys(store.days)) {
+            if (dayKey < cutoffKey) {
+                delete store.days[dayKey];
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            store.lastUpdatedAt = Math.floor(Date.now() / 1000);
+            this._scheduleFlush();
+        }
         return removed;
     }
 
@@ -465,7 +632,8 @@ export class TokenUsageManager {
 
         const store = this.load();
         const eventId = String(event.eventId || '').trim();
-        if (eventId && store.recentEventIds.includes(eventId)) return { recorded: false, duplicate: true };
+        if (eventId && store.recentEventIds.includes(eventId))
+            return { recorded: false, duplicate: true };
 
         const beforeStage = companionStageForTokens(storeTotal(store));
         const collectionEvents = [];
@@ -474,15 +642,26 @@ export class TokenUsageManager {
         const wasHatched = Boolean(pet && pet.xp > 0);
         const dayKey = GLib.DateTime.new_now_local().format('%Y-%m-%d');
 
-        if (!store.days[dayKey]) store.days[dayKey] = { total: 0, statuses: emptyStatusCounts(), providers: {} };
+        if (!store.days[dayKey])
+            store.days[dayKey] = { total: 0, statuses: emptyStatusCounts(), providers: {} };
         const day = store.days[dayKey];
         if (!day.statuses) day.statuses = emptyStatusCounts();
 
         if (!day.providers[provider]) {
             day.providers[provider] = {
-                prompt: 0, completion: 0, reasoning: 0, cachedHit: 0,
-                total: 0, exact: 0, estimated: 0, local: 0, remote: 0,
-                events: 0, statuses: emptyStatusCounts(), sources: {}, models: {},
+                prompt: 0,
+                completion: 0,
+                reasoning: 0,
+                cachedHit: 0,
+                total: 0,
+                exact: 0,
+                estimated: 0,
+                local: 0,
+                remote: 0,
+                events: 0,
+                statuses: emptyStatusCounts(),
+                sources: {},
+                models: {},
                 tiers: emptyDeepSeekTiers(),
             };
         }
@@ -491,11 +670,15 @@ export class TokenUsageManager {
         if (!bucket.sources) bucket.sources = {};
 
         const status = normalizeStatus(event.status);
-        const source = String(event.source || (event.exact ? 'exact' : 'estimate')).trim() || 'unknown';
+        const source =
+            String(event.source || (event.exact ? 'exact' : 'estimate')).trim() || 'unknown';
 
-        bucket.prompt += prompt; bucket.completion += completion;
-        bucket.reasoning += reasoning; bucket.cachedHit += cachedHit;
-        bucket.total += total; bucket.events += 1;
+        bucket.prompt += prompt;
+        bucket.completion += completion;
+        bucket.reasoning += reasoning;
+        bucket.cachedHit += cachedHit;
+        bucket.total += total;
+        bucket.events += 1;
         if (provider === 'deepseek') {
             if (!bucket.tiers) bucket.tiers = emptyDeepSeekTiers();
             const tier = isDeepSeekPeakHour(Date.now()) ? 'peak' : 'offPeak';
@@ -503,14 +686,28 @@ export class TokenUsageManager {
             bucket.tiers[tier].completion += completion;
             bucket.tiers[tier].hit += cachedHit;
         }
-        if (event.exact) { bucket.exact += total; } else { bucket.estimated += total; }
-        if (event.local) { bucket.local += total; } else { bucket.remote += total; }
+        if (event.exact) {
+            bucket.exact += total;
+        } else {
+            bucket.estimated += total;
+        }
+        if (event.local) {
+            bucket.local += total;
+        } else {
+            bucket.remote += total;
+        }
 
         const model = String(event.model || '').trim();
         if (model) {
-            if (!bucket.models[model]) bucket.models[model] = { total: 0, events: 0, exact: 0, estimated: 0 };
-            bucket.models[model].total += total; bucket.models[model].events += 1;
-            if (event.exact) { bucket.models[model].exact += total; } else { bucket.models[model].estimated += total; }
+            if (!bucket.models[model])
+                bucket.models[model] = { total: 0, events: 0, exact: 0, estimated: 0 };
+            bucket.models[model].total += total;
+            bucket.models[model].events += 1;
+            if (event.exact) {
+                bucket.models[model].exact += total;
+            } else {
+                bucket.models[model].estimated += total;
+            }
         }
 
         day.total += total;
@@ -558,9 +755,17 @@ export class TokenUsageManager {
         const afterTotal = storeTotal(store);
         const afterStage = companionStageForTokens(afterTotal);
         let celebration = null;
-        if (afterStage.key !== beforeStage.key && !store.milestonesCelebrated.includes(afterStage.key)) {
+        if (
+            afterStage.key !== beforeStage.key &&
+            !store.milestonesCelebrated.includes(afterStage.key)
+        ) {
             store.milestonesCelebrated.push(afterStage.key);
-            celebration = { stageKey: afterStage.key, stageLabel: afterStage.label, face: afterStage.face, totalTokens: afterTotal };
+            celebration = {
+                stageKey: afterStage.key,
+                stageLabel: afterStage.label,
+                face: afterStage.face,
+                totalTokens: afterTotal,
+            };
         }
         store.lastUpdatedAt = Math.floor(Date.now() / 1000);
         this._scheduleFlush();
@@ -569,24 +774,49 @@ export class TokenUsageManager {
 
     static getSummary(rangeKey = 'all') {
         const store = this.load();
-        const range = TOKEN_USAGE_RANGES.find(r => r.key === rangeKey) || TOKEN_USAGE_RANGES.at(-1);
+        const range =
+            TOKEN_USAGE_RANGES.find((r) => r.key === rangeKey) || TOKEN_USAGE_RANGES.at(-1);
         let cutoffKey = null;
-        if (range.days) cutoffKey = GLib.DateTime.new_now_local().add_days(-(range.days - 1)).format('%Y-%m-%d');
+        if (range.days)
+            cutoffKey = GLib.DateTime.new_now_local()
+                .add_days(-(range.days - 1))
+                .format('%Y-%m-%d');
 
         const summary = {
-            rangeKey: range.key, label: range.summaryLabel,
-            totalTokens: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, cachedHitTokens: 0,
-            exactTokens: 0, estimatedTokens: 0, localTokens: 0, remoteTokens: 0,
-            events: 0, statuses: emptyStatusCounts(), activeDays: 0,
-            providers: [], models: [], timeline: [],
-            mostActiveDay: null, trackingStartedAt: store.trackingStartedAt,
-            exactShare: 0, localShare: 0,
-            previousTotalTokens: 0, tokenTrend: null, previousLocalShare: 0, localShareTrend: null,
-            todayTokens: 0, dailyAverageTokens: 0, todayVsAverage: null,
-            localStreakDays: 0, milestones: [],
+            rangeKey: range.key,
+            label: range.summaryLabel,
+            totalTokens: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            reasoningTokens: 0,
+            cachedHitTokens: 0,
+            exactTokens: 0,
+            estimatedTokens: 0,
+            localTokens: 0,
+            remoteTokens: 0,
+            events: 0,
+            statuses: emptyStatusCounts(),
+            activeDays: 0,
+            providers: [],
+            models: [],
+            timeline: [],
+            mostActiveDay: null,
+            trackingStartedAt: store.trackingStartedAt,
+            exactShare: 0,
+            localShare: 0,
+            previousTotalTokens: 0,
+            tokenTrend: null,
+            previousLocalShare: 0,
+            localShareTrend: null,
+            todayTokens: 0,
+            dailyAverageTokens: 0,
+            todayVsAverage: null,
+            localStreakDays: 0,
+            milestones: [],
         };
 
-        const providerAgg = {}, modelAgg = {};
+        const providerAgg = {},
+            modelAgg = {};
 
         for (const [dayKey, day] of Object.entries(store.days)) {
             if (cutoffKey && dayKey < cutoffKey) continue;
@@ -608,11 +838,21 @@ export class TokenUsageManager {
                 summary.remoteTokens += bucket.remote || 0;
                 summary.events += bucket.events || 0;
 
-                if (!providerAgg[provider]) providerAgg[provider] = {
-                    provider, total: 0, events: 0, localTokens: 0, exact: 0, estimated: 0,
-                    peakPrompt: 0, peakCompletion: 0, peakHit: 0,
-                    offPeakPrompt: 0, offPeakCompletion: 0, offPeakHit: 0,
-                };
+                if (!providerAgg[provider])
+                    providerAgg[provider] = {
+                        provider,
+                        total: 0,
+                        events: 0,
+                        localTokens: 0,
+                        exact: 0,
+                        estimated: 0,
+                        peakPrompt: 0,
+                        peakCompletion: 0,
+                        peakHit: 0,
+                        offPeakPrompt: 0,
+                        offPeakCompletion: 0,
+                        offPeakHit: 0,
+                    };
                 providerAgg[provider].total += bucket.total || 0;
                 providerAgg[provider].events += bucket.events || 0;
                 providerAgg[provider].localTokens += bucket.local || 0;
@@ -623,13 +863,22 @@ export class TokenUsageManager {
                     providerAgg[provider].peakCompletion += bucket.tiers.peak?.completion || 0;
                     providerAgg[provider].peakHit += bucket.tiers.peak?.hit || 0;
                     providerAgg[provider].offPeakPrompt += bucket.tiers.offPeak?.prompt || 0;
-                    providerAgg[provider].offPeakCompletion += bucket.tiers.offPeak?.completion || 0;
+                    providerAgg[provider].offPeakCompletion +=
+                        bucket.tiers.offPeak?.completion || 0;
                     providerAgg[provider].offPeakHit += bucket.tiers.offPeak?.hit || 0;
                 }
 
                 for (const [model, m] of Object.entries(bucket.models || {})) {
                     const mk = `${provider}\u0000${model}`;
-                    if (!modelAgg[mk]) modelAgg[mk] = { provider, model, total: 0, events: 0, exact: 0, estimated: 0 };
+                    if (!modelAgg[mk])
+                        modelAgg[mk] = {
+                            provider,
+                            model,
+                            total: 0,
+                            events: 0,
+                            exact: 0,
+                            estimated: 0,
+                        };
                     modelAgg[mk].total += m.total || 0;
                     modelAgg[mk].events += m.events || 0;
                     modelAgg[mk].exact += m.exact || 0;
@@ -643,22 +892,33 @@ export class TokenUsageManager {
             summary.localShare = summary.localTokens / summary.totalTokens;
         }
 
-        summary.providers = Object.values(providerAgg).sort((a, b) => b.total - a.total)
-            .map(e => ({ ...e, share: summary.totalTokens > 0 ? e.total / summary.totalTokens : 0 }));
+        summary.providers = Object.values(providerAgg)
+            .sort((a, b) => b.total - a.total)
+            .map((e) => ({
+                ...e,
+                share: summary.totalTokens > 0 ? e.total / summary.totalTokens : 0,
+            }));
         // Full model list for cost estimation; only the top rows are rendered.
         // Slicing before estimation under-counted spend whenever a provider's
         // model fell outside the top MAX_MODEL_ROWS overall.
-        const sortedModels = Object.values(modelAgg).sort((a, b) => b.total - a.total)
-            .map(e => ({ ...e, share: summary.totalTokens > 0 ? e.total / summary.totalTokens : 0 }));
+        const sortedModels = Object.values(modelAgg)
+            .sort((a, b) => b.total - a.total)
+            .map((e) => ({
+                ...e,
+                share: summary.totalTokens > 0 ? e.total / summary.totalTokens : 0,
+            }));
         summary.allModels = sortedModels;
         summary.models = sortedModels.slice(0, MAX_MODEL_ROWS);
 
         const now = GLib.DateTime.new_now_local();
         const todayKey = now.format('%Y-%m-%d');
         summary.todayTokens = store.days[todayKey]?.total || 0;
-        summary.dailyAverageTokens = summary.activeDays > 0 ? Math.round(summary.totalTokens / summary.activeDays) : 0;
-        summary.todayVsAverage = summary.dailyAverageTokens > 0
-            ? (summary.todayTokens - summary.dailyAverageTokens) / summary.dailyAverageTokens : null;
+        summary.dailyAverageTokens =
+            summary.activeDays > 0 ? Math.round(summary.totalTokens / summary.activeDays) : 0;
+        summary.todayVsAverage =
+            summary.dailyAverageTokens > 0
+                ? (summary.todayTokens - summary.dailyAverageTokens) / summary.dailyAverageTokens
+                : null;
         summary.localStreakDays = this._computeLocalStreak(store);
 
         if (range.days) {
@@ -666,9 +926,11 @@ export class TokenUsageManager {
             const prevEnd = now.add_days(-range.days).format('%Y-%m-%d');
             const prev = aggregateRange(store, prevStart, prevEnd);
             summary.previousTotalTokens = prev.total;
-            summary.tokenTrend = prev.total > 0 ? (summary.totalTokens - prev.total) / prev.total : null;
+            summary.tokenTrend =
+                prev.total > 0 ? (summary.totalTokens - prev.total) / prev.total : null;
             summary.previousLocalShare = prev.total > 0 ? prev.local / prev.total : 0;
-            summary.localShareTrend = prev.total > 0 ? summary.localShare - summary.previousLocalShare : null;
+            summary.localShareTrend =
+                prev.total > 0 ? summary.localShare - summary.previousLocalShare : null;
         }
 
         summary.milestones = buildUsageMilestones(buildAllMilestoneSummary(store));
@@ -676,7 +938,11 @@ export class TokenUsageManager {
         for (let i = TIMELINE_DAYS - 1; i >= 0; i--) {
             const dt = now.add_days(-i);
             const dk = dt.format('%Y-%m-%d');
-            summary.timeline.push({ dayKey: dk, weekday: dt.format('%a'), total: store.days[dk]?.total || 0 });
+            summary.timeline.push({
+                dayKey: dk,
+                weekday: dt.format('%a'),
+                total: store.days[dk]?.total || 0,
+            });
         }
         return summary;
     }
@@ -685,7 +951,12 @@ export class TokenUsageManager {
         const allSummary = this.getSummary('all');
         let summary = this.getSummary(defaultRangeKey);
         if (summary.totalTokens === 0 && defaultRangeKey !== 'all') summary = allSummary;
-        return { summary, allSummary, companion: buildCompanionState(allSummary, summary), topProvider: summary.providers[0] || null };
+        return {
+            summary,
+            allSummary,
+            companion: buildCompanionState(allSummary, summary),
+            topProvider: summary.providers[0] || null,
+        };
     }
 
     static _computeLocalStreak(store) {
@@ -706,13 +977,30 @@ export class TokenUsageManager {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
-function clampCount(v) { const n = Math.round(Number(v) || 0); return n > 0 ? n : 0; }
-function emptyStatusCounts() { return Object.fromEntries(STATUS_KEYS.map(k => [k, 0])); }
-function emptyDeepSeekTiers() { return { peak: { prompt: 0, completion: 0, hit: 0 }, offPeak: { prompt: 0, completion: 0, hit: 0 } }; }
+function clampCount(v) {
+    const n = Math.round(Number(v) || 0);
+    return n > 0 ? n : 0;
+}
+function emptyStatusCounts() {
+    return Object.fromEntries(STATUS_KEYS.map((k) => [k, 0]));
+}
+function emptyDeepSeekTiers() {
+    return {
+        peak: { prompt: 0, completion: 0, hit: 0 },
+        offPeak: { prompt: 0, completion: 0, hit: 0 },
+    };
+}
 
-function normalizeStatus(s) { const v = String(s || '').trim(); return STATUS_KEYS.includes(v) ? v : 'completed'; }
+function normalizeStatus(s) {
+    const v = String(s || '').trim();
+    return STATUS_KEYS.includes(v) ? v : 'completed';
+}
 
-function storeTotal(store) { let t = 0; for (const d of Object.values(store.days || {})) t += d?.total || 0; return t; }
+function storeTotal(store) {
+    let t = 0;
+    for (const d of Object.values(store.days || {})) t += d?.total || 0;
+    return t;
+}
 
 function aggregateRange(store, start, end) {
     const agg = { total: 0, local: 0 };
@@ -769,7 +1057,9 @@ function mergeStageKeys(existingKeys, stageKey) {
 
 function buildMigratedCollection(store) {
     const collection = createEmptyCollectionState();
-    const dayEntries = Object.entries(store.days || {}).sort(([left], [right]) => left.localeCompare(right));
+    const dayEntries = Object.entries(store.days || {}).sort(([left], [right]) =>
+        left.localeCompare(right),
+    );
 
     for (const [dayKey, day] of dayEntries) {
         const timestamp = dayKeyToTimestamp(dayKey);
@@ -780,7 +1070,8 @@ function buildMigratedCollection(store) {
             if (tokens <= 0) continue;
 
             pet.xp += tokens;
-            pet.replyCount += clampCount(bucket.statuses?.completed) + clampCount(bucket.statuses?.stopped);
+            pet.replyCount +=
+                clampCount(bucket.statuses?.completed) + clampCount(bucket.statuses?.stopped);
             if (!pet.hatchedAt && timestamp) pet.hatchedAt = timestamp;
             if (timestamp) pet.lastFedAt = timestamp;
         }

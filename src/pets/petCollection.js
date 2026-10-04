@@ -9,20 +9,63 @@ export const PET_PROVIDERS = Object.freeze([
 ]);
 
 export const PET_DEFINITIONS = Object.freeze({
-    ollama: Object.freeze({ provider: 'ollama', name: 'Ollie', directory: 'ollie', iconFile: 'ollama.svg' }),
-    unsloth: Object.freeze({ provider: 'unsloth', name: 'Slothy', directory: 'slothy', iconFile: 'unsloth.png' }),
-    openai: Object.freeze({ provider: 'openai', name: 'Sparky', directory: 'sparky', iconFile: 'openai.svg' }),
-    anthropic: Object.freeze({ provider: 'anthropic', name: 'Clyde', directory: 'clyde', iconFile: 'claude.svg' }),
-    deepseek: Object.freeze({ provider: 'deepseek', name: 'Pearl', directory: 'pearl', iconFile: 'deepseek.svg' }),
+    ollama: Object.freeze({
+        provider: 'ollama',
+        name: 'Ollie',
+        directory: 'ollie',
+        iconFile: 'ollama.svg',
+    }),
+    unsloth: Object.freeze({
+        provider: 'unsloth',
+        name: 'Slothy',
+        directory: 'slothy',
+        iconFile: 'unsloth.png',
+    }),
+    openai: Object.freeze({
+        provider: 'openai',
+        name: 'Sparky',
+        directory: 'sparky',
+        iconFile: 'openai.svg',
+    }),
+    anthropic: Object.freeze({
+        provider: 'anthropic',
+        name: 'Clyde',
+        directory: 'clyde',
+        iconFile: 'claude.svg',
+    }),
+    deepseek: Object.freeze({
+        provider: 'deepseek',
+        name: 'Pearl',
+        directory: 'pearl',
+        iconFile: 'deepseek.svg',
+    }),
 });
 
 export const PET_STAGES = Object.freeze([
     Object.freeze({ rank: 0, minXp: 0, key: 'egg', label: 'Unhatched Egg', spriteFamily: 'egg' }),
-    Object.freeze({ rank: 1, minXp: 1, key: 'hatchling', label: 'Hatchling', spriteFamily: 'baby' }),
+    Object.freeze({
+        rank: 1,
+        minXp: 1,
+        key: 'hatchling',
+        label: 'Hatchling',
+        spriteFamily: 'baby',
+    }),
     Object.freeze({ rank: 2, minXp: 10_000, key: 'sprout', label: 'Sprout', spriteFamily: 'baby' }),
-    Object.freeze({ rank: 3, minXp: 100_000, key: 'scholar', label: 'Scholar', spriteFamily: 'adult' }),
+    Object.freeze({
+        rank: 3,
+        minXp: 100_000,
+        key: 'scholar',
+        label: 'Scholar',
+        spriteFamily: 'adult',
+    }),
     Object.freeze({ rank: 4, minXp: 1_000_000, key: 'sage', label: 'Sage', spriteFamily: 'adult' }),
-    Object.freeze({ rank: 5, minXp: 10_000_000, key: 'archmage', label: 'Archmage', spriteFamily: 'adult' }),
+    Object.freeze({
+        rank: 5,
+        minXp: 10_000_000,
+        key: 'archmage',
+        label: 'Archmage',
+        spriteFamily: 'adult',
+    }),
 ]);
 
 export const PET_SELECTION_MODES = Object.freeze({
@@ -30,7 +73,7 @@ export const PET_SELECTION_MODES = Object.freeze({
     PINNED: 'pinned',
 });
 
-const PET_STAGE_BY_KEY = new Map(PET_STAGES.map(stage => [stage.key, stage]));
+const PET_STAGE_BY_KEY = new Map(PET_STAGES.map((stage) => [stage.key, stage]));
 
 export function isPetProvider(provider) {
     return PET_PROVIDERS.includes(String(provider || ''));
@@ -54,7 +97,7 @@ export function getPetStageByKey(stageKey) {
 
 export function getStageKeysThrough(stageKey) {
     const targetRank = getPetStageByKey(stageKey).rank;
-    return PET_STAGES.filter(stage => stage.rank <= targetRank).map(stage => stage.key);
+    return PET_STAGES.filter((stage) => stage.rank <= targetRank).map((stage) => stage.key);
 }
 
 export function getPetStageProgress(xp) {
@@ -62,7 +105,13 @@ export function getPetStageProgress(xp) {
     const stage = getPetStage(normalizedXp);
     const nextStage = PET_STAGES[stage.rank + 1] || null;
     if (!nextStage) {
-        return { stage, nextStage: null, current: normalizedXp, required: normalizedXp, progress: 1 };
+        return {
+            stage,
+            nextStage: null,
+            current: normalizedXp,
+            required: normalizedXp,
+            progress: 1,
+        };
     }
 
     const span = nextStage.minXp - stage.minXp;
@@ -96,21 +145,26 @@ export function normalizePetState(rawPet) {
     const source = rawPet && typeof rawPet === 'object' ? rawPet : {};
     const stage = getPetStage(source.xp);
     const celebratedStages = Array.isArray(source.celebratedStages)
-        ? source.celebratedStages.filter((key, index, keys) => PET_STAGE_BY_KEY.has(key) && keys.indexOf(key) === index)
+        ? source.celebratedStages.filter(
+              (key, index, keys) => PET_STAGE_BY_KEY.has(key) && keys.indexOf(key) === index,
+          )
         : [];
     return {
         xp: normalizeCount(source.xp),
         replyCount: normalizeCount(source.replyCount),
         hatchedAt: normalizeTimestamp(source.hatchedAt),
         lastFedAt: normalizeTimestamp(source.lastFedAt),
-        celebratedStages: celebratedStages.filter(key => getPetStageByKey(key).rank <= stage.rank),
+        celebratedStages: celebratedStages.filter(
+            (key) => getPetStageByKey(key).rank <= stage.rank,
+        ),
     };
 }
 
 export function normalizeCollectionState(rawCollection) {
     const source = rawCollection && typeof rawCollection === 'object' ? rawCollection : {};
     const pets = {};
-    for (const provider of PET_PROVIDERS) pets[provider] = normalizePetState(source.pets?.[provider]);
+    for (const provider of PET_PROVIDERS)
+        pets[provider] = normalizePetState(source.pets?.[provider]);
     return { pets };
 }
 
@@ -121,7 +175,12 @@ export function providerFormId(provider) {
 export function parsePetForm(formId) {
     const parts = String(formId || '').split(':');
     if (parts[0] === 'provider' && parts.length === 2 && isPetProvider(parts[1])) {
-        return { id: providerFormId(parts[1]), type: 'provider', provider: parts[1], baseProvider: parts[1] };
+        return {
+            id: providerFormId(parts[1]),
+            type: 'provider',
+            provider: parts[1],
+            baseProvider: parts[1],
+        };
     }
     return null;
 }
@@ -160,9 +219,12 @@ export function getPetSpriteCandidates({ form, stageKey, pose = 'idle', frame = 
 
 export function getPetDisplayScale(stageKey) {
     switch (getPetStageByKey(stageKey).key) {
-        case 'hatchling': return 0.85;
-        case 'scholar': return 0.85;
-        default: return 1;
+        case 'hatchling':
+            return 0.85;
+        case 'scholar':
+            return 0.85;
+        default:
+            return 1;
     }
 }
 

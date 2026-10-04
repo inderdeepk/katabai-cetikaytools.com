@@ -13,11 +13,7 @@ import {
 } from './toolRegistry.js';
 
 // ── Local RAG (re-export for consumption) ─────────────────────────────────────
-import {
-    RAG_TOOL_NAME,
-    RAG_TOOL_COMMAND,
-    RAG_TOOL_ICON,
-} from './ragTools.js';
+import { RAG_TOOL_NAME, RAG_TOOL_COMMAND, RAG_TOOL_ICON } from './ragTools.js';
 
 // ── Explore Docs (agent-directed documentation navigation) ───────────────────
 import { EXPLORE_DOCS_TOOL_NAME } from './exploreDocsTools.js';
@@ -29,12 +25,14 @@ const WEB_SEARCH_PARAMS = {
     properties: {
         query: {
             type: 'string',
-            description: 'The search query string. Be specific — use keywords and phrases likely to appear on result pages. For technical queries, include version numbers or years.',
+            description:
+                'The search query string. Be specific — use keywords and phrases likely to appear on result pages. For technical queries, include version numbers or years.',
         },
         categories: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Optional SearxNG categories to filter by (e.g. ["general"], ["science"], ["news"]). Omit for default.',
+            description:
+                'Optional SearxNG categories to filter by (e.g. ["general"], ["science"], ["news"]). Omit for default.',
         },
         time_range: {
             type: 'string',
@@ -76,7 +74,8 @@ const READ_URL_PARAMS = {
     properties: {
         url: {
             type: 'string',
-            description: 'The absolute HTTP(S) URL of the page to fetch and extract readable text from.',
+            description:
+                'The absolute HTTP(S) URL of the page to fetch and extract readable text from.',
         },
     },
     required: ['url'],
@@ -106,11 +105,13 @@ const CRAWL_URL_PARAMS = {
     properties: {
         url: {
             type: 'string',
-            description: 'The absolute HTTP(S) URL of the web page to deep-scrape with a real browser.',
+            description:
+                'The absolute HTTP(S) URL of the web page to deep-scrape with a real browser.',
         },
         query: {
             type: 'string',
-            description: 'Optional. When using BM25 fit mode, this query focuses extraction on the most relevant portions of the page.',
+            description:
+                'Optional. When using BM25 fit mode, this query focuses extraction on the most relevant portions of the page.',
         },
     },
     required: ['url'],
@@ -180,12 +181,14 @@ const KNOWLEDGE_SEARCH_PARAMS = {
     properties: {
         query: {
             type: 'string',
-            description: 'The search query to find semantically relevant information in the local knowledge base. Use natural language — the search is semantic, not keyword-based.',
+            description:
+                'The search query to find semantically relevant information in the local knowledge base. Use natural language — the search is semantic, not keyword-based.',
         },
         collection: {
             type: 'string',
             enum: ['conversations', 'documents', 'research_cache'],
-            description: 'Optional: restrict the search to one collection — "conversations" (past chats), "documents" (imported/attached files), or "research_cache" (web research results). Omit to search everything.',
+            description:
+                'Optional: restrict the search to one collection — "conversations" (past chats), "documents" (imported/attached files), or "research_cache" (web research results). Omit to search everything.',
         },
     },
     required: ['query'],
@@ -217,11 +220,13 @@ const UPDATE_KNOWLEDGE_PARAMS = {
     properties: {
         about: {
             type: 'string',
-            description: 'A short label describing what topic or fact is being updated (e.g., "user GPU setup", "preferred language").',
+            description:
+                'A short label describing what topic or fact is being updated (e.g., "user GPU setup", "preferred language").',
         },
         new_fact: {
             type: 'string',
-            description: 'The corrected or updated information to store. Be specific and complete — this replaces the old understanding.',
+            description:
+                'The corrected or updated information to store. Be specific and complete — this replaces the old understanding.',
         },
     },
     required: ['about', 'new_fact'],
@@ -255,7 +260,8 @@ const FORGET_KNOWLEDGE_PARAMS = {
     properties: {
         about: {
             type: 'string',
-            description: 'The exact topic label ("about" value) used when the memory was saved with update_knowledge. Deleting removes the stored fact for that topic.',
+            description:
+                'The exact topic label ("about" value) used when the memory was saved with update_knowledge. Deleting removes the stored fact for that topic.',
         },
     },
     required: ['about'],
@@ -288,11 +294,13 @@ const EXPLORE_DOCS_PARAMS = {
     properties: {
         url: {
             type: 'string',
-            description: 'The absolute http(s) URL of the documentation landing page to explore (e.g. https://docs.example.org/).',
+            description:
+                'The absolute http(s) URL of the documentation landing page to explore (e.g. https://docs.example.org/).',
         },
         query: {
             type: 'string',
-            description: 'Optional. The research topic you are looking for. Used to highlight the most relevant links in the table of contents.',
+            description:
+                'Optional. The research topic you are looking for. Used to highlight the most relevant links in the table of contents.',
         },
     },
     required: ['url'],

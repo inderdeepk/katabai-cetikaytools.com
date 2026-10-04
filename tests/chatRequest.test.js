@@ -34,317 +34,469 @@ function makeGetOpt(values = {}) {
 }
 
 const tests = [
-    ['ollama options: builds the full sampling/context set', () => {
-        const options = buildOllamaOptions(makeGetOpt({
-            'temperature': 0.7,
-            'num-ctx': 8192,
-            'num-predict': -1,
-            'num-keep': 0,
-            'use-mmap': true,
-            'use-mlock': false,
-            'num-gpu': -1,
-            'num-thread': 4,
-            'top-k': 40,
-            'top-p': 0.9,
-            'min-p': 0.05,
-            'tfs-z': 1.0,
-            'mirostat': 0,
-            'mirostat-tau': 5.0,
-            'mirostat-eta': 0.1,
-            'repeat-last-n': 64,
-            'repeat-penalty': 1.1,
-            'presence-penalty': 0.0,
-            'frequency-penalty': 0.0,
-        }));
-        assertEqual(Object.keys(options).length, 19, 'all 19 keys present');
-        assertEqual(options.temperature, 0.7, 'temperature');
-        assertEqual(options.num_ctx, 8192, 'num_ctx');
-        assertEqual(options.use_mmap, true, 'use_mmap');
-        assertEqual(options.repeat_last_n, 64, 'repeat_last_n unchanged');
-    }],
+    [
+        'ollama options: builds the full sampling/context set',
+        () => {
+            const options = buildOllamaOptions(
+                makeGetOpt({
+                    temperature: 0.7,
+                    'num-ctx': 8192,
+                    'num-predict': -1,
+                    'num-keep': 0,
+                    'use-mmap': true,
+                    'use-mlock': false,
+                    'num-gpu': -1,
+                    'num-thread': 4,
+                    'top-k': 40,
+                    'top-p': 0.9,
+                    'min-p': 0.05,
+                    'tfs-z': 1.0,
+                    mirostat: 0,
+                    'mirostat-tau': 5.0,
+                    'mirostat-eta': 0.1,
+                    'repeat-last-n': 64,
+                    'repeat-penalty': 1.1,
+                    'presence-penalty': 0.0,
+                    'frequency-penalty': 0.0,
+                }),
+            );
+            assertEqual(Object.keys(options).length, 19, 'all 19 keys present');
+            assertEqual(options.temperature, 0.7, 'temperature');
+            assertEqual(options.num_ctx, 8192, 'num_ctx');
+            assertEqual(options.use_mmap, true, 'use_mmap');
+            assertEqual(options.repeat_last_n, 64, 'repeat_last_n unchanged');
+        },
+    ],
 
-    ['ollama options: null/undefined entries are pruned', () => {
-        const options = buildOllamaOptions(makeGetOpt({ 'temperature': 0.5 }));
-        assertEqual(Object.keys(options).join(','), 'temperature', 'only set keys remain');
-        assert(!('num_ctx' in options), 'unset key removed');
-    }],
+    [
+        'ollama options: null/undefined entries are pruned',
+        () => {
+            const options = buildOllamaOptions(makeGetOpt({ temperature: 0.5 }));
+            assertEqual(Object.keys(options).join(','), 'temperature', 'only set keys remain');
+            assert(!('num_ctx' in options), 'unset key removed');
+        },
+    ],
 
-    ['ollama options: repeat_last_n = -1 translates to num_ctx', () => {
-        const options = buildOllamaOptions(makeGetOpt({
-            'repeat-last-n': -1,
-            'num-ctx': 4096,
-        }));
-        assertEqual(options.repeat_last_n, 4096, 'translated to num_ctx');
-    }],
+    [
+        'ollama options: repeat_last_n = -1 translates to num_ctx',
+        () => {
+            const options = buildOllamaOptions(
+                makeGetOpt({
+                    'repeat-last-n': -1,
+                    'num-ctx': 4096,
+                }),
+            );
+            assertEqual(options.repeat_last_n, 4096, 'translated to num_ctx');
+        },
+    ],
 
-    ['ollama options: repeat_last_n = -1 falls back to 64 without a usable num_ctx', () => {
-        assertEqual(buildOllamaOptions(makeGetOpt({ 'repeat-last-n': -1 })).repeat_last_n, 64, 'no num_ctx');
-        assertEqual(buildOllamaOptions(makeGetOpt({ 'repeat-last-n': -1, 'num-ctx': 0 })).repeat_last_n, 64, 'zero num_ctx');
-    }],
+    [
+        'ollama options: repeat_last_n = -1 falls back to 64 without a usable num_ctx',
+        () => {
+            assertEqual(
+                buildOllamaOptions(makeGetOpt({ 'repeat-last-n': -1 })).repeat_last_n,
+                64,
+                'no num_ctx',
+            );
+            assertEqual(
+                buildOllamaOptions(makeGetOpt({ 'repeat-last-n': -1, 'num-ctx': 0 })).repeat_last_n,
+                64,
+                'zero num_ctx',
+            );
+        },
+    ],
 
-    ['ollama options: non-negative repeat_last_n preserved (including 0)', () => {
-        assertEqual(buildOllamaOptions(makeGetOpt({ 'repeat-last-n': 0, 'num-ctx': 4096 })).repeat_last_n, 0, 'zero kept');
-        assertEqual(buildOllamaOptions(makeGetOpt({ 'repeat-last-n': 128 })).repeat_last_n, 128, 'value kept');
-    }],
+    [
+        'ollama options: non-negative repeat_last_n preserved (including 0)',
+        () => {
+            assertEqual(
+                buildOllamaOptions(makeGetOpt({ 'repeat-last-n': 0, 'num-ctx': 4096 }))
+                    .repeat_last_n,
+                0,
+                'zero kept',
+            );
+            assertEqual(
+                buildOllamaOptions(makeGetOpt({ 'repeat-last-n': 128 })).repeat_last_n,
+                128,
+                'value kept',
+            );
+        },
+    ],
 
-    ['keep_alive: empty and -1 map to the indefinite duration, others pass through', () => {
-        assertEqual(normalizeOllamaKeepAlive(''), '999999h', 'empty → indefinite');
-        assertEqual(normalizeOllamaKeepAlive('-1'), '999999h', '-1 → indefinite');
-        assertEqual(normalizeOllamaKeepAlive(null), '999999h', 'null → indefinite');
-        assertEqual(normalizeOllamaKeepAlive('5m'), '5m', 'duration kept');
-        assertEqual(normalizeOllamaKeepAlive('999999h'), '999999h', 'indefinite kept');
-    }],
+    [
+        'keep_alive: empty and -1 map to the indefinite duration, others pass through',
+        () => {
+            assertEqual(normalizeOllamaKeepAlive(''), '999999h', 'empty → indefinite');
+            assertEqual(normalizeOllamaKeepAlive('-1'), '999999h', '-1 → indefinite');
+            assertEqual(normalizeOllamaKeepAlive(null), '999999h', 'null → indefinite');
+            assertEqual(normalizeOllamaKeepAlive('5m'), '5m', 'duration kept');
+            assertEqual(normalizeOllamaKeepAlive('999999h'), '999999h', 'indefinite kept');
+        },
+    ],
 
-    ['openai: endpoint, auth headers, stream_options', () => {
-        const built = buildOpenAiCompatStreamRequest({
-            provider: 'openai',
-            baseUrl: 'https://api.openai.com/v1',
-            apiKey: 'sk-test',
-            model: 'gpt-4o',
-            messages: [{ role: 'user', content: 'hi' }],
-        });
-        assertEqual(built.endpoint, 'https://api.openai.com/v1/chat/completions', 'endpoint suffix');
-        assertEqual(built.headers['Authorization'], 'Bearer sk-test', 'bearer auth');
-        assertEqual(built.headers['Content-Type'], 'application/json', 'content type');
-        assertEqual(built.payload.model, 'gpt-4o', 'model');
-        assertEqual(built.payload.stream, true, 'stream');
-        assertEqual(built.payload.stream_options.include_usage, true, 'usage chunk');
-        assertEqual(built.payload.messages.length, 1, 'messages passed through');
-        assert(!('tools' in built.payload), 'no tools when nothing advertised');
-    }],
+    [
+        'openai: endpoint, auth headers, stream_options',
+        () => {
+            const built = buildOpenAiCompatStreamRequest({
+                provider: 'openai',
+                baseUrl: 'https://api.openai.com/v1',
+                apiKey: 'sk-test',
+                model: 'gpt-4o',
+                messages: [{ role: 'user', content: 'hi' }],
+            });
+            assertEqual(
+                built.endpoint,
+                'https://api.openai.com/v1/chat/completions',
+                'endpoint suffix',
+            );
+            assertEqual(built.headers['Authorization'], 'Bearer sk-test', 'bearer auth');
+            assertEqual(built.headers['Content-Type'], 'application/json', 'content type');
+            assertEqual(built.payload.model, 'gpt-4o', 'model');
+            assertEqual(built.payload.stream, true, 'stream');
+            assertEqual(built.payload.stream_options.include_usage, true, 'usage chunk');
+            assertEqual(built.payload.messages.length, 1, 'messages passed through');
+            assert(!('tools' in built.payload), 'no tools when nothing advertised');
+        },
+    ],
 
-    ['openai: tools gate per family and omit the disabled ones', () => {
-        const built = buildOpenAiCompatStreamRequest({
-            provider: 'openai',
-            baseUrl: 'http://localhost:1234/v1',
-            model: 'm',
-            messages: [],
-            advertise: { crawl: true, exploreDocs: true, rag: true, webSearch: false },
-            toolNames: NAMES,
-        });
-        const names = built.payload.tools.map(toolNameOf);
-        assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not advertised');
-        assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl advertised');
-        assert(names.includes(EXPLORE_DOCS_TOOL_NAME), 'explore docs advertised');
-        assert(names.includes(RAG_TOOL_NAME), 'rag advertised');
-        assert(!('Authorization' in built.headers), 'no auth header without a key');
-    }],
+    [
+        'openai: tools gate per family and omit the disabled ones',
+        () => {
+            const built = buildOpenAiCompatStreamRequest({
+                provider: 'openai',
+                baseUrl: 'http://localhost:1234/v1',
+                model: 'm',
+                messages: [],
+                advertise: { crawl: true, exploreDocs: true, rag: true, webSearch: false },
+                toolNames: NAMES,
+            });
+            const names = built.payload.tools.map(toolNameOf);
+            assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not advertised');
+            assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl advertised');
+            assert(names.includes(EXPLORE_DOCS_TOOL_NAME), 'explore docs advertised');
+            assert(names.includes(RAG_TOOL_NAME), 'rag advertised');
+            assert(!('Authorization' in built.headers), 'no auth header without a key');
+        },
+    ],
 
-    ['unsloth: server-side tools, session id, forced tool_choice', () => {
-        const built = buildOpenAiCompatStreamRequest({
-            provider: 'unsloth',
-            baseUrl: 'http://localhost:8888/v1',
-            model: 'default',
-            messages: [],
-            forcedTool: WEB_SEARCH_TOOL_NAME,
-            conversationId: 'conv_42',
-            unslothEnableWebSearch: true,
-        });
-        assertEqual(built.payload.enable_tools, true, 'server-side tools enabled');
-        assertEqual(built.payload.enabled_tools.join(','), 'web_search,python,terminal', 'web search first');
-        assertEqual(built.payload.session_id, 'conv_42', 'session id from conversation');
-        assertEqual(built.payload.tool_choice.function.name, WEB_SEARCH_TOOL_NAME, 'forced tool choice');
-        assert(!('stream_options' in built.payload), 'unsloth has no usage chunk flag');
+    [
+        'unsloth: server-side tools, session id, forced tool_choice',
+        () => {
+            const built = buildOpenAiCompatStreamRequest({
+                provider: 'unsloth',
+                baseUrl: 'http://localhost:8888/v1',
+                model: 'default',
+                messages: [],
+                forcedTool: WEB_SEARCH_TOOL_NAME,
+                conversationId: 'conv_42',
+                unslothEnableWebSearch: true,
+            });
+            assertEqual(built.payload.enable_tools, true, 'server-side tools enabled');
+            assertEqual(
+                built.payload.enabled_tools.join(','),
+                'web_search,python,terminal',
+                'web search first',
+            );
+            assertEqual(built.payload.session_id, 'conv_42', 'session id from conversation');
+            assertEqual(
+                built.payload.tool_choice.function.name,
+                WEB_SEARCH_TOOL_NAME,
+                'forced tool choice',
+            );
+            assert(!('stream_options' in built.payload), 'unsloth has no usage chunk flag');
 
-        const fallback = buildOpenAiCompatStreamRequest({
-            provider: 'unsloth',
-            baseUrl: 'http://localhost:8888/v1',
-            model: 'default',
-            messages: [],
-            unslothEnableWebSearch: false,
-        });
-        assertEqual(fallback.payload.enabled_tools.join(','), 'python,terminal', 'web search left out');
-        assert(/^session_\d+$/.test(fallback.payload.session_id), 'generated session id');
-    }],
+            const fallback = buildOpenAiCompatStreamRequest({
+                provider: 'unsloth',
+                baseUrl: 'http://localhost:8888/v1',
+                model: 'default',
+                messages: [],
+                unslothEnableWebSearch: false,
+            });
+            assertEqual(
+                fallback.payload.enabled_tools.join(','),
+                'python,terminal',
+                'web search left out',
+            );
+            assert(/^session_\d+$/.test(fallback.payload.session_id), 'generated session id');
+        },
+    ],
 
-    ['anthropic: endpoint, headers, hoisted system prompt, filtered messages', () => {
-        const built = buildAnthropicStreamRequest({
-            baseUrl: 'https://api.anthropic.com',
-            apiKey: 'ak-test',
-            model: 'claude-3-5-sonnet-20241022',
-            messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
-            systemPrompt: 'merged system text',
-            advertise: { webSearch: true },
-            toolNames: NAMES,
-        });
-        assertEqual(built.endpoint, 'https://api.anthropic.com/v1/messages', 'endpoint suffix');
-        assertEqual(built.headers['x-api-key'], 'ak-test', 'api key header');
-        assertEqual(built.headers['anthropic-version'], '2023-06-01', 'version header');
-        assertEqual(built.headers['Authorization'], 'Bearer ak-test', 'bearer auth kept');
-        assertEqual(built.payload.max_tokens, 4096, 'max tokens');
-        assertEqual(built.payload.system, 'merged system text', 'system hoisted');
-        assertEqual(built.payload.messages.length, 1, 'system message filtered');
-        assertEqual(built.payload.messages[0].role, 'user', 'user message kept');
-        assertEqual(built.payload.tools.length, 2, 'web search + read page');
-        assert(!('function' in built.payload.tools[0]), 'anthropic schema shape');
-        assert(typeof built.payload.tools[0].input_schema === 'object', 'input_schema present');
+    [
+        'anthropic: endpoint, headers, hoisted system prompt, filtered messages',
+        () => {
+            const built = buildAnthropicStreamRequest({
+                baseUrl: 'https://api.anthropic.com',
+                apiKey: 'ak-test',
+                model: 'claude-3-5-sonnet-20241022',
+                messages: [
+                    { role: 'system', content: 'sys' },
+                    { role: 'user', content: 'hi' },
+                ],
+                systemPrompt: 'merged system text',
+                advertise: { webSearch: true },
+                toolNames: NAMES,
+            });
+            assertEqual(built.endpoint, 'https://api.anthropic.com/v1/messages', 'endpoint suffix');
+            assertEqual(built.headers['x-api-key'], 'ak-test', 'api key header');
+            assertEqual(built.headers['anthropic-version'], '2023-06-01', 'version header');
+            assertEqual(built.headers['Authorization'], 'Bearer ak-test', 'bearer auth kept');
+            assertEqual(built.payload.max_tokens, 4096, 'max tokens');
+            assertEqual(built.payload.system, 'merged system text', 'system hoisted');
+            assertEqual(built.payload.messages.length, 1, 'system message filtered');
+            assertEqual(built.payload.messages[0].role, 'user', 'user message kept');
+            assertEqual(built.payload.tools.length, 2, 'web search + read page');
+            assert(!('function' in built.payload.tools[0]), 'anthropic schema shape');
+            assert(typeof built.payload.tools[0].input_schema === 'object', 'input_schema present');
 
-        const noSystem = buildAnthropicStreamRequest({
-            baseUrl: 'https://api.anthropic.com',
-            model: 'm',
-            messages: [{ role: 'user', content: 'hi' }],
-        });
-        assert(!('system' in noSystem.payload), 'no system field when prompt is empty');
-    }],
+            const noSystem = buildAnthropicStreamRequest({
+                baseUrl: 'https://api.anthropic.com',
+                model: 'm',
+                messages: [{ role: 'user', content: 'hi' }],
+            });
+            assert(!('system' in noSystem.payload), 'no system field when prompt is empty');
+        },
+    ],
 
-    ['deepseek: payload shape, thinking, reasoning backfill', () => {
-        const messages = [
-            { role: 'assistant', content: 'ok' },
-            { role: 'user', content: 'go' },
-        ];
-        const built = buildDeepSeekStreamRequest({
-            baseUrl: 'https://api.deepseek.com',
-            apiKey: 'dk',
-            model: 'deepseek-flash',
-            messages,
-            thinking: true,
-            reasoningEffort: 'high',
-            maxTokens: 384000,
-            userId: 'katab-tester',
-        });
-        assertEqual(built.endpoint, 'https://api.deepseek.com/chat/completions', 'endpoint suffix');
-        assertEqual(built.headers['Authorization'], 'Bearer dk', 'bearer auth');
-        assertEqual(built.payload.max_tokens, 384000, 'output cap');
-        assertEqual(built.payload.thinking.type, 'enabled', 'thinking on');
-        assertEqual(built.payload.reasoning_effort, 'high', 'reasoning effort when thinking');
-        assertEqual(built.payload.user_id, 'katab-tester', 'user id');
-        assertEqual(built.payload.stream_options.include_usage, true, 'usage chunk');
-        assertEqual(messages[0].reasoning_content, '', 'assistant reasoning_content backfilled');
+    [
+        'deepseek: payload shape, thinking, reasoning backfill',
+        () => {
+            const messages = [
+                { role: 'assistant', content: 'ok' },
+                { role: 'user', content: 'go' },
+            ];
+            const built = buildDeepSeekStreamRequest({
+                baseUrl: 'https://api.deepseek.com',
+                apiKey: 'dk',
+                model: 'deepseek-flash',
+                messages,
+                thinking: true,
+                reasoningEffort: 'high',
+                maxTokens: 384000,
+                userId: 'katab-tester',
+            });
+            assertEqual(
+                built.endpoint,
+                'https://api.deepseek.com/chat/completions',
+                'endpoint suffix',
+            );
+            assertEqual(built.headers['Authorization'], 'Bearer dk', 'bearer auth');
+            assertEqual(built.payload.max_tokens, 384000, 'output cap');
+            assertEqual(built.payload.thinking.type, 'enabled', 'thinking on');
+            assertEqual(built.payload.reasoning_effort, 'high', 'reasoning effort when thinking');
+            assertEqual(built.payload.user_id, 'katab-tester', 'user id');
+            assertEqual(built.payload.stream_options.include_usage, true, 'usage chunk');
+            assertEqual(
+                messages[0].reasoning_content,
+                '',
+                'assistant reasoning_content backfilled',
+            );
 
-        const off = buildDeepSeekStreamRequest({
-            baseUrl: 'https://api.deepseek.com',
-            model: 'm',
-            messages: [],
-            thinking: false,
-            maxTokens: 1,
-        });
-        assertEqual(off.payload.thinking.type, 'disabled', 'thinking off');
-        assert(!('reasoning_effort' in off.payload), 'no reasoning effort when thinking off');
-    }],
+            const off = buildDeepSeekStreamRequest({
+                baseUrl: 'https://api.deepseek.com',
+                model: 'm',
+                messages: [],
+                thinking: false,
+                maxTokens: 1,
+            });
+            assertEqual(off.payload.thinking.type, 'disabled', 'thinking off');
+            assert(!('reasoning_effort' in off.payload), 'no reasoning effort when thinking off');
+        },
+    ],
 
-    ['deepseek: JSON mode injects the guard only when needed', () => {
-        const base = { baseUrl: 'https://api.deepseek.com', model: 'm', jsonMode: true, maxTokens: 1 };
-        const appended = buildDeepSeekStreamRequest({
-            ...base,
-            messages: [{ role: 'system', content: 'You are helpful.' }, { role: 'user', content: 'q' }],
-        });
-        assertEqual(appended.payload.response_format.type, 'json_object', 'response_format set');
-        assert(appended.payload.messages[0].content.includes('valid JSON object'), 'guard appended');
+    [
+        'deepseek: JSON mode injects the guard only when needed',
+        () => {
+            const base = {
+                baseUrl: 'https://api.deepseek.com',
+                model: 'm',
+                jsonMode: true,
+                maxTokens: 1,
+            };
+            const appended = buildDeepSeekStreamRequest({
+                ...base,
+                messages: [
+                    { role: 'system', content: 'You are helpful.' },
+                    { role: 'user', content: 'q' },
+                ],
+            });
+            assertEqual(
+                appended.payload.response_format.type,
+                'json_object',
+                'response_format set',
+            );
+            assert(
+                appended.payload.messages[0].content.includes('valid JSON object'),
+                'guard appended',
+            );
 
-        const kept = buildDeepSeekStreamRequest({
-            ...base,
-            messages: [{ role: 'system', content: 'Return JSON.' }],
-        });
-        assertEqual(kept.payload.messages[0].content, 'Return JSON.', 'json-mentioning system untouched');
+            const kept = buildDeepSeekStreamRequest({
+                ...base,
+                messages: [{ role: 'system', content: 'Return JSON.' }],
+            });
+            assertEqual(
+                kept.payload.messages[0].content,
+                'Return JSON.',
+                'json-mentioning system untouched',
+            );
 
-        const prepended = buildDeepSeekStreamRequest({
-            ...base,
-            messages: [{ role: 'user', content: 'q' }],
-        });
-        assertEqual(prepended.payload.messages[0].role, 'system', 'minimal system prepended');
-    }],
+            const prepended = buildDeepSeekStreamRequest({
+                ...base,
+                messages: [{ role: 'user', content: 'q' }],
+            });
+            assertEqual(prepended.payload.messages[0].role, 'system', 'minimal system prepended');
+        },
+    ],
 
-    ['deepseek: tools gate per family and JSON/tools exclusivity hold', () => {
-        const built = buildDeepSeekStreamRequest({
-            baseUrl: 'https://api.deepseek.com',
-            model: 'm',
-            maxTokens: 1,
-            messages: [],
-            advertise: { crawl: true, webSearch: false },
-            toolNames: NAMES,
-        });
-        const names = built.payload.tools.map(toolNameOf);
-        // Fixed in the review pass: the web-search group is only seeded when
-        // the webSearch advertisement flag is set (matches openai/ollama).
-        assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not seeded');
-        assert(!names.includes(READ_URL_TOOL_NAME), 'read_url not seeded');
-        assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl appended');
-        assertEqual(built.payload.tool_choice, 'auto', 'auto tool choice');
+    [
+        'deepseek: tools gate per family and JSON/tools exclusivity hold',
+        () => {
+            const built = buildDeepSeekStreamRequest({
+                baseUrl: 'https://api.deepseek.com',
+                model: 'm',
+                maxTokens: 1,
+                messages: [],
+                advertise: { crawl: true, webSearch: false },
+                toolNames: NAMES,
+            });
+            const names = built.payload.tools.map(toolNameOf);
+            // Fixed in the review pass: the web-search group is only seeded when
+            // the webSearch advertisement flag is set (matches openai/ollama).
+            assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not seeded');
+            assert(!names.includes(READ_URL_TOOL_NAME), 'read_url not seeded');
+            assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl appended');
+            assertEqual(built.payload.tool_choice, 'auto', 'auto tool choice');
 
-        const json = buildDeepSeekStreamRequest({
-            baseUrl: 'https://api.deepseek.com',
-            model: 'm',
-            maxTokens: 1,
-            messages: [],
-            jsonMode: true,
-            advertise: { webSearch: true },
-            toolNames: NAMES,
-        });
-        assert(!('tools' in json.payload), 'tools suppressed in JSON mode');
-        assert(!('tool_choice' in json.payload), 'no tool_choice in JSON mode');
-    }],
+            const json = buildDeepSeekStreamRequest({
+                baseUrl: 'https://api.deepseek.com',
+                model: 'm',
+                maxTokens: 1,
+                messages: [],
+                jsonMode: true,
+                advertise: { webSearch: true },
+                toolNames: NAMES,
+            });
+            assert(!('tools' in json.payload), 'tools suppressed in JSON mode');
+            assert(!('tool_choice' in json.payload), 'no tool_choice in JSON mode');
+        },
+    ],
 
-    ['ollama: endpoint, payload, format/raw conditionals', () => {
-        const built = buildOllamaStreamRequest({
-            baseUrl: 'http://localhost:11434',
-            model: 'llama3',
-            messages: [{ role: 'user', content: 'hi' }],
-            options: { temperature: 0.7 },
-        });
-        assertEqual(built.endpoint, 'http://localhost:11434/api/chat', 'endpoint suffix');
-        assertEqual(built.headers['Content-Type'], 'application/json', 'content type');
-        assert(!('Authorization' in built.headers), 'no auth for local ollama');
-        assertEqual(built.payload.model, 'llama3', 'model');
-        assertEqual(built.payload.stream, true, 'stream');
-        assertEqual(built.payload.keep_alive, '5m', 'default keep alive');
-        assertEqual(built.payload.think, true, 'default think');
-        assertEqual(built.payload.options.temperature, 0.7, 'options passed through');
-        assert(!('format' in built.payload), 'no format when empty');
-        assert(!('raw' in built.payload), 'no raw when false');
+    [
+        'ollama: endpoint, payload, format/raw conditionals',
+        () => {
+            const built = buildOllamaStreamRequest({
+                baseUrl: 'http://localhost:11434',
+                model: 'llama3',
+                messages: [{ role: 'user', content: 'hi' }],
+                options: { temperature: 0.7 },
+            });
+            assertEqual(built.endpoint, 'http://localhost:11434/api/chat', 'endpoint suffix');
+            assertEqual(built.headers['Content-Type'], 'application/json', 'content type');
+            assert(!('Authorization' in built.headers), 'no auth for local ollama');
+            assertEqual(built.payload.model, 'llama3', 'model');
+            assertEqual(built.payload.stream, true, 'stream');
+            assertEqual(built.payload.keep_alive, '5m', 'default keep alive');
+            assertEqual(built.payload.think, true, 'default think');
+            assertEqual(built.payload.options.temperature, 0.7, 'options passed through');
+            assert(!('format' in built.payload), 'no format when empty');
+            assert(!('raw' in built.payload), 'no raw when false');
 
-        const withFormat = buildOllamaStreamRequest({
-            baseUrl: 'http://localhost:11434/api/chat',
-            model: 'm',
-            messages: [],
-            keepAlive: '999999h',
-            think: false,
-            format: 'json',
-            raw: true,
-        });
-        // Endpoint normalization strips trailing slashes before the suffix
-        // check, so an already-suffixed base URL keeps exactly one suffix.
-        assertEqual(withFormat.endpoint, 'http://localhost:11434/api/chat', 'suffix not doubled');
-        assertEqual(withFormat.payload.keep_alive, '999999h', 'keep alive override');
-        assertEqual(withFormat.payload.think, false, 'think override');
-        assertEqual(withFormat.payload.format, 'json', 'format set');
-        assertEqual(withFormat.payload.raw, true, 'raw set');
-    }],
+            const withFormat = buildOllamaStreamRequest({
+                baseUrl: 'http://localhost:11434/api/chat',
+                model: 'm',
+                messages: [],
+                keepAlive: '999999h',
+                think: false,
+                format: 'json',
+                raw: true,
+            });
+            // Endpoint normalization strips trailing slashes before the suffix
+            // check, so an already-suffixed base URL keeps exactly one suffix.
+            assertEqual(
+                withFormat.endpoint,
+                'http://localhost:11434/api/chat',
+                'suffix not doubled',
+            );
+            assertEqual(withFormat.payload.keep_alive, '999999h', 'keep alive override');
+            assertEqual(withFormat.payload.think, false, 'think override');
+            assertEqual(withFormat.payload.format, 'json', 'format set');
+            assertEqual(withFormat.payload.raw, true, 'raw set');
+        },
+    ],
 
-    ['endpoint normalization: trailing slashes and existing suffixes', () => {
-        const openai = buildOpenAiCompatStreamRequest({
-            provider: 'openai', baseUrl: 'https://api.openai.com/v1/chat/completions', model: 'm', messages: [],
-        });
-        assertEqual(openai.endpoint, 'https://api.openai.com/v1/chat/completions', 'openai suffix kept');
-        const openaiSlash = buildOpenAiCompatStreamRequest({
-            provider: 'openai', baseUrl: 'https://api.openai.com/v1/', model: 'm', messages: [],
-        });
-        assertEqual(openaiSlash.endpoint, 'https://api.openai.com/v1/chat/completions', 'openai trailing slash + single suffix');
-        const anthropic = buildAnthropicStreamRequest({
-            baseUrl: 'https://api.anthropic.com/v1/messages/', model: 'm', messages: [],
-        });
-        assertEqual(anthropic.endpoint, 'https://api.anthropic.com/v1/messages', 'anthropic suffix kept, slash stripped');
-        const deepseek = buildDeepSeekStreamRequest({
-            baseUrl: 'https://api.deepseek.com/chat/completions', model: 'm', messages: [], maxTokens: 1,
-        });
-        assertEqual(deepseek.endpoint, 'https://api.deepseek.com/chat/completions', 'deepseek suffix kept');
-        const ollama = buildOllamaStreamRequest({
-            baseUrl: 'http://localhost:11434/api/chat/', model: 'm', messages: [],
-        });
-        assertEqual(ollama.endpoint, 'http://localhost:11434/api/chat', 'ollama suffix kept, slash stripped');
-    }],
+    [
+        'endpoint normalization: trailing slashes and existing suffixes',
+        () => {
+            const openai = buildOpenAiCompatStreamRequest({
+                provider: 'openai',
+                baseUrl: 'https://api.openai.com/v1/chat/completions',
+                model: 'm',
+                messages: [],
+            });
+            assertEqual(
+                openai.endpoint,
+                'https://api.openai.com/v1/chat/completions',
+                'openai suffix kept',
+            );
+            const openaiSlash = buildOpenAiCompatStreamRequest({
+                provider: 'openai',
+                baseUrl: 'https://api.openai.com/v1/',
+                model: 'm',
+                messages: [],
+            });
+            assertEqual(
+                openaiSlash.endpoint,
+                'https://api.openai.com/v1/chat/completions',
+                'openai trailing slash + single suffix',
+            );
+            const anthropic = buildAnthropicStreamRequest({
+                baseUrl: 'https://api.anthropic.com/v1/messages/',
+                model: 'm',
+                messages: [],
+            });
+            assertEqual(
+                anthropic.endpoint,
+                'https://api.anthropic.com/v1/messages',
+                'anthropic suffix kept, slash stripped',
+            );
+            const deepseek = buildDeepSeekStreamRequest({
+                baseUrl: 'https://api.deepseek.com/chat/completions',
+                model: 'm',
+                messages: [],
+                maxTokens: 1,
+            });
+            assertEqual(
+                deepseek.endpoint,
+                'https://api.deepseek.com/chat/completions',
+                'deepseek suffix kept',
+            );
+            const ollama = buildOllamaStreamRequest({
+                baseUrl: 'http://localhost:11434/api/chat/',
+                model: 'm',
+                messages: [],
+            });
+            assertEqual(
+                ollama.endpoint,
+                'http://localhost:11434/api/chat',
+                'ollama suffix kept, slash stripped',
+            );
+        },
+    ],
 
-    ['ollama: tools gate per family (no web-search seeding quirk)', () => {
-        const built = buildOllamaStreamRequest({
-            baseUrl: 'http://localhost:11434',
-            model: 'm',
-            messages: [],
-            advertise: { crawl: true, webSearch: false },
-            toolNames: NAMES,
-        });
-        const names = built.payload.tools.map(toolNameOf);
-        assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not seeded');
-        assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl advertised');
-    }],
+    [
+        'ollama: tools gate per family (no web-search seeding quirk)',
+        () => {
+            const built = buildOllamaStreamRequest({
+                baseUrl: 'http://localhost:11434',
+                model: 'm',
+                messages: [],
+                advertise: { crawl: true, webSearch: false },
+                toolNames: NAMES,
+            });
+            const names = built.payload.tools.map(toolNameOf);
+            assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not seeded');
+            assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl advertised');
+        },
+    ],
 ];
 
 await runTests(tests);

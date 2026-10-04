@@ -149,7 +149,8 @@ export const PetSpriteActor = GObject.registerClass(
         }
 
         _shouldAnimate() {
-            if (!this._animate || !this._form || this._pose !== 'idle' || !this.is_mapped()) return false;
+            if (!this._animate || !this._form || this._pose !== 'idle' || !this.is_mapped())
+                return false;
             try {
                 return St.Settings.get().enable_animations;
             } catch (_e) {
@@ -176,7 +177,14 @@ export const PetSpriteActor = GObject.registerClass(
         }
 
         _scheduleSleep() {
-            if (!this._animate || !this._form || !this.is_mapped() || this._pose !== 'idle' || this._stageKey === 'egg') return;
+            if (
+                !this._animate ||
+                !this._form ||
+                !this.is_mapped() ||
+                this._pose !== 'idle' ||
+                this._stageKey === 'egg'
+            )
+                return;
             this._sleepSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SLEEP_DELAY_MS, () => {
                 this._sleepSourceId = 0;
                 if (!this.is_mapped() || this._pose !== 'idle') return GLib.SOURCE_REMOVE;
@@ -193,7 +201,8 @@ export const PetSpriteActor = GObject.registerClass(
             GLib.source_remove(this._sleepSourceId);
             this._sleepSourceId = 0;
         }
-    });
+    },
+);
 
 function resolveAssetPath(extensionPath, relativeCandidates) {
     const cacheKey = `${extensionPath}\u0000${relativeCandidates.join('\u0000')}`;

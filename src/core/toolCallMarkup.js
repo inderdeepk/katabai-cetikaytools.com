@@ -28,10 +28,13 @@
 export function normalizeToolCallMarkup(text, { light = false } = {}) {
     let out = String(text)
         .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-        .replace(/[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g, '');
+        .replace(
+            /[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u08E2\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF\uFFF9-\uFFFB]/g,
+            '',
+        );
     if (!light) {
         out = out
-            .replace(/[\u{E0000}-\u{E007F}]/gu, '')  // Unicode tags block (needs u flag)
+            .replace(/[\u{E0000}-\u{E007F}]/gu, '') // Unicode tags block (needs u flag)
             .replace(/[\u2039\u2329\u27E8\u3008\uFE64\uFF1C]/g, '<')
             .replace(/[\u203A\u232A\u27E9\u3009\uFE65\uFF1E]/g, '>')
             .replace(/[\u201C\u201D\u201E\uFF02]/g, '"');
@@ -41,7 +44,10 @@ export function normalizeToolCallMarkup(text, { light = false } = {}) {
         .replace(/\|DSML\|/gi, '')
         .replace(/\|(?=[a-zA-Z_])/g, '')
         .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
-        .replace(/<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '</');
+        .replace(
+            /<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi,
+            '</',
+        );
 }
 
 // Fallback parser: when a model (e.g. DeepSeek V4 Pro) outputs tool calls as
@@ -72,7 +78,7 @@ export function parseTextToolCalls(text, knownToolNames) {
             const escaped = toolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const re = new RegExp(
                 escaped + '\\s*\\(\\s*(\\{(?:[^{}]|\\{[^{}]*\\})*\\})\\s*\\)',
-                'g'
+                'g',
             );
             let match;
             while ((match = re.exec(text)) !== null) {
@@ -111,7 +117,7 @@ function extractJsonToolCalls(text, knownToolNames) {
         // Quick sanity: the object must mention a known tool name within the
         // first ~200 chars (avoids deeply scanning every brace).
         const head = slice.slice(0, 200);
-        const hasKnownName = knownToolNames.some(n => head.includes(`"${n}"`));
+        const hasKnownName = knownToolNames.some((n) => head.includes(`"${n}"`));
         if (!hasKnownName) continue;
 
         const extracted = extractBalancedJson(slice);
@@ -119,16 +125,22 @@ function extractJsonToolCalls(text, knownToolNames) {
 
         try {
             const obj = JSON.parse(extracted);
-            if (obj && typeof obj === 'object' && typeof obj.name === 'string'
-                && knownToolNames.includes(obj.name) && obj.arguments !== undefined) {
+            if (
+                obj &&
+                typeof obj === 'object' &&
+                typeof obj.name === 'string' &&
+                knownToolNames.includes(obj.name) &&
+                obj.arguments !== undefined
+            ) {
                 results.push({
                     id: `txt_${results.length}_${Date.now()}`,
                     type: 'function',
                     function: {
                         name: obj.name,
-                        arguments: typeof obj.arguments === 'string'
-                            ? obj.arguments
-                            : JSON.stringify(obj.arguments),
+                        arguments:
+                            typeof obj.arguments === 'string'
+                                ? obj.arguments
+                                : JSON.stringify(obj.arguments),
                     },
                 });
             }
@@ -213,7 +225,10 @@ function extractXmlStyleToolCalls(text, knownToolNames) {
         const closeTag = `</${tagName}>`;
         const startIdx = match.index + match[0].length;
         const closeIdx = cleanText.indexOf(closeTag, startIdx);
-        const scope = closeIdx >= 0 ? cleanText.slice(startIdx, closeIdx) : cleanText.slice(startIdx, startIdx + 500);
+        const scope =
+            closeIdx >= 0
+                ? cleanText.slice(startIdx, closeIdx)
+                : cleanText.slice(startIdx, startIdx + 500);
 
         const args = parseXmlParameters(scope);
         if (!args) continue;
@@ -296,7 +311,9 @@ export function contentLooksLikeToolCalls(content) {
         // A legitimate response has paragraphs and sentences.
         // Raw tool-call XML has neither.
         if (paragraphCount >= 2 || sentenceCount >= 5) {
-            log(`[Katab:detect] Skipping — large prose response (${content.length} chars, ${paragraphCount} paras, ${sentenceCount} sentences)`);
+            log(
+                `[Katab:detect] Skipping — large prose response (${content.length} chars, ${paragraphCount} paras, ${sentenceCount} sentences)`,
+            );
             return false;
         }
     }
@@ -308,13 +325,17 @@ export function contentLooksLikeToolCalls(content) {
     // 1. Explicit wrapper tags — definitive signal of tool-call XML.
     // ("calls" covers the mangled "< calls>" variant, normalized above.)
     if (/<(function_calls|tool_calls|calls)>/i.test(cleaned)) {
-        log(`[Katab:detect] Found wrapper tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`);
+        log(
+            `[Katab:detect] Found wrapper tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`,
+        );
         return true;
     }
 
     // 2. Invoke tags with known tool names — model is trying to invoke a tool.
     if (/<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(cleaned)) {
-        log(`[Katab:detect] Found invoke tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`);
+        log(
+            `[Katab:detect] Found invoke tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`,
+        );
         return true;
     }
 
@@ -336,9 +357,13 @@ export function contentLooksLikeToolCalls(content) {
     if (content.length < 2000) {
         const head = cleaned.slice(0, 120);
         const m1 = /<(function_calls|tool_calls|calls)>/i.test(cleaned);
-        const m2 = /<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(cleaned);
+        const m2 = /<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(
+            cleaned,
+        );
         const m3 = /<parameter\s/i.test(cleaned) && /<\/invoke>/i.test(cleaned);
-        log(`[Katab:detect] No tool-call patterns found in ${content.length}-char response. Match1=${m1} Match2=${m2} Match3=${m3} Cleaned start: ${head}`);
+        log(
+            `[Katab:detect] No tool-call patterns found in ${content.length}-char response. Match1=${m1} Match2=${m2} Match3=${m3} Cleaned start: ${head}`,
+        );
     }
     return false;
 }
@@ -352,8 +377,12 @@ export function contentLooksLikeToolCalls(content) {
 export function stillLooksLikeToolMarkup(text) {
     if (!text || typeof text !== 'string') return false;
     const t = normalizeToolCallMarkup(text, { light: true });
-    return /<\/?\s*[a-zA-Z_][a-zA-Z0-9_]*\b[^>]*>/.test(t)
-        && /(?:tool_calls?|function_calls?|invoke|parameter|function|\bcalls\b|read_url|web_search|crawl_url|python|terminal)/i.test(t);
+    return (
+        /<\/?\s*[a-zA-Z_][a-zA-Z0-9_]*\b[^>]*>/.test(t) &&
+        /(?:tool_calls?|function_calls?|invoke|parameter|function|\bcalls\b|read_url|web_search|crawl_url|python|terminal)/i.test(
+            t,
+        )
+    );
 }
 
 // ── Aggressive tool-call markup stripping (handles truncated XML) ─────────
@@ -383,16 +412,25 @@ export function stripTruncatedToolCallMarkup(text) {
     // 1. Remove orphaned <invoke ...> through end of string or next <tag
     cleaned = cleaned.replace(/<invoke\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi, '');
     // 2. Remove orphaned <function_calls> / <tool_calls> without close
-    cleaned = cleaned.replace(/<(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi, '');
+    cleaned = cleaned.replace(
+        /<(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi,
+        '',
+    );
     // 3. Remove any remaining <parameter ...> lines
     cleaned = cleaned.replace(/<parameter\b[^>]*>[\s\S]*?(?=\n|$)/gi, '');
     // 4. Remove any remaining <function>tool_name</function> fragments
     cleaned = cleaned.replace(/<function>\s*\w+\s*<\/function>/gi, '');
 
     // Remove JSON tool-call objects
-    cleaned = cleaned.replace(/\{[^{}]*"name"\s*:\s*"(?:web_search|read_url|crawl_url|python|terminal)"[^{}]*\}/gi, '');
+    cleaned = cleaned.replace(
+        /\{[^{}]*"name"\s*:\s*"(?:web_search|read_url|crawl_url|python|terminal)"[^{}]*\}/gi,
+        '',
+    );
     // Remove function-call syntax
-    cleaned = cleaned.replace(/(?:web_search|read_url|crawl_url|python|terminal)\s*\(\s*\{[^{}]*\}\s*\)/gi, '');
+    cleaned = cleaned.replace(
+        /(?:web_search|read_url|crawl_url|python|terminal)\s*\(\s*\{[^{}]*\}\s*\)/gi,
+        '',
+    );
 
     // Remove stray angle-bracket fragments
     cleaned = cleaned.replace(/<\/?[a-zA-Z_][a-zA-Z0-9_]*(?:\s[^>]*)?\/?>/g, '');
@@ -409,15 +447,16 @@ export function stripTruncatedToolCallMarkup(text) {
     // all cleaning steps), use line-by-line string operations as a last
     // resort.  This is O(n) but only runs when regex stripping was
     // ineffective.
-    if (cleaned && (
-        cleaned.includes('<invoke') ||
-        cleaned.includes('<tool_call') ||
-        cleaned.includes('<function_call') ||
-        cleaned.includes('<parameter') ||
-        cleaned.includes('web_search(') ||
-        cleaned.includes('read_url(') ||
-        cleaned.includes('crawl_url(')
-    )) {
+    if (
+        cleaned &&
+        (cleaned.includes('<invoke') ||
+            cleaned.includes('<tool_call') ||
+            cleaned.includes('<function_call') ||
+            cleaned.includes('<parameter') ||
+            cleaned.includes('web_search(') ||
+            cleaned.includes('read_url(') ||
+            cleaned.includes('crawl_url('))
+    ) {
         const lines = cleaned.split('\n');
         const kept = [];
         let skipUntilClose = false;
@@ -455,10 +494,14 @@ export function stripTruncatedToolCallMarkup(text) {
 
         if (kept.length > 0) {
             cleaned = kept.join('\n').trim();
-            log(`[Katab:strip] String-based fallback kept ${kept.length}/${lines.length} lines after regex stripping was ineffective.`);
+            log(
+                `[Katab:strip] String-based fallback kept ${kept.length}/${lines.length} lines after regex stripping was ineffective.`,
+            );
         } else {
             cleaned = '';
-            log(`[Katab:strip] String-based fallback removed all ${lines.length} lines — content was entirely tool-call XML.`);
+            log(
+                `[Katab:strip] String-based fallback removed all ${lines.length} lines — content was entirely tool-call XML.`,
+            );
         }
     }
 

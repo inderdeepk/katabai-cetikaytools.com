@@ -26,13 +26,16 @@ export const DEFAULT_READ_CHUNK_BYTES = 64 * 1024;
  * @param {function(number): Error} [options.makeError] build the cap error; receives maxBytes
  * @returns {Promise<Uint8Array|GLib.Bytes>}
  */
-export function readCappedBytes(inputStream, {
-    maxBytes,
-    chunkBytes = DEFAULT_READ_CHUNK_BYTES,
-    cancellable = null,
-    asBytes = false,
-    makeError = null,
-} = {}) {
+export function readCappedBytes(
+    inputStream,
+    {
+        maxBytes,
+        chunkBytes = DEFAULT_READ_CHUNK_BYTES,
+        cancellable = null,
+        asBytes = false,
+        makeError = null,
+    } = {},
+) {
     return new Promise((resolve, reject) => {
         const chunks = [];
         let total = 0;
@@ -44,33 +47,50 @@ export function readCappedBytes(inputStream, {
                 combined.set(chunk, offset);
                 offset += chunk.length;
             }
-            try { inputStream.close(null); } catch (_e) { /* ignore */ }
+            try {
+                inputStream.close(null);
+            } catch (_e) {
+                /* ignore */
+            }
             resolve(asBytes ? new GLib.Bytes(combined) : combined);
         };
 
         const readNext = () => {
-            inputStream.read_bytes_async(chunkBytes, GLib.PRIORITY_DEFAULT, cancellable, (stream, result) => {
-                try {
-                    const bytes = stream.read_bytes_finish(result);
-                    const data = bytes.get_data();
-                    if (!data || data.length === 0) {
-                        combineAndResolve();
-                        return;
+            inputStream.read_bytes_async(
+                chunkBytes,
+                GLib.PRIORITY_DEFAULT,
+                cancellable,
+                (stream, result) => {
+                    try {
+                        const bytes = stream.read_bytes_finish(result);
+                        const data = bytes.get_data();
+                        if (!data || data.length === 0) {
+                            combineAndResolve();
+                            return;
+                        }
+                        total += data.length;
+                        if (total > maxBytes) {
+                            try {
+                                inputStream.close(null);
+                            } catch (_e) {
+                                /* ignore */
+                            }
+                            reject(
+                                makeError
+                                    ? makeError(maxBytes)
+                                    : new Error(
+                                          `The response exceeds the ${Math.round(maxBytes / (1024 * 1024))} MB safety limit.`,
+                                      ),
+                            );
+                            return;
+                        }
+                        chunks.push(new Uint8Array(data));
+                        readNext();
+                    } catch (error) {
+                        reject(error);
                     }
-                    total += data.length;
-                    if (total > maxBytes) {
-                        try { inputStream.close(null); } catch (_e) { /* ignore */ }
-                        reject(makeError
-                            ? makeError(maxBytes)
-                            : new Error(`The response exceeds the ${Math.round(maxBytes / (1024 * 1024))} MB safety limit.`));
-                        return;
-                    }
-                    chunks.push(new Uint8Array(data));
-                    readNext();
-                } catch (error) {
-                    reject(error);
-                }
-            });
+                },
+            );
         };
 
         readNext();

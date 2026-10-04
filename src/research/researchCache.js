@@ -39,7 +39,7 @@ function _cacheFilePath() {
 
 // ── In-memory cache ──────────────────────────────────────────────────────────
 
-let _cache = null;        // { entries: { keyHash: { query, results, crawledAt } }, order: [keyHash] }
+let _cache = null; // { entries: { keyHash: { query, results, crawledAt } }, order: [keyHash] }
 let _dirty = false;
 let _flushTimerId = 0;
 const DEFAULT_MAX_ENTRIES = 500;
@@ -90,9 +90,10 @@ function _flushNow() {
         const file = Gio.File.new_for_path(_cacheFilePath());
         file.replace_contents(
             encoder.encode(data),
-            null, false,
+            null,
+            false,
             Gio.FileCreateFlags.REPLACE_DESTINATION,
-            null
+            null,
         );
         // Only mark clean AFTER a successful write — a failed flush keeps the
         // dirty flag set so the next schedule/flushSync retries instead of
@@ -117,7 +118,11 @@ export function flushCacheSync() {
  */
 export function cacheSearchResults(query, results) {
     _loadCache();
-    const keyHash = _hashString(String(query || '').toLowerCase().trim());
+    const keyHash = _hashString(
+        String(query || '')
+            .toLowerCase()
+            .trim(),
+    );
     const entry = {
         type: 'search',
         query,
@@ -151,7 +156,11 @@ export function cacheSearchResults(query, results) {
  */
 export function getCachedSearchResults(query, maxAgeMs = DEFAULT_TTL_MS) {
     _loadCache();
-    const keyHash = _hashString(String(query || '').toLowerCase().trim());
+    const keyHash = _hashString(
+        String(query || '')
+            .toLowerCase()
+            .trim(),
+    );
     const entry = _cache.entries[keyHash];
     if (!entry || entry.type !== 'search') return null;
 
@@ -384,7 +393,7 @@ export function getRecommendedTtlForUrl(url, category = 'static') {
     // Heuristic: news-like URL patterns → shorter TTL
     const urlLower = String(url || '').toLowerCase();
     const newsPatterns = [
-        /\/20\d{2}\/\d{2}\/\d{2}\//,  // /2025/07/28/
+        /\/20\d{2}\/\d{2}\/\d{2}\//, // /2025/07/28/
         /\/article\//,
         /\/news\//,
         /\/blog\//,
@@ -458,9 +467,12 @@ export function clearCache() {
  */
 export function invalidateCacheEntry(type, key) {
     _loadCache();
-    const input = type === 'search'
-        ? String(key || '').toLowerCase().trim()
-        : String(key || '').trim();
+    const input =
+        type === 'search'
+            ? String(key || '')
+                  .toLowerCase()
+                  .trim()
+            : String(key || '').trim();
     const keyHash = _hashString(input);
     delete _cache.entries[keyHash];
     const idx = _cache.order.indexOf(keyHash);
@@ -477,7 +489,7 @@ export function invalidateCacheEntry(type, key) {
 // any time — each save overwrites the previous.
 
 const CHECKPOINT_FILE = 'research-checkpoint.json';
-const CHECKPOINT_VERSION = 2;  // bump when the checkpoint schema changes; old versions are invalidated (not migrated)
+const CHECKPOINT_VERSION = 2; // bump when the checkpoint schema changes; old versions are invalidated (not migrated)
 const MAX_CHECKPOINT_FINDINGS_CHARS = 8000;
 const MAX_CHECKPOINT_FACTS_PER_BRANCH = 20;
 const MAX_CHECKPOINT_FILE_BYTES = 2 * 1024 * 1024;
@@ -508,9 +520,11 @@ export function saveResearchCheckpoint(state) {
         const trimBranch = (r) => {
             if (!r) return null;
             const findings = String(r.findings || '');
-            const trimmed = findings.length > MAX_CHECKPOINT_FINDINGS_CHARS
-                ? findings.slice(0, MAX_CHECKPOINT_FINDINGS_CHARS) + '\n[...checkpoint truncated...]'
-                : findings;
+            const trimmed =
+                findings.length > MAX_CHECKPOINT_FINDINGS_CHARS
+                    ? findings.slice(0, MAX_CHECKPOINT_FINDINGS_CHARS) +
+                      '\n[...checkpoint truncated...]'
+                    : findings;
             const facts = Array.isArray(r.facts)
                 ? r.facts.slice(0, MAX_CHECKPOINT_FACTS_PER_BRANCH)
                 : [];
@@ -527,7 +541,7 @@ export function saveResearchCheckpoint(state) {
         let cleanedContext = null;
         if (state.globalContext) {
             cleanedContext = {
-                summaries: (state.globalContext.summaries || []).map(s => ({
+                summaries: (state.globalContext.summaries || []).map((s) => ({
                     topic: String(s.topic || ''),
                     gist: String(s.gist || '').slice(0, 500),
                     sourceCount: s.sourceCount || 0,
@@ -561,22 +575,30 @@ export function saveResearchCheckpoint(state) {
         // passes — a single halving pass could still leave an oversized
         // checkpoint that was then written anyway).
         for (let pass = 0; data.length > MAX_CHECKPOINT_FILE_BYTES && pass < 3; pass++) {
-            log(`[Katab:checkpoint] Payload ${data.length} bytes exceeds cap — aggressive trim pass ${pass + 1}.`);
+            log(
+                `[Katab:checkpoint] Payload ${data.length} bytes exceeds cap — aggressive trim pass ${pass + 1}.`,
+            );
             const suffix = pass === 0 ? '\n[...aggressively trimmed...]' : '';
-            for (const br of (payload.branchResults || [])) {
+            for (const br of payload.branchResults || []) {
                 const half = Math.floor(br.findings.length / 2);
                 br.findings = br.findings.slice(0, half) + suffix;
                 br.facts = br.facts.slice(0, Math.max(4, Math.floor(br.facts.length / 2)));
                 br.sources = br.sources.slice(0, 10);
             }
-            for (const rr of (payload.refinementResults || [])) {
+            for (const rr of payload.refinementResults || []) {
                 const half = Math.floor(rr.findings.length / 2);
                 rr.findings = rr.findings.slice(0, half) + suffix;
                 rr.facts = rr.facts.slice(0, Math.max(4, Math.floor(rr.facts.length / 2)));
                 rr.sources = rr.sources.slice(0, 10);
             }
-            payload.citationEntries = payload.citationEntries.slice(0, Math.max(10, Math.floor(payload.citationEntries.length / 2)));
-            payload.urlToNumber = payload.urlToNumber.slice(0, Math.max(10, Math.floor(payload.urlToNumber.length / 2)));
+            payload.citationEntries = payload.citationEntries.slice(
+                0,
+                Math.max(10, Math.floor(payload.citationEntries.length / 2)),
+            );
+            payload.urlToNumber = payload.urlToNumber.slice(
+                0,
+                Math.max(10, Math.floor(payload.urlToNumber.length / 2)),
+            );
             if (pass === 2) {
                 // Last resort: drop the cross-branch context and gap rationale.
                 payload.globalContext = '';
@@ -588,7 +610,9 @@ export function saveResearchCheckpoint(state) {
 
         const file = Gio.File.new_for_path(_checkpointFilePath());
         file.replace_contents(data, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
-        log(`[Katab:checkpoint] Checkpoint saved — ${data.length} bytes, ${(payload.branchResults || []).length + (payload.refinementResults || []).length} branches.`);
+        log(
+            `[Katab:checkpoint] Checkpoint saved — ${data.length} bytes, ${(payload.branchResults || []).length + (payload.refinementResults || []).length} branches.`,
+        );
     } catch (e) {
         log(`[Katab:checkpoint] Failed to write checkpoint: ${e.message}`);
     }
@@ -605,9 +629,11 @@ export function loadResearchCheckpoint() {
 
         const info = file.query_info('time::modified', Gio.FileQueryInfoFlags.NONE, null);
         const mtimeSec = info.get_modification_date_time()?.to_unix() || 0;
-        const age = Date.now() - (mtimeSec * 1000);
+        const age = Date.now() - mtimeSec * 1000;
         if (age > CHECKPOINT_MAX_AGE_MS) {
-            log(`[Katab:checkpoint] Stale checkpoint (${Math.round(age / 3600000)}h old) — deleting.`);
+            log(
+                `[Katab:checkpoint] Stale checkpoint (${Math.round(age / 3600000)}h old) — deleting.`,
+            );
             file.delete(null);
             return null;
         }
@@ -619,12 +645,16 @@ export function loadResearchCheckpoint() {
         const payload = JSON.parse(decoder.decode(contents));
 
         if (!payload || payload.version !== CHECKPOINT_VERSION || !Array.isArray(payload.plan)) {
-            log(`[Katab:checkpoint] Invalid/outdated checkpoint format (v${payload?.version ?? 'none'}) — deleting.`);
+            log(
+                `[Katab:checkpoint] Invalid/outdated checkpoint format (v${payload?.version ?? 'none'}) — deleting.`,
+            );
             file.delete(null);
             return null;
         }
 
-        log(`[Katab:checkpoint] Valid checkpoint found — ${payload.plan.length} plan items, ${(payload.branchResults || []).length} branches.`);
+        log(
+            `[Katab:checkpoint] Valid checkpoint found — ${payload.plan.length} plan items, ${(payload.branchResults || []).length} branches.`,
+        );
         return payload;
     } catch (e) {
         log(`[Katab:checkpoint] Failed to load checkpoint: ${e.message}`);

@@ -59,9 +59,11 @@ function _getPresetsFilePath() {
 function _ensureKatabaiDir() {
     try {
         Gio.File.new_for_path(
-            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai'])
+            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai']),
         ).make_directory_with_parents(null);
-    } catch (_e) { /* already exists */ }
+    } catch (_e) {
+        /* already exists */
+    }
 }
 
 /**
@@ -94,8 +96,7 @@ export function savePresets(presets) {
         _ensureKatabaiDir();
         const file = Gio.File.new_for_path(_getPresetsFilePath());
         const data = new TextEncoder().encode(JSON.stringify(presets, null, 2));
-        file.replace_contents(data, null, false,
-            Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        file.replace_contents(data, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         return true;
     } catch (e) {
         log(`Katab: failed to save presets: ${e.message}`);
@@ -120,7 +121,9 @@ export function capturePresetFromSettings(settings, name) {
     for (const { key, type, settingKey } of PRESET_SETTINGS) {
         try {
             preset[key] = settings[`get_${type}`](settingKey);
-        } catch (_e) { /* skip unavailable keys */ }
+        } catch (_e) {
+            /* skip unavailable keys */
+        }
     }
     return preset;
 }
@@ -137,7 +140,9 @@ export function applyPresetToSettings(settings, preset) {
         if (preset[key] !== undefined && preset[key] !== null) {
             try {
                 settings[`set_${type}`](settingKey, preset[key]);
-            } catch (_e) { /* skip */ }
+            } catch (_e) {
+                /* skip */
+            }
         }
     }
 }
@@ -161,7 +166,7 @@ export function addPreset(preset) {
  * @param {string} id
  */
 export function deletePreset(id) {
-    savePresets(loadPresets().filter(p => p.id !== id));
+    savePresets(loadPresets().filter((p) => p.id !== id));
 }
 
 /**
@@ -172,11 +177,10 @@ export function deletePreset(id) {
  * @returns {Object|null}
  */
 export function getPresetById(id, presets = null) {
-    if (!id)
-        return null;
+    if (!id) return null;
 
     const presetList = Array.isArray(presets) ? presets : loadPresets();
-    return presetList.find(p => p.id === id) ?? null;
+    return presetList.find((p) => p.id === id) ?? null;
 }
 
 /**
@@ -190,9 +194,8 @@ export function getPresetById(id, presets = null) {
  */
 export function updatePresetFromSettings(settings, id, options = {}) {
     const presets = loadPresets();
-    const idx = presets.findIndex(p => p.id === id);
-    if (idx < 0)
-        return null;
+    const idx = presets.findIndex((p) => p.id === id);
+    if (idx < 0) return null;
 
     const { onlyMissing = false } = options;
     const updatedPreset = { ...presets[idx] };
@@ -208,7 +211,9 @@ export function updatePresetFromSettings(settings, id, options = {}) {
                 updatedPreset[key] = nextValue;
                 changed = true;
             }
-        } catch (_e) { /* skip unavailable keys */ }
+        } catch (_e) {
+            /* skip unavailable keys */
+        }
     }
 
     if (changed) {
@@ -238,7 +243,9 @@ export function settingsMatchPreset(settings, preset) {
             } else {
                 if (current !== preset[key]) return false;
             }
-        } catch (_e) { /* key not in schema — skip */ }
+        } catch (_e) {
+            /* key not in schema — skip */
+        }
     }
     return true;
 }
@@ -252,8 +259,7 @@ export function settingsMatchPreset(settings, preset) {
  */
 export function reconcileActivePreset(settings) {
     const presetId = settings.get_string('ollama-active-preset');
-    if (!presetId)
-        return null;
+    if (!presetId) return null;
 
     const preset = getPresetById(presetId);
     if (!preset || !settingsMatchPreset(settings, preset)) {
@@ -271,7 +277,7 @@ export function reconcileActivePreset(settings) {
  */
 export function updatePresetName(id, name) {
     const presets = loadPresets();
-    const idx = presets.findIndex(p => p.id === id);
+    const idx = presets.findIndex((p) => p.id === id);
     if (idx >= 0) {
         presets[idx] = { ...presets[idx], name: (name || '').trim() || presets[idx].name };
         savePresets(presets);

@@ -20,17 +20,64 @@ import { buildCitationSummary } from './citationTracker.js';
 // ── Source contradiction detection ───────────────────────────────────────────
 // Heuristic clustering parameters — no embedding model available in GJS.
 export const CONTRADICTION_TOPIC_SIMILARITY_THRESHOLD = 3; // min shared words for same topic
-export const CONTRADICTION_NUMERIC_TOLERANCE = 0.15;        // 15% difference flags a conflict
+export const CONTRADICTION_NUMERIC_TOLERANCE = 0.15; // 15% difference flags a conflict
 
 // ── Shared stopwords for relevance scoring and contradiction detection ───────
 const COMMON_STOPWORDS = new Set([
-    'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can',
-    'had', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'from',
-    'they', 'that', 'this', 'with', 'what', 'when', 'where', 'which',
-    'will', 'would', 'about', 'there', 'their', 'been', 'more', 'some',
-    'than', 'then', 'also', 'into', 'only', 'other', 'over', 'such',
-    'each', 'very', 'just', 'after', 'before', 'between', 'through',
-    'its', 'his', 'these', 'those', 'them',
+    'the',
+    'and',
+    'for',
+    'are',
+    'but',
+    'not',
+    'you',
+    'all',
+    'can',
+    'had',
+    'her',
+    'was',
+    'one',
+    'our',
+    'out',
+    'has',
+    'have',
+    'from',
+    'they',
+    'that',
+    'this',
+    'with',
+    'what',
+    'when',
+    'where',
+    'which',
+    'will',
+    'would',
+    'about',
+    'there',
+    'their',
+    'been',
+    'more',
+    'some',
+    'than',
+    'then',
+    'also',
+    'into',
+    'only',
+    'other',
+    'over',
+    'such',
+    'each',
+    'very',
+    'just',
+    'after',
+    'before',
+    'between',
+    'through',
+    'its',
+    'his',
+    'these',
+    'those',
+    'them',
 ]);
 
 /**
@@ -47,7 +94,7 @@ const COMMON_STOPWORDS = new Set([
  */
 export function detectContradictions(branchResults) {
     const allFacts = [];
-    for (const br of (branchResults || [])) {
+    for (const br of branchResults || []) {
         if (br.facts && br.facts.length > 0) {
             for (const f of br.facts) {
                 if (f.claim && f.url) {
@@ -61,10 +108,11 @@ export function detectContradictions(branchResults) {
     // ── Extract significant words from each claim for clustering ────
     const tokenize = (text) => {
         return new Set(
-            text.toLowerCase()
+            text
+                .toLowerCase()
                 .replace(/[^a-z0-9\s]/g, ' ')
                 .split(/\s+/)
-                .filter(w => w.length > 2 && !COMMON_STOPWORDS.has(w))
+                .filter((w) => w.length > 2 && !COMMON_STOPWORDS.has(w)),
         );
     };
 
@@ -100,7 +148,9 @@ export function detectContradictions(branchResults) {
     for (const cluster of clusters) {
         const numericClaims = [];
         for (const c of cluster) {
-            const nums = c.claim.match(/\b\d+(?:\.\d+)?(?:\s*(?:%|million|billion|trillion|k|m|b|t))?\b/gi);
+            const nums = c.claim.match(
+                /\b\d+(?:\.\d+)?(?:\s*(?:%|million|billion|trillion|k|m|b|t))?\b/gi,
+            );
             if (nums && nums.length > 0) {
                 for (const n of nums) {
                     const val = parseFloat(n.replace(/[^\d.]/g, ''));
@@ -143,7 +193,9 @@ export function detectContradictions(branchResults) {
     }
 
     if (contradictions.length > 0) {
-        log(`[Katab:synthesis] Detected ${contradictions.length} potential contradictions across ${allFacts.length} facts.`);
+        log(
+            `[Katab:synthesis] Detected ${contradictions.length} potential contradictions across ${allFacts.length} facts.`,
+        );
     }
     return contradictions;
 }
@@ -187,16 +239,25 @@ export function sourceRecencyHint(url) {
  */
 export function sourceReliabilityHint(url) {
     try {
-        const host = String(url || '').replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
-        if (/(\.gov|\.edu|\.mil)$/.test(host)
-            || host.includes('arxiv.')
-            || host.includes('acm.org')
-            || host.includes('ieee.')
-            || host.includes('nature.com')
-            || host.includes('science.org')) {
+        const host = String(url || '')
+            .replace(/^https?:\/\//i, '')
+            .split('/')[0]
+            .toLowerCase();
+        if (
+            /(\.gov|\.edu|\.mil)$/.test(host) ||
+            host.includes('arxiv.') ||
+            host.includes('acm.org') ||
+            host.includes('ieee.') ||
+            host.includes('nature.com') ||
+            host.includes('science.org')
+        ) {
             return 'high';
         }
-        if (/(wikipedia|medium|wordpress|blogspot|reddit|quora|stackoverflow|github|substack|forum)/.test(host)) {
+        if (
+            /(wikipedia|medium|wordpress|blogspot|reddit|quora|stackoverflow|github|substack|forum)/.test(
+                host,
+            )
+        ) {
             return 'low';
         }
         return 'medium';
@@ -238,11 +299,13 @@ export function buildSynthesisPrompt(context) {
     const urlToNum = citationTracker?.urlToNumber || new Map();
     const formatSources = (urls) => {
         if (!urls || !urls.length) return '';
-        return urls.map(u => {
-            const normalized = String(u).trim().replace(/\/+$/, '').toLowerCase();
-            const num = urlToNum.get(normalized);
-            return num ? `[${num}](${u})` : `[?](${u})`;
-        }).join(', ');
+        return urls
+            .map((u) => {
+                const normalized = String(u).trim().replace(/\/+$/, '').toLowerCase();
+                const num = urlToNum.get(normalized);
+                return num ? `[${num}](${u})` : `[?](${u})`;
+            })
+            .join(', ');
     };
 
     // ── Build the synthesis prompt ──────────────────────────────────
@@ -266,7 +329,8 @@ export function buildSynthesisPrompt(context) {
         prompt += `Your task is to write a comprehensive, well-structured research report that directly answers this question. The research findings below were gathered through multiple phases of research (initial angles followed by targeted refinement to fill gaps). Use them as your primary source material — but do NOT organize your report around the research angles. Instead, organize your report around what best answers the user's question.\n\n`;
         prompt += `IMPORTANT: Determine the best structure for your report based on the user's question. If the question is about "how something works," organize around architecture/mechanisms/pipeline. If it's a comparison, organize around the compared entities and their trade-offs. If it asks "what makes a good X," organize around principles, criteria, and examples. Let the question dictate the structure — the research angles were just tools to gather information.\n\n`;
     } else {
-        prompt += '[SYNTHESIS TASK — Write a comprehensive research report based on the findings below.]\n\n';
+        prompt +=
+            '[SYNTHESIS TASK — Write a comprehensive research report based on the findings below.]\n\n';
     }
 
     // ── Layer 1.5: Outline scaffold (from Pass 1 synthesis) ─────────
@@ -291,11 +355,14 @@ export function buildSynthesisPrompt(context) {
     // Inject attached document context if available — the user attached
     // document(s) that should inform the research report.
     if (documentContext) {
-        const docContextPreview = documentContext.length > 6000
-            ? documentContext.slice(0, 6000) + '\n[...document truncated for synthesis — full content available in conversation history...]'
-            : documentContext;
+        const docContextPreview =
+            documentContext.length > 6000
+                ? documentContext.slice(0, 6000) +
+                  '\n[...document truncated for synthesis — full content available in conversation history...]'
+                : documentContext;
         prompt += '─── ATTACHED DOCUMENT CONTEXT ───\n\n';
-        prompt += 'The user attached the following document(s) as additional source material. Reference them alongside the web research findings below:\n\n';
+        prompt +=
+            'The user attached the following document(s) as additional source material. Reference them alongside the web research findings below:\n\n';
         prompt += docContextPreview + '\n\n';
         prompt += '─── WEB RESEARCH FINDINGS ───\n\n';
     }
@@ -305,7 +372,7 @@ export function buildSynthesisPrompt(context) {
     // deduplication and summarization — preserve as much as possible.
     // The budget is depth-aware (Phase 5 scales it with the depth knob).
     const FINDINGS_BUDGET_CHARS = contextBudgetChars;
-    const validResults = branchResults.filter(r => r.findings && r.findings.length > 100);
+    const validResults = branchResults.filter((r) => r.findings && r.findings.length > 100);
 
     // Compute total chars including both merged summaries and raw facts
     let totalRawChars = 0;
@@ -324,10 +391,11 @@ export function buildSynthesisPrompt(context) {
         const _scoreRelevance = (result) => {
             // Tokenize the query into lowercase words, skip stopwords
             const queryTokens = new Set(
-                originalQuery.toLowerCase()
+                originalQuery
+                    .toLowerCase()
                     .replace(/[^a-z0-9\s]/g, ' ')
                     .split(/\s+/)
-                    .filter(w => w.length > 2 && !COMMON_STOPWORDS.has(w))
+                    .filter((w) => w.length > 2 && !COMMON_STOPWORDS.has(w)),
             );
             if (queryTokens.size === 0) return 0;
 
@@ -370,9 +438,10 @@ export function buildSynthesisPrompt(context) {
         let text = '';
         // Merged narrative summary (primary)
         const summaryChars = Math.min(result.findings.length, Math.floor(maxChars * 0.6));
-        const condensedSummary = result.findings.length > summaryChars
-            ? result.findings.slice(0, summaryChars) + '\n[...summary trimmed...]'
-            : result.findings;
+        const condensedSummary =
+            result.findings.length > summaryChars
+                ? result.findings.slice(0, summaryChars) + '\n[...summary trimmed...]'
+                : result.findings;
         text += `${condensedSummary}\n`;
 
         // Granular facts (complementary data points the merge may have generalized)
@@ -398,13 +467,18 @@ export function buildSynthesisPrompt(context) {
     if (needsTruncation) {
         const scale = FINDINGS_BUDGET_CHARS / totalRawChars;
         for (const result of validResults) {
-            const budget = Math.max(2000, Math.floor((result.findings.length + (result.facts?.length || 0) * 100) * scale));
+            const budget = Math.max(
+                2000,
+                Math.floor((result.findings.length + (result.facts?.length || 0) * 100) * scale),
+            );
             const srcLabel = formatSources(result.sources);
             prompt += `### Research Context: ${result.topic}\n${renderBranch(result, budget)}`;
             if (srcLabel) prompt += `Sources: ${srcLabel}\n`;
             prompt += '\n---\n\n';
         }
-        log(`[Katab:synthesis] Context budget exceeded — scaled ${totalRawChars} → ~${FINDINGS_BUDGET_CHARS} chars across ${validResults.length} branches.`);
+        log(
+            `[Katab:synthesis] Context budget exceeded — scaled ${totalRawChars} → ~${FINDINGS_BUDGET_CHARS} chars across ${validResults.length} branches.`,
+        );
     } else {
         for (const result of validResults) {
             const srcLabel = formatSources(result.sources);
@@ -417,7 +491,9 @@ export function buildSynthesisPrompt(context) {
     // Log context stats for debugging — include token estimate
     const factCount = validResults.reduce((sum, r) => sum + (r.facts?.length || 0), 0);
     const estimatedTokens = estimateTokens(prompt);
-    log(`[Katab:synthesis] Feeding ~${estimatedTokens} tokens (${totalRawChars} chars, ${validResults.length} branches, ${factCount} facts, ${needsTruncation ? 'truncated' : 'full'}) into synthesis prompt.`);
+    log(
+        `[Katab:synthesis] Feeding ~${estimatedTokens} tokens (${totalRawChars} chars, ${validResults.length} branches, ${factCount} facts, ${needsTruncation ? 'truncated' : 'full'}) into synthesis prompt.`,
+    );
 
     // ── Layer 3: Citation map ───────────────────────────────────────
     if (citationTracker && citationTracker.entries.length > 0) {
@@ -429,9 +505,12 @@ export function buildSynthesisPrompt(context) {
         prompt += '─── CONTRADICTIONS TO RESOLVE ───\n\n';
         prompt += 'The following conflicting claims were detected across sources. You MUST:\n';
         prompt += '- Address each conflict explicitly in your report.\n';
-        prompt += '- Present BOTH figures/positions with their source attributions — do not silently pick one.\n';
-        prompt += '- Note which source is most recent (by publication year) and most reliable (by domain authority).\n';
-        prompt += '- If one source is clearly more recent AND reliable, say why and prioritise it; otherwise present both with their uncertainty.\n\n';
+        prompt +=
+            '- Present BOTH figures/positions with their source attributions — do not silently pick one.\n';
+        prompt +=
+            '- Note which source is most recent (by publication year) and most reliable (by domain authority).\n';
+        prompt +=
+            '- If one source is clearly more recent AND reliable, say why and prioritise it; otherwise present both with their uncertainty.\n\n';
         for (const c of contradictions.slice(0, 5)) {
             prompt += `**Topic**: ${c.topic}\n`;
             for (const claim of c.claims.slice(0, 3)) {
@@ -447,10 +526,14 @@ export function buildSynthesisPrompt(context) {
     // ── Report guidelines ───────────────────────────────────────────
     prompt += '─── REPORT GUIDELINES ───\n\n';
     prompt += 'Your report should include:\n';
-    prompt += '1. EXECUTIVE SUMMARY — A concise answer to the user\'s question, capturing the most important findings (2-3 sentences).\n';
-    prompt += '2. DETAILED ANALYSIS — Substantive sections organized in whatever way best answers the user\'s question. Explain concepts, compare approaches, highlight insights. This is NOT a tour of the research angles — it is a coherent answer to the user\'s question, supported by the research.\n';
-    prompt += '3. KEY TECHNICAL DETAILS — Architecture patterns, data flows, specific techniques, benchmarks, or code patterns relevant to the question.\n';
-    prompt += '4. SOURCES & REFERENCES — List each source with its [N] number and a brief note on what it contributed.\n';
+    prompt +=
+        "1. EXECUTIVE SUMMARY — A concise answer to the user's question, capturing the most important findings (2-3 sentences).\n";
+    prompt +=
+        "2. DETAILED ANALYSIS — Substantive sections organized in whatever way best answers the user's question. Explain concepts, compare approaches, highlight insights. This is NOT a tour of the research angles — it is a coherent answer to the user's question, supported by the research.\n";
+    prompt +=
+        '3. KEY TECHNICAL DETAILS — Architecture patterns, data flows, specific techniques, benchmarks, or code patterns relevant to the question.\n';
+    prompt +=
+        '4. SOURCES & REFERENCES — List each source with its [N] number and a brief note on what it contributed.\n';
     prompt += '5. RECOMMENDATIONS — Actionable, specific suggestions grounded in the research.\n\n';
     // NOTE: an inline-SVG charts option was removed — the chat surface is a
     // Pango text renderer and cannot display SVG, so enabling it only
@@ -460,7 +543,8 @@ export function buildSynthesisPrompt(context) {
     prompt += '- Cite sources using [N] notation matching the citation numbers above.\n';
     prompt += '- Use ONLY the research findings above as your factual basis — do not fabricate.\n';
     prompt += '- Be thorough — this is a DEEP research report, not a surface-level summary.\n';
-    prompt += '- Do NOT structure your report as "Angle 1... Angle 2... Angle 3..." — the research angles were tools, not an outline. Synthesize across them.';
+    prompt +=
+        '- Do NOT structure your report as "Angle 1... Angle 2... Angle 3..." — the research angles were tools, not an outline. Synthesize across them.';
 
     return prompt;
 }
