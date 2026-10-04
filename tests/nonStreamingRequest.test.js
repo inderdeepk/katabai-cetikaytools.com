@@ -125,11 +125,13 @@ const tests = [
     // ── response extraction ────────────────────────────────────────────────
 
     ['extract text: anthropic joins text blocks and skips others', () => {
-        const parsed = { content: [
-            { type: 'text', text: 'Hello ' },
-            { type: 'tool_use', id: 'x' },
-            { type: 'text', text: 'world' },
-        ] };
+        const parsed = {
+            content: [
+                { type: 'text', text: 'Hello ' },
+                { type: 'tool_use', id: 'x' },
+                { type: 'text', text: 'world' },
+            ]
+        };
         assertEqual(extractNonStreamingText('anthropic', parsed), 'Hello world', 'joined text blocks');
         assertEqual(extractNonStreamingText('anthropic', {}), '', 'missing content');
     }],

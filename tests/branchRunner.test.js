@@ -245,7 +245,7 @@ const tests = [
             webSearch: async (query) => {
                 attempts += 1;
                 if (attempts === 1) throw Object.assign(new Error('timeout'), { code: 'timeout' });
-                return { results: [searchResult(`https://${query}.example`) ] };
+                return { results: [searchResult(`https://${query}.example`)] };
             },
         });
         const plan = [{ sub_task: 'A', search_query: 'q1' }];

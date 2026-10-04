@@ -107,9 +107,9 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
         getCitationTracker = () => null,
         getGlobalContext = () => null,
         getOriginalQuery = () => '',
-        updateProgress = () => {},
-        addSearchResultCards = () => {},
-        addPageReadProgress = () => {},
+        updateProgress = () => { },
+        addSearchResultCards = () => { },
+        addPageReadProgress = () => { },
         formatBytes = () => '',
     } = host;
 
@@ -293,16 +293,16 @@ export async function runResearchBranches(host, plan) {
     const {
         getConfig,
         getGlobalContext = () => null,
-        setGlobalContext = () => {},
+        setGlobalContext = () => { },
         getCancellable = () => null,
         isCancelled = () => false,
         isTransient = () => false,
         sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
         getPipelineHost = () => ({}),
         getOriginalQuery = () => '',
-        updateProgress = () => {},
+        updateProgress = () => { },
         addTimelineEntry = () => null,
-        saveCheckpoint = () => {},
+        saveCheckpoint = () => { },
     } = host;
 
     const { webSearchConfig, crawl4aiConfig } = getConfig();
@@ -551,8 +551,8 @@ export async function runRefinementResearch(host, gapQueries) {
         getCitationTracker = () => null,
         getOriginalQuery = () => '',
         getActivePlanLength = () => 0,
-        updateProgress = () => {},
-        extendProgressCardForRefinement = () => {},
+        updateProgress = () => { },
+        extendProgressCardForRefinement = () => { },
     } = host;
 
     const { webSearchConfig, crawl4aiConfig } = getConfig();
