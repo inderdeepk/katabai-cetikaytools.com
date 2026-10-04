@@ -80,7 +80,9 @@ This document covers setting up a development environment, understanding the pro
 katabai@cetikaytools.com/
 ├── extension.js              # Main entry: KatabExtension, KatabDialog, HistoryManager,
 │                             #   ProviderHealthMonitor, Indicator
-├── prefs.js                  # GTK4/Adwaita preferences window (separate process)
+├── prefs.js                  # GTK4/Adwaita preferences orchestrator (separate process)
+├── src/ui/prefs/             # Preferences pages: widgets.js context factory + page modules
+│                             #   (generalPage, ollamaPage, deepseekPage, providerPages, tools/*)
 ├── prefs.css                 # Preferences CSS (loaded by prefs.js via Gtk.CssProvider)
 ├── stylesheet.css            # Shell overlay St CSS (auto-loaded by GNOME)
 ├── metadata.json             # Extension manifest (UUID, versions, schema)
@@ -139,11 +141,9 @@ graph TD
     crawl4aiTools.js --> networkGuard.js
     tokenUsageManager.js --> petCollection.js
     tokenUsageManager.js --> networkGuard.js
-    prefs.js --> presetManager.js
-    prefs.js --> webSearchTools.js
-    prefs.js --> crawl4aiTools.js
-    prefs.js --> tokenUsageManager.js
-    prefs.js --> petCollection.js
+    prefs.js --> src/ui/prefs/*  (page modules: ollamaPage → presetManager;
+                                 generalPage → tokenUsageManager, petCollection;
+                                 tools/* → webSearchTools, crawl4aiTools, ragTools)
 ```
 
 ### Data Flow (Message Send)
@@ -310,7 +310,7 @@ In `extension.js::_readSSE()`, add provider-specific parsing for the response fo
 In `extension.js::ProviderHealthMonitor`, add a probe for the new provider's health endpoint.
 
 ### Step 6: Add Preferences Page
-In `prefs.js`, add a provider page with URL, API key, and model settings using `createProviderPage()`.
+In `src/ui/prefs/providerPages.js` (or a new module under `src/ui/prefs/`), build the provider page with URL, API key, and model settings using `createProviderPage()` from the prefs context.
 
 ### Step 7: Test
 ```bash
@@ -372,7 +372,7 @@ case 'my_tool':
 Add keys to `schemas/org.gnome.shell.extensions.katabai.gschema.xml` and recompile.
 
 ### Step 5: Add Preferences Subpage
-In `prefs.js`, add a subpage with tool settings using the existing patterns.
+Add a section module under `src/ui/prefs/tools/` (export `build…Section(ctx)` returning the subpage) and register it in `src/ui/prefs/tools/index.js` — the shared row/subpage builders come from `src/ui/prefs/widgets.js`.
 
 ### Step 6: Add UI Button (if user-triggerable)
 In `extension.js`, add a footer button and wire it to initialize the tool.

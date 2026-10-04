@@ -98,7 +98,7 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
 
 ```
 extension.js          — Main entry: extension class, KatabDialog, Panel Indicator, ProviderHealthMonitor
-prefs.js              — GTK4/Adwaita preferences window
+prefs.js              — GTK4/Adwaita preferences orchestrator (pages live in src/ui/prefs/)
 prefs.css             — Preferences window styling
 stylesheet.css        — Shell overlay St CSS
 metadata.json         — Extension manifest
@@ -125,7 +125,7 @@ See [ARCHITECTURE.md](Documentation/Technical/ARCHITECTURE.md) for detailed file
 ### Adding a New Provider
 1. Add `-url`, `-api-key`, `-model` keys to `schemas/org.gnome.shell.extensions.katabai.gschema.xml`.
 2. Add entries to `PROVIDER_LABELS` and `PROVIDER_META` in `src/providers/catalog.js`.
-3. Add provider page to `prefs.js`.
+3. Add the provider page in `src/ui/prefs/providerPages.js` (simple URL/key/model shape) — or a dedicated module under `src/ui/prefs/` if it needs more than the shared row builders.
 4. Add the streaming request builder in `src/providers/chatRequest.js` (and the non-streaming variant in `src/providers/nonStreamingRequest.js`).
 5. Add the stream-line parser + tool-call accumulation in `src/providers/streamParse.js`.
 6. Add health probe to `ProviderHealthMonitor`.
@@ -136,7 +136,7 @@ See [ARCHITECTURE.md](Documentation/Technical/ARCHITECTURE.md) for detailed file
 2. Create a runtime module in `src/tools/` if needed.
 3. Add handler dispatch in `extension.js::_handleToolCalls()`.
 4. Add GSettings keys if the tool is configurable.
-5. Add preferences subpage in `prefs.js`.
+5. Add a preferences section under `src/ui/prefs/tools/` (export a `build…Section(ctx)` returning the tool subpage, then register it in `tools/index.js`).
 6. Add UI button in `extension.js` footer if user-triggerable.
 7. Consider SSRF safety for any network tool.
 

@@ -27,8 +27,15 @@ src/
 │   ├── chatRequest.js           ← Streaming request builders (all providers)
 │   ├── nonStreamingRequest.js   ← Non-streaming request builders + response extraction
 │   └── streamParse.js           ← SSE/NDJSON line parsing + tool-call accumulation
-├── ui/            # Render-model helpers
-│   └── markdownRender.js        ← Markdown segmentation + inline formatting
+├── ui/            # Render-model helpers + preferences pages
+│   ├── markdownRender.js        ← Markdown segmentation + inline formatting
+│   └── prefs/                   ← Preferences window modules (prefs.js is an 86-line orchestrator)
+│       ├── widgets.js           ← createPrefsContext: shared page/group/row builders + watch()/dispose()
+│       ├── generalPage.js       ← General page (provider cards, appearance, shortcut, budget)
+│       ├── ollamaPage.js        ← Ollama page (presets, connection, sampling, hardware)
+│       ├── deepseekPage.js      ← DeepSeek page (balance, vision model, reasoning)
+│       ├── providerPages.js     ← Unsloth / OpenAI / Anthropic pages
+│       └── tools/               ← Tools page: index.js aggregator + document, webSearch, crawler, knowledge, deepResearch
 ├── tools/         # Tool implementations and declarative registry
 │   ├── toolRegistry.js          ← Declarative tool registry (ToolDefinition map)
 │   ├── toolDefinitions.js       ← Concrete tool definitions (side-effect import)
