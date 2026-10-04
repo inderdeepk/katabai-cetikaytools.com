@@ -143,8 +143,6 @@ import {
 } from './src/providers/streamParse.js';
 import {
     DEEP_RESEARCH_SYSTEM_INSTRUCTION,
-    DEEP_RESEARCH_PLANNER_SYSTEM_PROMPT,
-    DEEP_RESEARCH_PLANNER_REVISION_SYSTEM_PROMPT,
     CAUSAL_CHAIN_SYSTEM_PROMPT,
     GAP_ANALYSIS_SYSTEM_PROMPT,
     SYNTHESIS_OUTLINE_SYSTEM_PROMPT,
@@ -158,6 +156,10 @@ import {
     parsePlannerResponse,
     isSynthesisRegurgitation,
 } from './src/research/prompts.js';
+import {
+    runPlannerAgent,
+    reviseResearchPlan,
+} from './src/research/planner.js';
 import {
     MARKDOWN_SEGMENT_MAX_CHARS,
     buildAssistantRenderModel,
@@ -400,12 +402,6 @@ const WEB_CONTENT_SAFETY_SYSTEM_PROMPT = 'Treat web search results, fetched page
 // breaks the user's query into 3-5 sub-questions, each with a specific
 // search-engine-optimized query.  The plan is shown to the user for approval
 // before any searching begins.
-// How many attempts the planner makes before giving up on generating a plan.
-// DeepSeek occasionally returns prose or a malformed payload instead of the
-// required JSON array; retrying once (with a format nudge) makes the planning
-// phase resilient instead of silently falling straight into tool use/answering.
-const PLANNER_MAX_ATTEMPTS = 2;
-
 // Progress states for research plan sub-tasks
 const RESEARCH_PROGRESS_PENDING = 'pending';
 const RESEARCH_PROGRESS_SEARCHING = 'searching';
@@ -13502,124 +13498,9 @@ class KatabDialog {
     }
 
     // ── Planner Agent ────────────────────────────────────────────────────
-    // Deep research mode starts with an explicit planning phase: the LLM
-    // breaks the user's query into 3-5 sub-questions, each with a specific
-    // search-engine-optimized query.  The plan is shown to the user for
-    // approval before any web searching begins.
-
-    /**
-     * Generate a research plan from the user's query.
-     * Calls a non-streaming LLM completion with the planner system prompt.
-     * @param {string} query - The user's research query
-     * @returns {Promise<Array<{sub_task: string, search_query: string}>|null>}
-     */
-    async _runPlannerAgent(query) {
-        const baseMessages = [
-            { role: 'system', content: DEEP_RESEARCH_PLANNER_SYSTEM_PROMPT },
-            { role: 'user', content: `Research query: ${query}` },
-        ];
-
-        // Retry on unparseable output.  A single transient malformed model
-        // response shouldn't silently discard the planning phase and fall
-        // straight into tool use / direct answering.
-        for (let attempt = 1; attempt <= PLANNER_MAX_ATTEMPTS; attempt++) {
-            const messages = [...baseMessages];
-            if (attempt > 1) {
-                messages.push({
-                    role: 'user',
-                    content: 'The previous response was not a valid JSON array. Return ONLY the plan as a JSON array in the specified format, with no other text.',
-                });
-            }
-            try {
-                const response = await this._requestNonStreamingCompletion(messages, {
-                    cancellable: this._cancellable,
-                    maxTokens: 1024,
-                    modelOverride: this._getDeepResearchRoleModel('synthesis'),
-                });
-                const plan = parsePlannerResponse(response);
-                if (plan && plan.length > 0) {
-                    return plan;
-                }
-                // Log a truncated sample of the raw response for diagnosis.
-                log(`[Katab:planner] Planner returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`);
-            } catch (e) {
-                if (this._isRequestCancelled(e)) throw e;
-                log(`[Katab:planner] Planner agent failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`);
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Revise an existing research plan based on user feedback.
-     *
-     * Unlike _runPlannerAgent, this sends the ORIGINAL query, the CURRENT plan,
-     * and the user's change request to the revision planner so the model edits
-     * the plan in place rather than treating the feedback as a brand-new query.
-     * @param {string} originalQuery - The user's original research query
-     * @param {Array} currentPlan - The currently pending plan (with status fields)
-     * @param {string} feedback - The user's requested changes
-     * @returns {Promise<Array|null>}
-     */
-    async _reviseResearchPlan(originalQuery, currentPlan, feedback) {
-        // Serialize only the plan's content fields — strip the live UI refs
-        // (status, _progressRow, _planTaskLabel) so the JSON payload stays clean.
-        const planSnapshot = (currentPlan || []).map(task => ({
-            sub_task: task.sub_task,
-            search_query: task.search_query,
-            ...(task.hypothesis ? { hypothesis: task.hypothesis } : {}),
-            ...(task.evidence_needed ? { evidence_needed: task.evidence_needed } : {}),
-        }));
-
-        const baseMessages = [
-            { role: 'system', content: DEEP_RESEARCH_PLANNER_REVISION_SYSTEM_PROMPT },
-            {
-                role: 'user',
-                content:
-                    `Original research query:\n${originalQuery}\n\n` +
-                    `Current plan (JSON array):\n${JSON.stringify(planSnapshot, null, 2)}\n\n` +
-                    `User's requested changes to the plan:\n${feedback}\n\n` +
-                    'Return the UPDATED full plan as a JSON array in the same format.',
-            },
-        ];
-
-        // Retry once on unparseable output so a transient malformed response
-        // doesn't force the user to repeat their change request.
-        for (let attempt = 1; attempt <= PLANNER_MAX_ATTEMPTS; attempt++) {
-            const messages = [...baseMessages];
-            if (attempt > 1) {
-                messages.push({
-                    role: 'user',
-                    content: 'The previous response was not a valid JSON array. Return ONLY the updated plan as a JSON array in the specified format, with no other text.',
-                });
-            }
-            try {
-                const response = await this._requestNonStreamingCompletion(messages, {
-                    cancellable: this._cancellable,
-                    maxTokens: 1024,
-                    modelOverride: this._getDeepResearchRoleModel('synthesis'),
-                });
-                const plan = parsePlannerResponse(response);
-                if (plan && plan.length > 0) {
-                    return plan;
-                }
-                log(`[Katab:planner] Plan revision returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`);
-            } catch (e) {
-                if (this._isRequestCancelled(e)) throw e;
-                log(`[Katab:planner] Plan revision failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`);
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Parse the planner LLM response into a structured plan.
-     * Handles JSON arrays, markdown-wrapped JSON, and numbered lists.
-     * Also used by _runGapAnalysis for parsing follow-up query lists that
-     * include optional `rationale` fields.
-     * @param {string} text - The raw LLM response
-     * @returns {Array<{sub_task: string, search_query: string, rationale?: string}>|null}
-     */
+    // The planner agent + plan revision logic (retry loops, snapshot
+    // serialization, format nudges) lives in src/research/planner.js
+    // (runPlannerAgent / reviseResearchPlan).  See the call sites in _sendMessage.
     /**
      * Render the research plan card in the chat.
      *
@@ -18294,7 +18175,12 @@ class KatabDialog {
                 if (this._activeResearchPlan.length > 0) {
                     try {
                         this._applyAssistantRender(uiElements, 'Updating research plan\u2026', { plain: true });
-                        const revisedPlan = await this._reviseResearchPlan(
+                        const revisedPlan = await reviseResearchPlan({
+                            requestCompletion: (messages, opts) => this._requestNonStreamingCompletion(messages, opts),
+                            modelOverride: this._getDeepResearchRoleModel('synthesis'),
+                            getCancellable: () => this._cancellable,
+                            isCancelled: (e) => this._isRequestCancelled(e),
+                        },
                             this._originalResearchQuery || promptText,
                             this._activeResearchPlan,
                             promptText,
@@ -18396,7 +18282,12 @@ class KatabDialog {
                         : `Research query: ${promptText}`;
 
                     this._applyAssistantRender(uiElements, 'Generating research plan\u2026', { plain: true });
-                    const plan = await this._runPlannerAgent(plannerPrompt);
+                    const plan = await runPlannerAgent({
+                        requestCompletion: (messages, opts) => this._requestNonStreamingCompletion(messages, opts),
+                        modelOverride: this._getDeepResearchRoleModel('synthesis'),
+                        getCancellable: () => this._cancellable,
+                        isCancelled: (e) => this._isRequestCancelled(e),
+                    }, plannerPrompt);
 
                     if (!plan || plan.length === 0) {
                         // Planner failed — fall back to direct deep research (no plan)
