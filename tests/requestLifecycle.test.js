@@ -223,6 +223,32 @@ const tests = [
         assertEqual(lc.generation, 2, 'second generation');
     }],
 
+    ['regression: anonymous begin clears the previous response key (KB-enriched second send)', () => {
+        const lc = fresh();
+        // Send #1 with auto-KB enrichment: anonymous enriching → named stream.
+        lc.begin(S.ENRICHING);
+        lc.begin(S.AWAITING_MODEL, 'u1');
+        lc.finish();
+        // Send #2 begins its enrichment anonymously — the stale 'u1' must be gone.
+        lc.begin(S.ENRICHING);
+        assertEqual(lc.responseKey, null, 'previous key cleared');
+        const named = lc.begin(S.AWAITING_MODEL, 'u2');
+        assert(named.ok && named.reason === null, 'second naming must not flag an overlap');
+        assertEqual(lc.generation, 2, 'exactly one generation per request');
+    }],
+
+    ['regression: two consecutive research runs name cleanly', () => {
+        const lc = fresh();
+        lc.begin(S.TOOL_LOOP);
+        assert(lc.begin(S.AWAITING_MODEL, 'r1').ok, 'run 1 named');
+        lc.finish();
+        lc.begin(S.TOOL_LOOP);
+        assertEqual(lc.responseKey, null, 'run 2 starts anonymous');
+        const named = lc.begin(S.AWAITING_MODEL, 'r2');
+        assert(named.ok && named.reason === null, 'run 2 naming clean');
+        assertEqual(lc.generation, 2, 'two generations');
+    }],
+
     ['full request sequence: enrichment → model → tools → synthesis → done', () => {
         const lc = fresh();
         assert(lc.begin(S.ENRICHING, 'r1').ok, 'begin');

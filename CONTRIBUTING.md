@@ -97,19 +97,21 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
 ## Project Structure
 
 ```
-extension.js          — Main entry: extension class, KatabDialog, HistoryManager, ProviderHealthMonitor, Indicator
+extension.js          — Main entry: extension class, KatabDialog, Panel Indicator, ProviderHealthMonitor
 prefs.js              — GTK4/Adwaita preferences window
 prefs.css             — Preferences window styling
 stylesheet.css        — Shell overlay St CSS
 metadata.json         — Extension manifest
 schemas/              — GSettings schema XML + compiled binary
 src/
-├── core/             — Planned refactoring targets (currently empty)
+├── core/             — HistoryManager, request-lifecycle FSM, tool-call markup
+├── providers/        — Provider request builders, stream parsers, catalog
+├── ui/               — Markdown render-model helpers
 ├── tools/            — Tool implementations and declarative registry
-├── research/         — Deep research: compression, citations, cache
-├── usage/            — Token tracking, presets
+├── research/         — Deep research pipeline (planner, branch runner, synthesis, compression, citations, cache)
+├── usage/            — Token tracking, DeepSeek pricing, presets
 ├── pets/             — Pet collection system
-└── shared/           — Shared utilities (SSRF guard)
+└── shared/           — Shared utilities (HTTP body reader, SSRF guard)
 tests/                — Unit tests
 Documentation/        — Help, Technical, Archive, Research Reports
 icons/                — Provider logos and custom icons
@@ -122,10 +124,10 @@ See [ARCHITECTURE.md](Documentation/Technical/ARCHITECTURE.md) for detailed file
 
 ### Adding a New Provider
 1. Add `-url`, `-api-key`, `-model` keys to `schemas/org.gnome.shell.extensions.katabai.gschema.xml`.
-2. Add entries to `PROVIDER_LABELS` and `PROVIDER_META` constants in `extension.js`.
+2. Add entries to `PROVIDER_LABELS` and `PROVIDER_META` in `src/providers/catalog.js`.
 3. Add provider page to `prefs.js`.
-4. Add payload builder in `extension.js::_streamResponse()`.
-5. Add SSE parser in `extension.js::_readSSE()`.
+4. Add the streaming request builder in `src/providers/chatRequest.js` (and the non-streaming variant in `src/providers/nonStreamingRequest.js`).
+5. Add the stream-line parser + tool-call accumulation in `src/providers/streamParse.js`.
 6. Add health probe to `ProviderHealthMonitor`.
 7. Recompile schemas and test with a live reload.
 
@@ -154,6 +156,26 @@ make check
 - Functional testing of UI, streaming, and tool-calling requires a running GNOME Shell session with configured providers.
 
 See [TESTING.md](Documentation/Technical/TESTING.md) for detailed testing procedures.
+
+## Release Checklist
+
+For maintainers publishing a release:
+
+1. **Bump the version** in `metadata.json` — it must be **monotonic** (extensions.gnome.org rejects uploads whose version does not increase).
+2. **Update `CHANGELOG.md`**: move the `[Unreleased]` entries under a new version/date heading.
+3. **Validate**: `make check && make test` (CI runs the same on every push), plus a live shell reload and smoke test — send, cancel mid-stream, one tool-call turn, history reload, and a deep-research run.
+4. **Package**: `make package` produces the distributable zip; verify it contains `schemas/gschemas.compiled`.
+5. **Publish**: upload the zip to extensions.gnome.org (or install it locally for a final check).
+
+## GNOME Shell Compatibility Policy
+
+Katab supports the shell versions listed in `metadata.json` (`shell-version`). When a new GNOME Shell release appears:
+
+1. Run the extension on the new shell (X11 and Wayland if possible).
+2. Exercise the release smoke test above and scan the journal for new warnings/criticals (`make logs`).
+3. Check shell API changes against the release notes (St/Clutter/Pango/Soup usage in particular).
+4. Only then add the new version to `metadata.json` — never pre-emptively.
+5. Keep changes compatible with the oldest supported version until a deliberate, documented drop.
 
 ## Documentation
 

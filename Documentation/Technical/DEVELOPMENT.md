@@ -473,7 +473,7 @@ Selection appears shifted right on text with multi-byte characters (curly quotes
 If assistant responses don't appear in reloaded conversations, check that `HistoryManager.flushSync()` is called after every `_saveCurrentConversation()` and that cache mutations use in-place methods (`splice`, not `filter`).
 
 #### Prompt Doesn't Send
-If pressing Enter appears to do nothing, check for `_sendInFlight` or `_isStreaming` guards. Also check if RAG auto-search is timing out (3-second timeout).
+If pressing Enter appears to do nothing, check the request lifecycle state — `[Katab:lifecycle]` journal lines show the current state (a send is dropped while the state is not settled, e.g. during KB/web enrichment). Also check if RAG auto-search is timing out (3-second timeout).
 
 ---
 

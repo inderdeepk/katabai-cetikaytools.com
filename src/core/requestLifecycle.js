@@ -147,7 +147,12 @@ export function createRequestLifecycle() {
                 reason = 'illegal-transition';
             } else if (settled) {
                 generation += 1;
-                if (key !== null) responseKey = key;
+                // Reset the identity even when the new request starts
+                // anonymously — a leftover key from the previous response
+                // would otherwise escalate the later naming (research-arm →
+                // synthesis stream, /kb enrichment → stream) into a FALSE
+                // 'response-overlap' flag.
+                responseKey = key;
             } else if (key !== null && !sameResponse) {
                 // Active with a different response identity: overlapping request.
                 if (responseKey === null) {
