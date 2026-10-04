@@ -29,6 +29,7 @@ import {
     parsePetForm,
     PET_SELECTION_MODES,
 } from './src/pets/petCollection.js';
+import { PROVIDER_DETAILS } from './src/providers/catalog.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
@@ -214,38 +215,7 @@ export default class KatabPreferences extends ExtensionPreferences {
             { label: 'Custom', value: 'custom' },
         ];
 
-        const providerDetails = {
-            ollama: {
-                label: 'Ollama',
-                pageTitle: 'Ollama',
-                iconFile: 'ollama.svg',
-                description: 'Run local models with a fast desktop-native workflow and deep tuning controls.',
-            },
-            deepseek: {
-                label: 'DeepSeek',
-                pageTitle: 'DeepSeek',
-                iconFile: 'deepseek.svg',
-                description: 'Access DeepSeek V4 models with a 1M token context window and advanced reasoning. Requires a funded prepaid account.',
-            },
-            unsloth: {
-                label: 'Unsloth Studio',
-                pageTitle: 'Unsloth',
-                iconFile: 'unsloth.png',
-                description: 'Connect to optimized local Unsloth Studio endpoints for heavier or longer-context jobs.',
-            },
-            openai: {
-                label: 'OpenAI',
-                pageTitle: 'OpenAI',
-                iconFile: 'openai.svg',
-                description: 'Use hosted OpenAI models when you want broad capability and reliable cloud access.',
-            },
-            anthropic: {
-                label: 'Anthropic Claude',
-                pageTitle: 'Claude',
-                iconFile: 'claude.svg',
-                description: 'Use Claude models through Anthropic for careful reasoning, writing, and long-context work.',
-            },
-        };
+        const providerDetails = PROVIDER_DETAILS;
 
         // General Provider Selection
         const generalGroup = createPreferencesGroup({

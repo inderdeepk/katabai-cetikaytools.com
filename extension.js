@@ -113,6 +113,13 @@ import {
 } from './src/core/toolCallMarkup.js';
 import { HistoryManager } from './src/core/historyManager.js';
 import {
+    DEEPSEEK_MODELS,
+    PROVIDER_ACCENT_CLASSES,
+    PROVIDER_ICON_STYLE_CLASSES,
+    PROVIDER_LABELS,
+    PROVIDER_META,
+} from './src/providers/catalog.js';
+import {
     MARKDOWN_SEGMENT_MAX_CHARS,
     buildAssistantRenderModel,
     formatInlineMarkdown,
@@ -259,39 +266,8 @@ const DEEP_RESEARCH_TRUNCATION_TIERS = [
     { maxIteration: Infinity, readUrlChars: 3000, crawlChars: 6000, knowledgeChars: 2000, searchSnippetChars: 200, searchResults: 5 },
 ];
 
-const PROVIDER_META = {
-    'ollama': { label: 'Ollama', iconFile: 'ollama.svg' },
-    'deepseek': { label: 'DeepSeek', iconFile: 'deepseek.svg' },
-    'unsloth': { label: 'Unsloth Studio', iconFile: 'unsloth.png' },
-    'openai': { label: 'OpenAI', iconFile: 'openai.svg' },
-    'anthropic': { label: 'Anthropic', iconFile: 'claude.svg' },
-};
-
-// Selectable DeepSeek model variants surfaced in the chat header dropdown.
-const DEEPSEEK_MODELS = [
-    {
-        id: 'deepseek-flash',
-        label: 'Flash (V4.1)',
-        description: 'Fast, efficient model for everyday tasks and quick replies. Supports image input.',
-    },
-    {
-        id: 'deepseek-v4-pro',
-        label: 'Pro',
-        description: 'Stronger reasoning for complex, multi-step problems.',
-    },
-    {
-        id: 'deepseek-v4-flash',
-        label: 'Flash (legacy)',
-        description: 'Retired alias — served by the V4.1 Flash model and billed at Flash rates.',
-    },
-];
-
-const PROVIDER_LABELS = Object.fromEntries(
-    Object.entries(PROVIDER_META).map(([provider, meta]) => [provider, meta.label])
-);
-
-const PROVIDER_ICON_STYLE_CLASSES = Object.keys(PROVIDER_META)
-    .map(provider => `katab-provider-icon-${provider}`);
+// Provider identity/branding (labels, icons, DeepSeek model list, accent and
+// icon style classes) lives in src/providers/catalog.js — imported at the top.
 
 const PROVIDER_STATUS = {
     CHECKING: 'checking',
@@ -302,12 +278,6 @@ const PROVIDER_STATUS = {
 
 const PROVIDER_STATUS_STYLE_CLASSES = Object.values(PROVIDER_STATUS)
     .map(status => `katab-provider-status-${status}`);
-
-// Per-provider brand accents (mirrors the usage-panel fill colors) applied as
-// micro-accents on selection rows — a thin left bar + tinted badge — never as
-// full-surface color, so pickers stay part of the neutral glass theme.
-const PROVIDER_ACCENT_CLASSES = Object.keys(PROVIDER_META)
-    .map(provider => `katab-accent-${provider}`);
 
 const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
