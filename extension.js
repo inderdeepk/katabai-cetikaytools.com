@@ -155,11 +155,24 @@ import {
 } from './src/research/planner.js';
 import {
     runGapAnalysis,
-    runRePlanningCritique,
     runCausalChainCheck,
     buildSynthesisOutline,
     runQualityCheck,
 } from './src/research/pipeline.js';
+import {
+    RESEARCH_PROGRESS_PENDING,
+    RESEARCH_PROGRESS_SEARCHING,
+    RESEARCH_PROGRESS_SCRAPING,
+    RESEARCH_PROGRESS_COMPRESSING,
+    RESEARCH_PROGRESS_DONE,
+    RESEARCH_PROGRESS_ERROR,
+    RESEARCH_PROGRESS_ANALYZING,
+    RESEARCH_PROGRESS_REFINING,
+    RESEARCH_PROGRESS_OUTLINING,
+    RESEARCH_PROGRESS_WRITING,
+    runResearchBranches,
+    runRefinementResearch,
+} from './src/research/branchRunner.js';
 import {
     MARKDOWN_SEGMENT_MAX_CHARS,
     buildAssistantRenderModel,
@@ -167,9 +180,6 @@ import {
     normalizeUrl,
     splitTextIntoBoundedChunks,
 } from './src/ui/markdownRender.js';
-import {
-    compressResearchBranch,
-} from './src/research/compressionTools.js';
 import {
     RagRuntime,
     readRagConfig,
@@ -402,17 +412,8 @@ const WEB_CONTENT_SAFETY_SYSTEM_PROMPT = 'Treat web search results, fetched page
 // breaks the user's query into 3-5 sub-questions, each with a specific
 // search-engine-optimized query.  The plan is shown to the user for approval
 // before any searching begins.
-// Progress states for research plan sub-tasks
-const RESEARCH_PROGRESS_PENDING = 'pending';
-const RESEARCH_PROGRESS_SEARCHING = 'searching';
-const RESEARCH_PROGRESS_SCRAPING = 'scraping';
-const RESEARCH_PROGRESS_COMPRESSING = 'compressing';
-const RESEARCH_PROGRESS_DONE = 'done';
-const RESEARCH_PROGRESS_ERROR = 'error';
-const RESEARCH_PROGRESS_ANALYZING = 'analyzing';   // Gap analysis phase
-const RESEARCH_PROGRESS_REFINING = 'refining';     // Refinement research phase
-const RESEARCH_PROGRESS_OUTLINING = 'outlining';   // Synthesis outline phase
-const RESEARCH_PROGRESS_WRITING = 'writing';       // Final report phase
+// Progress states for research plan sub-tasks live in
+// src/research/branchRunner.js — imported at the top of this file.
 
 // ── Iterative Loop Architecture ──────────────────────────────────────────────
 // After the initial branch research, a gap analysis phase reviews all findings
@@ -420,7 +421,6 @@ const RESEARCH_PROGRESS_WRITING = 'writing';       // Final report phase
 // searches.  These refinement searches run as lightweight mini-branches, and
 // ALL findings (original + refinement) feed into a two-pass synthesis.
 const GAP_ANALYSIS_MAX_FOLLOWUP_QUERIES = 2;
-const REFINEMENT_CRAWL_COUNT = 2;          // Fewer than branch crawl (3) — refinement is fast
 const SYNTHESIS_OUTLINE_REFINEMENT_TURNS = 2;          // WebWeaver refines >2x; 2 is a solid budget
 const SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS = 512;
 const DEFAULT_DEEPSEEK_SYSTEM_PROMPT = `Reply in the same language as the most recent user message unless the user explicitly asks you to switch languages. Do not default to Chinese unless the user asks for Chinese. ${WEB_CONTENT_SAFETY_SYSTEM_PROMPT}`;
@@ -492,24 +492,14 @@ const CONTEXT_SYNTHESIS_BUDGET_FRACTION = 0.75;
 // FORCE_SYNTHESIS_AFTER_ITERATIONS=5 silently contradicted that pref.
 
 // ── Branch-level error recovery ──────────────────────────────────────────────
-// When a research branch fails (search timeout, crawl error, engine down),
-// we retry transient errors with exponential backoff but skip permanent
-// errors (bad host, SSRF block, not found).  This matches the research
-// report's recommendation: "if a web worker fails during step fifteen of
-// a thirty-step research loop, the task manager recovers gracefully."
-const RESEARCH_BRANCH_MAX_RETRIES = 2;
-const RESEARCH_BRANCH_BACKOFF_MS = [2000, 5000]; // Exponential backoff per retry attempt
+// The retry/backoff constants live in src/research/branchRunner.js. The error
+// classifier below stays here because it also references tool-module error
+// codes. (Policy: transient errors are retried with exponential backoff;
+// permanent errors — bad host, SSRF block, not found — are skipped.)
 const TRANSIENT_ERROR_CODES = new Set([
     'connection-failed', 'timeout', 'rate-limited', 'network-error',
 ]);
 
-// ── Mid-research self-critique ───────────────────────────────────────────────
-// After every N branches, the system pauses to evaluate accumulated findings
-// against the original question.  If coverage gaps are detected, remaining
-// search angles can be adjusted before execution continues.
-const MID_RESEARCH_CRITIQUE_INTERVAL = 2;
-const MAX_CRITIQUE_SPAWNED_BRANCHES = 2;   // new angles spawned per critique
-const MAX_TOTAL_SPAWNED_BRANCHES = 3;      // total new angles per research run
 // ── Source contradiction detection ───────────────────────────────────────────
 // Heuristic clustering parameters — no embedding model available in GJS.
 const CONTRADICTION_TOPIC_SIMILARITY_THRESHOLD = 3; // min shared words for same topic
@@ -13991,23 +13981,6 @@ class KatabDialog {
     }
 
     /**
-     * Build the standardized service-down error used by the research pipeline
-     * so every abort site surfaces the same clear, actionable message.
-     * @param {Error|string|null} cause - The underlying connection failure
-     * @returns {Error} Error with code 'research-service-down'
-     */
-    _researchServiceDownError(cause) {
-        const detail = cause?.message || String(cause || 'Connection failed.');
-        const err = new Error(
-            `Deep research stopped: the web search / scraping service is unreachable.\n\n` +
-            `${detail}\n\n` +
-            `Start your SearxNG (web search) and Crawl4AI (web scraper) services, then run research again.`
-        );
-        err.code = 'research-service-down';
-        return err;
-    }
-
-    /**
      * Execute the approved research plan using a Google-style iterative loop:
      *
      *   PHASE 1: Initial Research — Sequential branches with cross-branch context
@@ -15306,417 +15279,22 @@ class KatabDialog {
     }
 
     // ── Parallel Sub-Agent Execution ────────────────────────────────────
+    // The single-branch executor and the sequential branch orchestrator
+    // (retry/backoff, cross-branch context sharing, mid-research critique,
+    // checkpointing) live in src/research/branchRunner.js. The wrapper below
+    // assembles the host bag (see _researchBranchHost) and delegates.
 
     /**
-     * Execute a single research branch: search → crawl top pages → compress each → merge.
-     * Each branch handles one sub-task from the research plan.
-     * @param {Object} subTask - { sub_task, search_query, index }
-     * @param {Object} config - { webSearchConfig, crawl4aiConfig }
-     * @param {Gio.Cancellable} cancellable
-     * @returns {Promise<{topic: string, findings: string, facts: Array, sources: string[], pageCount: number}>}
-     */
-    async _executeResearchBranch(subTask, config, cancellable) {
-        const { sub_task, search_query, index } = subTask;
-
-        // Update progress: searching
-        this._updateResearchBranchProgress(index, RESEARCH_PROGRESS_SEARCHING, `Searching...`);
-
-        // Step 1: Search
-        let searchResults;
-        try {
-            const result = await this._webSearchRuntime.search(search_query, config.webSearchConfig, cancellable);
-            searchResults = result?.results || [];
-        } catch (e) {
-            if (this._isRequestCancelled(e)) throw e;
-            // Re-throw transient errors so the retry loop in _runResearchBranches can act
-            if (this._isTransientError(e)) {
-                log(`[Katab:research] Branch "${sub_task}" search transient error — re-throwing for retry: ${e.message}`);
-                throw e;
-            }
-            log(`[Katab:research] Branch "${sub_task}" search failed: ${e.message}`);
-            this._updateResearchBranchProgress(index, RESEARCH_PROGRESS_ERROR, 'Search failed');
-            return { topic: sub_task, findings: '', facts: [], sources: [], pageCount: 0 };
-        }
-
-        if (!searchResults.length) {
-            log(`[Katab:research] Branch "${sub_task}" — no search results`);
-            this._updateResearchBranchProgress(index, RESEARCH_PROGRESS_DONE, 'No results found');
-            return { topic: sub_task, findings: '', facts: [], sources: [], pageCount: 0 };
-        }
-
-        // ── Show search results as inline cards (new timeline UI) ────────
-        const entryRef = subTask._timelineEntry;
-        if (entryRef) {
-            this._addSearchResultCards(entryRef, searchResults);
-        }
-
-        // Step 2: Crawl top results (up to 3), PREFERRING URLs not already
-        // covered by earlier branches. `_globalResearchContext.coveredUrls`
-        // holds normalized URLs from completed branches — filtering them out
-        // makes the documented cross-branch redundancy avoidance real instead
-        // of dead wiring, so later branches spend crawl budget on NEW sources.
-        const coveredUrls = this._globalResearchContext?.coveredUrls;
-        let topUrls = searchResults.map(r => r.url).filter(Boolean);
-        if (coveredUrls && coveredUrls.size > 0) {
-            const novel = topUrls.filter(u => !coveredUrls.has(
-                String(u).trim().replace(/\/+$/, '').toLowerCase()
-            ));
-            if (novel.length > 0) topUrls = novel;
-        }
-        topUrls = topUrls.slice(0, 3);
-        // Inject the branch search query so BM25 filtering can score relevance
-        config.crawl4aiConfig.query = search_query;
-        this._updateResearchBranchProgress(index, RESEARCH_PROGRESS_SCRAPING, `Scraping ${topUrls.length} pages...`);
-
-        const pages = [];
-        for (const url of topUrls) {
-            // Show page read progress
-            if (entryRef) {
-                this._addPageReadProgress(entryRef, url, 'reading');
-            }
-
-            try {
-                const crawlResults = await this._crawl4aiRuntime.crawl(url, config.crawl4aiConfig, cancellable);
-                const result = crawlResults?.[0];
-                // LLM extraction results carry their content in structuredJson /
-                // llmResponse with an empty fitMarkdown — read the best available text.
-                const text = result ? getCrawlResultText(result) : '';
-                if (result?.success && text) {
-                    pages.push({ url, text });
-                    // Update page read status
-                    if (entryRef) {
-                        const sizeStr = this._formatTimelineBytes(text.length);
-                        this._addPageReadProgress(entryRef, url, 'success', sizeStr);
-                    }
-                } else {
-                    if (entryRef) {
-                        this._addPageReadProgress(entryRef, url, 'error', 'No content extracted');
-                    }
-                }
-            } catch (e) {
-                if (this._isRequestCancelled(e)) throw e;
-                // Re-throw transient crawl errors so the retry loop can act
-                if (this._isTransientError(e)) {
-                    log(`[Katab:research] Branch "${sub_task}" crawl transient error for ${url} — re-throwing: ${e.message}`);
-                    throw e;
-                }
-                log(`[Katab:research] Branch "${sub_task}" — crawl failed for ${url}: ${e.message}`);
-                if (entryRef) {
-                    this._addPageReadProgress(entryRef, url, 'error', String(e.message || 'Failed').slice(0, 40));
-                }
-            }
-        }
-
-        if (!pages.length) {
-            // No pages crawled — return search snippets as fallback
-            const snippetText = searchResults.slice(0, 5).map(r =>
-                `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`
-            ).join('\n\n');
-            this._updateResearchBranchProgress(index, RESEARCH_PROGRESS_DONE, `${searchResults.length} results (snippets)`);
-
-            // Register sources in citation tracker
-            if (this._citationTracker) {
-                for (const r of searchResults) {
-                    registerSource(this._citationTracker, r.url, r.title);
-                }
-            }
-
-            return {
-                topic: sub_task,
-                findings: `Search results for "${search_query}":\n\n${snippetText}`,
-                facts: [],
-                sources: searchResults.map(r => r.url),
-                pageCount: 0,
-            };
-        }
-
-        // Step 3: Compress (if compression module available)
-        this._updateResearchBranchProgress(index, RESEARCH_PROGRESS_COMPRESSING, `Compressing ${pages.length} pages...`);
-
-        // Build an llmCall wrapper for compression tools
-        const llmCall = async (messages, opts = {}) => {
-            return await this._requestNonStreamingCompletion(messages, {
-                cancellable: opts.cancellable || cancellable,
-                maxTokens: opts.maxTokens || 1024,
-                modelOverride: this._getDeepResearchRoleModel('compression'),
-            });
-        };
-
-        let findings;
-        let facts = [];
-        const sources = pages.map(p => p.url);
-
-        try {
-            const compressed = await compressResearchBranch({
-                pages,
-                topic: sub_task,
-                llmCall,
-                cancellable,
-                researchContext: {
-                    originalQuery: this._originalResearchQuery,
-                    subTask: sub_task,
-                },
-            });
-            facts = compressed.facts;
-            findings = compressed.findings || '';
-
-            // Register facts in citation tracker
-            if (this._citationTracker && facts.length > 0) {
-                registerFacts(this._citationTracker, facts);
-            }
-        } catch (e) {
-            log(`[Katab:research] Branch "${sub_task}" compression failed: ${e.message}`);
-            // Fallback: raw page summaries
-            findings = pages.map(p =>
-                `### Page: ${p.url}\n${p.text.slice(0, 3000)}...`
-            ).join('\n\n---\n\n');
-        }
-
-        this._updateResearchBranchProgress(index, RESEARCH_PROGRESS_DONE, `${pages.length} pages, ${facts.length} facts`);
-        return { topic: sub_task, findings, facts, sources, pageCount: pages.length };
-    }
-
-    /**
-     * Run all research branches SEQUENTIALLY to avoid overwhelming
-     * SearXNG and Crawl4AI with simultaneous requests.  Parallel execution
-     * causes rate-limit errors across all upstream engines.
-     *
-     * Now implements cross-branch context sharing: after each branch completes,
-     * a condensed summary is pushed to `_globalResearchContext`.  Subsequent
-     * branches receive context awareness so they can avoid re-discovering
-     * already-covered ground and focus on their unique angle.
+     * Run all research branches sequentially via src/research/branchRunner.js.
      *
      * @param {Array} plan - Research plan with sub-tasks
      * @returns {Promise<Array>} Array of branch results
      */
     async _runResearchBranches(plan) {
-        const webSearchConfig = readWebSearchConfig(this._settings);
-        const crawl4aiConfig = readCrawl4AIConfig(this._settings);
-
-        // Initialize cross-branch context sharing. When resuming from a checkpoint
-        // the context was restored in _beginResearchExecution — PRESERVE it so
-        // remaining branches still know what earlier branches covered (otherwise
-        // they re-crawl redundant URLs). Only create fresh state when none exists.
-        if (!this._globalResearchContext || !Array.isArray(this._globalResearchContext.summaries)) {
-            this._globalResearchContext = {
-                summaries: [],
-                coveredUrls: new Set(),
-                keyFacts: [],
-            };
-        }
-        if (!(this._globalResearchContext.coveredUrls instanceof Set)) {
-            this._globalResearchContext.coveredUrls = new Set(this._globalResearchContext.coveredUrls || []);
-        }
-        if (!Array.isArray(this._globalResearchContext.keyFacts)) {
-            this._globalResearchContext.keyFacts = [];
-        }
-
-        log(`[Katab:research] Starting ${plan.length} research branches sequentially (rate-limit friendly)...`);
-
-        // Entries are created progressively — one at a time as each branch starts.
-        // No pre-creation loop here.  See the creation inside the execution loop below.
-
-        const results = [];
-        const droppedSet = new Set();   // indices dropped by the re-planning critique
-        let spawnedTotal = 0;           // total branches spawned across all critiques
-        // Set when the search/scrape backend is unreachable (connection failure).
-        // Once set, the whole research run aborts instead of grinding every
-        // remaining branch through per-branch retries.
-        let serviceDown = false;
-        for (let i = 0; i < plan.length; i++) {
-            const task = plan[i];
-
-            // Skip branches the mid-research critique dropped as redundant/low-value.
-            if (droppedSet.has(i)) {
-                results.push({ topic: task?.sub_task || '', findings: '', facts: [], sources: [], pageCount: 0 });
-                continue;
-            }
-
-            // ── Inject cross-branch context for branches 2+ ─────────────
-            if (i > 0 && this._globalResearchContext.summaries.length > 0) {
-                const priorSummaries = this._globalResearchContext.summaries
-                    .map(s => `- ${s.topic}: ${s.gist}`)
-                    .join('\n');
-                const coveredUrlsText = this._globalResearchContext.coveredUrls.size > 0
-                    ? `\nAlready crawled ${this._globalResearchContext.coveredUrls.size} URLs — avoid re-crawling these.`
-                    : '';
-                const contextNote = `[Cross-branch context — prior branches already covered:]\n${priorSummaries}${coveredUrlsText}\n\nFocus your remaining search on what is UNIQUE to this angle: "${task.sub_task}". Your search query:`;
-                // Append context to the search query so the model/runtime
-                // can prioritize novel URLs and avoid redundant work.
-                task._contextAware = contextNote;
-                log(`[Katab:research] Branch ${i + 1} receiving context from ${this._globalResearchContext.summaries.length} prior branches`);
-            }
-
-            // ── Create timeline entry on-demand (progressive disclosure) ──
-            if (!task._timelineEntry) {
-                const entryRef = this._addTimelineEntry(
-                    RESEARCH_PROGRESS_SEARCHING,
-                    'system-search-symbolic',
-                    `Angle ${i + 1}: ${task.sub_task}`,
-                    `Query: "${task.search_query}"`
-                );
-                if (entryRef) {
-                    task._timelineEntry = entryRef;
-                }
-            }
-
-            this._updateResearchBranchProgress(i, RESEARCH_PROGRESS_SEARCHING, `Branch ${i + 1}/${plan.length}...`);
-
-            // ── Retry loop for transient branch failures ────────────────
-            let result = null;
-            let branchError = null;
-            for (let attempt = 0; attempt <= RESEARCH_BRANCH_MAX_RETRIES; attempt++) {
-                if (attempt > 0) {
-                    const delay = RESEARCH_BRANCH_BACKOFF_MS[attempt - 1] || 5000;
-                    log(`[Katab:research] Branch "${task.sub_task}" retry ${attempt}/${RESEARCH_BRANCH_MAX_RETRIES} after ${delay}ms...`);
-                    this._updateResearchBranchProgress(i, RESEARCH_PROGRESS_SEARCHING,
-                        `Retry ${attempt}/${RESEARCH_BRANCH_MAX_RETRIES}...`);
-                    await new Promise(resolve => GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => { resolve(); return GLib.SOURCE_REMOVE; }));
-                }
-
-                try {
-                    branchError = null;
-                    result = await this._executeResearchBranch(
-                        { ...task, index: i },
-                        { webSearchConfig, crawl4aiConfig },
-                        this._cancellable
-                    );
-                    break; // Success — exit retry loop
-                } catch (e) {
-                    if (this._isRequestCancelled(e)) throw e;
-                    branchError = e;
-                    // The search/scrape backend is unreachable (connection
-                    // failure). This is a service-down condition, not a
-                    // transient blip — abort the whole run rather than retry a
-                    // dead service on this and every remaining branch.
-                    if (e.code === 'connection-failed' || e.code === 'network-error') {
-                        serviceDown = true;
-                        log(`[Katab:research] Research service unreachable (branch "${task.sub_task}"): ${e.message}`);
-                        break;
-                    }
-                    if (!this._isTransientError(e)) {
-                        log(`[Katab:research] Branch "${task.sub_task}" failed with non-transient error — skipping.`);
-                        break; // Permanent error — skip this branch
-                    }
-                    // Transient error — will retry on next loop iteration
-                    log(`[Katab:research] Branch "${task.sub_task}" transient error (attempt ${attempt + 1}): ${e.message}`);
-                }
-            }
-
-            // Service unreachable: abort the entire research run with a clear
-            // error instead of silently grinding through the remaining branches.
-            if (serviceDown) {
-                // Mark this and all remaining branches failed in the UI so the
-                // error is visible immediately (not after the run ends).
-                for (let j = i; j < plan.length; j++) {
-                    this._updateResearchBranchProgress(j, RESEARCH_PROGRESS_ERROR, 'Aborted — service unreachable');
-                }
-                // _abortResearchForServiceDown clears any checkpoint, so we
-                // don't persist one for an aborted run.
-                throw this._researchServiceDownError(branchError);
-            }
-
-            if (branchError && !result) {
-                log(`[Katab:research] Branch "${task.sub_task}" failed after retries: ${branchError.message}`);
-                this._updateResearchBranchProgress(i, RESEARCH_PROGRESS_ERROR, 'Failed');
-                results.push({ topic: task.sub_task, findings: '', facts: [], sources: [], pageCount: 0 });
-                // Still save checkpoint so progress on completed branches is preserved
-                this._saveResearchCheckpoint(`branch ${i + 1}/${plan.length} (failed)`);
-                continue;
-            }
-
-            results.push(result);
-
-            // ── Push completed branch summary to global context ─────────
-            if (result.findings && result.findings.length > 50) {
-                const gist = result.findings.length > 300
-                    ? result.findings.slice(0, 300).replace(/\n/g, ' ') + '...'
-                    : result.findings.replace(/\n/g, ' ');
-                this._globalResearchContext.summaries.push({
-                    topic: result.topic,
-                    gist,
-                    sourceCount: result.sources?.length || 0,
-                });
-                // Track covered URLs to help later branches avoid redundancy
-                if (result.sources) {
-                    for (const url of result.sources) {
-                        this._globalResearchContext.coveredUrls.add(
-                            String(url).trim().replace(/\/+$/, '').toLowerCase()
-                        );
-                    }
-                }
-                if (result.facts?.length) {
-                    this._globalResearchContext.keyFacts.push(...result.facts.slice(0, 5));
-                }
-            }
-
-            // Save checkpoint after each branch completes
-            this._saveResearchCheckpoint(`branch ${i + 1}/${plan.length}`);
-
-            // ── Mid-research re-planning critique — every N branches ────
-            if ((i + 1) % MID_RESEARCH_CRITIQUE_INTERVAL === 0 && i + 1 < plan.length) {
-                const remaining = plan.slice(i + 1);
-                const critique = await runRePlanningCritique(this._pipelineHost(), results, remaining, this._originalResearchQuery);
-                if (critique.sufficient) {
-                    log(`[Katab:critique] Findings sufficient after ${i + 1} branches — skipping remaining ${remaining.length}.`);
-                    // Mark remaining branches as skipped
-                    for (let j = i + 1; j < plan.length; j++) {
-                        this._updateResearchBranchProgress(j, RESEARCH_PROGRESS_DONE, 'Skipped (sufficient)');
-                    }
-                    break; // Exit the branch loop early
-                }
-
-                // Apply targeted search query adjustments to remaining angles.
-                if (critique.adjustments && critique.adjustments.length > 0) {
-                    for (const adj of critique.adjustments) {
-                        if (adj.index >= 0 && adj.index < remaining.length) {
-                            const target = remaining[adj.index];
-                            if (target && adj.new_query) {
-                                log(`[Katab:critique] Adjusted angle "${target.sub_task}" query → "${adj.new_query}" (${adj.rationale})`);
-                                target.search_query = adj.new_query;
-                            }
-                        }
-                    }
-                }
-
-                // Drop remaining angles the critic judged redundant / low-value.
-                if (critique.drop_indices && critique.drop_indices.length > 0) {
-                    for (const relIdx of critique.drop_indices) {
-                        const absIdx = i + 1 + relIdx;
-                        if (absIdx < plan.length) {
-                            droppedSet.add(absIdx);
-                            log(`[Katab:critique] Dropping remaining angle "${plan[absIdx]?.sub_task}" (redundant/low-value).`);
-                            this._updateResearchBranchProgress(absIdx, RESEARCH_PROGRESS_DONE, 'Skipped (redundant)');
-                        }
-                    }
-                }
-
-                // Spawn NEW angles from discovered sub-topics (bounded).
-                if (critique.new_branches && critique.new_branches.length > 0) {
-                    const remainingBudget = MAX_TOTAL_SPAWNED_BRANCHES - spawnedTotal;
-                    const toSpawn = critique.new_branches
-                        .slice(0, Math.min(MAX_CRITIQUE_SPAWNED_BRANCHES, remainingBudget));
-                    for (const nb of toSpawn) {
-                        plan.push({
-                            sub_task: String(nb.sub_task || 'New angle').slice(0, 80),
-                            search_query: String(nb.search_query),
-                            _timelineEntry: null,
-                        });
-                        spawnedTotal++;
-                        log(`[Katab:critique] Spawned new branch "${nb.sub_task}" (query: "${nb.search_query}")`);
-                    }
-                }
-            }
-        }
-
-        const totalPages = results.reduce((sum, r) => sum + (r.pageCount || 0), 0);
-        const totalFacts = results.reduce((sum, r) => sum + (r.facts?.length || 0), 0);
-        log(`[Katab:research] All branches complete — ${totalPages} pages scraped, ${totalFacts} facts extracted across ${results.length} branches.`);
-
-        return results;
+        return runResearchBranches(this._researchBranchHost(), plan);
     }
 
-    // ── Iterative Loop: Gap Analysis ────────────────────────────────────
+
 
     /**
      * Review all branch findings against the user's original question and
@@ -15746,151 +15324,54 @@ class KatabDialog {
         };
     }
 
+    /**
+     * Dependency bag for the branch runner module
+     * (src/research/branchRunner.js). Mirrors _pipelineHost — runtimes, the
+     * timeline UI callbacks, config readers, and the checkpoint store are
+     * injected so the module never touches dialog state directly.
+     */
+    _researchBranchHost() {
+        return {
+            webSearch: (query, cfg, cancellable) => this._webSearchRuntime.search(query, cfg, cancellable),
+            crawl: (url, cfg, cancellable) => this._crawl4aiRuntime.crawl(url, cfg, cancellable),
+            requestCompletion: (messages, opts) => this._requestNonStreamingCompletion(messages, opts),
+            modelOverride: this._getDeepResearchRoleModel('compression'),
+            getCancellable: () => this._cancellable,
+            isCancelled: (e) => this._isRequestCancelled(e),
+            isTransient: (e) => this._isTransientError(e),
+            sleep: (ms) => this._sleepMs(ms),
+            getConfig: () => ({
+                webSearchConfig: readWebSearchConfig(this._settings),
+                crawl4aiConfig: readCrawl4AIConfig(this._settings),
+            }),
+            getOriginalQuery: () => this._originalResearchQuery,
+            getCitationTracker: () => this._citationTracker,
+            getGlobalContext: () => this._globalResearchContext,
+            setGlobalContext: (ctx) => { this._globalResearchContext = ctx; },
+            getActivePlanLength: () => this._activeResearchPlan?.length || 0,
+            getPipelineHost: () => this._pipelineHost(),
+            updateProgress: (index, status, detail) => this._updateResearchBranchProgress(index, status, detail),
+            addTimelineEntry: (phase, iconName, title, desc) => this._addTimelineEntry(phase, iconName, title, desc),
+            addSearchResultCards: (entryRef, results) => this._addSearchResultCards(entryRef, results),
+            addPageReadProgress: (entryRef, url, status, detail) => this._addPageReadProgress(entryRef, url, status, detail),
+            formatBytes: (n) => this._formatTimelineBytes(n),
+            extendProgressCardForRefinement: (queries) => this._extendProgressCardForRefinement(queries),
+            saveCheckpoint: (label) => this._saveResearchCheckpoint(label),
+        };
+    }
+
     // ── Iterative Loop: Refinement Research ─────────────────────────────
 
     /**
-     * Execute the gap-addressing queries as lightweight mini-branches.
-     * Each query gets: search → crawl top 2 results → compress.
-     * Fewer crawls than the main branch phase (2 vs 3) to keep refinement fast.
+     * Execute the gap-addressing queries as lightweight mini-branches via
+     * src/research/branchRunner.js (search → crawl top 2 → compress).
      *
      * @param {Array} gapQueries - [{rationale, search_query}]
      * @returns {Promise<Array<{topic: string, findings: string, facts: Array, sources: string[], pageCount: number}>>}
      */
     async _runRefinementResearch(gapQueries) {
         if (!gapQueries || gapQueries.length === 0) return [];
-
-        const webSearchConfig = readWebSearchConfig(this._settings);
-        const crawl4aiConfig = readCrawl4AIConfig(this._settings);
-
-        log(`[Katab:research] Starting refinement phase — ${gapQueries.length} follow-up queries...`);
-
-        // Extend the progress card with refinement rows
-        this._extendProgressCardForRefinement(gapQueries);
-
-        const refinementResults = [];
-        for (let i = 0; i < gapQueries.length; i++) {
-            const gap = gapQueries[i];
-            const refIndex = (this._activeResearchPlan?.length || 0) + i;
-            this._updateResearchBranchProgress(refIndex, RESEARCH_PROGRESS_REFINING, 'Searching...');
-
-            // Step 1: Search
-            let searchResults;
-            try {
-                const result = await this._webSearchRuntime.search(gap.search_query, webSearchConfig, this._cancellable);
-                searchResults = result?.results || [];
-            } catch (e) {
-                if (this._isRequestCancelled(e)) throw e;
-                // Service unreachable — abort the whole research run rather than
-                // silently degrade every refinement query.
-                if (e.code === 'connection-failed' || e.code === 'network-error') {
-                    throw this._researchServiceDownError(e);
-                }
-                log(`[Katab:research] Refinement search "${gap.search_query}" failed: ${e.message}`);
-                this._updateResearchBranchProgress(refIndex, RESEARCH_PROGRESS_ERROR, 'Search failed');
-                refinementResults.push({ topic: gap.rationale, findings: '', facts: [], sources: [], pageCount: 0 });
-                continue;
-            }
-
-            if (!searchResults.length) {
-                this._updateResearchBranchProgress(refIndex, RESEARCH_PROGRESS_DONE, 'No results');
-                refinementResults.push({ topic: gap.rationale, findings: '', facts: [], sources: [], pageCount: 0 });
-                continue;
-            }
-
-            // Step 2: Crawl top results (only 2 for refinement)
-            const topUrls = searchResults.slice(0, REFINEMENT_CRAWL_COUNT).map(r => r.url).filter(Boolean);
-            // Inject the refinement search query for BM25 relevance scoring
-            crawl4aiConfig.query = gap.search_query;
-            this._updateResearchBranchProgress(refIndex, RESEARCH_PROGRESS_SCRAPING, `Scraping ${topUrls.length} pages...`);
-
-            const pages = [];
-            for (const url of topUrls) {
-                try {
-                    const crawlResults = await this._crawl4aiRuntime.crawl(url, crawl4aiConfig, this._cancellable);
-                    const result = crawlResults?.[0];
-                    // LLM extraction results carry their content in structuredJson /
-                    // llmResponse with an empty fitMarkdown — read the best available text.
-                    const text = result ? getCrawlResultText(result) : '';
-                    if (result?.success && text) {
-                        pages.push({ url, text });
-                    }
-                } catch (e) {
-                    if (this._isRequestCancelled(e)) throw e;
-                    if (e.code === 'connection-failed' || e.code === 'network-error') {
-                        throw this._researchServiceDownError(e);
-                    }
-                    log(`[Katab:research] Refinement crawl failed for ${url}: ${e.message}`);
-                }
-            }
-
-            if (!pages.length) {
-                const snippetText = searchResults.slice(0, 3).map(r =>
-                    `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`
-                ).join('\n\n');
-                this._updateResearchBranchProgress(refIndex, RESEARCH_PROGRESS_DONE, `${searchResults.length} results (snippets)`);
-                refinementResults.push({
-                    topic: gap.rationale,
-                    findings: `Refinement search for "${gap.search_query}":\n\n${snippetText}`,
-                    facts: [],
-                    sources: searchResults.map(r => r.url),
-                    pageCount: 0,
-                });
-                continue;
-            }
-
-            // Step 3: Compress
-            this._updateResearchBranchProgress(refIndex, RESEARCH_PROGRESS_COMPRESSING, `Compressing ${pages.length} pages...`);
-
-            const llmCall = async (messages, opts = {}) => {
-                return await this._requestNonStreamingCompletion(messages, {
-                    cancellable: opts.cancellable || this._cancellable,
-                    maxTokens: opts.maxTokens || 1024,
-                    modelOverride: this._getDeepResearchRoleModel('compression'),
-                });
-            };
-
-            let findings;
-            let facts = [];
-            const sources = pages.map(p => p.url);
-
-            try {
-                const compressed = await compressResearchBranch({
-                    pages,
-                    topic: gap.rationale,
-                    llmCall,
-                    cancellable: this._cancellable,
-                    researchContext: {
-                        originalQuery: this._originalResearchQuery,
-                        subTask: gap.rationale,
-                    },
-                });
-                facts = compressed.facts;
-                findings = compressed.findings || '';
-
-                // Register in citation tracker
-                if (this._citationTracker && facts.length > 0) {
-                    registerFacts(this._citationTracker, facts);
-                }
-                // Also register sources
-                if (this._citationTracker) {
-                    for (const url of sources) {
-                        registerSource(this._citationTracker, url);
-                    }
-                }
-            } catch (e) {
-                log(`[Katab:research] Refinement compression failed: ${e.message}`);
-                findings = pages.map(p =>
-                    `### Page: ${p.url}\n${p.text.slice(0, 2000)}...`
-                ).join('\n\n---\n\n');
-            }
-
-            this._updateResearchBranchProgress(refIndex, RESEARCH_PROGRESS_DONE, `${pages.length} pages, ${facts.length} facts`);
-            refinementResults.push({ topic: gap.rationale, findings, facts, sources, pageCount: pages.length });
-        }
-
-        const totalPages = refinementResults.reduce((sum, r) => sum + (r.pageCount || 0), 0);
-        log(`[Katab:research] Refinement complete — ${totalPages} additional pages across ${refinementResults.length} queries.`);
-        return refinementResults;
+        return runRefinementResearch(this._researchBranchHost(), gapQueries);
     }
 
     // ── Iterative Loop: Two-Pass Synthesis ──────────────────────────────
