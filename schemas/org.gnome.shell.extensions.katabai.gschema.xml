@@ -155,9 +155,9 @@
       <description>Permit page reading of private, loopback, and link-local addresses. Leave disabled to prevent server-side request forgery against internal services.</description>
     </key>
     <key name="web-search-max-tool-iterations" type="i">
-      <default>10</default>
+      <default>25</default>
       <summary>Max Tool Iterations</summary>
-      <description>Maximum rounds of sequential tool calls the model may trigger per user message before being forced to answer. Raise this if the model needs more search/read steps to answer. (1–50)</description>
+      <description>Maximum rounds of sequential tool calls the model may trigger per user message before being forced to answer. Raise this if the model needs more search/read steps to keep browsing when it is on a close trail. (1–100)</description>
     </key>
 
     <!-- Web Scraper Settings (Crawl4AI) -->
@@ -215,6 +215,16 @@
       <default>true</default>
       <summary>Allow Model-Triggered Scraping</summary>
       <description>Advertise the crawl_url tool to capable models so they can decide when to scrape a page. When disabled only the manual /crawl command works.</description>
+    </key>
+    <key name="crawl4ai-follow-links-enabled" type="b">
+      <default>true</default>
+      <summary>Follow Subpage Links in Research</summary>
+      <description>During deep research, score the links found on scraped pages against the branch query and follow the most relevant subpages (up to the configured cap). Lets research reach a detail that is one click away instead of missing it.</description>
+    </key>
+    <key name="crawl4ai-max-follow-links" type="i">
+      <default>3</default>
+      <summary>Max Followed Links per Branch</summary>
+      <description>How many relevance-scored subpage links a deep-research branch may follow after its initial crawl (0–10). Higher values browse deeper at the cost of extra scrapes.</description>
     </key>
     <key name="crawl4ai-allow-local-addresses" type="b">
       <default>false</default>

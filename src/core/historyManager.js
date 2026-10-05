@@ -15,6 +15,11 @@ import Gio from 'gi://Gio';
 
 const MAX_CONVERSATIONS = 50;
 
+// Storage caps for the user-managed metadata fields (UI also enforces these
+// as entry max_length so the values survive round-trips unchanged).
+export const HISTORY_TITLE_MAX_CHARS = 120;
+export const HISTORY_DESCRIPTION_MAX_CHARS = 400;
+
 let _historyPathOverride = null;
 
 /** Test seam: redirect history storage; pass null to restore the real path. */
@@ -121,9 +126,10 @@ export class HistoryManager {
         this._cache = null;
     }
 
-    static saveConversation(messageHistory, existingId = null) {
+    /** Default title = first 60 chars of the first user message. */
+    static _computeDefaultTitle(messageHistory) {
         let userMsgs = messageHistory.filter((m) => m.role === 'user');
-        if (userMsgs.length === 0) return null;
+        if (userMsgs.length === 0) return '';
 
         // Safely extract the title from the first user message, handling
         // array content (Anthropic blocks) and non-string edge cases.
@@ -139,27 +145,114 @@ export class HistoryManager {
             .trim();
         let title = rawTitle.slice(0, 60);
         if (rawTitle.length > 60) title += '\u2026';
+        return title;
+    }
+
+    /**
+     * Persist a conversation.  Entry shape:
+     *   { id, title, timestamp, messages,
+     *     customTitle?,  // title was set manually/generated — never auto-overwrite
+     *     description?,  // user-managed one-line summary
+     *     archived? }    // hidden from the active list when true
+     *
+     * User-managed metadata is carried over from the previous snapshot on
+     * every re-save so it survives automatic saves during chatting.
+     */
+    static saveConversation(messageHistory, existingId = null) {
+        let userMsgs = messageHistory.filter((m) => m.role === 'user');
+        if (userMsgs.length === 0) return null;
 
         let id = existingId || `conv_${Date.now()}`;
-        let entry = {
-            id: id,
-            title: title,
-            timestamp: Math.floor(Date.now() / 1000),
-            messages: [...messageHistory],
-        };
 
         // Use cache instead of re-reading disk — mutate in-place so that
         // _flushNow writes the updated array. Array.filter() returns a new
         // array, which would silently detach from this._cache.
         let arr = this.load();
+        let existing = null;
         if (existingId) {
             let idx = arr.findIndex((e) => e.id === existingId);
-            if (idx >= 0) arr.splice(idx, 1);
+            if (idx >= 0) existing = arr.splice(idx, 1)[0];
         }
+
+        let entry = {
+            id: id,
+            title: this._computeDefaultTitle(messageHistory),
+            timestamp: Math.floor(Date.now() / 1000),
+            messages: [...messageHistory],
+        };
+
+        // Carry over user-managed metadata: a manual/generated title must not
+        // be replaced by the first-message fallback, and an archived chat
+        // must not silently return to the active list.
+        if (existing) {
+            if (existing.customTitle && typeof existing.title === 'string' && existing.title) {
+                entry.title = existing.title;
+                entry.customTitle = true;
+            }
+            if (existing.description) entry.description = existing.description;
+            if (existing.archived) entry.archived = true;
+        }
+
         arr.unshift(entry);
         if (arr.length > MAX_CONVERSATIONS) arr.length = MAX_CONVERSATIONS;
         this._scheduleFlush();
         return id;
+    }
+
+    /** Archive / unarchive a conversation. Returns false when not found. */
+    static setConversationArchived(id, archived) {
+        let arr = this.load();
+        let entry = arr.find((e) => e.id === id);
+        if (!entry) return false;
+        if (archived) {
+            entry.archived = true;
+        } else {
+            delete entry.archived;
+        }
+        this._scheduleFlush();
+        return true;
+    }
+
+    /**
+     * Update the user-managed title/description of a conversation.
+     * An empty title resets it to the automatic first-message title.
+     * Returns false when the entry is not found.
+     */
+    static updateConversationMeta(id, { title, description } = {}) {
+        let arr = this.load();
+        let entry = arr.find((e) => e.id === id);
+        if (!entry) return false;
+
+        if (typeof title === 'string') {
+            let nextTitle = title.replace(/\s*\n\s*/g, ' ').trim();
+            if (nextTitle) {
+                entry.title = nextTitle.slice(0, HISTORY_TITLE_MAX_CHARS);
+                entry.customTitle = true;
+            } else {
+                delete entry.customTitle;
+                entry.title = this._computeDefaultTitle(entry.messages) || entry.title;
+            }
+        }
+        if (typeof description === 'string') {
+            let nextDesc = description.replace(/\s+/g, ' ').trim();
+            if (nextDesc) {
+                entry.description = nextDesc.slice(0, HISTORY_DESCRIPTION_MAX_CHARS);
+            } else {
+                delete entry.description;
+            }
+        }
+        this._scheduleFlush();
+        return true;
+    }
+
+    /** Conversations not archived (newest first). Read-only view. */
+    static getActiveConversations() {
+        return this.getCached().filter((e) => !e.archived);
+    }
+
+    /** Archived conversations (newest first). Read-only view. */
+    static getArchivedConversations() {
+        return this.getCached().filter((e) => e.archived === true);
     }
 
     static deleteConversation(id) {

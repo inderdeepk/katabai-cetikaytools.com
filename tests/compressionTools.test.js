@@ -449,6 +449,88 @@ const tests = [
             assertEqual(result.sources.length, 0, 'empty sources');
         },
     ],
+
+    // ── code-aware compression (decision-based summarization) ─────────────
+
+    [
+        'compressResearchBranch: code-heavy pages skip the LLM and keep raw code',
+        async () => {
+            let llmCalls = 0;
+            const llmCall = async () => {
+                llmCalls++;
+                return JSON.stringify([{ claim: 'x', url: 'https://code.example' }]);
+            };
+            const codePage = [
+                '# API Reference',
+                '```js',
+                'const x = 1;',
+                '```',
+                '```python',
+                'def f(): return 2',
+                '```',
+            ].join('\n');
+            const result = await compressResearchBranch({
+                pages: [{ url: 'https://code.example/api', text: codePage }],
+                topic: 'API',
+                llmCall,
+            });
+            assertEqual(llmCalls, 0, 'no LLM calls for an all-code branch');
+            assertEqual(result.facts.length, 0, 'no LLM facts');
+            assert(result.findings.includes('const x = 1;'), 'raw code preserved');
+            assert(result.findings.includes('Raw reference content'), 'raw section header');
+            assertEqual(result.sources.length, 1, 'source registered');
+        },
+    ],
+
+    [
+        'compressResearchBranch: mixed prose + code merges prose and appends raw code',
+        async () => {
+            let llmCalls = 0;
+            const llmCall = async () => {
+                llmCalls++;
+                return JSON.stringify([{ claim: 'Prose fact.', url: 'https://prose.example' }]);
+            };
+            const codePage = ['```js', 'const y = 2;', '```', '```js', 'f();', '```'].join('\n');
+            const result = await compressResearchBranch({
+                pages: [
+                    {
+                        url: 'https://prose.example',
+                        text: 'A normal prose page about things and stuff.',
+                    },
+                    { url: 'https://code.example', text: codePage },
+                ],
+                topic: 'Mixed',
+                llmCall,
+            });
+            assertEqual(llmCalls, 1, 'only the prose page compressed');
+            assertEqual(result.facts.length, 1, 'facts from prose only');
+            assert(result.findings.includes('Prose fact.'), 'prose summary present');
+            assert(result.findings.includes('const y = 2;'), 'code kept verbatim');
+            assert(result.findings.includes('Raw reference content'), 'raw section present');
+        },
+    ],
+
+    [
+        'compressResearchBranch: a single small code fence still uses LLM compression',
+        async () => {
+            let llmCalls = 0;
+            const llmCall = async () => {
+                llmCalls++;
+                return JSON.stringify([{ claim: 'F.', url: 'https://a.example' }]);
+            };
+            await compressResearchBranch({
+                pages: [
+                    {
+                        url: 'https://a.example',
+                        text: 'Prose intro.\n```js\nx();\n```\nMore prose follows here.',
+                    },
+                ],
+                topic: 'T',
+                llmCall,
+            });
+            assertEqual(llmCalls, 1, 'single short fence → still compressed');
+        },
+    ],
 ];
 
 // Run async tests

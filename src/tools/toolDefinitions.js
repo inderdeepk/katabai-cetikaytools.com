@@ -42,8 +42,8 @@ const WEB_SEARCH_PARAMS = {
         limit: {
             type: 'integer',
             minimum: 1,
-            maximum: 20,
-            description: 'Max results to return (default 5, capped at 20).',
+            maximum: 30,
+            description: 'Max results to return (default 5, capped at 30).',
         },
     },
     required: ['query'],
@@ -55,7 +55,8 @@ registerTool({
         'Search the web using a private SearxNG metasearch engine. ' +
         'Returns result titles, URLs, and snippets. ' +
         'Use this to find current information, verify facts, or discover sources. ' +
-        'After searching, use read_url to fetch full page content for the most promising results.',
+        'After searching, use read_url to fetch full page content for the most promising results. ' +
+        'When a page does not contain the answer, follow the links listed in that result before searching again.',
     parameters: WEB_SEARCH_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('web_search'),
@@ -86,7 +87,9 @@ registerTool({
     description:
         'Fetch and extract the main content from a web page as readable text. ' +
         'Use this after web_search to read promising results in full. ' +
-        'Strips navigation, ads, and boilerplate, keeping only the core content.',
+        'Strips navigation, ads, and boilerplate, keeping only the core content. ' +
+        'The result also lists the links found on the page — when the answer is not on ' +
+        'the current page, follow a promising link with read_url (or crawl_url for JS-heavy sites).',
     parameters: READ_URL_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('read_url'),
@@ -113,6 +116,20 @@ const CRAWL_URL_PARAMS = {
             description:
                 'Optional. When using BM25 fit mode, this query focuses extraction on the most relevant portions of the page.',
         },
+        mode: {
+            type: 'string',
+            enum: ['content', 'extract'],
+            description:
+                "Optional. 'content' (default) returns the raw page Markdown — best for code, " +
+                "exact wording, and full detail. 'extract' asks the server-side LLM to extract " +
+                'structured JSON or a focused answer instead (only when LLM extraction is configured).',
+        },
+        instruction: {
+            type: 'string',
+            description:
+                "Optional. When mode='extract', a focused extraction instruction (e.g. 'List every " +
+                "command and its flags'). Overrides the configured default instruction.",
+        },
     },
     required: ['url'],
 };
@@ -124,8 +141,11 @@ registerTool({
         'Use this after web_search to read a promising result in full depth. ' +
         'The page is rendered in a real browser (JavaScript, SPAs, lazy-loading), ' +
         'then stripped of navigation, ads, and boilerplate leaving only the core content. ' +
-        'When LLM extraction is enabled, the result may instead contain structured ' +
-        'JSON or an LLM-guided answer extracted from the page.',
+        'The result also lists the links found on the page so you can continue to subpages ' +
+        'when the answer is not on the current page. ' +
+        'By default the raw page content is returned; pass mode="extract" for server-side LLM ' +
+        'extraction instead. When an LLM extraction is shown, you can always call crawl_url ' +
+        'again with mode="content" on the same URL to get the raw text.',
     parameters: CRAWL_URL_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('crawl_url'),

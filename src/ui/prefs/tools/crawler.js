@@ -366,13 +366,14 @@ export function buildCrawlerSection(ctx) {
     const llmGroup = createPreferencesGroup({
         title: 'LLM Extraction (Optional)',
         description:
-            'Ask an LLM running on your Crawl4AI server to extract structured JSON or a freeform answer instead of raw Markdown. Fully optional \u2014 the default Markdown pipeline is unchanged.',
+            'Configure server-side LLM extraction. The crawl tool returns raw Markdown by default and only uses these settings when the model explicitly asks for extraction (mode="extract"); the manual /crawl command follows the Extraction Mode setting below. Fully optional \u2014 raw Markdown never needs an LLM.',
     });
     detailPage.add(llmGroup);
 
     createInstructionRow(
         'How to enable AI extraction',
-        'Pick an Extraction Mode below (Schema for structured JSON, Block for a freeform answer). ' +
+        'Models request extraction per crawl (mode="extract"); the Extraction Mode below decides its shape ' +
+            '(Schema for structured JSON, Block for a freeform answer). ' +
             'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
             'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
             'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
@@ -384,7 +385,7 @@ export function buildCrawlerSection(ctx) {
 
     const llmModeRow = createChoiceRow(
         'Extraction Mode',
-        'How Crawl4AI should format page content.',
+        'How Crawl4AI should format page content when LLM extraction is requested. Markdown remains the default fallback.',
         llmGroup,
     );
     bindChoiceRow(
@@ -490,6 +491,23 @@ export function buildCrawlerSection(ctx) {
         'Advertise the crawl_url tool to supported models so they can decide when to deep-scrape a page. With this off, only the manual /crawl command runs.',
         'crawl4ai-autonomous-enabled',
         advancedGroup,
+    );
+
+    createBooleanRow(
+        'Follow Subpage Links in Research',
+        'During deep research, follow the most relevant links found on scraped pages (e.g. a docs index linking to the actual page). Lets research reach details that are one click away.',
+        'crawl4ai-follow-links-enabled',
+        advancedGroup,
+    );
+
+    createIntRow(
+        'Max Followed Links per Branch',
+        'How many relevance-scored subpage links a research branch may follow after its initial crawl (0\u201310).',
+        'crawl4ai-max-follow-links',
+        advancedGroup,
+        0,
+        10,
+        1,
     );
 
     createBooleanRow(

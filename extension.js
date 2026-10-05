@@ -65,6 +65,7 @@ import {
     stripCrawl4AICommand,
     buildCrawlResultBlock,
     getCrawlResultText,
+    isLLMExtractionMode,
 } from './src/tools/crawl4aiTools.js';
 import { ExploreDocsRuntime, buildExploreDocsResultBlock } from './src/tools/exploreDocsTools.js';
 import {
@@ -104,7 +105,17 @@ import {
     stillLooksLikeToolMarkup,
     stripTruncatedToolCallMarkup,
 } from './src/core/toolCallMarkup.js';
-import { HistoryManager } from './src/core/historyManager.js';
+import {
+    HistoryManager,
+    HISTORY_TITLE_MAX_CHARS,
+    HISTORY_DESCRIPTION_MAX_CHARS,
+} from './src/core/historyManager.js';
+import {
+    buildTitleGenerationMessages,
+    parseTitleDescriptionResponse,
+    TITLE_GEN_MAX_TOKENS,
+} from './src/core/titleGenerator.js';
+import { splitLinksSection } from './src/shared/pageLinks.js';
 import { createRequestLifecycle, REQUEST_STATES } from './src/core/requestLifecycle.js';
 import {
     DEEPSEEK_MODELS,
@@ -202,11 +213,13 @@ import {
     SESSION_MEMORY_KEEP_EXCHANGES,
     SESSION_MEMORY_MIN_FOLD_COUNT,
     SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS,
+    IMAGE_TOKEN_ESTIMATE,
     buildMemoryUpdateMessages,
     estimateProviderCharBudget,
     isSessionMemoryMessage,
     parseMemoryResponse,
     splitHistoryForBudget,
+    stringifyContextValue,
 } from './src/core/sessionMemory.js';
 
 // Re-export tool name/command/icon constants from toolDefinitions (canonical source)
@@ -305,8 +318,9 @@ const DEEP_RESEARCH_MODE_LABELS = {
 
 // Default fallback cap for sequential tool-call rounds a single user turn may
 // trigger. The actual cap is read from the 'web-search-max-tool-iterations'
-// gsetting and defaults to 10. Keeping the constant for safety fallback.
-const WEB_SEARCH_MAX_TOOL_ITERATIONS_DEFAULT = 10;
+// gsetting and defaults to 25 — generous enough for a model on a close trail
+// to keep browsing instead of being forced to answer mid-research.
+const WEB_SEARCH_MAX_TOOL_ITERATIONS_DEFAULT = 25;
 
 // ── Deep Research mode ───────────────────────────────────────────────────────
 const DEEP_RESEARCH_LOCAL_TOOL = {
@@ -322,38 +336,40 @@ const DEEP_RESEARCH_LOCAL_TOOL = {
 const DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS = 6;
 const DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS = 80000;
 // More generous truncation tiers for deep research — double the normal limits.
+// Raised Oct 2026 (~30–50%) so long close-trail runs keep more page content;
+// the context-based force-synthesis trigger remains the runaway-loop backstop.
 const DEEP_RESEARCH_TRUNCATION_TIERS = [
     {
         maxIteration: 3,
-        readUrlChars: 12000,
-        crawlChars: 24000,
-        knowledgeChars: 8000,
+        readUrlChars: 16000,
+        crawlChars: 32000,
+        knowledgeChars: 10000,
         searchSnippetChars: 500,
         searchResults: 15,
     },
     {
         maxIteration: 5,
-        readUrlChars: 8000,
-        crawlChars: 16000,
-        knowledgeChars: 6000,
-        searchSnippetChars: 400,
-        searchResults: 10,
+        readUrlChars: 10000,
+        crawlChars: 20000,
+        knowledgeChars: 8000,
+        searchSnippetChars: 450,
+        searchResults: 12,
     },
     {
         maxIteration: 8,
-        readUrlChars: 5000,
-        crawlChars: 10000,
-        knowledgeChars: 4000,
-        searchSnippetChars: 300,
-        searchResults: 8,
+        readUrlChars: 6000,
+        crawlChars: 12000,
+        knowledgeChars: 5000,
+        searchSnippetChars: 350,
+        searchResults: 10,
     },
     {
         maxIteration: Infinity,
-        readUrlChars: 3000,
-        crawlChars: 6000,
-        knowledgeChars: 2000,
-        searchSnippetChars: 200,
-        searchResults: 5,
+        readUrlChars: 4000,
+        crawlChars: 8000,
+        knowledgeChars: 3000,
+        searchSnippetChars: 250,
+        searchResults: 6,
     },
 ];
 
@@ -513,35 +529,35 @@ const PROMPT_HISTORY_MAX_ENTRIES = 100;
 const TOOL_RESULT_TRUNCATION_TIERS = [
     {
         maxIteration: 2,
-        readUrlChars: 12000,
-        crawlChars: 24000,
-        knowledgeChars: 6000,
+        readUrlChars: 16000,
+        crawlChars: 32000,
+        knowledgeChars: 8000,
         searchSnippetChars: 500,
         searchResults: 10,
     },
     {
         maxIteration: 4,
-        readUrlChars: 6000,
-        crawlChars: 12000,
-        knowledgeChars: 4000,
-        searchSnippetChars: 350,
+        readUrlChars: 8000,
+        crawlChars: 16000,
+        knowledgeChars: 5000,
+        searchSnippetChars: 400,
         searchResults: 8,
     },
     {
         maxIteration: 6,
-        readUrlChars: 3000,
-        crawlChars: 6000,
-        knowledgeChars: 2500,
-        searchSnippetChars: 250,
-        searchResults: 5,
+        readUrlChars: 4000,
+        crawlChars: 8000,
+        knowledgeChars: 3000,
+        searchSnippetChars: 300,
+        searchResults: 6,
     },
     {
         maxIteration: Infinity,
-        readUrlChars: 1500,
-        crawlChars: 3000,
-        knowledgeChars: 1500,
-        searchSnippetChars: 150,
-        searchResults: 3,
+        readUrlChars: 2000,
+        crawlChars: 4000,
+        knowledgeChars: 2000,
+        searchSnippetChars: 200,
+        searchResults: 4,
     },
 ];
 // Floor for the context-based force-synthesis trigger.  The effective
@@ -554,9 +570,11 @@ const CONTEXT_SYNTHESIS_THRESHOLD_CHARS = 40000;
 // Fraction of the provider's input char budget at which the context-based
 // force-synthesis trigger fires.  Leaves headroom for the model's reply
 // while still stopping runaway loops before the payload hits the ceiling.
-const CONTEXT_SYNTHESIS_BUDGET_FRACTION = 0.75;
+// Raised to 0.85 (Oct 2026) so a model on a close trail has more room before
+// it is forced to answer; the iteration cap remains the primary trigger.
+const CONTEXT_SYNTHESIS_BUDGET_FRACTION = 0.85;
 // NOTE: the iteration-based synthesis trigger follows the user's
-// "Max Tool Iterations" setting (default 10) — see
+// "Max Tool Iterations" setting (default 25) — see
 // _getEffectiveSynthesisThresholds().  The old fixed
 // FORCE_SYNTHESIS_AFTER_ITERATIONS=5 silently contradicted that pref.
 
@@ -1450,6 +1468,10 @@ class KatabDialog {
         this._historyListCacheIds = null; // cached history entry IDs for diff
         this._historySearchQuery = ''; // current history search filter
         this._historySearchTimeoutId = 0; // debounce ID for search re-render
+        this._historyTab = 'active'; // history list tab: 'active' | 'archived'
+        this._historyEditorTargetId = null; // conversation id being edited (title/description)
+        this._titleGenInFlight = false; // manual title/description generation running
+        this._historyEditorCancellable = null; // Gio.Cancellable for the generation request
         this._notifyIdleId = 0; // debounce ID for _notifyCurrentChatChanged
 
         // ── RAG Phase 2: conversation indexing state ────────────────────
@@ -1460,7 +1482,7 @@ class KatabDialog {
         this._kbSearchQuery = ''; // current KB search filter
         this._kbSearchTimeoutId = 0; // debounce for KB search
         this._kbSearchViewActive = false; // showing KB results vs history list
-        this._kbSuppressWebSearch = false; // suppress web_search when KB has high-relevance results
+        this._kbSuppressWebSearch = false; // suppress the AUTO web fallback when the KB has high-relevance results
         this._ragHasContent = null; // null=unknown, true/false cached from /health
         this._ragEmbeddingOk = null; // null=unknown; false when /health reports embeddings down
         this._ragServiceOk = null; // null=unknown; false when /health reports the service unreachable
@@ -1633,6 +1655,10 @@ class KatabDialog {
         this._maxContextSize = 0;
         this._currentUsage = 0;
         this._draftUsage = 0;
+        // Sequence guard for the async /tokenize draft probe — a slow response
+        // for an older draft must never overwrite a newer count (or resurrect
+        // the draft after it was sent/cleared).
+        this._draftTokenRequestId = 0;
         this._lastTokenRatio = 0;
         // Cache for the actual context-payload token estimate, keyed on a cheap
         // fingerprint so per-keystroke gauge refreshes don't re-serialize and
@@ -1763,6 +1789,13 @@ class KatabDialog {
                     }
                     if (this._sessionInfoPopup?.visible) {
                         this._hideSessionInfoPopup();
+                        return Clutter.EVENT_STOP;
+                    }
+                    // The conversation metadata editor steps back to the
+                    // history list first (it also cancels a running
+                    // generation), mirroring the KB-search Escape flow.
+                    if (this._historyEditorPanel?.visible) {
+                        this._closeHistoryEditor();
                         return Clutter.EVENT_STOP;
                     }
                     this.close();
@@ -4167,25 +4200,24 @@ class KatabDialog {
     }
 
     _getMaxToolIterations() {
-        // Deep research mode raises the tool iteration cap from the user
-        // setting to support exhaustive multi-source research (12 iterations
-        // vs. the default 10).  This matches the documented "4→12" design
-        // intent for deep research sessions.
-        if (this._isDeepResearchActive()) {
-            return Math.max(
-                DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS * 2, // 12
-                WEB_SEARCH_MAX_TOOL_ITERATIONS_DEFAULT, // 10 floor
-            );
-        }
+        // Both normal and deep-research sessions follow the user's
+        // "Max Tool Iterations" setting (default 25) so a model on a close
+        // trail can keep browsing.  Deep research keeps a floor of 12 rounds
+        // (DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS × 2) so it never drops
+        // below the historical exhaustive-research budget.
+        let pref = WEB_SEARCH_MAX_TOOL_ITERATIONS_DEFAULT;
         try {
             const val = this._settings.get_int('web-search-max-tool-iterations');
-            if (val >= 1 && val <= 50) {
-                return val;
+            if (val >= 1 && val <= 100) {
+                pref = val;
             }
         } catch (_e) {
             /* fall through to default */
         }
-        return WEB_SEARCH_MAX_TOOL_ITERATIONS_DEFAULT;
+        if (this._isDeepResearchActive()) {
+            return Math.max(DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS * 2, pref);
+        }
+        return pref;
     }
 
     _getProviderTools() {
@@ -5549,8 +5581,16 @@ class KatabDialog {
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
         if (this._usagePanel) this._usagePanel.visible = false;
+        if (this._historyEditorPanel) this._historyEditorPanel.visible = false;
         this._chatScroll.visible = false;
         panel.visible = true;
+
+        // Switching to any other panel abandons an in-flight metadata
+        // generation — cancel it so no tokens are spent on a result the user
+        // can no longer see.
+        if (panel !== this._historyEditorPanel) {
+            this._cancelTitleGeneration();
+        }
     }
 
     // ── Provider (engine) picker ─────────────────────────────────────────────
@@ -7683,6 +7723,32 @@ class KatabDialog {
             return Clutter.EVENT_PROPAGATE;
         });
 
+        // ── Active / Archived tabs ───────────────────────────────────────
+        this._historyTabRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-history-tabs',
+            x_expand: true,
+        });
+        this._historyView.add_child(this._historyTabRow);
+
+        this._historyActiveTabBtn = new St.Button({
+            label: 'Active',
+            style_class: 'katab-history-tab',
+            can_focus: true,
+        });
+        this._historyActiveTabBtn.connect('clicked', () => this._setHistoryTab('active'));
+        this._historyTabRow.add_child(this._historyActiveTabBtn);
+
+        this._historyArchivedTabBtn = new St.Button({
+            label: 'Archived',
+            style_class: 'katab-history-tab',
+            can_focus: true,
+        });
+        this._historyArchivedTabBtn.connect('clicked', () => this._setHistoryTab('archived'));
+        this._historyTabRow.add_child(this._historyArchivedTabBtn);
+
+        this._syncHistoryTabButtons();
+
         // ── Knowledge Base search bar (Phase 2) ──────────────────────────
         this._kbSearchBox = new St.BoxLayout({
             vertical: false,
@@ -7757,6 +7823,291 @@ class KatabDialog {
         historyScroll.add_child(this._historyContainer);
     }
 
+    // ── Conversation metadata editor (title / description) ────────────────
+    // Manual editor for a saved conversation's title + description with an
+    // optional "Generate with AI" action that asks the active provider for a
+    // suggested pair (the user reviews the fields before pressing Save).
+
+    _buildHistoryEditorPanel() {
+        const { picker, listBox, closePickerBtn } = this._buildPickerShell('Edit Conversation');
+        closePickerBtn.connect('clicked', () => this._closeHistoryEditor());
+
+        const form = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-history-editor-form',
+            x_expand: true,
+        });
+        listBox.add_child(form);
+
+        form.add_child(
+            new St.Label({ text: 'Title', style_class: 'katab-history-editor-field-label' }),
+        );
+        this._historyEditorTitleEntry = new St.Entry({
+            style_class: 'katab-history-editor-entry',
+            hint_text: 'Conversation title',
+            x_expand: true,
+            can_focus: true,
+        });
+        this._historyEditorTitleEntry.clutter_text.max_length = HISTORY_TITLE_MAX_CHARS;
+        form.add_child(this._historyEditorTitleEntry);
+
+        form.add_child(
+            new St.Label({
+                text: 'Description',
+                style_class: 'katab-history-editor-field-label',
+            }),
+        );
+        this._historyEditorDescEntry = new St.Entry({
+            style_class: 'katab-history-editor-entry',
+            hint_text: 'Short one-line summary (optional)',
+            x_expand: true,
+            can_focus: true,
+        });
+        this._historyEditorDescEntry.clutter_text.max_length = HISTORY_DESCRIPTION_MAX_CHARS;
+        form.add_child(this._historyEditorDescEntry);
+
+        const hint = new St.Label({
+            text: 'Leave the title empty to restore the automatic title. The AI generator uses the active provider and only changes these fields once you press Save.',
+            style_class: 'katab-history-editor-hint',
+            x_expand: true,
+        });
+        hint.clutter_text.line_wrap = true;
+        hint.clutter_text.single_line_mode = false;
+        form.add_child(hint);
+
+        const actions = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-history-editor-actions',
+            x_expand: true,
+        });
+        form.add_child(actions);
+
+        this._historyEditorGenerateBtn = new St.Button({
+            label: 'Generate with AI',
+            style_class: 'katab-history-editor-generate-btn',
+            can_focus: true,
+        });
+        this._historyEditorGenerateBtn.connect('clicked', () => this._generateConversationMeta());
+        actions.add_child(this._historyEditorGenerateBtn);
+
+        this._historyEditorSaveBtn = new St.Button({
+            label: 'Save',
+            style_class: 'katab-history-editor-save-btn',
+            can_focus: true,
+        });
+        this._historyEditorSaveBtn.connect('clicked', () => this._saveHistoryEditor());
+        actions.add_child(this._historyEditorSaveBtn);
+
+        this._historyEditorCancelBtn = new St.Button({
+            label: 'Cancel',
+            style_class: 'katab-history-editor-cancel-btn',
+            can_focus: true,
+        });
+        this._historyEditorCancelBtn.connect('clicked', () => this._closeHistoryEditor());
+        actions.add_child(this._historyEditorCancelBtn);
+
+        this._historyEditorStatus = new St.Label({
+            text: '',
+            style_class: 'katab-history-editor-status',
+            x_expand: true,
+        });
+        this._historyEditorStatus.clutter_text.line_wrap = true;
+        this._historyEditorStatus.clutter_text.single_line_mode = false;
+        form.add_child(this._historyEditorStatus);
+
+        // Enter in either field saves; Escape returns to the history list.
+        for (const entry of [this._historyEditorTitleEntry, this._historyEditorDescEntry]) {
+            entry.clutter_text.connect('key-press-event', (actor, event) => {
+                const keyval = event.get_key_symbol();
+                if (keyval === Clutter.KEY_Return || keyval === Clutter.KEY_KP_Enter) {
+                    this._saveHistoryEditor();
+                    return Clutter.EVENT_STOP;
+                }
+                if (keyval === Clutter.KEY_Escape) {
+                    this._closeHistoryEditor();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+        }
+
+        return picker;
+    }
+
+    _openHistoryEditor(entry) {
+        if (!this._historyEditorPanel || !entry) return;
+        this._cancelTitleGeneration();
+        this._historyEditorTargetId = entry.id;
+        this._historyEditorTitleEntry.set_text(String(entry.title || ''));
+        this._historyEditorDescEntry.set_text(String(entry.description || ''));
+        this._historyEditorStatus.set_text('');
+        this._openAuxPanel(this._historyEditorPanel);
+        this._historyEditorTitleEntry.grab_key_focus();
+    }
+
+    _closeHistoryEditor() {
+        this._cancelTitleGeneration();
+        this._historyEditorTargetId = null;
+        this._showHistoryView();
+    }
+
+    _saveHistoryEditor() {
+        const id = this._historyEditorTargetId;
+        if (!id) return;
+        const title = (this._historyEditorTitleEntry?.get_text() || '').trim();
+        const description = (this._historyEditorDescEntry?.get_text() || '').trim();
+        const ok = HistoryManager.updateConversationMeta(id, { title, description });
+        if (!ok) {
+            this._historyEditorStatus.set_text(
+                'This conversation is no longer in history — nothing was saved.',
+            );
+            return;
+        }
+        this._cancelTitleGeneration();
+        this._historyEditorTargetId = null;
+        this._historyListCacheIds = null;
+        this._showHistoryView();
+        this._notifyCurrentChatChanged();
+    }
+
+    async _generateConversationMeta() {
+        if (this._titleGenInFlight) return;
+        const id = this._historyEditorTargetId;
+        const entry = id ? HistoryManager.getCached().find((e) => e.id === id) : null;
+        if (!entry) {
+            this._historyEditorStatus.set_text('This conversation is no longer in history.');
+            return;
+        }
+        const messages = buildTitleGenerationMessages(entry.messages);
+        if (!messages) {
+            this._historyEditorStatus.set_text(
+                'There is nothing to summarize in this conversation yet.',
+            );
+            return;
+        }
+
+        const request = { cancellable: new Gio.Cancellable(), id };
+        this._historyEditorCancellable = request.cancellable;
+        this._titleGenInFlight = true;
+        this._setTitleGenBusy(true);
+        this._historyEditorStatus.set_text('Generating a title and description…');
+        try {
+            const raw = await this._requestNonStreamingCompletion(messages, {
+                cancellable: request.cancellable,
+                maxTokens: TITLE_GEN_MAX_TOKENS,
+                countAsPipeline: false,
+            });
+            if (request.cancellable.is_cancelled()) return;
+            if (
+                this._historyEditorTargetId !== id ||
+                this._isActorDisposed(this._historyEditorTitleEntry)
+            ) {
+                return;
+            }
+            const parsed = parseTitleDescriptionResponse(raw);
+            if (parsed) {
+                this._historyEditorTitleEntry.set_text(parsed.title);
+                if (parsed.description) {
+                    this._historyEditorDescEntry.set_text(parsed.description);
+                }
+                this._historyEditorStatus.set_text('Generated — review the fields and press Save.');
+            } else if (raw && raw.trim()) {
+                this._historyEditorStatus.set_text(
+                    'Could not parse the model response. Edit the fields manually or try again.',
+                );
+            } else {
+                this._historyEditorStatus.set_text(
+                    'The model returned an empty response. Check the provider settings and try again.',
+                );
+            }
+        } catch (e) {
+            if (
+                !request.cancellable.is_cancelled() &&
+                !this._isActorDisposed(this._historyEditorStatus)
+            ) {
+                this._historyEditorStatus.set_text(
+                    `Generation failed: ${e.message || 'unknown error'}`,
+                );
+            }
+        } finally {
+            // Only clear the busy state when this request is still the current
+            // one — a cancelled request has already been reset by the caller.
+            if (this._historyEditorCancellable === request.cancellable) {
+                this._historyEditorCancellable = null;
+                this._titleGenInFlight = false;
+                this._setTitleGenBusy(false);
+            }
+        }
+    }
+
+    _cancelTitleGeneration() {
+        if (this._historyEditorCancellable) {
+            try {
+                this._historyEditorCancellable.cancel();
+            } catch (_e) {
+                /* already cancelled */
+            }
+        }
+        this._historyEditorCancellable = null;
+        this._titleGenInFlight = false;
+        this._setTitleGenBusy(false);
+    }
+
+    _setTitleGenBusy(busy) {
+        const btn = this._historyEditorGenerateBtn;
+        if (!btn || this._isActorDisposed(btn)) return;
+        btn.set_label(busy ? 'Generating…' : 'Generate with AI');
+        btn.reactive = !busy;
+        if (busy) {
+            btn.add_style_class_name('katab-history-editor-generate-busy');
+        } else {
+            btn.remove_style_class_name('katab-history-editor-generate-busy');
+        }
+    }
+
+    // ── History tabs (Active / Archived) ─────────────────────────────────
+
+    _setHistoryTab(tab) {
+        const next = tab === 'archived' ? 'archived' : 'active';
+        if (this._historyTab === next) return;
+        this._historyTab = next;
+        this._syncHistoryTabButtons();
+        this._renderHistoryList(this._historySearchQuery || null);
+    }
+
+    _syncHistoryTabButtons() {
+        const archived = this._historyTab === 'archived';
+        const apply = (btn, active) => {
+            if (!btn) return;
+            if (active) {
+                btn.add_style_class_name('katab-history-tab-active');
+            } else {
+                btn.remove_style_class_name('katab-history-tab-active');
+            }
+        };
+        apply(this._historyActiveTabBtn, !archived);
+        apply(this._historyArchivedTabBtn, archived);
+    }
+
+    _updateHistoryTabLabels(entries = HistoryManager.getCached()) {
+        const archivedCount = entries.filter((e) => e.archived === true).length;
+        const activeCount = entries.length - archivedCount;
+        if (this._historyActiveTabBtn) {
+            this._historyActiveTabBtn.set_label(`Active (${activeCount})`);
+        }
+        if (this._historyArchivedTabBtn) {
+            this._historyArchivedTabBtn.set_label(`Archived (${archivedCount})`);
+        }
+    }
+
+    _setConversationArchived(id, archived) {
+        if (!HistoryManager.setConversationArchived(id, archived)) return;
+        this._historyListCacheIds = null;
+        if (this._recentChatsPopup?.visible) this._hideRecentChatsPopup();
+        this._renderHistoryList(this._historySearchQuery || null);
+        this._notifyCurrentChatChanged();
+    }
+
     _buildPanelsAndFooter() {
         // Preset picker panel (hidden by default, replaces chat scroll like history)
         this._presetPicker = this._buildPresetPicker();
@@ -7769,6 +8120,10 @@ class KatabDialog {
         // DeepSeek model picker panel (Flash / Pro)
         this._deepseekModelPicker = this._buildDeepseekModelPicker();
         this.contentLayout.add_child(this._deepseekModelPicker);
+
+        // Conversation metadata editor (manual title/description + AI generator)
+        this._historyEditorPanel = this._buildHistoryEditorPanel();
+        this.contentLayout.add_child(this._historyEditorPanel);
 
         // AI Token Breakdown panel — local usage analytics + companion
         this._usagePanel = this._buildUsagePanel();
@@ -8959,6 +9314,7 @@ class KatabDialog {
         this._hideSessionInfoPopup();
         this._hideRecentChatsPopup();
         this._closeUsageRangeDropdown();
+        this._cancelTitleGeneration();
         this._notifyCurrentChatChanged();
     }
 
@@ -9103,7 +9459,14 @@ class KatabDialog {
     // ── History management ──────────────────────────────────────────────
 
     async _updateDraftTokenCount() {
-        let text = this._entry.get_text();
+        // Sequence guard: each call (and every explicit reset via
+        // _resetDraftUsage) invalidates any probe still in flight so a slow
+        // /tokenize response for an older draft can never overwrite the current
+        // count (symptom: the gauge jumped to a stale large value and only
+        // recovered on the next keystroke).
+        this._draftTokenRequestId = (this._draftTokenRequestId || 0) + 1;
+        const requestId = this._draftTokenRequestId;
+        const text = this._entry.get_text();
         if (!text) {
             this._draftUsage = 0;
             this._renderTokenCounter();
@@ -9111,6 +9474,24 @@ class KatabDialog {
         }
 
         const provider = this._currentProvider;
+
+        // Apply a probe result only while it is still the newest probe, the
+        // draft still matches the text this probe was started for, and the
+        // provider has not changed since (tokenizers differ per provider).
+        const applyDraftUsage = (value) => {
+            if (requestId !== this._draftTokenRequestId) return;
+            if (provider !== this._currentProvider) return;
+            let currentText;
+            try {
+                currentText = this._entry.get_text();
+            } catch (_e) {
+                return; // dialog was torn down while the probe was in flight
+            }
+            if (currentText !== text) return;
+            this._draftUsage = value;
+            this._renderTokenCounter();
+        };
+
         const canProbe =
             (provider === 'unsloth' || provider === 'ollama') &&
             this._tokenizeSupported[provider] !== false;
@@ -9177,7 +9558,16 @@ class KatabDialog {
                 let data = JSON.parse(new TextDecoder('utf-8').decode(bytes.get_data()));
 
                 this._tokenizeSupported[provider] = true;
-                this._draftUsage = data.tokens ? data.tokens.length : Math.ceil(text.length / 4);
+                // Accept only a real token array.  Servers that answer with a
+                // different JSON shape (or a bare number) used to leave
+                // `_draftUsage` as undefined/NaN and strand the gauge.
+                const probeCount =
+                    Array.isArray(data.tokens) && Number.isFinite(data.tokens.length)
+                        ? data.tokens.length
+                        : null;
+                applyDraftUsage(
+                    probeCount !== null && probeCount > 0 ? probeCount : Math.ceil(text.length / 4),
+                );
             } catch (e) {
                 // A 404/405 means the endpoint does not exist on this server
                 // (Ollama has no public /api/tokenize route) — cache that so the
@@ -9189,13 +9579,21 @@ class KatabDialog {
                         `[Katab:tokenize] ${provider} has no tokenize endpoint — using character estimate.`,
                     );
                 }
-                this._draftUsage = Math.ceil(text.length / 4);
+                applyDraftUsage(Math.ceil(text.length / 4));
             }
-            this._renderTokenCounter();
             return;
         }
 
-        this._draftUsage = Math.ceil(text.length / 4);
+        applyDraftUsage(Math.ceil(text.length / 4));
+    }
+
+    // Invalidate any in-flight draft-token probe and clear the draft count.
+    // Called whenever the draft is committed/cleared (send, new chat,
+    // compaction, KB import) so a late /tokenize response can't resurrect a
+    // stale count.
+    _resetDraftUsage() {
+        this._draftTokenRequestId = (this._draftTokenRequestId || 0) + 1;
+        this._draftUsage = 0;
         this._renderTokenCounter();
     }
 
@@ -9432,7 +9830,7 @@ class KatabDialog {
             const est = this._estimateApiMessagesTokens(apiMessages);
             messageTokens = est.messageTokens;
             toolResultTokens = est.toolResultTokens;
-            systemTokens = this._estimateSystemPromptTokens(provider);
+            systemTokens = this._estimateSystemPromptTokens(provider, apiMessages);
             toolDefTokens = this._estimateToolDefTokens(provider);
         } catch (_e) {
             // Never let context estimation throw into the UI — on any unexpected
@@ -9491,6 +9889,17 @@ class KatabDialog {
                 crawlAutonomous = 0,
                 ragAutonomous = 0,
                 fetchPage = 0;
+            let deepResearch = 0,
+                noResults = 0,
+                ragToolsUsable = 1,
+                sessionDocCount = 0,
+                ollamaNumCtx = 0,
+                unslothNumCtx = 0,
+                maxToolIterations = 0;
+            let openaiModel = '',
+                anthropicModel = '',
+                deepseekPromptLen = 0,
+                ollamaPromptLen = 0;
             try {
                 webEnabled = this._isWebSearchEnabled() ? 1 : 0;
                 crawlEnabled = this._isCrawl4AIEnabled() ? 1 : 0;
@@ -9499,6 +9908,26 @@ class KatabDialog {
                 crawlAutonomous = this._settings.get_boolean('crawl4ai-autonomous-enabled') ? 1 : 0;
                 ragAutonomous = this._settings.get_boolean('rag-autonomous-enabled') ? 1 : 0;
                 fetchPage = this._settings.get_boolean('web-search-fetch-page-enabled') ? 1 : 0;
+            } catch (_e) {
+                /* keep defaults */
+            }
+            // Inputs that also change the estimated payload but lived outside
+            // the original fingerprint — a stale cache here showed the numbers
+            // from the previous truncation budget / system prompt / tool gates
+            // until some other change happened to invalidate it.
+            try {
+                deepResearch = this._isDeepResearchActive() ? 1 : 0;
+                noResults = this._noResultsSynthesis ? 1 : 0;
+                ragToolsUsable =
+                    this._ragHasContent === false || this._ragBackendKnownDown() ? 0 : 1;
+                sessionDocCount = this._sessionDocuments?.size || 0;
+                ollamaNumCtx = this._settings.get_int('ollama-num-ctx');
+                unslothNumCtx = this._settings.get_int('unsloth-num-ctx');
+                openaiModel = this._settings.get_string('openai-model');
+                anthropicModel = this._settings.get_string('anthropic-model');
+                maxToolIterations = this._getMaxToolIterations();
+                deepseekPromptLen = this._settings.get_string('deepseek-system-prompt').length;
+                ollamaPromptLen = this._settings.get_string('ollama-system-prompt').length;
             } catch (_e) {
                 /* keep defaults */
             }
@@ -9518,6 +9947,17 @@ class KatabDialog {
                 crawlAutonomous,
                 ragAutonomous,
                 fetchPage,
+                deepResearch,
+                noResults,
+                ragToolsUsable,
+                sessionDocCount,
+                ollamaNumCtx,
+                unslothNumCtx,
+                openaiModel,
+                anthropicModel,
+                maxToolIterations,
+                deepseekPromptLen,
+                ollamaPromptLen,
             ].join('|');
         } catch (_e) {
             return (
@@ -9535,23 +9975,28 @@ class KatabDialog {
         for (const msg of apiMessages || []) {
             if (!msg) continue;
             if (msg.role === 'tool' || msg.tool_call_id) {
-                toolResultTokens += this._estimateTextTokens(
-                    typeof msg.content === 'string'
-                        ? msg.content
-                        : JSON.stringify(msg.content || ''),
-                );
+                toolResultTokens += this._estimateContentTokens(msg.content);
                 continue;
             }
             if (Array.isArray(msg.content)) {
                 const toolBlocks = msg.content.filter((b) => b?.type === 'tool_result');
                 const nonToolBlocks = msg.content.filter((b) => b?.type !== 'tool_result');
-                toolResultTokens += this._estimateTextTokens(JSON.stringify(toolBlocks));
-                messageTokens += this._estimateTextTokens(JSON.stringify(nonToolBlocks));
+                toolResultTokens += this._estimateContentTokens(toolBlocks);
+                messageTokens += this._estimateContentTokens(nonToolBlocks);
             } else {
-                messageTokens += this._estimateTextTokens(msg.content);
+                messageTokens += this._estimateContentTokens(msg.content);
             }
             if (Array.isArray(msg.tool_calls)) {
                 messageTokens += this._estimateTextTokens(JSON.stringify(msg.tool_calls));
+            }
+            // DeepSeek echoes reasoning_content on tool-call turns — it is a
+            // real part of the outbound payload and must be counted.
+            if (typeof msg.reasoning_content === 'string' && msg.reasoning_content) {
+                messageTokens += this._estimateTextTokens(msg.reasoning_content);
+            }
+            // Ollama-style image attachments live outside `content`.
+            if (Array.isArray(msg.images) && msg.images.length > 0) {
+                messageTokens += msg.images.length * IMAGE_TOKEN_ESTIMATE;
             }
         }
         return { messageTokens, toolResultTokens };
@@ -9559,7 +10004,7 @@ class KatabDialog {
 
     // Token estimate for the system prompt that would be sent with the next
     // request (mirrors the assembly in _streamResponse / the request builders).
-    _estimateSystemPromptTokens(provider = this._currentProvider) {
+    _estimateSystemPromptTokens(provider = this._currentProvider, apiMessages = null) {
         const webContentSafetyPolicy = this._shouldApplyWebContentSafetyPolicy(provider)
             ? WEB_CONTENT_SAFETY_SYSTEM_PROMPT
             : '';
@@ -9594,8 +10039,13 @@ class KatabDialog {
             systemPromptText = this._mergeSystemPromptParts(ollamaSystemPrompt, systemPromptText);
         }
         if (provider === 'anthropic') {
-            const apiMessages = this._getApiMessageHistory(provider);
-            systemPromptText = this._buildSystemPromptText(apiMessages, systemPromptText);
+            // Reuse the caller's sanitized/truncated history when provided —
+            // recomputing it here doubled the whole serialize+truncate pass
+            // for every gauge refresh.
+            systemPromptText = this._buildSystemPromptText(
+                apiMessages || this._getApiMessageHistory(provider),
+                systemPromptText,
+            );
         }
         return Math.ceil(systemPromptText.length / 4);
     }
@@ -9612,20 +10062,19 @@ class KatabDialog {
                 this._isCrawl4AIEnabled() &&
                 this._settings.get_boolean('crawl4ai-autonomous-enabled');
             const ragAutonomous =
-                this._isRagEnabled() && this._settings.get_boolean('rag-autonomous-enabled');
+                this._isRagEnabled() &&
+                this._settings.get_boolean('rag-autonomous-enabled') &&
+                // Mirror the real advertisement gate: an empty/down KB never
+                // advertises the RAG tools, so don't count their tokens either.
+                this._ragHasContent !== false &&
+                !this._ragBackendKnownDown();
             const maxToolIterations = this._getMaxToolIterations();
             const notUnsloth = provider !== 'unsloth';
             const underIterationCap = (this._toolIterations || 0) < maxToolIterations;
             const notForceSynthesis = !this._forceSynthesisActive;
 
             let toolNames = [];
-            if (
-                notUnsloth &&
-                webSearchAutonomous &&
-                underIterationCap &&
-                notForceSynthesis &&
-                !this._kbSuppressWebSearch
-            ) {
+            if (notUnsloth && webSearchAutonomous && underIterationCap && notForceSynthesis) {
                 toolNames.push(WEB_SEARCH_TOOL_NAME);
                 if (this._settings.get_boolean('web-search-fetch-page-enabled')) {
                     toolNames.push(READ_URL_TOOL_NAME);
@@ -10608,9 +11057,8 @@ class KatabDialog {
 
         this._messageHistory = newHistory;
         this._currentUsage = 0;
-        this._draftUsage = 0;
         this._lastTokenRatio = 0;
-        this._renderTokenCounter();
+        this._resetDraftUsage();
 
         // Rebuild the chat UI — bump the generation so in-flight async
         // renders targeting the old bubbles bail instead of crashing.
@@ -11124,9 +11572,12 @@ class KatabDialog {
     }
 
     _truncateOllamaMessages(messages, { maxBodyChars = 200000 } = {}) {
-        const estimateSize = (msgs) => {
+        // Serialized size with image payloads collapsed to a fixed per-image
+        // cost — base64 bytes are a transport detail and must not dwarf the
+        // budget (see stringifyContextValue).
+        const estimateSize = (value) => {
             try {
-                return JSON.stringify(msgs).length;
+                return stringifyContextValue(value).length;
             } catch (_) {
                 return Infinity;
             }
@@ -11139,9 +11590,20 @@ class KatabDialog {
             return messages;
         }
 
-        if (estimateSize(messages) <= maxBodyChars) {
+        // Per-message sizes computed once; each candidate for `keep` is then
+        // O(1) via suffix sums (the old loop re-serialized the whole candidate
+        // array on every step — O(n²) on the shell thread).
+        const sizes = messages.map((message) => estimateSize(message));
+        const suffix = new Array(messages.length + 1);
+        suffix[messages.length] = 0;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            suffix[i] = suffix[i + 1] + sizes[i];
+        }
+
+        const fullSize = suffix[0] + messages.length + 1;
+        if (fullSize <= maxBodyChars) {
             log(
-                `[Katab:truncate] No truncation needed — ${messages.length} msgs, ${estimateSize(messages)} chars ≤ ${maxBodyChars}`,
+                `[Katab:truncate] No truncation needed — ${messages.length} msgs, ${fullSize} chars ≤ ${maxBodyChars}`,
             );
             return messages;
         }
@@ -11149,10 +11611,12 @@ class KatabDialog {
         // Keep the system prompt (index 0) and drop oldest middle messages
         // until the serialized body fits under maxBodyChars.
         const systemMsg = messages[0];
+        const systemSize = sizes[0];
         for (let keep = messages.length; keep >= 2; keep--) {
-            const candidate = [systemMsg, ...messages.slice(messages.length - keep + 1)];
-            const size = estimateSize(candidate);
+            const suffixSum = suffix[messages.length - keep + 1];
+            const size = Number.isFinite(suffixSum) ? systemSize + suffixSum + keep + 1 : Infinity;
             if (size <= maxBodyChars) {
+                const candidate = [systemMsg, ...messages.slice(messages.length - keep + 1)];
                 const dropped = messages.length - candidate.length;
                 const droppedRoles = messages
                     .slice(1, messages.length - keep + 1)
@@ -11254,11 +11718,55 @@ class KatabDialog {
     }
 
     _estimateTextTokens(text) {
-        if (!text) {
+        if (text === null || text === undefined || text === '') {
             return 0;
         }
+        if (typeof text !== 'string') {
+            // Defence: a non-string value must never degrade to
+            // "[object Object]" (which massively under-counts a real payload).
+            try {
+                text = JSON.stringify(text);
+            } catch (_e) {
+                text = String(text);
+            }
+        }
 
-        return Math.ceil(String(text).length / 4);
+        return Math.ceil(text.length / 4);
+    }
+
+    // Token estimate for a message `content` value.  Attached images are
+    // charged a fixed per-image cost instead of their base64 payload length:
+    // one photo's base64 is megabytes, so counting it as text made the context
+    // gauge read ~1M tokens for a single image and let images evict the whole
+    // text history from the budget (see stringifyContextValue).
+    _estimateContentTokens(content) {
+        if (content === null || content === undefined || content === '') {
+            return 0;
+        }
+        if (typeof content === 'string') {
+            return this._estimateTextTokens(content);
+        }
+        if (Array.isArray(content)) {
+            let total = 0;
+            for (const block of content) {
+                if (!block || typeof block !== 'object') {
+                    total += this._estimateTextTokens(block);
+                    continue;
+                }
+                if (
+                    block.type === 'image_url' ||
+                    block.type === 'image' ||
+                    block.image_url ||
+                    block.source?.type === 'base64'
+                ) {
+                    total += IMAGE_TOKEN_ESTIMATE;
+                    continue;
+                }
+                total += this._estimateTextTokens(JSON.stringify(block));
+            }
+            return total;
+        }
+        return this._estimateTextTokens(JSON.stringify(content));
     }
 
     _estimateDeepSeekMessageTokens(message) {
@@ -11268,7 +11776,7 @@ class KatabDialog {
 
         let total = 6;
         total += this._estimateTextTokens(message.role);
-        total += this._estimateTextTokens(message.content);
+        total += this._estimateContentTokens(message.content);
         total += this._estimateTextTokens(message.name);
 
         if (message.reasoning_content) {
@@ -11277,6 +11785,10 @@ class KatabDialog {
 
         if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
             total += this._estimateTextTokens(JSON.stringify(message.tool_calls));
+        }
+
+        if (Array.isArray(message.images) && message.images.length > 0) {
+            total += message.images.length * IMAGE_TOKEN_ESTIMATE;
         }
 
         return total;
@@ -12270,6 +12782,9 @@ class KatabDialog {
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
+        if (this._historyEditorPanel) this._historyEditorPanel.visible = false;
+        // Leaving the metadata editor abandons any in-flight AI generation.
+        this._cancelTitleGeneration();
         if (this._usagePanel) this._usagePanel.visible = false;
         this._chatScroll.visible = true;
         this._footerBox.visible = true;
@@ -12300,6 +12815,9 @@ class KatabDialog {
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
+        if (this._historyEditorPanel) this._historyEditorPanel.visible = false;
+        // Leaving the metadata editor abandons any in-flight AI generation.
+        this._cancelTitleGeneration();
         if (this._usagePanel) this._usagePanel.visible = false;
         this._historyView.visible = true;
         // Phase 2: show KB search box if RAG is enabled, reset KB search state
@@ -12344,7 +12862,9 @@ class KatabDialog {
     _showRecentChatsPopup() {
         if (!this._historyBtn) return;
         let history = HistoryManager.getCached();
-        let recentEntries = history.filter((e) => e.id !== this._currentConversationId).slice(0, 5);
+        let recentEntries = history
+            .filter((e) => e.id !== this._currentConversationId && !e.archived)
+            .slice(0, 5);
         if (recentEntries.length === 0) return;
 
         // Build once, reuse thereafter
@@ -12578,21 +13098,41 @@ class KatabDialog {
     }
 
     _renderHistoryList(filterQuery = null) {
-        // Avoid redundant rebuilds when neither the cached history nor the
-        // search query has changed.
-        let arr = HistoryManager.getCached();
-        let currentIds = arr.map((e) => e.id).join(',');
-        let cacheKey = `${currentIds}|${filterQuery || ''}`;
+        let allEntries = HistoryManager.getCached();
+        const tab = this._historyTab === 'archived' ? 'archived' : 'active';
+        this._updateHistoryTabLabels(allEntries);
+        // The normal conversation list replaces any KB search results view.
+        this._kbSearchViewActive = false;
+
+        // Filter by tab first, then by search query (case-insensitive match
+        // against title, description, and message text).
+        let arr =
+            tab === 'archived'
+                ? HistoryManager.getArchivedConversations()
+                : HistoryManager.getActiveConversations();
+
+        // Avoid redundant rebuilds when neither the cached history, the tab,
+        // nor the search query has changed. Titles/descriptions/timestamps are
+        // part of the key so metadata edits always refresh the rows.
+        let currentIds = arr
+            .map(
+                (e) =>
+                    `${e.id}:${e.archived ? 1 : 0}:${e.timestamp}:${e.title}:${e.description || ''}`,
+            )
+            .join(',');
+        let cacheKey = `${tab}|${currentIds}|${filterQuery || ''}`;
         if (this._historyListCacheIds === cacheKey && this._historyContainer.get_n_children() > 0) {
             return;
         }
         this._historyListCacheIds = cacheKey;
 
-        // Filter by search query (case-insensitive substring match)
         if (filterQuery) {
             let q = filterQuery.toLowerCase();
             arr = arr.filter((entry) => {
-                if (entry.title.toLowerCase().includes(q)) {
+                if ((entry.title || '').toLowerCase().includes(q)) {
+                    return true;
+                }
+                if ((entry.description || '').toLowerCase().includes(q)) {
                     return true;
                 }
                 return entry.messages.some((msg) =>
@@ -12604,9 +13144,18 @@ class KatabDialog {
         this._historyContainer.destroy_all_children();
 
         if (arr.length === 0) {
-            let msg = filterQuery
-                ? 'No conversations match your search.'
-                : 'No saved conversations yet.\nStart chatting and use New Chat to save.';
+            let msg;
+            if (filterQuery) {
+                msg =
+                    tab === 'archived'
+                        ? 'No archived conversations match your search.'
+                        : 'No conversations match your search.';
+            } else {
+                msg =
+                    tab === 'archived'
+                        ? 'No archived conversations yet.\nArchive a conversation to keep it out of the main list.'
+                        : 'No saved conversations yet.\nStart chatting and use New Chat to save.';
+            }
             let emptyLabel = new St.Label({
                 text: msg,
                 style_class: 'katab-history-empty',
@@ -12635,13 +13184,24 @@ class KatabDialog {
             });
 
             let titleLabel = new St.Label({
-                text: entry.title,
+                text: entry.title || 'Untitled',
                 style_class: 'katab-history-title',
                 x_expand: true,
             });
             titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
             titleLabel.clutter_text.single_line_mode = true;
             textCol.add_child(titleLabel);
+
+            if (entry.description) {
+                let descriptionLabel = new St.Label({
+                    text: entry.description,
+                    style_class: 'katab-history-description',
+                    x_expand: true,
+                });
+                descriptionLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                descriptionLabel.clutter_text.single_line_mode = true;
+                textCol.add_child(descriptionLabel);
+            }
 
             let date = new Date(entry.timestamp * 1000);
             let dateStr =
@@ -12669,6 +13229,30 @@ class KatabDialog {
             });
             loadBtn.connect('clicked', () => this._loadConversation(entry));
             row.add_child(loadBtn);
+
+            let archiveBtn = new St.Button({
+                label: tab === 'archived' ? 'Unarchive' : 'Archive',
+                style_class: 'katab-history-archive-btn',
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            archiveBtn.connect('clicked', () =>
+                this._setConversationArchived(entry.id, tab !== 'archived'),
+            );
+            row.add_child(archiveBtn);
+
+            let editBtn = new St.Button({
+                child: new St.Icon({
+                    icon_name: 'document-edit-symbolic',
+                    style_class: 'katab-history-edit-icon',
+                }),
+                style_class: 'katab-history-edit-btn',
+                can_focus: true,
+                y_align: Clutter.ActorAlign.CENTER,
+                accessible_name: 'Edit title and description',
+            });
+            editBtn.connect('clicked', () => this._openHistoryEditor(entry));
+            row.add_child(editBtn);
 
             let deleteBtn = new St.Button({
                 child: new St.Icon({
@@ -12931,12 +13515,11 @@ class KatabDialog {
         this._documentToolRuntime.clearCache();
         this._setPendingDocument(null);
         this._currentUsage = 0;
-        this._draftUsage = 0;
         this._lastTokenRatio = 0;
         this._deepResearchCumulativeTokens = 0;
         this._toolIterations = 0;
         this._lastTurnToolIterations = 0;
-        this._renderTokenCounter();
+        this._resetDraftUsage();
         this._resetSessionCacheSavings();
 
         // Clear the prompt so the user sees a clean slate — stale text from
@@ -13423,7 +14006,10 @@ class KatabDialog {
                 extractUrls(message.webSearchContext);
             }
             if (message.crawl4aiContext) {
-                extractUrls(message.crawl4aiContext);
+                // Strip the "Links on this page" navigation surface first —
+                // those links were not visited and would otherwise flood the
+                // Sources list with dozens of unread pages per scrape.
+                extractUrls(splitLinksSection(message.crawl4aiContext).head);
             }
             // NOTE: knowledgeContext URLs are NOT collected here — they come
             // from past research injected by the KB, not from this conversation's
@@ -13471,7 +14057,15 @@ class KatabDialog {
                         : Array.isArray(message.content)
                           ? message.content.map((b) => b?.content || '').join('\n')
                           : '';
-                extractUrls(content);
+                // Only the page itself counts as a source — not the navigation
+                // links its result now lists (followed pages are collected
+                // from their own tool calls).  explore_docs results are a pure
+                // navigation TOC: the landing page is already collected from
+                // the tool-call arguments, and none of the listed links were
+                // visited, so skip the result body entirely.
+                if (message.name !== EXPLORE_DOCS_TOOL_NAME) {
+                    extractUrls(splitLinksSection(content).head);
+                }
             }
         }
 
@@ -17468,7 +18062,10 @@ class KatabDialog {
             // (symptom: model tool calls suppressed with "Maximum research
             // depth reached" after a single iteration).
             const msgs = this._getApiMessageHistory(provider);
-            return JSON.stringify(msgs).length;
+            // Image payloads are collapsed to a fixed per-image cost so a
+            // single photo can't masquerade as a megabyte-sized text context
+            // (see stringifyContextValue).
+            return stringifyContextValue(msgs).length;
         } catch (_e) {
             return this._messageHistory.reduce(
                 (sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0),
@@ -17507,8 +18104,21 @@ class KatabDialog {
                   ? tier.crawlChars
                   : tier.knowledgeChars || tier.crawlChars;
             if (text.length > maxChars) {
-                const truncated = `${text.slice(0, maxChars).trimEnd()}\n\n[Content trimmed — iteration ${iteration}. Ask the user to narrow their query for more detail.]`;
-                return truncated;
+                const trimNote = `[Content trimmed at iteration ${iteration} to manage context — re-read this page later if you need the rest.]`;
+                if (isRead || isCrawl) {
+                    // Keep the page's links section (and any trailing safety
+                    // guard / nudges) intact so the agent can still navigate
+                    // to subpages after the body is trimmed.
+                    const { head, tail } = splitLinksSection(text);
+                    if (tail) {
+                        const headBudget = Math.max(
+                            200,
+                            maxChars - tail.length - trimNote.length - 4,
+                        );
+                        return `${head.slice(0, headBudget).trimEnd()}\n\n${trimNote}\n\n${tail}`;
+                    }
+                }
+                return `${text.slice(0, maxChars).trimEnd()}\n\n${trimNote}`;
             }
         }
 
@@ -18362,8 +18972,7 @@ class KatabDialog {
                     this._lifecycle.finish();
                 }
                 this._entry.set_text('');
-                this._draftUsage = 0;
-                this._renderTokenCounter();
+                this._resetDraftUsage();
                 return;
             }
 
@@ -18618,8 +19227,7 @@ class KatabDialog {
         this._usageCompanionSprite?.showPose('tip', 1200);
         this._entry.set_text('');
         this._resetOneShotToolModes(webSearchModeForPrompt, crawl4aiModeForPrompt);
-        this._draftUsage = 0;
-        this._renderTokenCounter();
+        this._resetDraftUsage();
         this._hasConversationStarted = true;
         this._setWelcomeVisible(false);
         this._addChatMessage('You', String(userMessage.content ?? '').trim(), 'user', userMessage);
@@ -19269,12 +19877,14 @@ class KatabDialog {
         // has no choice but to write its answer.  DeepSeek V4 Pro with
         // thinking enabled will otherwise ignore user-message instructions
         // to stop and continue emitting tool calls indefinitely.
+        // NOTE: a strong knowledge-base match no longer hides web_search from
+        // the model — it only suppresses Katab's automatic web fallback (see
+        // the knowledge_search branch). The model decides for itself.
         const advertiseLocalTools =
             provider !== 'unsloth' &&
             webSearchAutonomous &&
             (this._toolIterations || 0) < maxToolIterations &&
-            !this._forceSynthesisActive &&
-            !this._kbSuppressWebSearch;
+            !this._forceSynthesisActive;
 
         const crawl4aiAutonomous =
             this._isCrawl4AIEnabled() && this._settings.get_boolean('crawl4ai-autonomous-enabled');
@@ -19653,9 +20263,10 @@ class KatabDialog {
 
         // Context for the token-usage ledger: model, endpoint (for local vs
         // remote classification), and prompt size for estimate fallbacks.
+        // Image payloads are masked so base64 bytes don't inflate the estimate.
         let usagePromptChars = 0;
         try {
-            usagePromptChars = JSON.stringify(payload.messages || []).length;
+            usagePromptChars = stringifyContextValue(payload.messages || []).length;
         } catch (_e) {
             usagePromptChars = 0;
         }
@@ -20802,7 +21413,7 @@ class KatabDialog {
     // Mirrors the endpoint/header conventions of _streamResponse without tools or streaming.
     async _requestNonStreamingCompletion(
         messages,
-        { cancellable = null, maxTokens = 256, modelOverride = null } = {},
+        { cancellable = null, maxTokens = 256, modelOverride = null, countAsPipeline = true } = {},
     ) {
         const provider = this._currentProvider;
         let url = this._settings.get_string(`${provider}-url`);
@@ -20896,7 +21507,12 @@ class KatabDialog {
             const usageTokens = extractNonStreamingUsage(provider, parsed);
             if (usageTokens > 0) {
                 this._currentUsage += usageTokens;
-                this._deepResearchCumulativeTokens += usageTokens;
+                // Not every non-streaming call belongs to the research
+                // pipeline — UI actions like title generation must not inflate
+                // the "Pipeline (cumulative)" figure in Session Info.
+                if (countAsPipeline) {
+                    this._deepResearchCumulativeTokens += usageTokens;
+                }
                 this._renderTokenCounter();
                 log(
                     `[Katab:usage] Non-streaming ${provider} call: ${usageTokens} tokens (cumulative: ${this._currentUsage})`,
@@ -21473,7 +22089,7 @@ class KatabDialog {
                             cancellable,
                         );
                         resultText = buildReadUrlResultBlock(page);
-                        const contentLen = page?.content?.length || 0;
+                        const contentLen = page?.text?.length || 0;
                         this._updateToolCallLogEntry(logEntry, {
                             status: 'success',
                             detail:
@@ -21497,9 +22113,35 @@ class KatabDialog {
                             plain: true,
                         });
                         const crawlConfig = readCrawl4AIConfig(this._settings);
+                        // Decision-based extraction (Oct 2026): the tool-call
+                        // path returns RAW content by default; the model opts
+                        // into server-side LLM extraction with mode='extract'
+                        // (optionally supplying an instruction).  The global
+                        // llm-* settings configure HOW extraction runs, not
+                        // whether every crawl is summarized.  Manual /crawl
+                        // keeps honoring the configured mode (explicit user
+                        // action).
+                        const requestedMode = String(args.mode ?? '')
+                            .trim()
+                            .toLowerCase();
+                        const instruction = String(args.instruction ?? '').trim();
+                        if (requestedMode === 'extract') {
+                            if (instruction || !isLLMExtractionMode(crawlConfig)) {
+                                crawlConfig.extractionMode = 'llm-block';
+                            }
+                            if (instruction) {
+                                crawlConfig.llmInstruction = instruction;
+                            }
+                        } else {
+                            // Default ('content') and any unknown value: raw markdown.
+                            crawlConfig.extractionMode = 'markdown';
+                        }
                         if (crawlConfig.fitMarkdownMode === 'bm25') {
                             crawlConfig.query = String(args.query ?? '').trim();
                         }
+                        log(
+                            `[Katab:crawl4ai] Tool crawl mode=${crawlConfig.extractionMode} for ${targetUrl}`,
+                        );
                         const crawlResults = await this._crawl4aiRuntime.crawl(
                             targetUrl,
                             crawlConfig,
@@ -21778,10 +22420,10 @@ class KatabDialog {
                           : `Error executing tool: ${e.message}`;
 
                 if (isFetchFailure && consecutiveReadUrlFailures >= 2) {
-                    errorBase += `\n\nIMPORTANT: This is the ${consecutiveReadUrlFailures}th consecutive page that could not be read. The sites may require JavaScript, block scraping, or use paywalls. Stop trying to read URLs. Synthesise your answer from the web search results and information you already have. Do NOT call read_url or crawl_url again this turn.`;
+                    errorBase += `\n\nNOTE: This is the ${consecutiveReadUrlFailures}th consecutive page that could not be read — these sites may require JavaScript, block scraping, or use paywalls. Prefer crawl_url for JavaScript-heavy pages, try different sources, or follow links from pages you have already read.`;
                 } else if (isFetchFailure) {
                     errorBase +=
-                        '\n\nThis page could not be read (the site may block scraping or require JavaScript). Try a different approach \u2014 use search results you already have, or answer with your existing knowledge.';
+                        '\n\nThis page could not be read (the site may block scraping or require JavaScript). Try crawl_url for JavaScript-heavy pages, a different URL, or a link from a page you have already read.';
                 }
 
                 resultText = errorBase;
@@ -22768,7 +23410,7 @@ const Indicator = GObject.registerClass(
 
         _updateHistoryMenu() {
             this._historySection.removeAll();
-            let arr = HistoryManager.getCached();
+            let arr = HistoryManager.getCached().filter((entry) => !entry.archived);
 
             if (arr.length === 0) {
                 let emptyItem = new PopupMenu.PopupMenuItem('No history', { reactive: false });

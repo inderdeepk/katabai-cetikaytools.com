@@ -365,6 +365,8 @@ curl http://localhost:11235/health
 ### Step 3 — Scrape
 - **Manual**: `/crawl https://example.com/article` scrapes a URL directly. `/crawl gnome 47` searches via SearxNG then scrapes the top result. You can also embed `/crawl <url>` anywhere in a message — e.g. *"Tell me about X. /crawl https://example.com"* — and the page will be scraped and included alongside your question.
 - **Autonomous**: The model can call `crawl_url` after `web_search` to read promising results in depth.
+- **Link-aware results**: both `read_url` and `crawl_url` results include a compact list of the links found on the page. When the answer is not on the current page, the model can follow a promising link directly instead of running another broad search. During Deep Research, Katab can also follow the most relevant links it finds automatically (see below).
+- **Raw by default**: `crawl_url` returns the raw page Markdown. The model can explicitly request server-side LLM extraction (`mode="extract"`), and every extraction result offers a way back to the raw page (`mode="content"`) when the exact code or wording matters.
 - **Footer button**: Cycle the Scrape button to **On** for one-shot scraping.
 
 ### Settings Reference
@@ -380,15 +382,17 @@ curl http://localhost:11235/health
 | **Max characters** | Truncation limit for extracted content (default: 24,000) |
 | **Stealth mode** | Simulates user interaction to bypass bot detection |
 | **Autonomous** | Model can call `crawl_url` without `/crawl` (on by default) |
+| **Follow subpage links** | During Deep Research, follow the most relevant links found on scraped pages (on by default) |
+| **Max followed links per branch** | How many subpage links a research branch may follow after its initial crawl (default: 3, range 0–10) |
 | **Allow local addresses** | Off by default — only enable for trusted local setups |
-| **Extraction mode** | `markdown` (default) or `llm-schema` / `llm-block` (see below) |
+| **Extraction mode** | `markdown` (default) or `llm-schema` / `llm-block` — the shape used **when the model requests extraction** (see below) |
 | **LLM provider** | LiteLLM model identifier for LLM extraction (defaults to DeepSeek V4.1 Flash, `deepseek/deepseek-flash`) |
 | **Chunk token threshold** | Max tokens per chunk when splitting large pages for the LLM (default 4000) |
 | **Chunk overlap rate** | Overlap between chunks to preserve context (default 0.1) |
 
 ### LLM Extraction (Optional)
 
-By default Crawl4AI extracts clean Markdown using its built-in content filter. If your Crawl4AI server has an LLM provider configured, you can also ask it to extract **structured JSON** or a **freeform answer** directly from the page.
+By default Crawl4AI extracts clean Markdown using its built-in content filter, and `crawl_url` returns that raw content — the model only uses LLM extraction when it explicitly asks for it (`mode="extract"`). If your Crawl4AI server has an LLM provider configured, you can also let it extract **structured JSON** or a **freeform answer** directly from the page; the extraction mode below determines the shape of that output.
 
 > **How it works**: Katab submits the crawl to Crawl4AI's dedicated **`/llm` endpoint**, which constructs the `LLMExtractionStrategy` **server-side** — so it works even on Crawl4AI's secure-by-default build (which blocks client-supplied LLM config on `/crawl`). Katab only sends the URL, the provider name, and the schema/instruction; your API key is never sent to or stored by Katab.
 
@@ -542,11 +546,11 @@ Leave both model fields empty to use the active provider's model.
 ### Threshold Differences
 | Parameter | Normal | Deep Research (Standard) |
 |---|---|---|
-| Force-synthesis after | 5 iterations | 6 iterations |
-| Max tool iterations | 10 (configurable) | 12 |
-| Context synthesis threshold | 40K chars | 80K chars |
-| Search results per query | 10 → 8 → 5 → 3 | 15 → 10 → 8 → 5 |
-| Crawl char limit | 24K → 12K → 6K → 3K | 24K → 16K → 10K → 6K |
+| Force-synthesis after | Follows Max Tool Iterations (default 25) | Same preference (minimum 12) |
+| Max tool iterations | 25 (configurable, 1–100) | max(25, 12) |
+| Context synthesis threshold | 85% of the provider budget (min 40K chars) | 85% of the provider budget (min 80K chars) |
+| Search results per query | 10 → 8 → 6 → 4 | 15 → 12 → 10 → 6 |
+| Crawl char limit | 32K → 16K → 8K → 4K | 32K → 20K → 12K → 8K |
 
 Selecting **Deep** or **Max** depth scales the synthesis context budget (120K / 160K chars) and raises retry/gap-query counts further.
 
@@ -657,9 +661,9 @@ Katab automatically saves your conversations.
 
 ### Storage
 - File: `~/.local/share/katabai/history.json`
-- Format: JSON array of conversations, each with `id`, `title`, `timestamp`, and `messages`.
+- Format: JSON array of conversations, each with `id`, `title`, `timestamp`, and `messages`, plus optional `description` and `archived` fields.
 - Limit: 50 most recent conversations.
-- Title: First 60 characters of your first message.
+- Title: First 60 characters of your first message, or your custom/generated title.
 
 ### Managing History
 - **History button** in the chat header opens the history panel.
@@ -667,6 +671,18 @@ Katab automatically saves your conversations.
 - **New Chat** in the panel menu or via the button starts a fresh conversation.
 - Conversations are saved automatically after each assistant response and tool call.
 - Closing the chat window does not lose the current conversation — it resumes when you reopen.
+
+### Archiving Conversations
+- The history panel has **Active** and **Archived** tabs, each showing its conversation count; search filters the current tab.
+- **Archive** on a row moves the conversation out of the active list without deleting it. Archived chats are also hidden from the recent-chats dropdown and the panel menu's history section.
+- **Unarchive** from the Archived tab returns a conversation to the active list.
+- Loading, searching, and deleting work the same in both tabs.
+
+### Titles & Descriptions
+- The pencil button on a history row opens the conversation editor with a **Title** field and an optional one-line **Description**.
+- **Generate with AI** asks the active provider to draft both from the conversation transcript; the result lands in the editable fields — nothing is saved until you press **Save**.
+- Descriptions appear under the title in the history list, and both fields are searchable.
+- Leave the title empty and save to restore the automatic first-message title. Manual and generated titles are never overwritten by auto-saves.
 
 ### Auto-Save Behavior
 - Writes are debounced (200ms) to minimize disk I/O.

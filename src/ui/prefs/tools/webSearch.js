@@ -104,11 +104,11 @@ export function buildWebSearchSection(ctx) {
 
     createIntRow(
         'Result Limit',
-        'Maximum number of search results passed to the model per query (1\u201320).',
+        'Maximum number of search results passed to the model per query (1\u201330).',
         'web-search-result-limit',
         behaviorGroup,
         1,
-        20,
+        30,
         1,
     );
 
@@ -241,11 +241,11 @@ export function buildWebSearchSection(ctx) {
 
     createIntRow(
         'Max Tool Iterations',
-        'Rounds of sequential tool calls the model may trigger per message before being forced to answer. Raise if the model needs more search/read steps.',
+        'Rounds of sequential tool calls the model may trigger per message before being forced to answer. Higher values let the model keep browsing when it is on a close trail (1\u2013100).',
         'web-search-max-tool-iterations',
         advancedGroup,
         1,
-        50,
+        100,
         1,
     );
 

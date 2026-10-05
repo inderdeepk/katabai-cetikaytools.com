@@ -191,16 +191,17 @@ curl 'http://localhost:8080/search?q=test&format=json' -H 'Accept: application/j
 
 - **Manual search:** use `/search` at the start or end of a message to force a web lookup, e.g. `/search gnome 47 release date` or `gnome 47 release date /search`. Katab fetches results, then the model answers using them with source links.
 - **Autonomous search:** when `Autonomous web search` is on (default), capable providers (Ollama, OpenAI, Anthropic, DeepSeek) can decide to call the `web_search` and `read_url` tools on their own during a normal conversation.
+- **Link-aware browsing:** `read_url` and `crawl_url` results list the links found on the page, so when the answer is not on the current page the model can follow a promising subpage directly instead of running another broad search. Deep Research does this automatically (Web Scraper → “Follow Subpage Links in Research”, default 3 links per branch).
 
 ### Settings reference
 
 | Setting | Purpose |
 | --- | --- |
 | SearxNG URL | Base URL of your SearxNG instance. |
-| Result limit | Maximum results passed to the model (1–20). |
+| Result limit | Maximum results passed to the model (1–30). |
 | Time range / Safe search / Language / Categories / Engines | Forwarded to SearxNG to scope results. |
 | API key | Optional `Authorization: Bearer` token if your instance requires one. |
-| Read full pages (`read_url`) | Lets the model open a result and read its text. Guarded against private/loopback addresses. |
+| Read full pages (`read_url`) | Lets the model open a result, read its text, and follow the links listed in it. Guarded against private/loopback addresses. |
 | Multi-query expansion | Expands a `/search` query into several related queries before searching. Off by default for predictable latency. |
 | Autonomous web search | Allows the model to call the search tools without `/search`. On by default. |
 | Allow local/loopback addresses | Off by default. Only enable for a trusted local-only setup; it relaxes the SSRF guard. |

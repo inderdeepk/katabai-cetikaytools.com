@@ -11,6 +11,12 @@
 // the discovery surface (TOC), and the LLM decides which links to follow.
 
 import { Crawl4AIRuntime } from './crawl4aiTools.js';
+import { isPdfHref, scoreLinksByQuery } from '../shared/pageLinks.js';
+
+// scoreLinksByQuery moved to src/shared/pageLinks.js (shared with read_url /
+// crawl_url link surfacing and the research branch runner).  Re-exported here
+// so existing importers keep working.
+export { scoreLinksByQuery };
 
 // ── Public constants ─────────────────────────────────────────────────────────
 
@@ -25,96 +31,8 @@ const EXPLORE_DOCS_MAX_TOC_LINKS = 50;
 const EXPLORE_DOCS_MAX_SUGGESTED_LINKS = 5;
 const EXPLORE_DOCS_PAGE_SUMMARY_CHARS = 3000;
 
-// Small stopword set for keyword-overlap relevance scoring.  Keep it lean —
-// this runs in GJS (no embedding model available), mirroring the keyword
-// scoring used by the research pipeline's contradiction detection.
-const EXPLORE_DOCS_STOPWORDS = new Set([
-    'the',
-    'and',
-    'for',
-    'are',
-    'but',
-    'not',
-    'you',
-    'all',
-    'can',
-    'had',
-    'her',
-    'was',
-    'one',
-    'our',
-    'out',
-    'has',
-    'have',
-    'from',
-    'they',
-    'that',
-    'this',
-    'with',
-    'what',
-    'how',
-    'when',
-    'where',
-    'which',
-    'will',
-    'would',
-    'about',
-    'your',
-    'more',
-    'than',
-    'then',
-    'into',
-    'only',
-    'other',
-    'over',
-    'such',
-    'just',
-    'docs',
-    'doc',
-    'documentation',
-    'html',
-    'page',
-    'pages',
-    'guide',
-    'guides',
-]);
-
 // ── Link scoring ─────────────────────────────────────────────────────────────
-
-function tokenize(text) {
-    return String(text || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .split(/\s+/)
-        .filter((w) => w.length > 2 && !EXPLORE_DOCS_STOPWORDS.has(w));
-}
-
-/**
- * Score links by keyword overlap with the research query.  Compares query
- * tokens against both the link text and the URL slug (docs URLs are usually
- * descriptive: /admin/settings/settings_search.html).  Higher = more relevant.
- * @param {Array<{href: string, text: string, title: string}>} links
- * @param {string} query
- * @returns {Array<{href: string, text: string, title: string, score: number}>}
- */
-export function scoreLinksByQuery(links, query) {
-    const tokens = tokenize(String(query || ''));
-    if (tokens.length === 0) {
-        return (links || []).map((link) => ({ ...link, score: 0 }));
-    }
-
-    const scored = [];
-    for (const link of links || []) {
-        const haystack = `${link.text || ''} ${link.title || ''} ${link.href || ''}`.toLowerCase();
-        let score = 0;
-        for (const token of tokens) {
-            score += haystack.split(token).length - 1;
-        }
-        scored.push({ ...link, score });
-    }
-    scored.sort((a, b) => b.score - a.score || a.href.localeCompare(b.href));
-    return scored;
-}
+// (tokenizer + stopwords + scoreLinksByQuery live in src/shared/pageLinks.js)
 
 function capLinks(links, max) {
     return Array.isArray(links) ? links.slice(0, max) : [];
@@ -163,7 +81,9 @@ export class ExploreDocsRuntime {
             };
         }
 
-        const rawLinks = Array.isArray(landing.links) ? landing.links : [];
+        const rawLinks = (Array.isArray(landing.links) ? landing.links : []).filter(
+            (link) => !link.external && !isPdfHref(link.href),
+        );
         const tableOfContents = capLinks(rawLinks, EXPLORE_DOCS_MAX_TOC_LINKS);
 
         let suggestedLinks = [];

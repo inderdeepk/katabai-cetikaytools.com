@@ -32,6 +32,7 @@
 //     saveCheckpoint(label),
 //   }
 import { getCrawlResultText } from '../tools/crawl4aiTools.js';
+import { scoreLinksByQuery } from '../shared/pageLinks.js';
 import { compressResearchBranch } from './compressionTools.js';
 import { registerFacts, registerSource } from './citationTracker.js';
 import { runRePlanningCritique } from './pipeline.js';
@@ -61,6 +62,71 @@ export const RESEARCH_BRANCH_BACKOFF_MS = [2000, 5000]; // Exponential backoff p
 
 // ── Refinement research ──────────────────────────────────────────────────────
 export const REFINEMENT_CRAWL_COUNT = 2; // Fewer than branch crawl (3) — refinement is fast
+
+// ── Progressive browsing (subpage link following) ────────────────────────────
+// Search results are often hub/overview pages; the actual detail can be one
+// click away.  After the initial crawl, branches score the links found on
+// those pages against the branch query and follow the best few (one level
+// deep, bounded).  Configurable via crawl4ai-follow-links-enabled /
+// crawl4ai-max-follow-links.
+export const RESEARCH_FOLLOW_LINKS_DEFAULT_MAX = 3;
+export const RESEARCH_FOLLOW_LINKS_MAX_CAP = 10;
+
+function normalizeUrlKey(url) {
+    return String(url || '')
+        .trim()
+        .replace(/\/+$/, '')
+        .toLowerCase();
+}
+
+/**
+ * Pick the most promising subpage links to follow from already-crawled pages.
+ *
+ * @param {Array<{url: string, links?: Array}>} pages - Crawled pages (with links).
+ * @param {string} query - The branch search query used for relevance scoring.
+ * @param {{exclude?: Set<string>, max?: number}} [options] - `exclude` holds
+ *   normalized URL keys (lowercase, no trailing slash) that must not be followed.
+ * @returns {Array<{href: string, text?: string, score: number, external?: boolean}>}
+ */
+export function selectFollowLinks(
+    pages,
+    query,
+    { exclude = new Set(), max = RESEARCH_FOLLOW_LINKS_DEFAULT_MAX } = {},
+) {
+    const limit = Number.isFinite(max)
+        ? Math.max(0, Math.min(RESEARCH_FOLLOW_LINKS_MAX_CAP, Math.trunc(max)))
+        : RESEARCH_FOLLOW_LINKS_DEFAULT_MAX;
+    if (limit === 0 || !Array.isArray(pages) || pages.length === 0) return [];
+
+    const candidates = [];
+    for (const page of pages) {
+        for (const link of Array.isArray(page?.links) ? page.links : []) {
+            const href = String(link?.href || '').trim();
+            if (!href) continue;
+            candidates.push({ ...link, href });
+        }
+    }
+    if (candidates.length === 0) return [];
+
+    const scored = scoreLinksByQuery(candidates, query).filter((link) => link.score > 0);
+    // Internal (same-site) links are the classic "subpage" case — prefer them
+    // at equal relevance; a clearly more relevant external link still wins.
+    scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return (a.external ? 1 : 0) - (b.external ? 1 : 0);
+    });
+
+    const selected = [];
+    const seen = new Set();
+    for (const link of scored) {
+        const key = normalizeUrlKey(link.href);
+        if (seen.has(key) || exclude.has(key)) continue;
+        seen.add(key);
+        selected.push(link);
+        if (selected.length >= limit) break;
+    }
+    return selected;
+}
 
 // ── Mid-research self-critique ───────────────────────────────────────────────
 // After every N branches, the system pauses to evaluate accumulated findings
@@ -115,6 +181,11 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
 
     const { sub_task, search_query, index } = subTask;
 
+    // Research always crawls the raw markdown: link extraction (subpage
+    // following) only exists on the markdown path, and per-page summarization
+    // decisions belong to the compression stage — not the scrape server.
+    const branchCrawlConfig = { ...config.crawl4aiConfig, extractionMode: 'markdown' };
+
     // Update progress: searching
     updateProgress(index, RESEARCH_PROGRESS_SEARCHING, `Searching...`);
 
@@ -164,7 +235,7 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
     }
     topUrls = topUrls.slice(0, 3);
     // Inject the branch search query so BM25 filtering can score relevance
-    config.crawl4aiConfig.query = search_query;
+    branchCrawlConfig.query = search_query;
     updateProgress(index, RESEARCH_PROGRESS_SCRAPING, `Scraping ${topUrls.length} pages...`);
 
     const pages = [];
@@ -175,13 +246,17 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
         }
 
         try {
-            const crawlResults = await crawl(url, config.crawl4aiConfig, cancellable);
+            const crawlResults = await crawl(url, branchCrawlConfig, cancellable);
             const result = crawlResults?.[0];
             // LLM extraction results carry their content in structuredJson /
             // llmResponse with an empty fitMarkdown — read the best available text.
             const text = result ? getCrawlResultText(result) : '';
             if (result?.success && text) {
-                pages.push({ url, text });
+                pages.push({
+                    url,
+                    text,
+                    links: Array.isArray(result.links) ? result.links : [],
+                });
                 // Update page read status
                 if (entryRef) {
                     const sizeStr = formatBytes(text.length);
@@ -209,6 +284,74 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
                     'error',
                     String(e.message || 'Failed').slice(0, 40),
                 );
+            }
+        }
+    }
+
+    // ── Follow promising subpage links (progressive browsing) ────────────
+    // Search hits are often hub/overview pages; the data can be one click
+    // away.  Score links found on the crawled pages against the branch query
+    // and follow the most relevant few — bounded and one level deep.
+    const followLinksEnabled = branchCrawlConfig.followLinksEnabled !== false;
+    const configuredMaxFollow = Number.isFinite(branchCrawlConfig.maxFollowLinks)
+        ? branchCrawlConfig.maxFollowLinks
+        : RESEARCH_FOLLOW_LINKS_DEFAULT_MAX;
+    if (followLinksEnabled && configuredMaxFollow > 0 && pages.length > 0) {
+        const excludeKeys = new Set();
+        for (const url of topUrls) excludeKeys.add(normalizeUrlKey(url));
+        for (const page of pages) excludeKeys.add(normalizeUrlKey(page.url));
+        if (coveredUrls && coveredUrls.size > 0) {
+            for (const url of coveredUrls) excludeKeys.add(String(url));
+        }
+        const followTargets = selectFollowLinks(pages, search_query, {
+            exclude: excludeKeys,
+            max: configuredMaxFollow,
+        });
+        if (followTargets.length > 0) {
+            log(
+                `[Katab:research] Branch "${sub_task}" — following ${followTargets.length} subpage link(s): ${followTargets.map((l) => l.href).join(', ')}`,
+            );
+            updateProgress(
+                index,
+                RESEARCH_PROGRESS_SCRAPING,
+                `Following ${followTargets.length} link(s)...`,
+            );
+            for (const link of followTargets) {
+                if (entryRef) {
+                    addPageReadProgress(entryRef, link.href, 'reading');
+                }
+                try {
+                    const crawlResults = await crawl(link.href, branchCrawlConfig, cancellable);
+                    const result = crawlResults?.[0];
+                    const text = result ? getCrawlResultText(result) : '';
+                    if (result?.success && text) {
+                        pages.push({ url: link.href, text, links: [] });
+                        if (entryRef) {
+                            addPageReadProgress(
+                                entryRef,
+                                link.href,
+                                'success',
+                                formatBytes(text.length),
+                            );
+                        }
+                    } else if (entryRef) {
+                        addPageReadProgress(entryRef, link.href, 'error', 'No content extracted');
+                    }
+                } catch (e) {
+                    if (isCancelled(e)) throw e;
+                    if (isTransient(e)) throw e;
+                    log(
+                        `[Katab:research] Branch "${sub_task}" — follow crawl failed for ${link.href}: ${e.message}`,
+                    );
+                    if (entryRef) {
+                        addPageReadProgress(
+                            entryRef,
+                            link.href,
+                            'error',
+                            String(e.message || 'Failed').slice(0, 40),
+                        );
+                    }
+                }
             }
         }
     }
@@ -614,6 +757,10 @@ export async function runRefinementResearch(host, gapQueries) {
 
     const { webSearchConfig, crawl4aiConfig } = getConfig();
 
+    // Research always crawls the raw markdown (same reasoning as branches):
+    // links only exist on the markdown path, and compression decides per page.
+    const branchCrawlConfig = { ...crawl4aiConfig, extractionMode: 'markdown' };
+
     log(`[Katab:research] Starting refinement phase — ${gapQueries.length} follow-up queries...`);
 
     // Extend the progress card with refinement rows
@@ -667,19 +814,23 @@ export async function runRefinementResearch(host, gapQueries) {
             .map((r) => r.url)
             .filter(Boolean);
         // Inject the refinement search query for BM25 relevance scoring
-        crawl4aiConfig.query = gap.search_query;
+        branchCrawlConfig.query = gap.search_query;
         updateProgress(refIndex, RESEARCH_PROGRESS_SCRAPING, `Scraping ${topUrls.length} pages...`);
 
         const pages = [];
         for (const url of topUrls) {
             try {
-                const crawlResults = await crawl(url, crawl4aiConfig, getCancellable());
+                const crawlResults = await crawl(url, branchCrawlConfig, getCancellable());
                 const result = crawlResults?.[0];
                 // LLM extraction results carry their content in structuredJson /
                 // llmResponse with an empty fitMarkdown — read the best available text.
                 const text = result ? getCrawlResultText(result) : '';
                 if (result?.success && text) {
-                    pages.push({ url, text });
+                    pages.push({
+                        url,
+                        text,
+                        links: Array.isArray(result.links) ? result.links : [],
+                    });
                 }
             } catch (e) {
                 if (isCancelled(e)) throw e;
@@ -687,6 +838,53 @@ export async function runRefinementResearch(host, gapQueries) {
                     throw serviceDownError(e);
                 }
                 log(`[Katab:research] Refinement crawl failed for ${url}: ${e.message}`);
+            }
+        }
+
+        // Progressive browsing: follow the best subpage links (bounded).
+        const followLinksEnabled = branchCrawlConfig.followLinksEnabled !== false;
+        const configuredMaxFollow = Number.isFinite(branchCrawlConfig.maxFollowLinks)
+            ? branchCrawlConfig.maxFollowLinks
+            : RESEARCH_FOLLOW_LINKS_DEFAULT_MAX;
+        if (followLinksEnabled && configuredMaxFollow > 0 && pages.length > 0) {
+            const excludeKeys = new Set();
+            for (const url of topUrls) excludeKeys.add(normalizeUrlKey(url));
+            for (const page of pages) excludeKeys.add(normalizeUrlKey(page.url));
+            const followTargets = selectFollowLinks(pages, gap.search_query, {
+                exclude: excludeKeys,
+                max: configuredMaxFollow,
+            });
+            if (followTargets.length > 0) {
+                log(
+                    `[Katab:research] Refinement "${gap.search_query}" — following ${followTargets.length} subpage link(s): ${followTargets.map((l) => l.href).join(', ')}`,
+                );
+                updateProgress(
+                    refIndex,
+                    RESEARCH_PROGRESS_SCRAPING,
+                    `Following ${followTargets.length} link(s)...`,
+                );
+                for (const link of followTargets) {
+                    try {
+                        const crawlResults = await crawl(
+                            link.href,
+                            branchCrawlConfig,
+                            getCancellable(),
+                        );
+                        const result = crawlResults?.[0];
+                        const text = result ? getCrawlResultText(result) : '';
+                        if (result?.success && text) {
+                            pages.push({ url: link.href, text, links: [] });
+                        }
+                    } catch (e) {
+                        if (isCancelled(e)) throw e;
+                        if (e.code === 'connection-failed' || e.code === 'network-error') {
+                            throw serviceDownError(e);
+                        }
+                        log(
+                            `[Katab:research] Refinement follow crawl failed for ${link.href}: ${e.message}`,
+                        );
+                    }
+                }
             }
         }
 

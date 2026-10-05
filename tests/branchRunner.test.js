@@ -15,6 +15,7 @@ import {
     executeResearchBranch,
     runRefinementResearch,
     runResearchBranches,
+    selectFollowLinks,
     serviceDownError,
 } from '../src/research/branchRunner.js';
 import { createCitationTracker } from '../src/research/citationTracker.js';
@@ -568,6 +569,162 @@ const tests = [
                 calls.progress.some((p) => p.status === RESEARCH_PROGRESS_ERROR),
                 'error progress',
             );
+        },
+    ],
+
+    // ── selectFollowLinks + progressive browsing ─────────────────────────
+
+    [
+        'selectFollowLinks: scores, caps, excludes, and prefers internal links',
+        () => {
+            const pages = [
+                {
+                    url: 'https://site.example/start',
+                    links: [
+                        {
+                            href: 'https://site.example/engine-error-handling',
+                            text: 'Engine error handling',
+                        },
+                        {
+                            href: 'https://other.example/engine-errors',
+                            text: 'Engine errors guide',
+                            external: true,
+                        },
+                        { href: 'https://site.example/unrelated', text: 'Unrelated topic' },
+                        {
+                            href: 'https://site.example/engine-error-handling#top',
+                            text: 'Engine error handling',
+                        },
+                    ],
+                },
+            ];
+            const selected = selectFollowLinks(pages, 'engine error', {
+                exclude: new Set(['https://site.example/unrelated']),
+                max: 2,
+            });
+            assertEqual(selected.length, 2, 'capped at max');
+            assertEqual(
+                selected[0].href,
+                'https://site.example/engine-error-handling',
+                'internal link first',
+            );
+            assert(
+                selected.every((l) => l.score > 0),
+                'only links with a keyword match are selected',
+            );
+        },
+    ],
+
+    [
+        'selectFollowLinks: safe on empty input and stopword-only queries',
+        () => {
+            assertEqual(selectFollowLinks([], 'q', {}).length, 0, 'no pages');
+            const selected = selectFollowLinks(
+                [
+                    {
+                        url: 'https://a.example',
+                        links: [{ href: 'https://a.example/x', text: 'X' }],
+                    },
+                ],
+                'the docs page',
+                {},
+            );
+            assertEqual(selected.length, 0, 'stopword-only query selects nothing');
+            assertEqual(
+                selectFollowLinks(
+                    [
+                        {
+                            url: 'https://a.example',
+                            links: [{ href: 'https://a.example/engine', text: 'Engine' }],
+                        },
+                    ],
+                    'engine',
+                    { max: 0 },
+                ).length,
+                0,
+                'max 0 disables following',
+            );
+        },
+    ],
+
+    [
+        'executeResearchBranch: follows scored subpage links in raw markdown mode',
+        async () => {
+            const { calls, host } = makeHost({
+                webSearch: async () => ({
+                    results: [searchResult('https://start.example/page', 'Start', 'S'.repeat(80))],
+                }),
+                crawl: async (url, cfg, c) => {
+                    calls.crawl.push({ url, cfg, c });
+                    if (url === 'https://start.example/page') {
+                        return [
+                            {
+                                success: true,
+                                fitMarkdown: 'Overview page about engine error handling.',
+                                links: [
+                                    {
+                                        href: 'https://start.example/engine-errors',
+                                        text: 'Engine error handling',
+                                    },
+                                    { href: 'https://start.example/other', text: 'Other topic' },
+                                ],
+                            },
+                        ];
+                    }
+                    return [{ success: true, fitMarkdown: `Detail page for ${url}` }];
+                },
+            });
+            const result = await executeResearchBranch(
+                host,
+                { sub_task: 'Engine errors', search_query: 'engine error handling', index: 0 },
+                {
+                    webSearchConfig: { ws: true },
+                    crawl4aiConfig: {
+                        c4: true,
+                        extractionMode: 'llm-schema',
+                        followLinksEnabled: true,
+                        maxFollowLinks: 2,
+                    },
+                },
+                'ct',
+            );
+            const urls = calls.crawl.map((entry) => entry.url);
+            assert(
+                urls.includes('https://start.example/engine-errors'),
+                'followed the relevant subpage',
+            );
+            assert(!urls.includes('https://start.example/other'), 'unrelated link not followed');
+            assertEqual(calls.crawl[0].cfg.extractionMode, 'markdown', 'raw markdown crawl');
+            assertEqual(result.pageCount, 2, 'followed page counted');
+        },
+    ],
+
+    [
+        'executeResearchBranch: follow pass can be disabled',
+        async () => {
+            const { calls, host } = makeHost({
+                webSearch: async () => ({ results: [searchResult('https://start.example/page')] }),
+                crawl: async (url, cfg, c) => {
+                    calls.crawl.push({ url, cfg, c });
+                    return [
+                        {
+                            success: true,
+                            fitMarkdown: 'Page about engines.',
+                            links: [{ href: 'https://start.example/engine', text: 'Engine' }],
+                        },
+                    ];
+                },
+            });
+            await executeResearchBranch(
+                host,
+                { sub_task: 'S', search_query: 'engine', index: 0 },
+                {
+                    webSearchConfig: {},
+                    crawl4aiConfig: { followLinksEnabled: false, maxFollowLinks: 3 },
+                },
+                null,
+            );
+            assertEqual(calls.crawl.length, 1, 'no follow crawls when disabled');
         },
     ],
 ];

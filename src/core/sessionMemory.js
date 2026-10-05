@@ -32,6 +32,15 @@ const CHARS_PER_TOKEN = 3.5;
 // never the whole window.
 const OUTPUT_RESERVE_RATIO = 0.8;
 
+// Fixed token cost charged for one attached image.  Base64 image bytes are a
+// transport detail, not context — charging their raw length made a single
+// photo look like ~1M tokens (and let one image evict the entire text history
+// from the budget).  ~1024 tokens matches typical vision-model accounting.
+export const IMAGE_TOKEN_ESTIMATE = 1024;
+// Serialized characters charged in place of a base64 image payload so the
+// character budget and the token estimate stay proportional.
+const IMAGE_CHAR_EQUIVALENT = Math.round(IMAGE_TOKEN_ESTIMATE * CHARS_PER_TOKEN);
+
 // DeepSeek input budget mirrors extension.js DEEPSEEK_INPUT_TOKEN_BUDGET
 // (DEEPSEEK_MAX_CONTEXT_TOKENS 1,000,000 - DEEPSEEK_MAX_OUTPUT_TOKENS 384,000).
 // Keep the two in sync if either constant changes.
@@ -71,6 +80,14 @@ function safeGetInt(settings, key, fallback) {
     }
 }
 
+// Context sizes must be strictly positive — 0/negative values (which the
+// preference UI allows) used to produce a ZERO char budget, silently reducing
+// every request to the newest user message.
+function resolveContextTokens(settings, key, fallback) {
+    const value = safeGetInt(settings, key, fallback);
+    return value > 0 ? value : fallback;
+}
+
 function safeGetString(settings, key, fallback) {
     if (!settings) return fallback;
     try {
@@ -89,11 +106,11 @@ function safeGetString(settings, key, fallback) {
 export function estimateProviderCharBudget(provider, settings) {
     try {
         if (provider === 'ollama') {
-            const ctx = safeGetInt(settings, 'ollama-num-ctx', 4096) || 4096;
+            const ctx = resolveContextTokens(settings, 'ollama-num-ctx', 4096);
             return Math.max(0, Math.floor(ctx * OUTPUT_RESERVE_RATIO * CHARS_PER_TOKEN));
         }
         if (provider === 'unsloth') {
-            const ctx = safeGetInt(settings, 'unsloth-num-ctx', 8192) || 8192;
+            const ctx = resolveContextTokens(settings, 'unsloth-num-ctx', 8192);
             return Math.max(0, Math.floor(ctx * OUTPUT_RESERVE_RATIO * CHARS_PER_TOKEN));
         }
         if (provider === 'deepseek') {
@@ -121,10 +138,59 @@ export function isSessionMemoryMessage(message) {
     return Boolean(message && message._sessionMemory);
 }
 
+function boundImageString(text) {
+    if (text.length <= IMAGE_CHAR_EQUIVALENT) {
+        return text;
+    }
+    return 'A'.repeat(IMAGE_CHAR_EQUIVALENT);
+}
+
+/**
+ * Serialize a value the way the context budget should count it: JSON with
+ * embedded image payloads collapsed to a fixed per-image cost.  Handles the
+ * three shapes Katab can put in a payload:
+ *   - OpenAI-style `{ type: 'image_url', image_url: { url: 'data:image/...' } }`
+ *   - Ollama-style `message.images: ['<base64>', ...]`
+ *   - Anthropic-style `{ source: { type: 'base64', data: '<base64>' } }`
+ * Non-image values serialize IDENTICALLY to `JSON.stringify`, so budget and
+ * size math is unchanged for text-only conversations.
+ */
+export function stringifyContextValue(value) {
+    return JSON.stringify(value, function (key, val) {
+        if (typeof val === 'string') {
+            if (key === 'url' && val.startsWith('data:image/')) {
+                return boundImageString(val);
+            }
+            if (key === 'data' && this && this.type === 'base64') {
+                return boundImageString(val);
+            }
+        }
+        if (key === 'images' && Array.isArray(val)) {
+            return val.map((entry) =>
+                typeof entry === 'string' ? boundImageString(entry) : entry,
+            );
+        }
+        return val;
+    });
+}
+
+function messageContextSize(message) {
+    try {
+        return stringifyContextValue(message).length;
+    } catch (_e) {
+        return Infinity;
+    }
+}
+
 /**
  * Split sanitized API messages into a memory system message + a verbatim tail
  * that fits within `budget` chars.  Drops from the FRONT (oldest messages)
  * only, and never drops the newest user message.
+ *
+ * Per-message sizes are computed ONCE and combined with prefix sums, so the
+ * search for the oldest message that still fits is O(n) instead of
+ * re-serializing the tail on every step (the old version was O(n²) on the
+ * shell thread for long conversations).
  *
  * @returns {{ memoryMsg: object|null, tail: object[], foldedCount: number }}
  */
@@ -133,18 +199,25 @@ export function splitHistoryForBudget(messages, budget = 200000, memoryText = ''
     const mem = String(memoryText || '').trim();
     const memoryMsg = mem ? { role: 'system', content: mem } : null;
 
-    const sizeOf = (arr) => {
-        try {
-            return JSON.stringify(arr).length;
-        } catch (_e) {
-            return Infinity;
-        }
+    const memChars = memoryMsg ? messageContextSize(memoryMsg) : 0;
+
+    // Prefix sums of per-message sizes.  JSON.stringify(list.slice(start))
+    // length for `count = list.length - start` elements is
+    // `sum(sizes) + 2 brackets + (count - 1) commas`.
+    const prefix = new Array(list.length + 1);
+    prefix[0] = 0;
+    for (let i = 0; i < list.length; i++) {
+        prefix[i + 1] = prefix[i] + messageContextSize(list[i]);
+    }
+    const tailSize = (start) => {
+        const count = list.length - start;
+        if (count <= 0) return 2; // "[]"
+        const sum = prefix[list.length] - prefix[start];
+        return Number.isFinite(sum) ? sum + count + 1 : Infinity;
     };
-    const memChars = memoryMsg ? sizeOf(memoryMsg) : 0;
+    const fits = (start) => memChars + tailSize(start) <= budget;
 
-    const fits = (tail) => memChars + sizeOf(tail) <= budget;
-
-    if (fits(list)) {
+    if (fits(0)) {
         return { memoryMsg, tail: list, foldedCount: 0 };
     }
 
@@ -171,9 +244,8 @@ export function splitHistoryForBudget(messages, budget = 200000, memoryText = ''
     }
 
     for (let start = 0; start <= newestUserIdx; start++) {
-        const tail = list.slice(start);
-        if (fits(tail)) {
-            return { memoryMsg, tail, foldedCount: start };
+        if (fits(start)) {
+            return { memoryMsg, tail: list.slice(start), foldedCount: start };
         }
     }
 

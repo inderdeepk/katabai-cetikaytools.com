@@ -748,6 +748,173 @@
 }
 
 /* ════════════════════════════════════════════
+   HISTORY TABS + ROW ACTIONS (archive / edit)
+   ════════════════════════════════════════════ */
+
+.katab-history-tabs {
+    padding: 0 6px 8px 6px;
+    spacing: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    margin-bottom: 4px;
+}
+
+.katab-history-tab {
+    background-color: rgba(56, 56, 56, 0.55);
+    color: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 4px 14px;
+    font-size: 0.95em;
+    font-weight: bold;
+}
+
+.katab-history-tab:hover {
+    background-color: rgba(72, 72, 72, 0.72);
+}
+
+.katab-history-tab-active {
+    background-color: rgba(148, 226, 213, 0.16);
+    color: #94e2d5;
+    border-color: rgba(148, 226, 213, 0.30);
+}
+
+.katab-history-tab-active:hover {
+    background-color: rgba(148, 226, 213, 0.22);
+}
+
+.katab-history-description {
+    font-size: 0.86em;
+    color: rgba(255, 255, 255, 0.62);
+    font-style: italic;
+}
+
+.katab-history-archive-btn {
+    background-color: rgba(56, 56, 56, 0.80);
+    color: rgba(255, 255, 255, 0.85);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    padding: 6px 12px;
+    font-size: 0.95em;
+}
+
+.katab-history-archive-btn:hover {
+    background-color: rgba(72, 72, 72, 0.95);
+}
+
+.katab-history-edit-btn {
+    background-color: transparent;
+    border-radius: 6px;
+    padding: 4px 6px;
+}
+
+.katab-history-edit-btn:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
+
+.katab-history-edit-icon {
+    icon-size: 14px;
+    color: rgba(255, 255, 255, 0.80);
+}
+
+/* ════════════════════════════════════════════
+   CONVERSATION METADATA EDITOR
+   ════════════════════════════════════════════ */
+
+.katab-history-editor-form {
+    spacing: 8px;
+    padding: 6px 2px 10px 2px;
+}
+
+.katab-history-editor-field-label {
+    font-size: 0.95em;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.katab-history-editor-entry {
+    background-color: rgba(56, 56, 56, 0.65);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 7px;
+    padding: 6px 10px;
+    font-size: 1.0em;
+    caret-color: #ffffff;
+    selection-background-color: rgba(255, 255, 255, 0.18);
+}
+
+.katab-history-editor-entry:focus {
+    border-color: rgba(148, 226, 213, 0.38);
+    background-color: rgba(72, 72, 72, 0.72);
+}
+
+.katab-history-editor-entry StEntryHint {
+    color: rgba(255, 255, 255, 0.50);
+    font-size: 1.0em;
+}
+
+.katab-history-editor-hint {
+    font-size: 0.86em;
+    color: rgba(255, 255, 255, 0.50);
+}
+
+.katab-history-editor-actions {
+    spacing: 8px;
+    padding-top: 4px;
+}
+
+.katab-history-editor-generate-btn {
+    background-color: rgba(148, 226, 213, 0.16);
+    color: #94e2d5;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 226, 213, 0.28);
+    padding: 6px 14px;
+    font-size: 0.95em;
+    font-weight: bold;
+}
+
+.katab-history-editor-generate-btn:hover {
+    background-color: rgba(148, 226, 213, 0.26);
+}
+
+.katab-history-editor-generate-busy {
+    color: rgba(148, 226, 213, 0.55);
+    border-color: rgba(148, 226, 213, 0.18);
+}
+
+.katab-history-editor-save-btn {
+    background-color: rgba(56, 56, 56, 0.85);
+    color: #ffffff;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    padding: 6px 16px;
+    font-size: 0.95em;
+    font-weight: bold;
+}
+
+.katab-history-editor-save-btn:hover {
+    background-color: rgba(72, 72, 72, 0.98);
+}
+
+.katab-history-editor-cancel-btn {
+    background-color: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    padding: 6px 14px;
+    font-size: 0.95em;
+}
+
+.katab-history-editor-cancel-btn:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.katab-history-editor-status {
+    font-size: 0.86em;
+    color: rgba(255, 255, 255, 0.62);
+    padding-top: 2px;
+}
+
+/* ════════════════════════════════════════════
    KNOWLEDGE BASE SEARCH (Phase 2)
    ════════════════════════════════════════════ */
 
@@ -2802,6 +2969,115 @@
 
 .katab-theme-light .katab-history-search-entry StEntryHint {
     color: rgba(0, 0, 0, 0.32);
+}
+
+/* Light-theme history tabs + row actions */
+
+.katab-theme-light .katab-history-tabs {
+    border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-history-tab {
+    background-color: rgba(0, 0, 0, 0.05);
+    color: rgba(0, 0, 0, 0.72);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+.katab-theme-light .katab-history-tab:hover {
+    background-color: rgba(0, 0, 0, 0.09);
+}
+
+.katab-theme-light .katab-history-tab-active {
+    background-color: rgba(14, 122, 107, 0.12);
+    color: #0e7a6b;
+    border-color: rgba(14, 122, 107, 0.28);
+}
+
+.katab-theme-light .katab-history-description {
+    color: rgba(0, 0, 0, 0.58);
+}
+
+.katab-theme-light .katab-history-archive-btn {
+    background-color: rgba(0, 0, 0, 0.06);
+    color: rgba(0, 0, 0, 0.75);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+.katab-theme-light .katab-history-archive-btn:hover {
+    background-color: rgba(0, 0, 0, 0.11);
+}
+
+.katab-theme-light .katab-history-edit-btn:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
+.katab-theme-light .katab-history-edit-icon {
+    color: rgba(0, 0, 0, 0.74);
+}
+
+/* Light-theme conversation metadata editor */
+
+.katab-theme-light .katab-history-editor-field-label {
+    color: rgba(0, 0, 0, 0.72);
+}
+
+.katab-theme-light .katab-history-editor-entry {
+    background-color: rgba(255, 255, 255, 0.78);
+    color: rgba(0, 0, 0, 0.82);
+    border-color: rgba(0, 0, 0, 0.10);
+    caret-color: rgba(0, 0, 0, 0.82);
+    selection-background-color: rgba(0, 0, 0, 0.14);
+}
+
+.katab-theme-light .katab-history-editor-entry:focus {
+    border-color: rgba(14, 122, 107, 0.35);
+    background-color: rgba(255, 255, 255, 0.92);
+}
+
+.katab-theme-light .katab-history-editor-entry StEntryHint {
+    color: rgba(0, 0, 0, 0.32);
+}
+
+.katab-theme-light .katab-history-editor-hint {
+    color: rgba(0, 0, 0, 0.45);
+}
+
+.katab-theme-light .katab-history-editor-generate-btn {
+    background-color: rgba(14, 122, 107, 0.10);
+    color: #0e7a6b;
+    border-color: rgba(14, 122, 107, 0.28);
+}
+
+.katab-theme-light .katab-history-editor-generate-btn:hover {
+    background-color: rgba(14, 122, 107, 0.18);
+}
+
+.katab-theme-light .katab-history-editor-generate-busy {
+    color: rgba(14, 122, 107, 0.55);
+    border-color: rgba(14, 122, 107, 0.18);
+}
+
+.katab-theme-light .katab-history-editor-save-btn {
+    background-color: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.82);
+    border-color: rgba(0, 0, 0, 0.14);
+}
+
+.katab-theme-light .katab-history-editor-save-btn:hover {
+    background-color: rgba(0, 0, 0, 0.13);
+}
+
+.katab-theme-light .katab-history-editor-cancel-btn {
+    color: rgba(0, 0, 0, 0.66);
+    border-color: rgba(0, 0, 0, 0.10);
+}
+
+.katab-theme-light .katab-history-editor-cancel-btn:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.katab-theme-light .katab-history-editor-status {
+    color: rgba(0, 0, 0, 0.60);
 }
 
 /* Light-theme KB search (Phase 2) */

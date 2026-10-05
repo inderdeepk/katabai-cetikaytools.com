@@ -10,6 +10,8 @@
 // All compression functions accept an `llmCall` callback so they work with
 // any provider/endpoint — extension.js passes its _requestNonStreamingCompletion.
 
+import { analyzeCodeHeaviness, buildRawCodeExcerpt } from '../shared/contentKind.js';
+
 // ── Compression system prompts ───────────────────────────────────────────────
 
 const COMPRESS_PAGE_SYSTEM = `You are a research assistant extracting key facts from a web page.
@@ -562,12 +564,31 @@ export async function compressResearchBranch({
 
     // Level 1: Compress each page, carrying the previous pages' facts forward
     // (contextual augmentation) so each page yields NEW, non-redundant evidence.
+    //
+    // Decision-based summarization (Oct 2026): code-heavy pages (docs with
+    // code samples, API references, source files) skip the LLM entirely — the
+    // verbatim code is the data the user wants, and an LLM paraphrase loses
+    // it.  Their bounded raw excerpt is appended to the findings instead.
     const allFacts = [];
     const pageSummaries = [];
+    const codeExcerpts = [];
     const sources = new Set();
     let priorPageFacts = '';
 
     for (const page of pages) {
+        const codeInfo = analyzeCodeHeaviness(page.text);
+        if (codeInfo.codeHeavy) {
+            const excerpt = buildRawCodeExcerpt(page.text);
+            if (excerpt) {
+                codeExcerpts.push(`### ${page.url}\n${excerpt}`);
+                sources.add(page.url);
+                log(
+                    `[Katab:compress] Code-heavy page — keeping raw excerpt (${excerpt.length} chars) instead of an LLM summary: ${page.url}`,
+                );
+                continue;
+            }
+        }
+
         const facts = await compressPage({
             rawText: page.text,
             sourceUrl: page.url,
@@ -594,17 +615,26 @@ export async function compressResearchBranch({
         }
     }
 
-    if (allFacts.length === 0) {
+    if (allFacts.length === 0 && codeExcerpts.length === 0) {
         return { findings: '', facts: [], sources: [] };
     }
 
-    // Level 2: Merge page summaries
-    const findings = await mergePageSummaries({
-        summaries: pageSummaries,
-        topic,
-        llmCall,
-        cancellable,
-    });
+    // Level 2: Merge the prose summaries.  An all-code branch skips the merge
+    // LLM entirely — there is nothing to merge, keep the excerpts verbatim.
+    let findings = '';
+    if (pageSummaries.length > 0) {
+        findings = await mergePageSummaries({
+            summaries: pageSummaries,
+            topic,
+            llmCall,
+            cancellable,
+        });
+    }
+
+    if (codeExcerpts.length > 0) {
+        const codeBlock = `## Raw reference content (code pages preserved)\n\n${codeExcerpts.join('\n\n---\n\n')}`;
+        findings = findings ? `${findings}\n\n${codeBlock}` : codeBlock;
+    }
 
     return {
         findings,

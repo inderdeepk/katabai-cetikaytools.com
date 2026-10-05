@@ -4,7 +4,12 @@
 // ~/.local/share/katabai/history.json.
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
-import { HistoryManager, _setHistoryPathForTesting } from '../src/core/historyManager.js';
+import {
+    HISTORY_DESCRIPTION_MAX_CHARS,
+    HISTORY_TITLE_MAX_CHARS,
+    HistoryManager,
+    _setHistoryPathForTesting,
+} from '../src/core/historyManager.js';
 import { assert, assertEqual, runTests } from './testUtils.js';
 
 const TEST_PATH = GLib.build_filenamev([GLib.get_tmp_dir(), 'katabai-history-test.json']);
@@ -111,6 +116,103 @@ const tests = [
             const id = HistoryManager.getCached()[0].id;
             HistoryManager.deleteConversation(id);
             assert(!HistoryManager.getCached().some((e) => e.id === id), 'entry deleted');
+        },
+    ],
+
+    [
+        'archive: setConversationArchived toggles, persists, and survives auto-save',
+        () => {
+            const id = HistoryManager.saveConversation(userMsg('archivable conversation'));
+            assert(HistoryManager.setConversationArchived(id, true), 'archive call returned true');
+            HistoryManager.flushSync();
+            HistoryManager.invalidateCache();
+
+            let entry = HistoryManager.getCached().find((e) => e.id === id);
+            assertEqual(entry.archived, true, 'archived flag persisted to disk');
+            assert(
+                HistoryManager.getArchivedConversations().some((e) => e.id === id),
+                'present in the archived view',
+            );
+            assert(
+                !HistoryManager.getActiveConversations().some((e) => e.id === id),
+                'absent from the active view',
+            );
+
+            // A later auto-save must not silently unarchive the conversation.
+            HistoryManager.saveConversation(userMsg('archivable conversation updated'), id);
+            entry = HistoryManager.getCached().find((e) => e.id === id);
+            assertEqual(entry.archived, true, 'archived survives auto-save');
+
+            HistoryManager.setConversationArchived(id, false);
+            entry = HistoryManager.getCached().find((e) => e.id === id);
+            assertEqual(entry.archived, undefined, 'flag removed on unarchive');
+            assertEqual(
+                HistoryManager.setConversationArchived('conv_missing', true),
+                false,
+                'unknown id returns false',
+            );
+        },
+    ],
+
+    [
+        'meta: updateConversationMeta sets custom title/description; auto-save preserves them',
+        () => {
+            const id = HistoryManager.saveConversation(userMsg('original first message'));
+            assert(
+                HistoryManager.updateConversationMeta(id, {
+                    title: 'Manual Title',
+                    description: 'One line summary.',
+                }),
+                'update returned true',
+            );
+            let entry = HistoryManager.getCached().find((e) => e.id === id);
+            assertEqual(entry.title, 'Manual Title', 'title set');
+            assertEqual(entry.customTitle, true, 'custom-title flag set');
+            assertEqual(entry.description, 'One line summary.', 'description set');
+
+            // Re-saving (as the auto-save does) must not clobber the metadata.
+            HistoryManager.saveConversation(userMsg('different first message'), id);
+            entry = HistoryManager.getCached().find((e) => e.id === id);
+            assertEqual(entry.title, 'Manual Title', 'title survives auto-save');
+            assertEqual(entry.description, 'One line summary.', 'description survives auto-save');
+            assertEqual(entry.customTitle, true, 'custom-title flag survives auto-save');
+            assertEqual(
+                HistoryManager.updateConversationMeta('conv_missing', { title: 'x' }),
+                false,
+                'unknown id returns false',
+            );
+        },
+    ],
+
+    [
+        'meta: empty title resets to the automatic title; empty description clears',
+        () => {
+            const id = HistoryManager.saveConversation(userMsg('auto title source'));
+            HistoryManager.updateConversationMeta(id, { title: 'Custom', description: 'desc' });
+            HistoryManager.updateConversationMeta(id, { title: '   ', description: '' });
+            const entry = HistoryManager.getCached().find((e) => e.id === id);
+            assertEqual(entry.title, 'auto title source', 'automatic title restored');
+            assertEqual(entry.customTitle, undefined, 'custom-title flag cleared');
+            assertEqual(entry.description, undefined, 'description cleared');
+        },
+    ],
+
+    [
+        'meta: stored title/description are normalized and length-capped',
+        () => {
+            const id = HistoryManager.saveConversation(userMsg('cap test'));
+            HistoryManager.updateConversationMeta(id, {
+                title: `  first\nline ${'T'.repeat(500)}  `,
+                description: 'D'.repeat(2000),
+            });
+            const entry = HistoryManager.getCached().find((e) => e.id === id);
+            assertEqual(entry.title.length, HISTORY_TITLE_MAX_CHARS, 'title capped');
+            assert(entry.title.startsWith('first line T'), 'title newline collapsed');
+            assertEqual(
+                entry.description.length,
+                HISTORY_DESCRIPTION_MAX_CHARS,
+                'description capped',
+            );
         },
     ],
 

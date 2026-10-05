@@ -5,6 +5,7 @@ import {
     splitHistoryForBudget,
     buildMemoryUpdateMessages,
     parseMemoryResponse,
+    stringifyContextValue,
 } from '../src/core/sessionMemory.js';
 import { assert, assertEqual, createMockSettings, runTests } from './testUtils.js';
 
@@ -79,6 +80,29 @@ const tests = [
             );
         },
     ],
+    [
+        'budget: non-positive ollama num-ctx falls back to the default',
+        () => {
+            const zero = createMockSettings({ 'ollama-num-ctx': 0 });
+            assertEqual(
+                estimateProviderCharBudget('ollama', zero),
+                Math.floor(4096 * 0.8 * 3.5),
+                'zero num-ctx → default budget (never a zero budget)',
+            );
+            const negative = createMockSettings({ 'ollama-num-ctx': -1 });
+            assertEqual(
+                estimateProviderCharBudget('ollama', negative),
+                Math.floor(4096 * 0.8 * 3.5),
+                'negative num-ctx → default budget',
+            );
+            const unsloth = createMockSettings({ 'unsloth-num-ctx': 0 });
+            assertEqual(
+                estimateProviderCharBudget('unsloth', unsloth),
+                Math.floor(8192 * 0.8 * 3.5),
+                'unsloth zero num-ctx → default budget',
+            );
+        },
+    ],
 
     // ── splitHistoryForBudget ──────────────────────────────────────────────
 
@@ -142,6 +166,72 @@ const tests = [
         () => {
             const result = splitHistoryForBudget([userMsg('hi')], 1000, '   ');
             assertEqual(result.memoryMsg, null, 'whitespace memory → null');
+        },
+    ],
+
+    [
+        'split: image payloads count at a fixed cost, not base64 length',
+        () => {
+            const base64 = 'A'.repeat(200000);
+            const msgs = [
+                userMsg('plain question '.repeat(10)),
+                asstMsg('plain answer '.repeat(10)),
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: 'look at this' },
+                        {
+                            type: 'image_url',
+                            image_url: { url: `data:image/png;base64,${base64}` },
+                        },
+                    ],
+                },
+            ];
+            const result = splitHistoryForBudget(msgs, 6000, '');
+            assertEqual(result.foldedCount, 0, 'image collapsed — text history retained');
+            assertEqual(result.tail.length, 3, 'all messages kept');
+        },
+    ],
+
+    [
+        'images: stringifyContextValue collapses every supported image shape',
+        () => {
+            const base64 = 'A'.repeat(40000);
+            const openai = {
+                role: 'user',
+                content: [
+                    { type: 'text', text: 'what is this' },
+                    { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+                ],
+            };
+            const openaiJson = stringifyContextValue(openai);
+            assert(openaiJson.length < 20000, 'openai data URI collapsed');
+            assert(openaiJson.includes('what is this'), 'text block preserved');
+
+            const ollama = { role: 'user', content: 'x', images: [base64, base64] };
+            assert(stringifyContextValue(ollama).length < 20000, 'ollama images array collapsed');
+
+            const anthropic = {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: base64 },
+            };
+            assert(
+                stringifyContextValue(anthropic).length < 20000,
+                'anthropic base64 source collapsed',
+            );
+
+            // Non-image values serialize IDENTICALLY to JSON.stringify.
+            assertEqual(
+                stringifyContextValue({ a: 1, b: 'x' }),
+                JSON.stringify({ a: 1, b: 'x' }),
+                'plain object identical',
+            );
+            assertEqual(stringifyContextValue([1, 2, 3]), '[1,2,3]', 'plain array identical');
+            assertEqual(
+                stringifyContextValue({ url: 'https://example.com/x', data: 'short' }),
+                JSON.stringify({ url: 'https://example.com/x', data: 'short' }),
+                'non-image url/data untouched',
+            );
         },
     ],
 

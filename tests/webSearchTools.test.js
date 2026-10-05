@@ -236,14 +236,15 @@ const tests = [
     ],
 
     [
-        'buildWebSearchResultBlock: guard rails at high search count',
+        'buildWebSearchResultBlock: advisory (not stop) guidance at high search count',
         () => {
             const block = buildWebSearchResultBlock(
                 'test',
                 [{ title: 'R1', url: 'https://a.com', content: 'S1' }],
                 { totalSearchesThisTurn: 5 },
             );
-            assert(block.includes('STOP SEARCHING'), 'stop message at 5 searches');
+            assert(block.includes('close trail'), 'close-trail guidance at 5 searches');
+            assert(!block.includes('STOP SEARCHING'), 'no hard stop message');
         },
     ],
 
