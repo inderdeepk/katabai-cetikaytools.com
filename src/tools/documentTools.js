@@ -271,6 +271,30 @@ export function getAttachmentInfoForPath(path) {
     return getAttachmentInfoForExtension(getFileExtension(path));
 }
 
+// True when the attachment metadata (or its file extension) describes an
+// image.  Lives here (next to getAttachmentInfoForPath) so the dialog and the
+// provider-payload shaping in src/providers/historyPayload.js share a single
+// detector.
+export function looksLikeImageAttachment(attachmentMeta) {
+    if (!attachmentMeta) {
+        return false;
+    }
+
+    if (attachmentMeta.kind === 'image') {
+        return true;
+    }
+
+    if (
+        typeof attachmentMeta.mimeType === 'string' &&
+        attachmentMeta.mimeType.startsWith('image/')
+    ) {
+        return true;
+    }
+
+    const info = getAttachmentInfoForPath(attachmentMeta.path || attachmentMeta.displayName || '');
+    return info.kind === 'image';
+}
+
 function getFileExtension(path) {
     const filename = GLib.path_get_basename(path);
     const lastDot = filename.lastIndexOf('.');

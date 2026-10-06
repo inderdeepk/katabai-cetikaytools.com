@@ -664,7 +664,7 @@ export function buildKnowledgeSection(ctx) {
     const limitsGroup = createPreferencesGroup({
         title: 'Storage Limits',
         description:
-            'Prevent the knowledge base from growing beyond your disk budget. Set to 0 to disable a cap.',
+            'Prevent the knowledge base from growing beyond your disk budget. Set to 0 to disable a cap. Changes apply immediately.',
     });
     detailPage.add(limitsGroup);
 

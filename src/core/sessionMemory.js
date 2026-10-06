@@ -41,9 +41,10 @@ export const IMAGE_TOKEN_ESTIMATE = 1024;
 // character budget and the token estimate stay proportional.
 const IMAGE_CHAR_EQUIVALENT = Math.round(IMAGE_TOKEN_ESTIMATE * CHARS_PER_TOKEN);
 
-// DeepSeek input budget mirrors extension.js DEEPSEEK_INPUT_TOKEN_BUDGET
-// (DEEPSEEK_MAX_CONTEXT_TOKENS 1,000,000 - DEEPSEEK_MAX_OUTPUT_TOKENS 384,000).
-// Keep the two in sync if either constant changes.
+// DeepSeek input budget mirrors src/providers/historyPayload.js
+// DEEPSEEK_INPUT_TOKEN_BUDGET (DEEPSEEK_MAX_CONTEXT_TOKENS 1,000,000 -
+// DEEPSEEK_MAX_OUTPUT_TOKENS 384,000).  sessionMemory is a lower layer and
+// cannot import from providers/ — keep the two in sync if either changes.
 const DEEPSEEK_INPUT_TOKEN_BUDGET = 616000;
 
 // Context-window sizes (tokens) for providers that don't expose a configurable

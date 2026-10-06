@@ -33,15 +33,13 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Animation from 'resource:///org/gnome/shell/ui/animation.js';
 import {
     buildDocumentPromptBlock,
-    buildMissingDocumentPromptBlock,
-    buildMissingImagePromptBlock,
-    buildVisionAnalysisPromptBlock,
     DOCUMENT_TOOL_COMMAND,
     DOCUMENT_TOOL_ICON,
     DOCUMENT_TOOL_NAME,
     DocumentToolError,
     DocumentToolRuntime,
     getAttachmentInfoForPath,
+    looksLikeImageAttachment,
     parseDocumentCommand,
     resolveDocumentPath,
 } from './src/tools/documentTools.js';
@@ -221,6 +219,19 @@ import {
     splitHistoryForBudget,
     stringifyContextValue,
 } from './src/core/sessionMemory.js';
+import {
+    DEEPSEEK_MAX_CONTEXT_TOKENS,
+    DEEPSEEK_MAX_OUTPUT_TOKENS,
+    estimateTextTokens,
+    estimateContentTokens,
+    truncateOllamaMessages,
+    truncateDeepSeekMessages,
+    truncateToolResultForIteration,
+    getMessageAttachments,
+    getAttachmentKind,
+    extractMessageText,
+    sanitizeHistoryMessage,
+} from './src/providers/historyPayload.js';
 
 // Re-export tool name/command/icon constants from toolDefinitions (canonical source)
 import {
@@ -425,10 +436,9 @@ const RAG_INDEX_MAX_TEXT_CHARS = 60000;
 const DEEPSEEK_MAX_RETRY_ATTEMPTS = 3;
 const DEEPSEEK_BACKOFF_BASE_MS = 1000;
 const DEEPSEEK_BACKOFF_CAP_MS = 15000;
-const DEEPSEEK_MAX_CONTEXT_TOKENS = 1000000;
-const DEEPSEEK_MAX_OUTPUT_TOKENS = 384000;
-const DEEPSEEK_INPUT_TOKEN_BUDGET = DEEPSEEK_MAX_CONTEXT_TOKENS - DEEPSEEK_MAX_OUTPUT_TOKENS;
-const DEEPSEEK_CONTEXT_PREFIX_MESSAGES = 2;
+// DEEPSEEK_MAX_CONTEXT_TOKENS / DEEPSEEK_MAX_OUTPUT_TOKENS and the derived
+// input-token budget live in src/providers/historyPayload.js (imported at the
+// top of this file) alongside the truncation logic that consumes them.
 // DeepSeek billing rates + tier helpers live in src/usage/deepseekPricing.js
 // (imported at the top of this file) so the chat cache-savings chip and the
 // token-usage ledger share a single rate card.
@@ -675,26 +685,6 @@ function setProviderIcon(
 
     actor.gicon = null;
     actor.icon_name = fallbackIconName;
-}
-
-function looksLikeImageAttachment(attachmentMeta) {
-    if (!attachmentMeta) {
-        return false;
-    }
-
-    if (attachmentMeta.kind === 'image') {
-        return true;
-    }
-
-    if (
-        typeof attachmentMeta.mimeType === 'string' &&
-        attachmentMeta.mimeType.startsWith('image/')
-    ) {
-        return true;
-    }
-
-    const info = getAttachmentInfoForPath(attachmentMeta.path || attachmentMeta.displayName || '');
-    return info.kind === 'image';
 }
 
 function looksLikeVisionModel(modelName) {
@@ -1496,6 +1486,7 @@ class KatabDialog {
         this._ragCapWarnedAt = 0; // throttle for "indexing blocked" warnings
         this._ragHighUsageWarned = false; // 80%-full warning shown this session
         this._ragEmbedWarnedAt = 0; // throttle for "embeddings down" warnings
+        this._ragLimitsChangedTimeoutId = 0; // debounce for storage-limit changes
         this._focusPromptTimeoutId = 0; // timeout ID for deferred focusPrompt
 
         // Track settings-handler IDs so destroy() can disconnect them. The
@@ -1570,6 +1561,21 @@ class KatabDialog {
                 /* settings read may fail */
             }
         });
+        // Storage-limit changes (chunk cap, total size, auto-prune) apply to every
+        // new index request immediately, but the running extension must also
+        // re-evaluate: retry content the previous limit blocked and re-arm the
+        // usage warnings under the new numbers.  Previously only a restart (via
+        // the startup health check) re-checked anything, so a raised cap could
+        // look like it had no effect until the shell was restarted.
+        for (const limitKey of [
+            'rag-max-chunks-per-collection',
+            'rag-max-total-size-mb',
+            'rag-auto-prune',
+        ]) {
+            this._connectSetting(`changed::${limitKey}`, () =>
+                this._scheduleRagStorageLimitsApply(limitKey),
+            );
+        }
         // Preferences bumps this key on "Re-index" / "Clear Knowledge Base" so
         // the running extension resets its in-memory sentinel immediately —
         // without it, the next debounced save resurrects stale index state and
@@ -1803,6 +1809,9 @@ class KatabDialog {
                 }
             } else if (event.type() === Clutter.EventType.BUTTON_PRESS) {
                 const [cx, cy] = event.get_coords();
+                const insideDialog = !this._isClickOutsideDialog(cx, cy);
+                let dismissedPopup = false;
+
                 // Close the Tools popup when clicking outside both the popup
                 // and the gear button.
                 if (this._toolsPopup?.visible) {
@@ -1810,7 +1819,7 @@ class KatabDialog {
                     const inGearBtn = this._isPointInActor(this._toolsGearWrap, cx, cy);
                     if (!inPopup && !inGearBtn) {
                         this._hideToolsPopup();
-                        return Clutter.EVENT_STOP;
+                        dismissedPopup = true;
                     }
                 }
                 // Close the Session Info popup when clicking outside both
@@ -1820,8 +1829,19 @@ class KatabDialog {
                     const inTokenBox = this._isPointInActor(this._tokenBox, cx, cy);
                     if (!inPopup && !inTokenBox) {
                         this._hideSessionInfoPopup();
-                        return Clutter.EVENT_STOP;
+                        dismissedPopup = true;
                     }
+                }
+                // Dismissing a floating popup must not eat the click for the
+                // dialog control under the cursor: swallowing it here made
+                // every header button (New Chat, History, …) need a second
+                // click whenever a hover-opened Tools / Session Info popup
+                // was still on screen.  In-dialog clicks are forwarded after
+                // the dismissal; outside-dialog clicks stay consumed so one
+                // click only dismisses the popup and the next one closes the
+                // chat.
+                if (dismissedPopup) {
+                    return insideDialog ? Clutter.EVENT_PROPAGATE : Clutter.EVENT_STOP;
                 }
                 // Only close the chat when the click is outside the dialog
                 // container AND outside every visible floating popup.  Popups
@@ -1829,7 +1849,7 @@ class KatabDialog {
                 // dialog widgets but sized/clamped independently); treating
                 // those clicks as "outside" swallowed the click and closed the
                 // chat window instead.
-                if (this._isClickOutsideDialog(cx, cy) && !this._isClickOnDialogPopup(cx, cy)) {
+                if (!insideDialog && !this._isClickOnDialogPopup(cx, cy)) {
                     this.close();
                     return Clutter.EVENT_STOP;
                 }
@@ -3855,13 +3875,68 @@ class KatabDialog {
         this._ragCapWarnedAt = Date.now();
         try {
             if (this.isOpen) {
-                this._addSystemMessage(`Knowledge base indexing was skipped: ${reason}`, {
+                // The service message names the limit but not where to change
+                // it - point at the setting that lifts the block.
+                const hint = /cap\b|storage/i.test(reason)
+                    ? ' Storage limits live in Settings \u25b8 Tools \u25b8 Knowledge Base.'
+                    : '';
+                this._addSystemMessage(`Knowledge base indexing was skipped: ${reason}${hint}`, {
                     variant: 'warning',
                 });
             }
         } catch (_) {
             /* dialog may be mid-teardown */
         }
+    }
+
+    /** Storage-limit settings changed (chunk cap / total size / auto-prune).
+     *  The values themselves are read live by every index request, but the
+     *  running extension must also RE-EVALUATE: re-arm the usage warnings
+     *  under the new numbers and retry whatever the previous limit blocked.
+     *  Without this a raised cap looked like it needed a shell restart before
+     *  anything changed (the startup health check did the re-check instead).
+     *  Debounced - typing into / holding a spin button fires per step. */
+    _scheduleRagStorageLimitsApply(key) {
+        if (this._ragLimitsChangedTimeoutId) {
+            GLib.source_remove(this._ragLimitsChangedTimeoutId);
+        }
+        this._ragLimitsChangedTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1200, () => {
+            this._ragLimitsChangedTimeoutId = 0;
+            this._applyRagStorageLimitsChange(key);
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _applyRagStorageLimitsChange(key) {
+        let ragConfig;
+        try {
+            ragConfig = readRagConfig(this._settings);
+        } catch (_) {
+            return;
+        }
+        if (!ragConfig.enabled) return;
+        log(
+            `[Katab:rag] Storage limits changed (${key}) \u2014 applying immediately ` +
+                `(cap=${ragConfig.maxChunksPerCollection} chunks, ` +
+                `total=${ragConfig.maxTotalSizeMb} MB, ` +
+                `auto-prune=${ragConfig.autoPrune ? 'on' : 'off'})`,
+        );
+        // Re-arm the once-per-session / hourly notices so they re-evaluate
+        // against the new limits...
+        this._ragHighUsageWarned = false;
+        this._ragCapWarnedAt = 0;
+        // ...and drain anything the previous limit blocked.  Cap rejections are
+        // never recorded in the index sentinel, so the full reconcile pass
+        // re-attempts them (conversations already indexed are skipped).
+        this._ragReconcileFullRequested = true;
+        if (this.isOpen) {
+            this._addSystemMessage(
+                'Knowledge Base storage limits updated \u2014 applying immediately.',
+            );
+        }
+        this._checkRagHealth().catch((e) =>
+            log(`[Katab:rag] Post-storage-limit health check failed: ${e.message}`),
+        );
     }
 
     /** Preferences bumped 'rag-maintenance-generation' (Re-index / Clear KB).
@@ -4341,25 +4416,11 @@ class KatabDialog {
     }
 
     _getMessageAttachments(message) {
-        return Array.isArray(message?.documents) ? message.documents : [];
+        return getMessageAttachments(message);
     }
 
     _getAttachmentKind(attachmentMeta) {
-        if (!attachmentMeta) {
-            return null;
-        }
-
-        if (attachmentMeta.kind) {
-            return attachmentMeta.kind;
-        }
-
-        return looksLikeImageAttachment(attachmentMeta) ? 'image' : 'document';
-    }
-
-    _messageHasImageAttachments(message) {
-        return this._getMessageAttachments(message).some(
-            (attachmentMeta) => this._getAttachmentKind(attachmentMeta) === 'image',
-        );
+        return getAttachmentKind(attachmentMeta);
     }
 
     // ── DeepSeek Vision Model (Image Support) ───────────────────────────────
@@ -4633,112 +4694,6 @@ class KatabDialog {
         } catch (_e) {
             /* bubble may be disposed */
         }
-    }
-
-    _buildApiAttachmentPayload(
-        message,
-        {
-            provider = this._currentProvider,
-            visionAnalysis = null,
-            visionModelName = '',
-            nativeVision = false,
-        } = {},
-    ) {
-        // Structured content (arrays of content blocks, e.g. Anthropic tool_use /
-        // tool_result turns) is passed through verbatim.
-        if (Array.isArray(message?.content)) {
-            return { content: message.content, images: [] };
-        }
-        let content = String(message?.content ?? '');
-        const attachments = this._getMessageAttachments(message);
-        if (!attachments.length) {
-            return { content, images: [] };
-        }
-
-        const attachmentBlocks = [];
-        const imageBlocks = [];
-        const images = [];
-
-        for (const attachmentMeta of attachments) {
-            const sessionAttachment = attachmentMeta?.path
-                ? this._sessionDocuments.get(attachmentMeta.path)
-                : null;
-            const attachmentKind =
-                sessionAttachment?.kind || this._getAttachmentKind(attachmentMeta);
-
-            if (attachmentKind === 'image') {
-                if (provider === 'ollama' && sessionAttachment?.base64Data) {
-                    images.push(sessionAttachment.base64Data);
-                } else if (
-                    provider === 'deepseek' &&
-                    nativeVision &&
-                    sessionAttachment?.base64Data
-                ) {
-                    // Native DeepSeek Flash vision: images become OpenAI-style
-                    // image_url content blocks sent straight to the DeepSeek API.
-                    imageBlocks.push({
-                        type: 'image_url',
-                        image_url: {
-                            url: `data:${sessionAttachment.mimeType || attachmentMeta.mimeType || 'image/png'};base64,${sessionAttachment.base64Data}`,
-                        },
-                    });
-                } else if (
-                    provider === 'deepseek' &&
-                    visionAnalysis !== null &&
-                    visionAnalysis !== undefined
-                ) {
-                    // DeepSeek is text-only: the vision model's analysis replaces
-                    // the raw image. Add the block once (dedupe across images).
-                    // Empty string is a sentinel for a failed analysis — the
-                    // helper renders a clear "unavailable" notice.
-                    if (!attachmentBlocks.some((b) => b && b.startsWith('[Vision analysis'))) {
-                        attachmentBlocks.push(
-                            buildVisionAnalysisPromptBlock(visionAnalysis, visionModelName),
-                        );
-                    }
-                } else {
-                    attachmentBlocks.push(buildMissingImagePromptBlock(attachmentMeta));
-                }
-                continue;
-            }
-
-            if (sessionAttachment) {
-                attachmentBlocks.push(buildDocumentPromptBlock(sessionAttachment));
-            } else {
-                attachmentBlocks.push(buildMissingDocumentPromptBlock(attachmentMeta));
-            }
-        }
-
-        if (imageBlocks.length) {
-            const blocks = [];
-            if (content && content.trim()) {
-                blocks.push({ type: 'text', text: content });
-            }
-            blocks.push(...imageBlocks);
-            if (attachmentBlocks.length) {
-                blocks.push({ type: 'text', text: attachmentBlocks.join('\n\n') });
-            }
-            if (!blocks.some((block) => block && block.type === 'text')) {
-                blocks.unshift({ type: 'text', text: 'Please analyze the attached image(s).' });
-            }
-            return { content: blocks, images: [] };
-        }
-
-        if (!attachmentBlocks.length) {
-            return { content, images };
-        }
-
-        if (!content) {
-            return {
-                content: attachmentBlocks.join('\n\n'),
-                images,
-            };
-        }
-
-        return {
-            content: `${content}\n\n${attachmentBlocks.join('\n\n')}`,
-            images,
-        };
     }
 
     _buildDocumentMeta(path) {
@@ -5774,8 +5729,11 @@ class KatabDialog {
 
         // Try to render the actual pet sprite image at header-friendly size
         try {
+            // slotSize matches the 22px pet box in the header — a larger slot
+            // inflates the whole Usage pill (the sprite's preferred size
+            // propagates through the BinLayout into the pill's height).
             const sprite = new PetSpriteActor(this._extension.path, {
-                slotSize: 72,
+                slotSize: 22,
                 animate: false,
                 fallbackText: face,
             });
@@ -7329,58 +7287,11 @@ class KatabDialog {
         });
         titleWrapper.add_child(titleLabel);
 
-        let headerSpacerLeft = new St.Widget({
+        // Flexible gap — the title stays left, all controls cluster on the right.
+        let headerSpacer = new St.Widget({
             x_expand: true,
-            y_expand: true,
         });
-        headerBox.add_child(headerSpacerLeft);
-
-        // AI Token Breakdown — centered header button opening the usage panel.
-        this._usageBtn = new St.BoxLayout({
-            style_class: 'katab-usage-btn',
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            vertical: false,
-            y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: 'Token Usage & Analytics',
-        });
-        this._usageBtn.connect('button-press-event', () => {
-            this._toggleUsagePanel();
-            return Clutter.EVENT_STOP;
-        });
-
-        // Circular pet avatar — pet sprite with fallback face
-        this._headerPetBox = new St.Widget({
-            style_class: 'katab-usage-btn-pet-box',
-            layout_manager: new Clutter.BinLayout(),
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.CENTER,
-        });
-        this._headerPetSprite = null;
-        this._headerPetFallback = new St.Label({
-            text: '─ ‿ ─',
-            style_class: 'katab-usage-btn-pet-fallback',
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.CENTER,
-        });
-        this._headerPetBox.add_child(this._headerPetFallback);
-        this._usageBtn.add_child(this._headerPetBox);
-
-        this._usageBtn.add_child(
-            new St.Label({
-                text: 'Usage',
-                style_class: 'katab-usage-btn-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        headerBox.add_child(this._usageBtn);
-
-        let headerSpacerRight = new St.Widget({
-            x_expand: true,
-            y_expand: true,
-        });
-        headerBox.add_child(headerSpacerRight);
+        headerBox.add_child(headerSpacer);
 
         // Subtle running total of prompt-cache savings for the current chat.
         // Only shown for DeepSeek once at least a little has been saved.
@@ -7529,6 +7440,48 @@ class KatabDialog {
         );
         headerBox.add_child(this._deepseekModelBtn);
 
+        // AI Token Breakdown — header button opening the usage panel. Sits after
+        // the provider/model chips, right before the window actions.
+        this._usageBtn = new St.BoxLayout({
+            style_class: 'katab-usage-btn',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+            vertical: false,
+            y_align: Clutter.ActorAlign.CENTER,
+            accessible_name: 'Token Usage & Analytics',
+        });
+        this._usageBtn.connect('button-press-event', () => {
+            this._toggleUsagePanel();
+            return Clutter.EVENT_STOP;
+        });
+
+        // Circular pet avatar — pet sprite with fallback face
+        this._headerPetBox = new St.Widget({
+            style_class: 'katab-usage-btn-pet-box',
+            layout_manager: new Clutter.BinLayout(),
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._headerPetSprite = null;
+        this._headerPetFallback = new St.Label({
+            text: '─ ‿ ─',
+            style_class: 'katab-usage-btn-pet-fallback',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._headerPetBox.add_child(this._headerPetFallback);
+        this._usageBtn.add_child(this._headerPetBox);
+
+        this._usageBtn.add_child(
+            new St.Label({
+                text: 'Usage',
+                style_class: 'katab-usage-btn-label',
+                y_align: Clutter.ActorAlign.CENTER,
+            }),
+        );
+        headerBox.add_child(this._usageBtn);
+
         // History button — hover shows last 5 conversations dropdown,
         // click opens the full history view.  Single button replaces the
         // old split history-icon + hidden dropdown toggle.
@@ -7634,6 +7587,8 @@ class KatabDialog {
         });
         closeBtn.connect('clicked', () => this.close());
         headerBox.add_child(closeBtn);
+
+        log('[Katab:ui] Header bar built (usage right of model chip)');
     }
 
     _buildChatArea() {
@@ -9412,6 +9367,10 @@ class KatabDialog {
             GLib.source_remove(this._ragIndexFlushTimeoutId);
             this._ragIndexFlushTimeoutId = 0;
         }
+        if (this._ragLimitsChangedTimeoutId) {
+            GLib.source_remove(this._ragLimitsChangedTimeoutId);
+            this._ragLimitsChangedTimeoutId = 0;
+        }
 
         // Stop any in-flight tokenize probe request created by the prompt
         // debounce; the session itself is released with the dialog.
@@ -10480,19 +10439,17 @@ class KatabDialog {
     _toggleSessionInfoPopup() {
         this._clearSessionInfoTimeouts();
 
-        if (this._sessionInfoPopup?.visible && this._sessionInfoClickLocked) {
-            // Click while open and locked → close
+        // A visible popup always closes on a trigger click — whether it was
+        // opened by hover or by click.  The old "click while hover-shown
+        // pins it open" branch turned the click into a silent no-op, which
+        // read as a stuck button (users clicked again and again).
+        if (this._sessionInfoPopup?.visible) {
             this._hideSessionInfoPopup();
             return;
         }
 
-        if (this._sessionInfoPopup?.visible) {
-            // Click while hover-shown → lock it open
-            this._sessionInfoClickLocked = true;
-            return;
-        }
-
-        // Click while closed → show and lock
+        // Click while closed → show; the click lock keeps it open while the
+        // pointer moves onto it (hover-opened previews still auto-hide).
         this._sessionInfoClickLocked = true;
         this._showSessionInfoPopup();
     }
@@ -10739,13 +10696,11 @@ class KatabDialog {
     _toggleToolsPopup() {
         this._clearToolsTimeouts();
 
-        if (this._toolsPopup?.visible && this._toolsClickLocked) {
-            this._hideToolsPopup();
-            return;
-        }
-
+        // A visible popup always closes on a trigger click (same rationale
+        // as the Session Info toggle) — a hover-opened popup used to swallow
+        // the first click as a silent "pin" no-op.
         if (this._toolsPopup?.visible) {
-            this._toolsClickLocked = true;
+            this._hideToolsPopup();
             return;
         }
 
@@ -11099,244 +11054,13 @@ class KatabDialog {
         message,
         { provider = this._currentProvider, thinkingEnabled = false } = {},
     ) {
-        let sanitized = {
-            role: message.role,
-        };
-
-        const attachments = this._getMessageAttachments(message);
-        const visionConfig = provider === 'deepseek' ? this._getVisionModelConfig() : null;
-        // Native DeepSeek Flash vision: user image messages keep their array
-        // content blocks (text + image_url) instead of being flattened to a
-        // string or routed through the orchestration vision model.
-        const nativeVision =
-            provider === 'deepseek' &&
-            message.role === 'user' &&
-            this._messageHasImageAttachments(message) &&
-            this._isDeepSeekNativeVisionModel();
-        const attachmentPayload = this._buildApiAttachmentPayload(message, {
+        return sanitizeHistoryMessage(message, {
             provider,
-            // `??` (not `||`) preserves the empty-string sentinel used to mark
-            // a failed vision analysis.
-            visionAnalysis: provider === 'deepseek' ? (message.visionAnalysis ?? null) : null,
-            visionModelName: visionConfig?.model || '',
-            nativeVision,
+            thinkingEnabled,
+            isDeepSeekNativeVisionModel: () => this._isDeepSeekNativeVisionModel(),
+            getVisionModelConfig: () => this._getVisionModelConfig(),
+            getSessionAttachment: (path) => (path ? this._sessionDocuments.get(path) : null),
         });
-
-        if (message.content !== undefined || attachments.length) {
-            sanitized.content = attachmentPayload.content;
-        }
-
-        // When the provider is not Anthropic (i.e. DeepSeek, OpenAI, Ollama
-        // or other OpenAI-compatible APIs), convert array-format content
-        // blocks (e.g. Anthropic tool_use / tool_result turns that survive
-        // a provider switch mid-conversation) into the string format that
-        // these APIs expect.
-        if (provider !== 'anthropic' && Array.isArray(sanitized.content) && !nativeVision) {
-            const blocks = sanitized.content;
-            // Assistant tool_use blocks → convert to tool_calls payload.
-            if (sanitized.role === 'assistant' && blocks.every((b) => b?.type === 'tool_use')) {
-                sanitized.tool_calls = blocks.map((b) => ({
-                    id: b.id || '',
-                    type: 'function',
-                    function: {
-                        name: b.name || '',
-                        arguments: JSON.stringify(b.input || {}),
-                    },
-                }));
-                delete sanitized.content;
-            } else {
-                // Everything else (tool_result blocks, mixed content, etc.)
-                // → flatten to a plain-text string so the API accepts it.
-                sanitized.content = this._extractMessageText({ content: blocks });
-                if (!sanitized.content) {
-                    delete sanitized.content;
-                }
-            }
-        }
-
-        // DeepSeek and other OpenAI-compatible APIs reject any message
-        // field that is an object/map where a string is expected.  This can
-        // happen when switching from a provider that stores exotic types in
-        // message fields (e.g. an object slipped into `content` or `name`
-        // during a malformed response).  Coerce every known string-valued
-        // field to a plain string before serialization.
-        if (provider !== 'anthropic') {
-            // Coerce string-valued fields and also `role` (defence-in-depth).
-            for (const field of ['role', 'content', 'name', 'tool_call_id', 'reasoning_content']) {
-                const val = sanitized[field];
-                if (val !== undefined && val !== null && typeof val !== 'string') {
-                    // Native DeepSeek Flash vision keeps `content` as an array
-                    // of text/image_url blocks — do not stringify it.
-                    if (field === 'content' && nativeVision && Array.isArray(val)) {
-                        continue;
-                    }
-                    sanitized[field] =
-                        typeof val === 'object'
-                            ? this._extractMessageText({ content: val })
-                            : String(val);
-                    if (!sanitized[field]) {
-                        delete sanitized[field];
-                    }
-                }
-            }
-            // Strip every other field whose value is an object — DeepSeek
-            // (and other OpenAI-compatible APIs) will reject any unknown
-            // map-valued key.
-            for (const key of Object.keys(sanitized)) {
-                if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
-                    // `tool_calls` is the only array-of-objects field the
-                    // API accepts; let it through.
-                    if (key === 'tool_calls' && Array.isArray(sanitized[key])) {
-                        continue;
-                    }
-                    // Native DeepSeek Flash vision also keeps array `content`.
-                    if (key === 'content' && nativeVision && Array.isArray(sanitized[key])) {
-                        continue;
-                    }
-                    delete sanitized[key];
-                }
-            }
-        }
-
-        if (message.webSearchContext) {
-            if (typeof sanitized.content === 'string') {
-                sanitized.content = sanitized.content
-                    ? `${sanitized.content}\n\n${message.webSearchContext}`
-                    : message.webSearchContext;
-            } else if (sanitized.content === undefined) {
-                sanitized.content = message.webSearchContext;
-            }
-        }
-
-        if (message.crawl4aiContext) {
-            if (typeof sanitized.content === 'string') {
-                sanitized.content = sanitized.content
-                    ? `${sanitized.content}\n\n${message.crawl4aiContext}`
-                    : message.crawl4aiContext;
-            } else if (sanitized.content === undefined) {
-                sanitized.content = message.crawl4aiContext;
-            }
-        }
-
-        if (message.knowledgeContext) {
-            if (typeof sanitized.content === 'string') {
-                sanitized.content = sanitized.content
-                    ? `${sanitized.content}\n\n${message.knowledgeContext}`
-                    : message.knowledgeContext;
-            } else if (sanitized.content === undefined) {
-                sanitized.content = message.knowledgeContext;
-            }
-        }
-
-        if (message.tool_calls !== undefined) {
-            sanitized.tool_calls = message.tool_calls;
-            // OpenAI-compatible APIs (DeepSeek, OpenAI, Ollama) require content
-            // to be null or absent when tool_calls is present. Strip empty/falsy
-            // content so the API does not reject the message or return an empty reply.
-            if (!sanitized.content) {
-                delete sanitized.content;
-            }
-        }
-
-        // OpenAI-compatible APIs are strict about message and tool_call shapes.
-        // Strip every key that is not part of the OpenAI Chat Completions schema
-        // so that provider-specific artifacts (index, documents, provider,
-        // metrics, etc.) never reach the API.
-        if (provider !== 'anthropic') {
-            const ALLOWED_MESSAGE_KEYS = new Set([
-                'role',
-                'content',
-                'name',
-                'tool_calls',
-                'tool_call_id',
-                'reasoning_content', // DeepSeek-specific, harmless for others
-                'type', // DeepSeek-specific, harmless for others
-                'images', // Ollama image attachments
-            ]);
-            for (const key of Object.keys(sanitized)) {
-                if (!ALLOWED_MESSAGE_KEYS.has(key)) {
-                    delete sanitized[key];
-                }
-            }
-
-            // DeepSeek requires a `type` field on every message (set to the role).
-            // This is not part of the OpenAI spec; other providers (Ollama) may
-            // reject it, so only add it when targeting DeepSeek.
-            if (provider === 'deepseek' && !sanitized.type) {
-                sanitized.type = sanitized.role;
-            } else if (provider !== 'deepseek') {
-                delete sanitized.type;
-            }
-
-            // Ensure tool_calls conform: only id / type / function, and
-            // function only name / arguments (both strings).
-            // Ollama expects its native format (arguments as objects, no forced type field)
-            // — do NOT convert, or the server will 400 on the next turn.
-            if (Array.isArray(sanitized.tool_calls) && provider !== 'ollama') {
-                for (const tc of sanitized.tool_calls) {
-                    if (!tc || typeof tc !== 'object') continue;
-                    // Strip unexpected keys from tool_call
-                    for (const k of Object.keys(tc)) {
-                        if (k !== 'id' && k !== 'type' && k !== 'function') {
-                            delete tc[k];
-                        }
-                    }
-                    if (!tc.type) tc.type = 'function';
-                    if (tc.function && typeof tc.function === 'object') {
-                        for (const k of Object.keys(tc.function)) {
-                            if (k !== 'name' && k !== 'arguments') {
-                                delete tc.function[k];
-                            }
-                        }
-                        if (typeof tc.function.arguments !== 'string') {
-                            tc.function.arguments =
-                                tc.function.arguments != null
-                                    ? JSON.stringify(tc.function.arguments)
-                                    : '';
-                        }
-                    }
-                }
-            }
-        }
-
-        if (message.tool_call_id !== undefined) {
-            sanitized.tool_call_id = message.tool_call_id;
-        }
-
-        // For DeepSeek: assistant messages that carry reasoning_content must
-        // echo it back. When the current request has thinking enabled the API
-        // requires it on *every* assistant message — even tool-call turns where
-        // thinking was disabled — to maintain chain-of-thought continuity.
-        // When thinking is disabled we still echo it on tool-call turns because
-        // the API generated that reasoning_content originally and expects it
-        // alongside the tool_calls.
-        if (provider === 'deepseek' && message.role === 'assistant') {
-            if (thinkingEnabled) {
-                // Thinking is ON: every assistant message MUST carry
-                // reasoning_content (at minimum an empty string).
-                sanitized.reasoning_content = message.reasoning_content || '';
-            } else if (message.tool_calls !== undefined && message.reasoning_content) {
-                // Thinking is OFF but this message had tool_calls with
-                // reasoning_content — echo it so the model can continue.
-                sanitized.reasoning_content = message.reasoning_content;
-            }
-        }
-
-        if (message.name !== undefined) {
-            sanitized.name = message.name;
-        }
-
-        if (provider === 'ollama') {
-            const existingImages = Array.isArray(message.images)
-                ? message.images.filter(Boolean)
-                : [];
-            const images = [...existingImages, ...attachmentPayload.images].filter(Boolean);
-            if (images.length) {
-                sanitized.images = images;
-            }
-        }
-
-        return sanitized;
     }
 
     _getApiMessageHistory(provider = this._currentProvider, { thinkingEnabled = false } = {}) {
@@ -11367,13 +11091,13 @@ class KatabDialog {
         // Provider-specific safety nets remain as a final guard for a single
         // oversized recent message that still overflows the budget.
         if (provider === 'deepseek') {
-            return this._truncateDeepSeekMessages(assembled);
+            return truncateDeepSeekMessages(assembled);
         }
         if (provider === 'ollama') {
             // Align the legacy char clamp with the unified budget so a large
             // num-ctx can't re-trigger raw (non-summarizing) truncation below
             // what the memory-aware split already kept.
-            return this._truncateOllamaMessages(assembled, { maxBodyChars: budget });
+            return truncateOllamaMessages(assembled, { maxBodyChars: budget });
         }
 
         return assembled;
@@ -11571,74 +11295,6 @@ class KatabDialog {
         }
     }
 
-    _truncateOllamaMessages(messages, { maxBodyChars = 200000 } = {}) {
-        // Serialized size with image payloads collapsed to a fixed per-image
-        // cost — base64 bytes are a transport detail and must not dwarf the
-        // budget (see stringifyContextValue).
-        const estimateSize = (value) => {
-            try {
-                return stringifyContextValue(value).length;
-            } catch (_) {
-                return Infinity;
-            }
-        };
-
-        if (!Array.isArray(messages) || messages.length <= 4) {
-            log(
-                `[Katab:truncate] Skipping (${messages.length} msgs ≤ 4) — estimate=${estimateSize(messages)} chars`,
-            );
-            return messages;
-        }
-
-        // Per-message sizes computed once; each candidate for `keep` is then
-        // O(1) via suffix sums (the old loop re-serialized the whole candidate
-        // array on every step — O(n²) on the shell thread).
-        const sizes = messages.map((message) => estimateSize(message));
-        const suffix = new Array(messages.length + 1);
-        suffix[messages.length] = 0;
-        for (let i = messages.length - 1; i >= 0; i--) {
-            suffix[i] = suffix[i + 1] + sizes[i];
-        }
-
-        const fullSize = suffix[0] + messages.length + 1;
-        if (fullSize <= maxBodyChars) {
-            log(
-                `[Katab:truncate] No truncation needed — ${messages.length} msgs, ${fullSize} chars ≤ ${maxBodyChars}`,
-            );
-            return messages;
-        }
-
-        // Keep the system prompt (index 0) and drop oldest middle messages
-        // until the serialized body fits under maxBodyChars.
-        const systemMsg = messages[0];
-        const systemSize = sizes[0];
-        for (let keep = messages.length; keep >= 2; keep--) {
-            const suffixSum = suffix[messages.length - keep + 1];
-            const size = Number.isFinite(suffixSum) ? systemSize + suffixSum + keep + 1 : Infinity;
-            if (size <= maxBodyChars) {
-                const candidate = [systemMsg, ...messages.slice(messages.length - keep + 1)];
-                const dropped = messages.length - candidate.length;
-                const droppedRoles = messages
-                    .slice(1, messages.length - keep + 1)
-                    .map(
-                        (m) =>
-                            `${m.role}${m.tool_calls ? '(tool_calls)' : m.tool_call_id ? '(tool_result)' : ''}`,
-                    );
-                log(
-                    `[Katab:truncate] Truncated: ${messages.length} → ${candidate.length} msgs (${size} chars). Dropped ${dropped} middle msgs: [${droppedRoles.join(', ')}]`,
-                );
-                return candidate;
-            }
-        }
-
-        // Fallback: system + last message only
-        const minimal = [systemMsg, messages[messages.length - 1]];
-        log(
-            `[Katab:truncate] Heavy truncation: ${messages.length} → 2 msgs (${estimateSize(minimal)} chars)`,
-        );
-        return minimal;
-    }
-
     _shouldApplyWebContentSafetyPolicy(provider = this._currentProvider) {
         if (provider === 'unsloth') {
             return true;
@@ -11718,80 +11374,13 @@ class KatabDialog {
     }
 
     _estimateTextTokens(text) {
-        if (text === null || text === undefined || text === '') {
-            return 0;
-        }
-        if (typeof text !== 'string') {
-            // Defence: a non-string value must never degrade to
-            // "[object Object]" (which massively under-counts a real payload).
-            try {
-                text = JSON.stringify(text);
-            } catch (_e) {
-                text = String(text);
-            }
-        }
-
-        return Math.ceil(text.length / 4);
+        return estimateTextTokens(text);
     }
 
-    // Token estimate for a message `content` value.  Attached images are
-    // charged a fixed per-image cost instead of their base64 payload length:
-    // one photo's base64 is megabytes, so counting it as text made the context
-    // gauge read ~1M tokens for a single image and let images evict the whole
-    // text history from the budget (see stringifyContextValue).
+    // Token estimate for a message `content` value.  Image blocks are charged
+    // a fixed per-image cost — see estimateContentTokens in historyPayload.js.
     _estimateContentTokens(content) {
-        if (content === null || content === undefined || content === '') {
-            return 0;
-        }
-        if (typeof content === 'string') {
-            return this._estimateTextTokens(content);
-        }
-        if (Array.isArray(content)) {
-            let total = 0;
-            for (const block of content) {
-                if (!block || typeof block !== 'object') {
-                    total += this._estimateTextTokens(block);
-                    continue;
-                }
-                if (
-                    block.type === 'image_url' ||
-                    block.type === 'image' ||
-                    block.image_url ||
-                    block.source?.type === 'base64'
-                ) {
-                    total += IMAGE_TOKEN_ESTIMATE;
-                    continue;
-                }
-                total += this._estimateTextTokens(JSON.stringify(block));
-            }
-            return total;
-        }
-        return this._estimateTextTokens(JSON.stringify(content));
-    }
-
-    _estimateDeepSeekMessageTokens(message) {
-        if (!message) {
-            return 0;
-        }
-
-        let total = 6;
-        total += this._estimateTextTokens(message.role);
-        total += this._estimateContentTokens(message.content);
-        total += this._estimateTextTokens(message.name);
-
-        if (message.reasoning_content) {
-            total += this._estimateTextTokens(message.reasoning_content);
-        }
-
-        if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-            total += this._estimateTextTokens(JSON.stringify(message.tool_calls));
-        }
-
-        if (Array.isArray(message.images) && message.images.length > 0) {
-            total += message.images.length * IMAGE_TOKEN_ESTIMATE;
-        }
-
-        return total;
+        return estimateContentTokens(content);
     }
 
     _buildDeepSeekUserId() {
@@ -11810,148 +11399,6 @@ class KatabDialog {
         }
 
         return `katab-${normalized}`.slice(0, 512);
-    }
-
-    _getDeepSeekContextPrefixLength(messages) {
-        let prefixLength = 0;
-
-        while (prefixLength < messages.length && messages[prefixLength]?.role === 'system') {
-            prefixLength++;
-        }
-
-        let preservedMessages = 0;
-        while (
-            prefixLength < messages.length &&
-            preservedMessages < DEEPSEEK_CONTEXT_PREFIX_MESSAGES
-        ) {
-            let message = messages[prefixLength];
-            if (!message || message.role === 'tool') {
-                break;
-            }
-
-            prefixLength++;
-            preservedMessages++;
-
-            if (message.role === 'user') {
-                break;
-            }
-        }
-
-        return prefixLength;
-    }
-
-    _getDeepSeekRetentionSpan(annotated, index, prefixLength) {
-        let start = index;
-        let end = index;
-
-        if (annotated[index]?.message?.role === 'tool') {
-            while (start > prefixLength && annotated[start - 1]?.message?.role === 'tool') {
-                start--;
-            }
-
-            if (
-                start > prefixLength &&
-                annotated[start - 1]?.message?.role === 'assistant' &&
-                annotated[start - 1]?.message?.tool_calls !== undefined
-            ) {
-                start--;
-            }
-        } else if (
-            annotated[index]?.message?.role === 'assistant' &&
-            annotated[index]?.message?.tool_calls !== undefined
-        ) {
-            while (end + 1 < annotated.length && annotated[end + 1]?.message?.role === 'tool') {
-                end++;
-            }
-        }
-
-        let tokens = 0;
-        for (let i = start; i <= end; i++) {
-            tokens += annotated[i].tokens;
-        }
-
-        return { start, end, tokens };
-    }
-
-    _truncateDeepSeekMessages(messages, { tokenBudget = DEEPSEEK_INPUT_TOKEN_BUDGET } = {}) {
-        if (!Array.isArray(messages) || messages.length <= 2) {
-            return messages;
-        }
-
-        let annotated = messages.map((message, index) => ({
-            index,
-            message,
-            tokens: this._estimateDeepSeekMessageTokens(message),
-        }));
-
-        let totalTokens = annotated.reduce((sum, item) => sum + item.tokens, 0);
-        if (totalTokens <= tokenBudget) {
-            return messages;
-        }
-
-        let prefixLength = this._getDeepSeekContextPrefixLength(messages);
-        let selectedIndexes = new Set();
-        let selectedTokens = 0;
-
-        for (let i = 0; i < prefixLength; i++) {
-            selectedIndexes.add(i);
-            selectedTokens += annotated[i].tokens;
-        }
-
-        let lastSpan = this._getDeepSeekRetentionSpan(annotated, messages.length - 1, prefixLength);
-        for (let i = lastSpan.start; i <= lastSpan.end; i++) {
-            if (selectedIndexes.has(i)) {
-                continue;
-            }
-
-            selectedIndexes.add(i);
-            selectedTokens += annotated[i].tokens;
-        }
-
-        if (selectedTokens >= tokenBudget) {
-            return annotated
-                .filter((item) => selectedIndexes.has(item.index))
-                .map((item) => item.message);
-        }
-
-        for (let i = messages.length - 1; i >= prefixLength;) {
-            if (selectedIndexes.has(i)) {
-                i--;
-                continue;
-            }
-
-            let span = this._getDeepSeekRetentionSpan(annotated, i, prefixLength);
-            let missingIndexes = [];
-            let missingTokens = 0;
-
-            for (let j = span.start; j <= span.end; j++) {
-                if (selectedIndexes.has(j)) {
-                    continue;
-                }
-
-                missingIndexes.push(j);
-                missingTokens += annotated[j].tokens;
-            }
-
-            if (selectedTokens + missingTokens > tokenBudget) {
-                i = span.start - 1;
-                continue;
-            }
-
-            for (let retainedIndex of missingIndexes) {
-                selectedIndexes.add(retainedIndex);
-            }
-            selectedTokens += missingTokens;
-            i = span.start - 1;
-        }
-
-        if (selectedIndexes.size === messages.length) {
-            return messages;
-        }
-
-        return annotated
-            .filter((item) => selectedIndexes.has(item.index))
-            .map((item) => item.message);
     }
 
     _formatMetricNumber(value, fractionDigits = 1) {
@@ -12861,6 +12308,10 @@ class KatabDialog {
 
     _showRecentChatsPopup() {
         if (!this._historyBtn) return;
+        // Only preview from the chat view — never over the history list or
+        // another auxiliary panel (the popup would cover the panel's first
+        // rows and intercept clicks meant for them).
+        if (!this._chatScroll?.visible) return;
         let history = HistoryManager.getCached();
         let recentEntries = history
             .filter((e) => e.id !== this._currentConversationId && !e.archived)
@@ -13072,29 +12523,11 @@ class KatabDialog {
         return new Date(timestamp * 1000).toLocaleDateString();
     }
 
-    /** Extract searchable plain-text from a message object.
-     *  Handles string content, array content (Anthropic content blocks),
-     *  and tool results. Returns an empty string for unsearchable payloads. */
+    /** Extract searchable plain-text from a message object (string or
+     *  Anthropic-style content blocks). See extractMessageText in
+     *  src/providers/historyPayload.js. */
     _extractMessageText(msg) {
-        let content = msg.content;
-        if (typeof content === 'string') {
-            return content;
-        }
-        if (Array.isArray(content)) {
-            let parts = [];
-            for (let block of content) {
-                if (!block) continue;
-                if (typeof block === 'string') {
-                    parts.push(block);
-                } else if (typeof block.text === 'string') {
-                    parts.push(block.text);
-                } else if (block.type === 'tool_result' && typeof block.content === 'string') {
-                    parts.push(block.content);
-                }
-            }
-            return parts.join(' ');
-        }
-        return '';
+        return extractMessageText(msg);
     }
 
     _renderHistoryList(filterQuery = null) {
@@ -14651,35 +14084,6 @@ class KatabDialog {
         }
 
         return chunks.join('').trim();
-    }
-
-    _extractErrorSummary(responseBody) {
-        if (!responseBody) {
-            return '';
-        }
-
-        try {
-            let parsed = JSON.parse(responseBody);
-            if (
-                parsed?.error &&
-                typeof parsed.error.message === 'string' &&
-                parsed.error.message.trim()
-            ) {
-                return parsed.error.message.trim();
-            }
-            if (typeof parsed.error === 'string' && parsed.error.trim()) {
-                return parsed.error.trim();
-            }
-            if (typeof parsed.message === 'string' && parsed.message.trim()) {
-                return parsed.message.trim();
-            }
-        } catch (_e) {}
-
-        let firstLine = responseBody
-            .split('\n')
-            .map((line) => line.trim())
-            .find(Boolean);
-        return firstLine || '';
     }
 
     _buildRequestDiagnostics({
@@ -18074,93 +17478,6 @@ class KatabDialog {
         }
     }
 
-    // Progressively truncate tool-result text based on the current tool-call
-    // iteration.  Early iterations keep full results; later iterations get
-    // shorter content so the context stays within practical model limits.
-    _truncateToolResultForIteration(text, toolName) {
-        if (!text || typeof text !== 'string') return text;
-        const iteration = this._toolIterations || 0;
-        const tiers = this._getEffectiveSynthesisThresholds().truncationTiers;
-        let tier = tiers[tiers.length - 1];
-        for (const t of tiers) {
-            if (iteration <= t.maxIteration) {
-                tier = t;
-                break;
-            }
-        }
-
-        const isSearch = toolName === WEB_SEARCH_TOOL_NAME;
-        const isRead = toolName === READ_URL_TOOL_NAME;
-        // explore_docs results (TOC + page summary) are bounded like crawl results.
-        const isCrawl = toolName === CRAWL4AI_TOOL_NAME || toolName === EXPLORE_DOCS_TOOL_NAME;
-        // knowledge_search results are capped too (registry resultTruncationKey
-        // is informational only — the switch lives here).
-        const isKnowledge = toolName === RAG_TOOL_NAME;
-
-        if (isRead || isCrawl || isKnowledge) {
-            const maxChars = isRead
-                ? tier.readUrlChars
-                : isCrawl
-                  ? tier.crawlChars
-                  : tier.knowledgeChars || tier.crawlChars;
-            if (text.length > maxChars) {
-                const trimNote = `[Content trimmed at iteration ${iteration} to manage context — re-read this page later if you need the rest.]`;
-                if (isRead || isCrawl) {
-                    // Keep the page's links section (and any trailing safety
-                    // guard / nudges) intact so the agent can still navigate
-                    // to subpages after the body is trimmed.
-                    const { head, tail } = splitLinksSection(text);
-                    if (tail) {
-                        const headBudget = Math.max(
-                            200,
-                            maxChars - tail.length - trimNote.length - 4,
-                        );
-                        return `${head.slice(0, headBudget).trimEnd()}\n\n${trimNote}\n\n${tail}`;
-                    }
-                }
-                return `${text.slice(0, maxChars).trimEnd()}\n\n${trimNote}`;
-            }
-        }
-
-        if (isSearch) {
-            // For web_search results, we trim individual result snippets.
-            // The block is line-based: "N. Title\n   URL: ...\n   snippet\n".
-            // We limit both the number of results and snippet length.
-            const lines = text.split('\n');
-            const result = [];
-            let resultCount = 0;
-            let inResult = false;
-            for (const line of lines) {
-                if (/^\d+\.\s/.test(line)) {
-                    resultCount++;
-                    if (resultCount > tier.searchResults) break;
-                    inResult = true;
-                    result.push(line);
-                } else if (
-                    inResult &&
-                    line.startsWith('   ') &&
-                    resultCount <= tier.searchResults
-                ) {
-                    if (line.length > tier.searchSnippetChars + 3) {
-                        result.push(line.slice(0, tier.searchSnippetChars).trimEnd() + '…');
-                    } else {
-                        result.push(line);
-                    }
-                } else if (!inResult || resultCount <= tier.searchResults) {
-                    result.push(line);
-                }
-            }
-            if (resultCount > tier.searchResults) {
-                result.push(
-                    `\n[${resultCount - tier.searchResults} more results trimmed — iteration ${iteration}.]`,
-                );
-            }
-            return result.join('\n');
-        }
-
-        return text;
-    }
-
     // Wire runtime-specific handlers (WebSearchRuntime, Crawl4AIRuntime,
     // settings, etc.) into the declarative tool registry. Called once in the
     // constructor after runtimes are created.
@@ -18629,17 +17946,775 @@ class KatabDialog {
             return;
         }
 
+        // ── Attachments: document command, picker, vision gating ────────────
+        const attachments = await this._resolveSendAttachments(rawPromptText);
+        if (!attachments) return;
+        let promptText = attachments.promptText;
+        const documentMetas = attachments.documentMetas;
+        const shouldClearPendingAfterSend = attachments.shouldClearPendingAfterSend;
+        const hasImageAttachment = attachments.hasImageAttachment;
+
+        const providerState = this._extension.providerHealthMonitor?.getState(
+            this._currentProvider,
+        );
+        if (this._isBlockingProviderState(providerState)) {
+            this._addSystemMessage(`${providerState.label}: ${providerState.detail}`, {
+                variant: 'warning',
+            });
+            return;
+        }
+
+        // ── Tool-command parsing (/search, /crawl, /research) ───────────────
+        const toolCommands = this._parseSendToolCommands(promptText);
+        if (!toolCommands) return;
+        promptText = toolCommands.promptText;
+        const webSearchQuery = toolCommands.webSearchQuery;
+        const crawl4aiTargetUrl = toolCommands.crawl4aiTargetUrl;
+        const crawl4aiSearchQuery = toolCommands.crawl4aiSearchQuery;
+        const crawlCommand = toolCommands.crawlCommand;
+        const hasResearchPrefix = toolCommands.hasResearchPrefix;
+        const hasResearchSuffix = toolCommands.hasResearchSuffix;
+        const webSearchModeForPrompt = toolCommands.webSearchModeForPrompt;
+        const crawl4aiModeForPrompt = toolCommands.crawl4aiModeForPrompt;
+
+        // ── Knowledge Base enrichment (/kb, auto search, coverage fallback) ─
+        // Manual /kb (incl. /kb import), the automatic pre-send search, and
+        // the low-coverage web fallback all run inside the helper below. It
+        // can await a slow local RAG service, so it enters the ENRICHING phase
+        // after its own validation returns; the stream's _beginActiveResponse
+        // then transitions ENRICHING → AWAITING_MODEL, and an aborted send
+        // settles via _clearActiveResponseState.
+        const enrichment = await this._prepareSendKnowledgeContext({
+            promptText,
+            crawlCommand,
+            webSearchQuery,
+            crawl4aiTargetUrl,
+        });
+        if (!enrichment) return;
+        promptText = enrichment.promptText;
+        const knowledgeContext = enrichment.knowledgeContext;
+        const autoFallbackWebSearch = enrichment.autoFallbackWebSearch;
+        const sendKnowledgeUsage = enrichment.sendKnowledgeUsage;
+
+        const userMessage = {
+            role: 'user',
+            // When a /crawl command was used, strip the raw command text so the
+            // model only sees the conversational part ("tell me about X." rather
+            // than "tell me about X. /crawl https://…"). The scraped content is
+            // attached separately as crawl4aiContext below. If stripping leaves
+            // nothing (bare "/crawl <url>"), keep the original text so the
+            // message still shows in the chat history.
+            content:
+                webSearchQuery !== null
+                    ? webSearchQuery
+                    : crawlCommand?.isCommand
+                      ? stripCrawl4AICommand(promptText) || promptText
+                      : promptText,
+        };
+        if (documentMetas.length) {
+            userMessage.documents = documentMetas;
+        }
+        if (knowledgeContext) {
+            userMessage.knowledgeContext = knowledgeContext;
+        }
+        if (sendKnowledgeUsage) {
+            userMessage.knowledgeUsage = [sendKnowledgeUsage];
+        }
+
+        this._recordSentPrompt(rawPromptText);
+        this._usageCompanionSprite?.showPose('tip', 1200);
+        this._entry.set_text('');
+        this._resetOneShotToolModes(webSearchModeForPrompt, crawl4aiModeForPrompt);
+        this._resetDraftUsage();
+        this._hasConversationStarted = true;
+        this._setWelcomeVisible(false);
+        this._addChatMessage('You', String(userMessage.content ?? '').trim(), 'user', userMessage);
+
+        this._messageHistory.push(userMessage);
+        this._saveCurrentConversation();
+
+        let uiElements = this._addChatMessage('Katab AI', '...', 'assistant');
+        const requestCancellable = new Gio.Cancellable();
+        this._cancellable = requestCancellable;
+        this._beginActiveResponse(
+            uiElements,
+            this._currentProvider,
+            documentMetas.length ? 'document' : 'response',
+            documentMetas.length === 1
+                ? documentMetas[0].displayName
+                : `${documentMetas.length} attachments`,
+        );
+
+        // Surface the pre-send KB-fallback web search in the tool-call log so
+        // the UI reflects searches that ran before the model response started.
+        if (autoFallbackWebSearch) {
+            this._addToolCallLogEntry(uiElements, {
+                toolName: WEB_SEARCH_TOOL_NAME,
+                status: 'success',
+                detail: `Found ${autoFallbackWebSearch.resultCount} result${autoFallbackWebSearch.resultCount !== 1 ? 's' : ''} (KB fallback)`,
+                expandLabel: 'Search query',
+                expandValue: autoFallbackWebSearch.query,
+            });
+        }
+
+        // Surface send-path KB usage (manual /kb or auto KB search) as the
+        // compact footer pill instead of a tool-call row.
+        if (sendKnowledgeUsage) {
+            this._recordKnowledgeUsage(uiElements, sendKnowledgeUsage);
+        }
+
+        // ── DeepSeek Vision Model (Image Support) — see helper ──────────────
+        const visionContinues = await this._runSendVisionPreanalysis({
+            hasImageAttachment,
+            documentMetas,
+            requestCancellable,
+            uiElements,
+            userMessage,
+            webSearchQuery,
+            promptText,
+        });
+        if (!visionContinues) return;
+
+        // ── Deep Research Planner Agent — see helper ─────────────────────────
+        const plannerContinues = await this._runSendResearchPlanner({
+            webSearchQuery,
+            crawl4aiTargetUrl,
+            crawl4aiSearchQuery,
+            hasResearchPrefix,
+            hasResearchSuffix,
+            promptText,
+            documentMetas,
+            shouldClearPendingAfterSend,
+            userMessage,
+            uiElements,
+            requestCancellable,
+        });
+        if (!plannerContinues) return;
+
+        await this._runSendPipeline({
+            documentMetas,
+            shouldClearPendingAfterSend,
+            userMessage,
+            uiElements,
+            requestCancellable,
+            crawl4aiTargetUrl,
+            crawl4aiSearchQuery,
+            webSearchQuery,
+        });
+    }
+
+    /** Deep Research planner phase: plan revision while a plan is pending, or
+     *  fresh plan generation when deep research is On.  Renders the plan card
+     *  for approval (or the revision outcome). Returns false when the turn is
+     *  fully handled (caller must return) or the user cancelled; true when the
+     *  caller should continue with the standard send pipeline. */
+    async _runSendResearchPlanner({
+        webSearchQuery,
+        crawl4aiTargetUrl,
+        crawl4aiSearchQuery,
+        hasResearchPrefix,
+        hasResearchSuffix,
+        promptText,
+        documentMetas,
+        shouldClearPendingAfterSend,
+        userMessage,
+        uiElements,
+        requestCancellable,
+    }) {
+        // When deep research mode is explicitly On, run the planner BEFORE
+        // any searching.  The plan is shown to the user for approval.
+        // Execution begins only after the user clicks "Start Research".
+        // Attachments are parsed here and passed as document context so the
+        // planner can generate sub-tasks informed by the attached content.
+        // Enter the planner block when deep research is On, OR when a plan is
+        // still pending approval — so follow-up prompts during the plan phase
+        // route to plan revision even if the mode was toggled off meanwhile.
+        const planPending =
+            !this._planApproved &&
+            !this._planBranchesStarted &&
+            this._activeResearchPlan.length > 0;
+        if (
+            (this._deepResearchMode === TOOL_MODE_ON || planPending) &&
+            !this._planApproved &&
+            !this._planBranchesStarted
+        ) {
+            // If the user is currently editing the plan, block the send so edits aren't lost.
+            // _beginActiveResponse has already armed the response lifecycle and
+            // set the cancellable, so cancel the pending response to un-stick
+            // the send button (otherwise the next Enter would push a bogus stopped reply).
+            if (this._editingPlan) {
+                this._applyAssistantRender(
+                    uiElements,
+                    'Finish editing the research plan or cancel editing before sending.',
+                    { plain: true },
+                );
+                this._cancelStream();
+                return false;
+            }
+            if (!webSearchQuery && !crawl4aiTargetUrl && !crawl4aiSearchQuery) {
+                // ── Plan revision (follow-up while a plan is pending) ──────────
+                // If a research plan is waiting for approval, a follow-up prompt
+                // is most likely a CHANGE REQUEST to that plan (e.g. "the year is
+                // 2026, GNOME is 50 — update it"), not a brand-new research query.
+                // Route it through the revision planner so it edits the existing
+                // plan instead of replacing it from scratch. An explicit /research
+                // command, on the other hand, means "start a fresh plan".
+                if (hasResearchPrefix || hasResearchSuffix) {
+                    this._activeResearchPlan = [];
+                    this._originalResearchQuery = '';
+                }
+                if (this._activeResearchPlan.length > 0) {
+                    try {
+                        this._applyAssistantRender(uiElements, 'Updating research plan\u2026', {
+                            plain: true,
+                        });
+                        const revisedPlan = await reviseResearchPlan(
+                            {
+                                requestCompletion: (messages, opts) =>
+                                    this._requestNonStreamingCompletion(messages, opts),
+                                modelOverride: this._getDeepResearchRoleModel('synthesis'),
+                                getCancellable: () => this._cancellable,
+                                isCancelled: (e) => this._isRequestCancelled(e),
+                            },
+                            this._originalResearchQuery || promptText,
+                            this._activeResearchPlan,
+                            promptText,
+                        );
+                        // If the chat was rebuilt (new conversation / history switch
+                        // / compaction) while the revision was in flight, discard the
+                        // stale result (mirrors the initial-plan path below).
+                        if (!this._isChatUiCurrent(uiElements)) {
+                            log(
+                                '[Katab:planner] Chat was rebuilt while revising the plan — discarding stale revision.',
+                            );
+                            this._clearActiveResponseState();
+                            return false;
+                        }
+                        if (revisedPlan && revisedPlan.length > 0) {
+                            this._activeResearchPlan = revisedPlan.map((task) => ({
+                                ...task,
+                                status: RESEARCH_PROGRESS_PENDING,
+                                statusDetail: '',
+                                _progressRow: null,
+                            }));
+                            log(
+                                `[Katab:planner] Research plan revised per user feedback — ${revisedPlan.length} sub-tasks.`,
+                            );
+                            if (uiElements && uiElements.contentBox) {
+                                try {
+                                    uiElements.contentBox.destroy_all_children();
+                                } catch (_e) {
+                                    /* disposed */
+                                }
+                            }
+                            this._applyAssistantRender(
+                                uiElements,
+                                "Updated the research plan based on your feedback. Anything else you'd like to change?",
+                                { plain: true },
+                            );
+                            this._renderResearchPlan(this._activeResearchPlan);
+                            this._clearActiveResponseState();
+                            return false;
+                        }
+                        // Revision failed — keep the existing plan untouched and let
+                        // the user know. Never fall through to a fresh plan or direct
+                        // research here: that is exactly what used to clobber the
+                        // pending plan with an unrelated one.
+                        log(
+                            '[Katab:planner] Plan revision returned no valid plan — keeping the existing plan.',
+                        );
+                        if (!this._isChatUiCurrent(uiElements)) {
+                            log(
+                                '[Katab:planner] Chat was rebuilt after failed plan revision — discarding stale UI.',
+                            );
+                            this._clearActiveResponseState();
+                            return false;
+                        }
+                        if (uiElements && uiElements.contentBox) {
+                            try {
+                                uiElements.contentBox.destroy_all_children();
+                            } catch (_e) {
+                                /* disposed */
+                            }
+                        }
+                        this._applyAssistantRender(
+                            uiElements,
+                            "I couldn't apply that change to the research plan. The existing plan is unchanged — you can use 'Edit plan' to adjust it manually, or start research as-is.",
+                            { plain: true },
+                        );
+                        this._renderResearchPlan(this._activeResearchPlan);
+                        this._clearActiveResponseState();
+                        return false;
+                    } catch (e) {
+                        if (this._isRequestCancelled(e)) return false;
+                        log(`[Katab:planner] Plan revision error: ${e.message}`);
+                        if (!this._isChatUiCurrent(uiElements)) {
+                            log(
+                                '[Katab:planner] Chat was rebuilt after plan revision error — discarding stale UI.',
+                            );
+                            this._clearActiveResponseState();
+                            return false;
+                        }
+                        this._applyAssistantRender(
+                            uiElements,
+                            "I hit an error while updating the research plan. The existing plan is unchanged — try again or use 'Edit plan'.",
+                            { plain: true },
+                        );
+                        this._renderResearchPlan(this._activeResearchPlan);
+                        this._clearActiveResponseState();
+                        return false;
+                    }
+                }
+                try {
+                    // Save the original query for synthesis grounding
+                    this._originalResearchQuery = promptText;
+
+                    // Parse attached documents and build context for the planner
+                    let documentContext = '';
+                    if (documentMetas.length) {
+                        this._applyAssistantRender(
+                            uiElements,
+                            'Reading attached documents for research context\u2026',
+                            { plain: true },
+                        );
+                        const parsedDocs = [];
+                        const rawParsedDocs = [];
+                        for (const docMeta of documentMetas) {
+                            const parsedDocument = await this._documentToolRuntime.parseDocument(
+                                docMeta.path,
+                                requestCancellable,
+                            );
+                            this._rememberSessionDocument(parsedDocument);
+                            parsedDocs.push(this._serializeDocumentMeta(parsedDocument));
+                            rawParsedDocs.push(parsedDocument);
+                        }
+                        userMessage.documents = parsedDocs;
+                        this._messageHistory[this._messageHistory.length - 1] = userMessage;
+                        this._saveCurrentConversation();
+                        if (shouldClearPendingAfterSend) {
+                            this._setPendingDocument(null);
+                        }
+                        this._maybeIndexParsedDocuments(rawParsedDocs);
+                        // Build document context for the planner prompt
+                        const docBlocks = parsedDocs.map((d) => buildDocumentPromptBlock(d));
+                        documentContext = docBlocks.join('\n\n');
+                        this._researchDocumentContext = documentContext;
+                        log(
+                            `[Katab:planner] Parsed ${parsedDocs.length} attachment(s) — ${documentContext.length} chars of context for planner.`,
+                        );
+                    }
+
+                    // Build the planner prompt — include document context when present
+                    const plannerPrompt = documentContext
+                        ? `Research query: ${promptText}\n\nThe user attached the following document(s) for research context. Use these to understand the topic scope and generate targeted search queries, but the plan should still include web research to gather additional independent sources:\n\n${documentContext}`
+                        : `Research query: ${promptText}`;
+
+                    this._applyAssistantRender(uiElements, 'Generating research plan\u2026', {
+                        plain: true,
+                    });
+                    const plan = await runPlannerAgent(
+                        {
+                            requestCompletion: (messages, opts) =>
+                                this._requestNonStreamingCompletion(messages, opts),
+                            modelOverride: this._getDeepResearchRoleModel('synthesis'),
+                            getCancellable: () => this._cancellable,
+                            isCancelled: (e) => this._isRequestCancelled(e),
+                        },
+                        plannerPrompt,
+                    );
+
+                    if (!plan || plan.length === 0) {
+                        // Planner failed — fall back to direct deep research (no plan)
+                        log(
+                            '[Katab:planner] Planner returned empty plan — falling back to direct research.',
+                        );
+                        this._applyAssistantRender(
+                            uiElements,
+                            'Could not generate a research plan. Starting research directly\u2026',
+                            { plain: true },
+                        );
+                    } else {
+                        // If the chat was rebuilt (new conversation / history
+                        // switch / compaction) while the planner was running,
+                        // the captured assistant bubble has been destroyed.
+                        // Discard the stale plan instead of rendering into
+                        // disposed UI.
+                        if (!this._isChatUiCurrent(uiElements)) {
+                            log(
+                                '[Katab:planner] Chat was rebuilt while generating the plan — discarding stale plan.',
+                            );
+                            this._activeResearchPlan = [];
+                            this._originalResearchQuery = '';
+                            this._clearActiveResponseState();
+                            return false;
+                        }
+
+                        // Store the plan and render it for user approval
+                        this._activeResearchPlan = plan.map((task) => ({
+                            ...task,
+                            status: RESEARCH_PROGRESS_PENDING,
+                            statusDetail: '',
+                            _progressRow: null,
+                        }));
+                        this._citationTracker = createCitationTracker();
+                        log(
+                            `[Katab:planner] Generated research plan with ${plan.length} sub-tasks.`,
+                        );
+
+                        // Update the assistant bubble with the conversational intro
+                        if (uiElements && uiElements.contentBox) {
+                            try {
+                                uiElements.contentBox.destroy_all_children();
+                            } catch (_e) {
+                                /* disposed */
+                            }
+                        }
+                        this._applyAssistantRender(
+                            uiElements,
+                            "Here's a research plan for that topic. If you need to update it, let me know!",
+                            { plain: true },
+                        );
+                        this._renderResearchPlan(plan);
+                        this._clearActiveResponseState();
+                        return false;
+                    }
+                } catch (e) {
+                    if (this._isRequestCancelled(e)) return false;
+                    log(
+                        `[Katab:planner] Planner error: ${e.message} — falling back to direct research.`,
+                    );
+                }
+            }
+            // If we reach here (plan failed or was skipped), continue with
+            // standard deep research flow below (model drives research via tools).
+        }
+
+        return true;
+    }
+
+    /** Final send pipeline: parse attachments, run manual /crawl and /search,
+     *  then hand off to _streamResponse.  Renders request errors into the
+     *  assistant bubble. */
+    async _runSendPipeline({
+        documentMetas,
+        shouldClearPendingAfterSend,
+        userMessage,
+        uiElements,
+        requestCancellable,
+        crawl4aiTargetUrl,
+        crawl4aiSearchQuery,
+        webSearchQuery,
+    }) {
+        try {
+            // Parse documents if not already parsed by the planner agent above.
+            // When the planner succeeded it already parsed and stored documents
+            // in userMessage.documents and returned early.  We only reach here
+            // when the planner was skipped (no deep research mode) or failed.
+            const documentsAlreadyParsed =
+                this._researchDocumentContext &&
+                Array.isArray(userMessage.documents) &&
+                userMessage.documents.length > 0;
+            if (documentMetas.length && !documentsAlreadyParsed) {
+                const parsedDocs = [];
+                const rawParsedDocs = [];
+                for (const docMeta of documentMetas) {
+                    const docIsImage = looksLikeImageAttachment(docMeta);
+                    const attachmentStatus = docIsImage
+                        ? `Encoding ${docMeta.displayName}...`
+                        : `Reading ${docMeta.displayName}...`;
+                    this._applyAssistantRender(uiElements, attachmentStatus, { plain: true });
+                    const parsedDocument = await this._documentToolRuntime.parseDocument(
+                        docMeta.path,
+                        requestCancellable,
+                    );
+                    this._rememberSessionDocument(parsedDocument);
+                    parsedDocs.push(this._serializeDocumentMeta(parsedDocument));
+                    rawParsedDocs.push(parsedDocument);
+                }
+                userMessage.documents = parsedDocs;
+                this._messageHistory[this._messageHistory.length - 1] = userMessage;
+                this._saveCurrentConversation();
+                if (shouldClearPendingAfterSend) {
+                    this._setPendingDocument(null);
+                }
+                this._maybeIndexParsedDocuments(rawParsedDocs);
+            }
+
+            if (crawl4aiTargetUrl !== null || crawl4aiSearchQuery !== null) {
+                const crawlConfig = readCrawl4AIConfig(this._settings);
+                let scrapeUrl = crawl4aiTargetUrl;
+
+                // If user provided a search query, first search to find a URL
+                if (crawl4aiSearchQuery !== null) {
+                    this._applyAssistantRender(
+                        uiElements,
+                        `Searching for \u201c${crawl4aiSearchQuery}\u201d to scrape\u2026`,
+                        { plain: true },
+                    );
+                    const webConfig = readWebSearchConfig(this._settings);
+                    const searchPayload = await this._webSearchRuntime.search(
+                        crawl4aiSearchQuery,
+                        webConfig,
+                        requestCancellable,
+                    );
+                    const results = searchPayload?.results || [];
+                    if (results.length === 0) {
+                        this._renderLocalAssistantError(
+                            uiElements,
+                            `No results found for "${crawl4aiSearchQuery}" to scrape.`,
+                        );
+                        return;
+                    }
+                    scrapeUrl = results[0].url;
+                    this._applyAssistantRender(
+                        uiElements,
+                        `Found: ${scrapeUrl}\nScraping page content\u2026`,
+                        { plain: true },
+                    );
+                } else {
+                    this._applyAssistantRender(uiElements, `Scraping ${scrapeUrl}\u2026`, {
+                        plain: true,
+                    });
+                }
+
+                if (crawlConfig.fitMarkdownMode === 'bm25') {
+                    crawlConfig.query = crawl4aiSearchQuery || '';
+                }
+
+                log(
+                    `[Katab:crawl4ai] /crawl command → scraping ${scrapeUrl} (mode=${crawlConfig.extractionMode})`,
+                );
+                const crawlResults = await this._crawl4aiRuntime.crawl(
+                    scrapeUrl,
+                    crawlConfig,
+                    requestCancellable,
+                );
+                if (!crawlResults || !crawlResults.length) {
+                    this._renderLocalAssistantError(uiElements, `Could not scrape ${scrapeUrl}.`);
+                    return;
+                }
+
+                const resultBlock = buildCrawlResultBlock(crawlResults[0]);
+                userMessage.crawl4aiContext = resultBlock;
+                this._messageHistory[this._messageHistory.length - 1] = userMessage;
+                this._saveCurrentConversation();
+
+                if (webSearchQuery !== null) {
+                    this._applyAssistantRender(
+                        uiElements,
+                        `Scraping complete. Sending results to the model\u2026`,
+                        { plain: true },
+                    );
+                }
+            }
+
+            if (webSearchQuery !== null) {
+                this._applyAssistantRender(
+                    uiElements,
+                    `Searching the web for \u201c${webSearchQuery}\u201d\u2026`,
+                    { plain: true },
+                );
+                const webConfig = readWebSearchConfig(this._settings);
+                let searchQueries = webSearchQuery;
+
+                // Attach intent-based engine routing when the user hasn't set
+                // explicit engines or categories.  This routes code queries to
+                // StackOverflow/GitHub, news to news category, etc.
+                const intent = classifyQueryIntent(webSearchQuery);
+                const route = ENGINE_ROUTES[intent];
+                if (route && !webConfig.engines && webConfig.categories === 'general') {
+                    webConfig.intentRoute = route;
+                }
+
+                // Category-aware parallelism: when no explicit engines/categories,
+                // search across multiple categories in parallel for better coverage.
+                if (!webConfig.engines && webConfig.categories === 'general') {
+                    webConfig.parallelCategories = ['general', 'news', 'science'];
+                }
+
+                if (webConfig.multiQueryEnabled && webSearchQuery.trim()) {
+                    // Query quality gating: only expand if the query looks like
+                    // natural language, not already keyword-like.
+                    if (!needsExpansion(webSearchQuery)) {
+                        log(
+                            `[Katab] Skipping query expansion — "${webSearchQuery}" already looks like a search keyword.`,
+                        );
+                    } else {
+                        const expanded = await this._generateSearchQueries(
+                            webSearchQuery,
+                            requestCancellable,
+                        );
+                        if (Array.isArray(expanded) && expanded.length > 1) {
+                            searchQueries = expanded;
+                            this._applyAssistantRender(
+                                uiElements,
+                                `Searching the web (${expanded.length} queries) for \u201c${webSearchQuery}\u201d\u2026`,
+                                { plain: true },
+                            );
+                        }
+                    }
+                }
+                const searchPayload = await this._webSearchRuntime.search(
+                    searchQueries,
+                    webConfig,
+                    requestCancellable,
+                );
+                const manualResultCount = searchPayload?.results?.length || 0;
+                userMessage.webSearchContext = buildWebSearchResultBlock(
+                    webSearchQuery,
+                    searchPayload,
+                    { includeGuard: true },
+                );
+                this._messageHistory[this._messageHistory.length - 1] = userMessage;
+                this._saveCurrentConversation();
+                // Reflect the manual /search in the tool-call log (system search,
+                // not a model tool call) so the UI shows all searches performed.
+                this._addToolCallLogEntry(uiElements, {
+                    toolName: WEB_SEARCH_TOOL_NAME,
+                    status: 'success',
+                    detail:
+                        manualResultCount > 0
+                            ? `Found ${manualResultCount} result${manualResultCount !== 1 ? 's' : ''}`
+                            : 'No results found',
+                    expandLabel: 'Search query',
+                    expandValue: webSearchQuery,
+                });
+            }
+
+            this._streamResponse(uiElements, { cancellable: requestCancellable });
+        } catch (e) {
+            if (this._isRequestCancelled(e)) {
+                return;
+            }
+
+            if (e instanceof DocumentToolError) {
+                this._renderLocalAssistantError(uiElements, e.message);
+                return;
+            }
+
+            if (e instanceof WebSearchToolError) {
+                this._renderLocalAssistantError(uiElements, e.message);
+                return;
+            }
+
+            if (e instanceof Crawl4AIError) {
+                this._renderLocalAssistantError(uiElements, e.message);
+                return;
+            }
+
+            const diagnostics = this._buildRequestDiagnostics({
+                provider: this._currentProvider,
+                endpoint: 'Not constructed',
+                model: 'Unknown',
+                payload: { reason: 'Request construction failed' },
+                errorMessage: e.message,
+            });
+            this._renderRequestError(
+                uiElements,
+                `Error constructing request: ${e.message}`,
+                diagnostics,
+            );
+        }
+    }
+
+    /** Mode-B vision pre-analysis for text-only DeepSeek models. Runs after the
+     *  user message is committed so the bubble can show an "analyzing" status;
+     *  Stop cancels mid-analysis.  Returns false when the user cancelled and
+     *  the caller must return without continuing the send. */
+    async _runSendVisionPreanalysis({
+        hasImageAttachment,
+        documentMetas,
+        requestCancellable,
+        uiElements,
+        userMessage,
+        webSearchQuery,
+        promptText,
+    }) {
+        // DeepSeek is text-only. When images are attached while DeepSeek is the
+        // active provider, run the vision analysis (Mode B) AFTER the user's
+        // message has been committed, so the prompt is taken in like normal and
+        // the assistant bubble shows a proper "analyzing" status instead of
+        // leaving the user waiting with their text still in the input box.
+        // In 'direct' mode we skip pre-analysis — _streamResponse routes the
+        // whole request to the vision model instead.  The await is bounded by
+        // _withTimeout; the send button is live (streaming state is active), so
+        // the user can press Stop to cancel mid-analysis.
+        if (
+            this._currentProvider === 'deepseek' &&
+            hasImageAttachment &&
+            !this._isDeepSeekNativeVisionModel()
+        ) {
+            const visionConfig = this._getVisionModelConfig();
+            if (visionConfig.enabled && visionConfig.mode === DEEPSEEK_VISION_MODE_PREPROCESS) {
+                // Parse the image bytes first (normal sends parse documents later
+                // in the flow) so the vision model can actually receive them.
+                const cachedImages = await this._ensureCachedImageAttachments(
+                    documentMetas,
+                    requestCancellable,
+                );
+                if (cachedImages.length) {
+                    const analysisPrompt =
+                        (webSearchQuery !== null ? webSearchQuery : promptText) ||
+                        'Please analyze the attached image(s).';
+                    this._showVisionAnalysisStatus(
+                        uiElements,
+                        `Analyzing ${cachedImages.length} image(s) with ${visionConfig.model}\u2026`,
+                    );
+                    const visionOutcome = await this._analyzeImagesWithVisionModel({
+                        text: analysisPrompt,
+                        imageAttachments: cachedImages,
+                        cancellable: requestCancellable,
+                    });
+                    if (requestCancellable.is_cancelled()) {
+                        // User pressed Stop during analysis — the stop handler
+                        // already recorded the stopped response and cleaned up.
+                        return false;
+                    }
+                    if (visionOutcome.ok) {
+                        userMessage.visionAnalysis = visionOutcome.text;
+                        log(
+                            `[Katab:vision] Analysis complete — ${visionOutcome.text.length} chars from ${visionConfig.model}`,
+                        );
+                    } else {
+                        // Empty string is a sentinel: the payload shows a clear
+                        // "analysis unavailable" notice instead of a generic
+                        // reattach message.
+                        userMessage.visionAnalysis = '';
+                        this._applyAssistantRender(
+                            uiElements,
+                            `Image analysis failed (${visionOutcome.error}). Sending without image analysis\u2026`,
+                            { plain: true },
+                        );
+                        this._addSystemMessage(
+                            `Image analysis failed (${visionOutcome.error}). The message was sent without image analysis.`,
+                            { variant: 'warning' },
+                        );
+                    }
+                    this._messageHistory[this._messageHistory.length - 1] = userMessage;
+                    this._saveCurrentConversation();
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /** Resolve the send's document command and pending attachments, apply the
+     *  provider image/vision gate, and derive the final prompt text.
+     *  Returns null (abort — the user was already told why) or
+     *  { promptText, documentMetas, shouldClearPendingAfterSend, hasImageAttachment }. */
+    async _resolveSendAttachments(rawPromptText) {
         let documentCommand = null;
         try {
             documentCommand = parseDocumentCommand(rawPromptText);
         } catch (error) {
             this._addSystemMessage(error.message);
-            return;
+            return null;
         }
 
         if (documentCommand && !this._isDocumentToolEnabled()) {
             this._addSystemMessage('Enable the Document Tool in Settings before using /doc.');
-            return;
+            return null;
         }
 
         let promptText = documentCommand ? documentCommand.promptText : rawPromptText;
@@ -18652,7 +18727,7 @@ class KatabDialog {
                 try {
                     const pickedPath = await this._pickDocumentPath();
                     if (!pickedPath) {
-                        return;
+                        return null;
                     }
 
                     const pickedMeta = this._buildDocumentMeta(pickedPath);
@@ -18669,7 +18744,7 @@ class KatabDialog {
                     this._addSystemMessage(
                         error.message || `Could not open the document picker: ${error}`,
                     );
-                    return;
+                    return null;
                 }
             } else if (documentCommand.filePath) {
                 const normalizedPath =
@@ -18700,14 +18775,14 @@ class KatabDialog {
                 const validation = this._validateVisionModelConfig(visionConfig);
                 if (!validation.ok) {
                     this._addSystemMessage(validation.message, { variant: 'warning' });
-                    return;
+                    return null;
                 }
             }
         } else if (hasImageAttachment && this._currentProvider !== 'ollama') {
             this._addSystemMessage(
                 'Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava.',
             );
-            return;
+            return null;
         }
 
         if (!promptText && documentMetas.length) {
@@ -18717,19 +18792,18 @@ class KatabDialog {
         }
 
         if (!promptText && !documentMetas.length) {
-            return;
+            return null;
         }
 
-        const providerState = this._extension.providerHealthMonitor?.getState(
-            this._currentProvider,
-        );
-        if (this._isBlockingProviderState(providerState)) {
-            this._addSystemMessage(`${providerState.label}: ${providerState.detail}`, {
-                variant: 'warning',
-            });
-            return;
-        }
+        return { promptText, documentMetas, shouldClearPendingAfterSend, hasImageAttachment };
+    }
 
+    /** Reset per-turn tool state and parse the prompt's tool commands.
+     *  Returns null (abort — the user was already told why) or the parsed
+     *  command state: { promptText, webSearchQuery, crawl4aiTargetUrl,
+     *  crawl4aiSearchQuery, crawlCommand, hasResearchPrefix, hasResearchSuffix,
+     *  webSearchModeForPrompt, crawl4aiModeForPrompt }. */
+    _parseSendToolCommands(promptText) {
         this._forcedTool = null;
         this._toolIterations = 0;
         this._forceSynthesisActive = false;
@@ -18744,7 +18818,7 @@ class KatabDialog {
         this._allEnginesDown = false;
         this._totalReadUrlAttemptsThisTurn = 0;
         // Deep Research turn tracking: decrement the turns-remaining counter
-        // at the start of each _sendMessage.  When it reaches 0 the mode is
+        // at the start of each send.  When it reaches 0 the mode is
         // auto-reset to OFF.  Infinity means persistent (UI toggle).
         // - /research query: 1 turn (this one) → resets after
         // - /research exact: 2 turns (next one) → resets after that
@@ -18788,7 +18862,7 @@ class KatabDialog {
                 'Web search is off for this prompt. Set Search to Auto or On before using /search.',
                 { variant: 'warning' },
             );
-            return;
+            return null;
         }
         if (!this._forcedTool && this._currentProvider === 'unsloth' && forceWebSearchForPrompt) {
             this._forcedTool = WEB_SEARCH_TOOL_NAME;
@@ -18810,7 +18884,7 @@ class KatabDialog {
                     'Web search is off. Enable it in Settings > Tools > Web Search to use the /search command.',
                     { variant: 'warning' },
                 );
-                return;
+                return null;
             }
 
             if (!forcedSearchQuery) {
@@ -18818,7 +18892,7 @@ class KatabDialog {
                     'Add a query after /search, for example: /search latest GNOME release.',
                     { variant: 'warning' },
                 );
-                return;
+                return null;
             }
 
             webSearchQuery = forcedSearchQuery;
@@ -18839,7 +18913,7 @@ class KatabDialog {
                     'Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command.',
                     { variant: 'warning' },
                 );
-                return;
+                return null;
             }
 
             if (crawlCommand.url) {
@@ -18855,7 +18929,7 @@ class KatabDialog {
                         'Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search.',
                         { variant: 'warning' },
                     );
-                    return;
+                    return null;
                 }
                 crawl4aiSearchQuery = crawlCommand.query;
             } else {
@@ -18863,7 +18937,7 @@ class KatabDialog {
                     'Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release.',
                     { variant: 'warning' },
                 );
-                return;
+                return null;
             }
         }
 
@@ -18904,7 +18978,7 @@ class KatabDialog {
                     { variant: 'info' },
                 );
                 this._updateToolsUI();
-                return;
+                return null;
             }
             if (!promptText) {
                 this._addSystemMessage('Deep Research mode activated. Type your research query.', {
@@ -18912,23 +18986,34 @@ class KatabDialog {
                 });
                 this._updateToolsUI();
                 this._setPendingDocument(null);
-                return;
+                return null;
             }
             this._updateToolsUI();
         }
 
-        // ── Knowledge Base search (/kb) ────────────────────────────────────
-        // Manual /kb query → local RAG semantic search across documents,
-        // conversations, and research cache. Runs synchronously before the
-        // message is sent; results are injected as context.
-        //
-        // The enrichment below can await a slow local RAG service.  We enter
-        // the ENRICHING phase only AFTER all validation returns below, so a
-        // disabled KB / empty /kb query can't leave the guard stuck busy.
-        // The stream's _beginActiveResponse then transitions ENRICHING →
-        // AWAITING_MODEL within the same request; an aborted send settles via
-        // _clearActiveResponseState.
+        return {
+            promptText,
+            webSearchQuery,
+            crawl4aiTargetUrl,
+            crawl4aiSearchQuery,
+            crawlCommand,
+            hasResearchPrefix,
+            hasResearchSuffix,
+            webSearchModeForPrompt,
+            crawl4aiModeForPrompt,
+        };
+    }
 
+    /** Run the send-path Knowledge Base enrichment: manual /kb (incl. /kb
+     *  import), the automatic pre-send search, and the low-coverage web-search
+     *  fallback.  Returns null (abort — the user was already told why) or
+     *  { promptText, knowledgeContext, autoFallbackWebSearch, sendKnowledgeUsage }. */
+    async _prepareSendKnowledgeContext({
+        promptText,
+        crawlCommand,
+        webSearchQuery,
+        crawl4aiTargetUrl,
+    }) {
         let knowledgeContext = null;
         // Captured when the auto KB-fallback web search actually returns results.
         // It runs before the assistant bubble exists, so we stash it here and
@@ -18945,14 +19030,14 @@ class KatabDialog {
                     'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command.',
                     { variant: 'warning' },
                 );
-                return;
+                return null;
             }
             if (!kbCommand.query) {
                 this._addSystemMessage(
                     'Add a query after /kb, for example: /kb what is the meaning of life?',
                     { variant: 'warning' },
                 );
-                return;
+                return null;
             }
 
             // /kb import "path" — index local files/folders into the KB.
@@ -18963,7 +19048,7 @@ class KatabDialog {
                         'Usage: /kb import "~/path/to/file-or-folder" — imports txt, md, pdf, docx, and eml files into the knowledge base.',
                         { variant: 'info' },
                     );
-                    return;
+                    return null;
                 }
                 this._lifecycle.begin(REQUEST_STATES.ENRICHING);
                 try {
@@ -18973,7 +19058,7 @@ class KatabDialog {
                 }
                 this._entry.set_text('');
                 this._resetDraftUsage();
-                return;
+                return null;
             }
 
             // The /kb search below can await a slow local RAG service — guard
@@ -19198,619 +19283,7 @@ class KatabDialog {
             log('[Katab:rag] Skipping auto KB/web enrichment — direct /crawl <url> command active');
         }
 
-        const userMessage = {
-            role: 'user',
-            // When a /crawl command was used, strip the raw command text so the
-            // model only sees the conversational part ("tell me about X." rather
-            // than "tell me about X. /crawl https://…"). The scraped content is
-            // attached separately as crawl4aiContext below. If stripping leaves
-            // nothing (bare "/crawl <url>"), keep the original text so the
-            // message still shows in the chat history.
-            content:
-                webSearchQuery !== null
-                    ? webSearchQuery
-                    : crawlCommand?.isCommand
-                      ? stripCrawl4AICommand(promptText) || promptText
-                      : promptText,
-        };
-        if (documentMetas.length) {
-            userMessage.documents = documentMetas;
-        }
-        if (knowledgeContext) {
-            userMessage.knowledgeContext = knowledgeContext;
-        }
-        if (sendKnowledgeUsage) {
-            userMessage.knowledgeUsage = [sendKnowledgeUsage];
-        }
-
-        this._recordSentPrompt(rawPromptText);
-        this._usageCompanionSprite?.showPose('tip', 1200);
-        this._entry.set_text('');
-        this._resetOneShotToolModes(webSearchModeForPrompt, crawl4aiModeForPrompt);
-        this._resetDraftUsage();
-        this._hasConversationStarted = true;
-        this._setWelcomeVisible(false);
-        this._addChatMessage('You', String(userMessage.content ?? '').trim(), 'user', userMessage);
-
-        this._messageHistory.push(userMessage);
-        this._saveCurrentConversation();
-
-        let uiElements = this._addChatMessage('Katab AI', '...', 'assistant');
-        const requestCancellable = new Gio.Cancellable();
-        this._cancellable = requestCancellable;
-        this._beginActiveResponse(
-            uiElements,
-            this._currentProvider,
-            documentMetas.length ? 'document' : 'response',
-            documentMetas.length === 1
-                ? documentMetas[0].displayName
-                : `${documentMetas.length} attachments`,
-        );
-
-        // Surface the pre-send KB-fallback web search in the tool-call log so
-        // the UI reflects searches that ran before the model response started.
-        if (autoFallbackWebSearch) {
-            this._addToolCallLogEntry(uiElements, {
-                toolName: WEB_SEARCH_TOOL_NAME,
-                status: 'success',
-                detail: `Found ${autoFallbackWebSearch.resultCount} result${autoFallbackWebSearch.resultCount !== 1 ? 's' : ''} (KB fallback)`,
-                expandLabel: 'Search query',
-                expandValue: autoFallbackWebSearch.query,
-            });
-        }
-
-        // Surface send-path KB usage (manual /kb or auto KB search) as the
-        // compact footer pill instead of a tool-call row.
-        if (sendKnowledgeUsage) {
-            this._recordKnowledgeUsage(uiElements, sendKnowledgeUsage);
-        }
-
-        // ── DeepSeek Vision Model (Image Support) ───────────────────────────
-        // DeepSeek is text-only. When images are attached while DeepSeek is the
-        // active provider, run the vision analysis (Mode B) AFTER the user's
-        // message has been committed, so the prompt is taken in like normal and
-        // the assistant bubble shows a proper "analyzing" status instead of
-        // leaving the user waiting with their text still in the input box.
-        // In 'direct' mode we skip pre-analysis — _streamResponse routes the
-        // whole request to the vision model instead.  The await is bounded by
-        // _withTimeout; the send button is live (streaming state is active), so
-        // the user can press Stop to cancel mid-analysis.
-        if (
-            this._currentProvider === 'deepseek' &&
-            hasImageAttachment &&
-            !this._isDeepSeekNativeVisionModel()
-        ) {
-            const visionConfig = this._getVisionModelConfig();
-            if (visionConfig.enabled && visionConfig.mode === DEEPSEEK_VISION_MODE_PREPROCESS) {
-                // Parse the image bytes first (normal sends parse documents later
-                // in the flow) so the vision model can actually receive them.
-                const cachedImages = await this._ensureCachedImageAttachments(
-                    documentMetas,
-                    requestCancellable,
-                );
-                if (cachedImages.length) {
-                    const analysisPrompt =
-                        (webSearchQuery !== null ? webSearchQuery : promptText) ||
-                        'Please analyze the attached image(s).';
-                    this._showVisionAnalysisStatus(
-                        uiElements,
-                        `Analyzing ${cachedImages.length} image(s) with ${visionConfig.model}\u2026`,
-                    );
-                    const visionOutcome = await this._analyzeImagesWithVisionModel({
-                        text: analysisPrompt,
-                        imageAttachments: cachedImages,
-                        cancellable: requestCancellable,
-                    });
-                    if (requestCancellable.is_cancelled()) {
-                        // User pressed Stop during analysis — the stop handler
-                        // already recorded the stopped response and cleaned up.
-                        return;
-                    }
-                    if (visionOutcome.ok) {
-                        userMessage.visionAnalysis = visionOutcome.text;
-                        log(
-                            `[Katab:vision] Analysis complete — ${visionOutcome.text.length} chars from ${visionConfig.model}`,
-                        );
-                    } else {
-                        // Empty string is a sentinel: the payload shows a clear
-                        // "analysis unavailable" notice instead of a generic
-                        // reattach message.
-                        userMessage.visionAnalysis = '';
-                        this._applyAssistantRender(
-                            uiElements,
-                            `Image analysis failed (${visionOutcome.error}). Sending without image analysis\u2026`,
-                            { plain: true },
-                        );
-                        this._addSystemMessage(
-                            `Image analysis failed (${visionOutcome.error}). The message was sent without image analysis.`,
-                            { variant: 'warning' },
-                        );
-                    }
-                    this._messageHistory[this._messageHistory.length - 1] = userMessage;
-                    this._saveCurrentConversation();
-                }
-            }
-        }
-
-        // ── Deep Research Planner Agent ───────────────────────────────────
-        // When deep research mode is explicitly On, run the planner BEFORE
-        // any searching.  The plan is shown to the user for approval.
-        // Execution begins only after the user clicks "Start Research".
-        // Attachments are parsed here and passed as document context so the
-        // planner can generate sub-tasks informed by the attached content.
-        // Enter the planner block when deep research is On, OR when a plan is
-        // still pending approval — so follow-up prompts during the plan phase
-        // route to plan revision even if the mode was toggled off meanwhile.
-        const planPending =
-            !this._planApproved &&
-            !this._planBranchesStarted &&
-            this._activeResearchPlan.length > 0;
-        if (
-            (this._deepResearchMode === TOOL_MODE_ON || planPending) &&
-            !this._planApproved &&
-            !this._planBranchesStarted
-        ) {
-            // If the user is currently editing the plan, block the send so edits aren't lost.
-            // _beginActiveResponse has already armed the response lifecycle and
-            // set the cancellable, so cancel the pending response to un-stick
-            // the send button (otherwise the next Enter would push a bogus stopped reply).
-            if (this._editingPlan) {
-                this._applyAssistantRender(
-                    uiElements,
-                    'Finish editing the research plan or cancel editing before sending.',
-                    { plain: true },
-                );
-                this._cancelStream();
-                return;
-            }
-            if (!webSearchQuery && !crawl4aiTargetUrl && !crawl4aiSearchQuery) {
-                // ── Plan revision (follow-up while a plan is pending) ──────────
-                // If a research plan is waiting for approval, a follow-up prompt
-                // is most likely a CHANGE REQUEST to that plan (e.g. "the year is
-                // 2026, GNOME is 50 — update it"), not a brand-new research query.
-                // Route it through the revision planner so it edits the existing
-                // plan instead of replacing it from scratch. An explicit /research
-                // command, on the other hand, means "start a fresh plan".
-                if (hasResearchPrefix || hasResearchSuffix) {
-                    this._activeResearchPlan = [];
-                    this._originalResearchQuery = '';
-                }
-                if (this._activeResearchPlan.length > 0) {
-                    try {
-                        this._applyAssistantRender(uiElements, 'Updating research plan\u2026', {
-                            plain: true,
-                        });
-                        const revisedPlan = await reviseResearchPlan(
-                            {
-                                requestCompletion: (messages, opts) =>
-                                    this._requestNonStreamingCompletion(messages, opts),
-                                modelOverride: this._getDeepResearchRoleModel('synthesis'),
-                                getCancellable: () => this._cancellable,
-                                isCancelled: (e) => this._isRequestCancelled(e),
-                            },
-                            this._originalResearchQuery || promptText,
-                            this._activeResearchPlan,
-                            promptText,
-                        );
-                        // If the chat was rebuilt (new conversation / history switch
-                        // / compaction) while the revision was in flight, discard the
-                        // stale result (mirrors the initial-plan path below).
-                        if (!this._isChatUiCurrent(uiElements)) {
-                            log(
-                                '[Katab:planner] Chat was rebuilt while revising the plan — discarding stale revision.',
-                            );
-                            this._clearActiveResponseState();
-                            return;
-                        }
-                        if (revisedPlan && revisedPlan.length > 0) {
-                            this._activeResearchPlan = revisedPlan.map((task) => ({
-                                ...task,
-                                status: RESEARCH_PROGRESS_PENDING,
-                                statusDetail: '',
-                                _progressRow: null,
-                            }));
-                            log(
-                                `[Katab:planner] Research plan revised per user feedback — ${revisedPlan.length} sub-tasks.`,
-                            );
-                            if (uiElements && uiElements.contentBox) {
-                                try {
-                                    uiElements.contentBox.destroy_all_children();
-                                } catch (_e) {
-                                    /* disposed */
-                                }
-                            }
-                            this._applyAssistantRender(
-                                uiElements,
-                                "Updated the research plan based on your feedback. Anything else you'd like to change?",
-                                { plain: true },
-                            );
-                            this._renderResearchPlan(this._activeResearchPlan);
-                            this._clearActiveResponseState();
-                            return;
-                        }
-                        // Revision failed — keep the existing plan untouched and let
-                        // the user know. Never fall through to a fresh plan or direct
-                        // research here: that is exactly what used to clobber the
-                        // pending plan with an unrelated one.
-                        log(
-                            '[Katab:planner] Plan revision returned no valid plan — keeping the existing plan.',
-                        );
-                        if (!this._isChatUiCurrent(uiElements)) {
-                            log(
-                                '[Katab:planner] Chat was rebuilt after failed plan revision — discarding stale UI.',
-                            );
-                            this._clearActiveResponseState();
-                            return;
-                        }
-                        if (uiElements && uiElements.contentBox) {
-                            try {
-                                uiElements.contentBox.destroy_all_children();
-                            } catch (_e) {
-                                /* disposed */
-                            }
-                        }
-                        this._applyAssistantRender(
-                            uiElements,
-                            "I couldn't apply that change to the research plan. The existing plan is unchanged — you can use 'Edit plan' to adjust it manually, or start research as-is.",
-                            { plain: true },
-                        );
-                        this._renderResearchPlan(this._activeResearchPlan);
-                        this._clearActiveResponseState();
-                        return;
-                    } catch (e) {
-                        if (this._isRequestCancelled(e)) return;
-                        log(`[Katab:planner] Plan revision error: ${e.message}`);
-                        if (!this._isChatUiCurrent(uiElements)) {
-                            log(
-                                '[Katab:planner] Chat was rebuilt after plan revision error — discarding stale UI.',
-                            );
-                            this._clearActiveResponseState();
-                            return;
-                        }
-                        this._applyAssistantRender(
-                            uiElements,
-                            "I hit an error while updating the research plan. The existing plan is unchanged — try again or use 'Edit plan'.",
-                            { plain: true },
-                        );
-                        this._renderResearchPlan(this._activeResearchPlan);
-                        this._clearActiveResponseState();
-                        return;
-                    }
-                }
-                try {
-                    // Save the original query for synthesis grounding
-                    this._originalResearchQuery = promptText;
-
-                    // Parse attached documents and build context for the planner
-                    let documentContext = '';
-                    if (documentMetas.length) {
-                        this._applyAssistantRender(
-                            uiElements,
-                            'Reading attached documents for research context\u2026',
-                            { plain: true },
-                        );
-                        const parsedDocs = [];
-                        const rawParsedDocs = [];
-                        for (const docMeta of documentMetas) {
-                            const parsedDocument = await this._documentToolRuntime.parseDocument(
-                                docMeta.path,
-                                requestCancellable,
-                            );
-                            this._rememberSessionDocument(parsedDocument);
-                            parsedDocs.push(this._serializeDocumentMeta(parsedDocument));
-                            rawParsedDocs.push(parsedDocument);
-                        }
-                        userMessage.documents = parsedDocs;
-                        this._messageHistory[this._messageHistory.length - 1] = userMessage;
-                        this._saveCurrentConversation();
-                        if (shouldClearPendingAfterSend) {
-                            this._setPendingDocument(null);
-                        }
-                        this._maybeIndexParsedDocuments(rawParsedDocs);
-                        // Build document context for the planner prompt
-                        const docBlocks = parsedDocs.map((d) => buildDocumentPromptBlock(d));
-                        documentContext = docBlocks.join('\n\n');
-                        this._researchDocumentContext = documentContext;
-                        log(
-                            `[Katab:planner] Parsed ${parsedDocs.length} attachment(s) — ${documentContext.length} chars of context for planner.`,
-                        );
-                    }
-
-                    // Build the planner prompt — include document context when present
-                    const plannerPrompt = documentContext
-                        ? `Research query: ${promptText}\n\nThe user attached the following document(s) for research context. Use these to understand the topic scope and generate targeted search queries, but the plan should still include web research to gather additional independent sources:\n\n${documentContext}`
-                        : `Research query: ${promptText}`;
-
-                    this._applyAssistantRender(uiElements, 'Generating research plan\u2026', {
-                        plain: true,
-                    });
-                    const plan = await runPlannerAgent(
-                        {
-                            requestCompletion: (messages, opts) =>
-                                this._requestNonStreamingCompletion(messages, opts),
-                            modelOverride: this._getDeepResearchRoleModel('synthesis'),
-                            getCancellable: () => this._cancellable,
-                            isCancelled: (e) => this._isRequestCancelled(e),
-                        },
-                        plannerPrompt,
-                    );
-
-                    if (!plan || plan.length === 0) {
-                        // Planner failed — fall back to direct deep research (no plan)
-                        log(
-                            '[Katab:planner] Planner returned empty plan — falling back to direct research.',
-                        );
-                        this._applyAssistantRender(
-                            uiElements,
-                            'Could not generate a research plan. Starting research directly\u2026',
-                            { plain: true },
-                        );
-                    } else {
-                        // If the chat was rebuilt (new conversation / history
-                        // switch / compaction) while the planner was running,
-                        // the captured assistant bubble has been destroyed.
-                        // Discard the stale plan instead of rendering into
-                        // disposed UI.
-                        if (!this._isChatUiCurrent(uiElements)) {
-                            log(
-                                '[Katab:planner] Chat was rebuilt while generating the plan — discarding stale plan.',
-                            );
-                            this._activeResearchPlan = [];
-                            this._originalResearchQuery = '';
-                            this._clearActiveResponseState();
-                            return;
-                        }
-
-                        // Store the plan and render it for user approval
-                        this._activeResearchPlan = plan.map((task) => ({
-                            ...task,
-                            status: RESEARCH_PROGRESS_PENDING,
-                            statusDetail: '',
-                            _progressRow: null,
-                        }));
-                        this._citationTracker = createCitationTracker();
-                        log(
-                            `[Katab:planner] Generated research plan with ${plan.length} sub-tasks.`,
-                        );
-
-                        // Update the assistant bubble with the conversational intro
-                        if (uiElements && uiElements.contentBox) {
-                            try {
-                                uiElements.contentBox.destroy_all_children();
-                            } catch (_e) {
-                                /* disposed */
-                            }
-                        }
-                        this._applyAssistantRender(
-                            uiElements,
-                            "Here's a research plan for that topic. If you need to update it, let me know!",
-                            { plain: true },
-                        );
-                        this._renderResearchPlan(plan);
-                        this._clearActiveResponseState();
-                        return;
-                    }
-                } catch (e) {
-                    if (this._isRequestCancelled(e)) return;
-                    log(
-                        `[Katab:planner] Planner error: ${e.message} — falling back to direct research.`,
-                    );
-                }
-            }
-            // If we reach here (plan failed or was skipped), continue with
-            // standard deep research flow below (model drives research via tools).
-        }
-
-        try {
-            // Parse documents if not already parsed by the planner agent above.
-            // When the planner succeeded it already parsed and stored documents
-            // in userMessage.documents and returned early.  We only reach here
-            // when the planner was skipped (no deep research mode) or failed.
-            const documentsAlreadyParsed =
-                this._researchDocumentContext &&
-                Array.isArray(userMessage.documents) &&
-                userMessage.documents.length > 0;
-            if (documentMetas.length && !documentsAlreadyParsed) {
-                const parsedDocs = [];
-                const rawParsedDocs = [];
-                for (const docMeta of documentMetas) {
-                    const docIsImage = looksLikeImageAttachment(docMeta);
-                    const attachmentStatus = docIsImage
-                        ? `Encoding ${docMeta.displayName}...`
-                        : `Reading ${docMeta.displayName}...`;
-                    this._applyAssistantRender(uiElements, attachmentStatus, { plain: true });
-                    const parsedDocument = await this._documentToolRuntime.parseDocument(
-                        docMeta.path,
-                        requestCancellable,
-                    );
-                    this._rememberSessionDocument(parsedDocument);
-                    parsedDocs.push(this._serializeDocumentMeta(parsedDocument));
-                    rawParsedDocs.push(parsedDocument);
-                }
-                userMessage.documents = parsedDocs;
-                this._messageHistory[this._messageHistory.length - 1] = userMessage;
-                this._saveCurrentConversation();
-                if (shouldClearPendingAfterSend) {
-                    this._setPendingDocument(null);
-                }
-                this._maybeIndexParsedDocuments(rawParsedDocs);
-            }
-
-            if (crawl4aiTargetUrl !== null || crawl4aiSearchQuery !== null) {
-                const crawlConfig = readCrawl4AIConfig(this._settings);
-                let scrapeUrl = crawl4aiTargetUrl;
-
-                // If user provided a search query, first search to find a URL
-                if (crawl4aiSearchQuery !== null) {
-                    this._applyAssistantRender(
-                        uiElements,
-                        `Searching for \u201c${crawl4aiSearchQuery}\u201d to scrape\u2026`,
-                        { plain: true },
-                    );
-                    const webConfig = readWebSearchConfig(this._settings);
-                    const searchPayload = await this._webSearchRuntime.search(
-                        crawl4aiSearchQuery,
-                        webConfig,
-                        requestCancellable,
-                    );
-                    const results = searchPayload?.results || [];
-                    if (results.length === 0) {
-                        this._renderLocalAssistantError(
-                            uiElements,
-                            `No results found for "${crawl4aiSearchQuery}" to scrape.`,
-                        );
-                        return;
-                    }
-                    scrapeUrl = results[0].url;
-                    this._applyAssistantRender(
-                        uiElements,
-                        `Found: ${scrapeUrl}\nScraping page content\u2026`,
-                        { plain: true },
-                    );
-                } else {
-                    this._applyAssistantRender(uiElements, `Scraping ${scrapeUrl}\u2026`, {
-                        plain: true,
-                    });
-                }
-
-                if (crawlConfig.fitMarkdownMode === 'bm25') {
-                    crawlConfig.query = crawl4aiSearchQuery || '';
-                }
-
-                log(
-                    `[Katab:crawl4ai] /crawl command → scraping ${scrapeUrl} (mode=${crawlConfig.extractionMode})`,
-                );
-                const crawlResults = await this._crawl4aiRuntime.crawl(
-                    scrapeUrl,
-                    crawlConfig,
-                    requestCancellable,
-                );
-                if (!crawlResults || !crawlResults.length) {
-                    this._renderLocalAssistantError(uiElements, `Could not scrape ${scrapeUrl}.`);
-                    return;
-                }
-
-                const resultBlock = buildCrawlResultBlock(crawlResults[0]);
-                userMessage.crawl4aiContext = resultBlock;
-                this._messageHistory[this._messageHistory.length - 1] = userMessage;
-                this._saveCurrentConversation();
-
-                if (webSearchQuery !== null) {
-                    this._applyAssistantRender(
-                        uiElements,
-                        `Scraping complete. Sending results to the model\u2026`,
-                        { plain: true },
-                    );
-                }
-            }
-
-            if (webSearchQuery !== null) {
-                this._applyAssistantRender(
-                    uiElements,
-                    `Searching the web for \u201c${webSearchQuery}\u201d\u2026`,
-                    { plain: true },
-                );
-                const webConfig = readWebSearchConfig(this._settings);
-                let searchQueries = webSearchQuery;
-
-                // Attach intent-based engine routing when the user hasn't set
-                // explicit engines or categories.  This routes code queries to
-                // StackOverflow/GitHub, news to news category, etc.
-                const intent = classifyQueryIntent(webSearchQuery);
-                const route = ENGINE_ROUTES[intent];
-                if (route && !webConfig.engines && webConfig.categories === 'general') {
-                    webConfig.intentRoute = route;
-                }
-
-                // Category-aware parallelism: when no explicit engines/categories,
-                // search across multiple categories in parallel for better coverage.
-                if (!webConfig.engines && webConfig.categories === 'general') {
-                    webConfig.parallelCategories = ['general', 'news', 'science'];
-                }
-
-                if (webConfig.multiQueryEnabled && webSearchQuery.trim()) {
-                    // Query quality gating: only expand if the query looks like
-                    // natural language, not already keyword-like.
-                    if (!needsExpansion(webSearchQuery)) {
-                        log(
-                            `[Katab] Skipping query expansion — "${webSearchQuery}" already looks like a search keyword.`,
-                        );
-                    } else {
-                        const expanded = await this._generateSearchQueries(
-                            webSearchQuery,
-                            requestCancellable,
-                        );
-                        if (Array.isArray(expanded) && expanded.length > 1) {
-                            searchQueries = expanded;
-                            this._applyAssistantRender(
-                                uiElements,
-                                `Searching the web (${expanded.length} queries) for \u201c${webSearchQuery}\u201d\u2026`,
-                                { plain: true },
-                            );
-                        }
-                    }
-                }
-                const searchPayload = await this._webSearchRuntime.search(
-                    searchQueries,
-                    webConfig,
-                    requestCancellable,
-                );
-                const manualResultCount = searchPayload?.results?.length || 0;
-                userMessage.webSearchContext = buildWebSearchResultBlock(
-                    webSearchQuery,
-                    searchPayload,
-                    { includeGuard: true },
-                );
-                this._messageHistory[this._messageHistory.length - 1] = userMessage;
-                this._saveCurrentConversation();
-                // Reflect the manual /search in the tool-call log (system search,
-                // not a model tool call) so the UI shows all searches performed.
-                this._addToolCallLogEntry(uiElements, {
-                    toolName: WEB_SEARCH_TOOL_NAME,
-                    status: 'success',
-                    detail:
-                        manualResultCount > 0
-                            ? `Found ${manualResultCount} result${manualResultCount !== 1 ? 's' : ''}`
-                            : 'No results found',
-                    expandLabel: 'Search query',
-                    expandValue: webSearchQuery,
-                });
-            }
-
-            this._streamResponse(uiElements, { cancellable: requestCancellable });
-        } catch (e) {
-            if (this._isRequestCancelled(e)) {
-                return;
-            }
-
-            if (e instanceof DocumentToolError) {
-                this._renderLocalAssistantError(uiElements, e.message);
-                return;
-            }
-
-            if (e instanceof WebSearchToolError) {
-                this._renderLocalAssistantError(uiElements, e.message);
-                return;
-            }
-
-            if (e instanceof Crawl4AIError) {
-                this._renderLocalAssistantError(uiElements, e.message);
-                return;
-            }
-
-            const diagnostics = this._buildRequestDiagnostics({
-                provider: this._currentProvider,
-                endpoint: 'Not constructed',
-                model: 'Unknown',
-                payload: { reason: 'Request construction failed' },
-                errorMessage: e.message,
-            });
-            this._renderRequestError(
-                uiElements,
-                `Error constructing request: ${e.message}`,
-                diagnostics,
-            );
-        }
+        return { promptText, knowledgeContext, autoFallbackWebSearch, sendKnowledgeUsage };
     }
 
     async _streamResponse(uiElements, { cancellable = null, retryAttempt = 0 } = {}) {
@@ -20303,7 +19776,7 @@ class KatabDialog {
                             inputStream,
                             currentCancellable,
                         );
-                        const summaryText = this._extractErrorSummary(responseBody);
+                        const summaryText = extractErrorSummary(responseBody);
 
                         if (
                             provider === 'deepseek' &&
@@ -21882,583 +21355,615 @@ class KatabDialog {
         const groupBody = this._beginToolCallGroup(uiElements, totalCalls);
 
         // ── Execute a single tool call (shared by both serial and parallel paths) ──
-        const executeOneTool = async (tc) => {
-            // If the response UI was torn down mid-batch, stop touching widgets.
-            // The top-of-_handleToolCalls check covers teardown BEFORE the batch;
-            // this covers teardown while tools are awaiting their network calls.
-            if (!this._responseUiAlive(uiElements)) {
-                return {
-                    tc,
-                    toolName: tc.function?.name,
-                    resultText: 'Response UI no longer active — tool call dropped.',
-                };
+        const turn = {
+            uiElements,
+            groupBody,
+            cancellable,
+            totalWebSearchesThisTurn,
+            consecutiveEmptySearches,
+            totalReadUrlFailuresThisTurn,
+            consecutiveReadUrlFailures,
+            totalReadUrlAttemptsThisTurn,
+        };
+        const executeOneTool = (tc) => this._executeToolCall(tc, turn);
+        return this._finishToolBatch({
+            executeOneTool,
+            readOnlyCalls,
+            unsafeCalls,
+            activeProvider,
+            anthropicResultBlocks,
+            pendingMessages,
+            uiElements,
+        });
+    }
+
+    /** Execute a single tool call.  `turn` carries the batch-scoped UI handles
+     *  and the progressive search-state counters shared by parallel/serial calls. */
+    async _executeToolCall(tc, turn) {
+        const { uiElements, groupBody, cancellable } = turn;
+        // If the response UI was torn down mid-batch, stop touching widgets.
+        // The top-of-_handleToolCalls check covers teardown BEFORE the batch;
+        // this covers teardown while tools are awaiting their network calls.
+        if (!this._responseUiAlive(uiElements)) {
+            return {
+                tc,
+                toolName: tc.function?.name,
+                resultText: 'Response UI no longer active — tool call dropped.',
+            };
+        }
+
+        const toolName = tc.function?.name;
+        const args = this._parseToolArguments(tc.function?.arguments);
+
+        // Build args summary + expand label/value for the log entry
+        let argsSummary = '';
+        let expandLabel = '';
+        let expandValue = '';
+        if (toolName === WEB_SEARCH_TOOL_NAME) {
+            const q = String(args.query ?? args.q ?? '').trim();
+            argsSummary = q ? `"${q.substring(0, 60)}${q.length > 60 ? '…' : ''}"` : '';
+            if (q) {
+                expandLabel = 'Search query';
+                expandValue = q;
             }
+        } else if (
+            toolName === READ_URL_TOOL_NAME ||
+            toolName === CRAWL4AI_TOOL_NAME ||
+            toolName === EXPLORE_DOCS_TOOL_NAME
+        ) {
+            const u = String(args.url ?? '').trim();
+            argsSummary = u ? u.substring(0, 60) + (u.length > 60 ? '…' : '') : '';
+            if (u) {
+                expandLabel =
+                    toolName === CRAWL4AI_TOOL_NAME
+                        ? 'Scraped URL'
+                        : toolName === EXPLORE_DOCS_TOOL_NAME
+                          ? 'Explored URL'
+                          : 'Page URL';
+                expandValue = u;
+            }
+        }
 
-            const toolName = tc.function?.name;
-            const args = this._parseToolArguments(tc.function?.arguments);
+        // KB tools no longer add rows to the tool-call log — their activity
+        // is surfaced as a compact glowing pill in the message footer (see
+        // _recordKnowledgeUsage). Other tools keep the VS Code-style rows.
+        const isKbTool =
+            toolName === RAG_TOOL_NAME ||
+            toolName === UPDATE_KNOWLEDGE_TOOL_NAME ||
+            toolName === FORGET_KNOWLEDGE_TOOL_NAME;
+        let knowledgeUsage = null;
+        const logEntry = isKbTool
+            ? null
+            : this._addToolCallLogEntry(uiElements, {
+                  toolName: toolName || 'unknown',
+                  status: 'pending',
+                  detail: argsSummary || 'Executing…',
+                  expandLabel,
+                  expandValue,
+                  parentBox: groupBody,
+              });
 
-            // Build args summary + expand label/value for the log entry
-            let argsSummary = '';
-            let expandLabel = '';
-            let expandValue = '';
+        let resultText = '';
+
+        // ── Mode guard (defense-in-depth, Unsloth pattern) ────────────
+        // Tools should never be advertised when their mode is OFF, but
+        // check at execution time as a safety net.  If a tool is disabled
+        // the call is rejected with a clear error rather than silently
+        // executing.
+        if (toolName === WEB_SEARCH_TOOL_NAME && !this._isWebSearchEnabled()) {
+            resultText =
+                'Web search is currently disabled (mode: Off). Set Search to Auto or On before using.';
+            this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+            return { tc, toolName, resultText };
+        }
+        if (toolName === CRAWL4AI_TOOL_NAME && !this._isCrawl4AIEnabled()) {
+            resultText =
+                'Web scraping is currently disabled (mode: Off). Set Scrape to Auto or On before using.';
+            this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+            return { tc, toolName, resultText };
+        }
+        // explore_docs is a Crawl4AI-backed discovery tool — gate it by the
+        // same web-scraping mode as crawl_url.
+        if (toolName === EXPLORE_DOCS_TOOL_NAME && !this._isCrawl4AIEnabled()) {
+            resultText =
+                'explore_docs is unavailable — web scraping is currently disabled (mode: Off). Set Scrape to Auto or On before using.';
+            this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+            return { tc, toolName, resultText };
+        }
+        // read_url is a sub-feature of web search (fetch-page); gate it by
+        // web search mode since it's advertised alongside web_search.
+        if (toolName === READ_URL_TOOL_NAME && !this._isWebSearchEnabled()) {
+            resultText =
+                'Page reading is currently unavailable — web search must be enabled (mode must not be Off).';
+            this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+            return { tc, toolName, resultText };
+        }
+
+        try {
             if (toolName === WEB_SEARCH_TOOL_NAME) {
-                const q = String(args.query ?? args.q ?? '').trim();
-                argsSummary = q ? `"${q.substring(0, 60)}${q.length > 60 ? '…' : ''}"` : '';
-                if (q) {
-                    expandLabel = 'Search query';
-                    expandValue = q;
-                }
-            } else if (
-                toolName === READ_URL_TOOL_NAME ||
-                toolName === CRAWL4AI_TOOL_NAME ||
-                toolName === EXPLORE_DOCS_TOOL_NAME
-            ) {
-                const u = String(args.url ?? '').trim();
-                argsSummary = u ? u.substring(0, 60) + (u.length > 60 ? '…' : '') : '';
-                if (u) {
-                    expandLabel =
-                        toolName === CRAWL4AI_TOOL_NAME
-                            ? 'Scraped URL'
-                            : toolName === EXPLORE_DOCS_TOOL_NAME
-                              ? 'Explored URL'
-                              : 'Page URL';
-                    expandValue = u;
-                }
-            }
-
-            // KB tools no longer add rows to the tool-call log — their activity
-            // is surfaced as a compact glowing pill in the message footer (see
-            // _recordKnowledgeUsage). Other tools keep the VS Code-style rows.
-            const isKbTool =
-                toolName === RAG_TOOL_NAME ||
-                toolName === UPDATE_KNOWLEDGE_TOOL_NAME ||
-                toolName === FORGET_KNOWLEDGE_TOOL_NAME;
-            let knowledgeUsage = null;
-            const logEntry = isKbTool
-                ? null
-                : this._addToolCallLogEntry(uiElements, {
-                      toolName: toolName || 'unknown',
-                      status: 'pending',
-                      detail: argsSummary || 'Executing…',
-                      expandLabel,
-                      expandValue,
-                      parentBox: groupBody,
-                  });
-
-            let resultText = '';
-
-            // ── Mode guard (defense-in-depth, Unsloth pattern) ────────────
-            // Tools should never be advertised when their mode is OFF, but
-            // check at execution time as a safety net.  If a tool is disabled
-            // the call is rejected with a clear error rather than silently
-            // executing.
-            if (toolName === WEB_SEARCH_TOOL_NAME && !this._isWebSearchEnabled()) {
-                resultText =
-                    'Web search is currently disabled (mode: Off). Set Search to Auto or On before using.';
-                this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
-                return { tc, toolName, resultText };
-            }
-            if (toolName === CRAWL4AI_TOOL_NAME && !this._isCrawl4AIEnabled()) {
-                resultText =
-                    'Web scraping is currently disabled (mode: Off). Set Scrape to Auto or On before using.';
-                this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
-                return { tc, toolName, resultText };
-            }
-            // explore_docs is a Crawl4AI-backed discovery tool — gate it by the
-            // same web-scraping mode as crawl_url.
-            if (toolName === EXPLORE_DOCS_TOOL_NAME && !this._isCrawl4AIEnabled()) {
-                resultText =
-                    'explore_docs is unavailable — web scraping is currently disabled (mode: Off). Set Scrape to Auto or On before using.';
-                this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
-                return { tc, toolName, resultText };
-            }
-            // read_url is a sub-feature of web search (fetch-page); gate it by
-            // web search mode since it's advertised alongside web_search.
-            if (toolName === READ_URL_TOOL_NAME && !this._isWebSearchEnabled()) {
-                resultText =
-                    'Page reading is currently unavailable — web search must be enabled (mode must not be Off).';
-                this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
-                return { tc, toolName, resultText };
-            }
-
-            try {
-                if (toolName === WEB_SEARCH_TOOL_NAME) {
-                    const query = String(args.query ?? args.q ?? '').trim();
-                    if (!query) {
-                        resultText = 'No search query was provided.';
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'error',
-                            error: resultText,
-                        });
-                    } else {
-                        this._applyAssistantRender(
-                            uiElements,
-                            `Searching the web for \u201c${query}\u201d\u2026`,
-                            { plain: true },
-                        );
-                        const config = readWebSearchConfig(this._settings);
-                        // Honor the schema-advertised optional arguments so a
-                        // model-requested time filter / category / limit is not
-                        // silently ignored.
-                        const timeRange = String(args.time_range ?? '')
-                            .trim()
-                            .toLowerCase();
-                        if (['day', 'week', 'month', 'year'].includes(timeRange)) {
-                            config.timeRange = timeRange;
-                        }
-                        const categoriesValue = Array.isArray(args.categories)
-                            ? args.categories
-                                  .map((c) => String(c ?? '').trim())
-                                  .filter(Boolean)
-                                  .join(',')
-                            : String(args.categories ?? '').trim();
-                        if (categoriesValue) {
-                            // Explicit categories replace the default category
-                            // fan-out and intent routing.
-                            config.categories = categoriesValue;
-                            config.parallelCategories = null;
-                            config.intentRoute = null;
-                        }
-                        const limitArg = Number(args.limit);
-                        if (Number.isFinite(limitArg) && limitArg > 0) {
-                            config.resultLimit = Math.floor(limitArg);
-                        }
-                        const searchPayload = await this._webSearchRuntime.search(
-                            query,
-                            config,
-                            cancellable,
-                        );
-                        totalWebSearchesThisTurn++;
-                        const resultCount = searchPayload?.results?.length || 0;
-                        const unresponsiveEngines = Array.isArray(
-                            searchPayload?.unresponsiveEngines,
-                        )
-                            ? searchPayload.unresponsiveEngines
-                            : [];
-                        if (resultCount === 0) {
-                            consecutiveEmptySearches++;
-                            // Detect when ALL configured engines are dead (not just "no results")
-                            if (
-                                unresponsiveEngines.length > 0 &&
-                                (searchPayload?.answers || []).length === 0
-                            ) {
-                                this._allEnginesDown = true;
-                                log(
-                                    `[Katab:search] ALL engines unresponsive — ${unresponsiveEngines.map((e) => e.name || 'unknown').join(', ')}`,
-                                );
-                            }
-                        } else {
-                            consecutiveEmptySearches = 0;
-                            this._allEnginesDown = false;
-                        }
-                        this._totalWebSearchesThisTurn = totalWebSearchesThisTurn;
-                        this._consecutiveEmptySearches = consecutiveEmptySearches;
-                        resultText = buildWebSearchResultBlock(query, searchPayload, {
-                            includeGuard: true,
-                            consecutiveEmptySearches,
-                            totalSearchesThisTurn: totalWebSearchesThisTurn,
-                            totalReadUrlFailuresThisTurn,
-                            totalReadUrlAttemptsThisTurn,
-                        });
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'success',
-                            detail:
-                                resultCount > 0
-                                    ? `Found ${resultCount} result${resultCount !== 1 ? 's' : ''}`
-                                    : 'No results found',
-                        });
-                    }
-                } else if (toolName === READ_URL_TOOL_NAME) {
-                    const targetUrl = String(args.url ?? '').trim();
-                    if (!targetUrl) {
-                        resultText = 'No URL was provided.';
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'error',
-                            error: resultText,
-                        });
-                    } else {
-                        totalReadUrlAttemptsThisTurn++;
-                        this._totalReadUrlAttemptsThisTurn = totalReadUrlAttemptsThisTurn;
-                        this._applyAssistantRender(uiElements, `Reading ${targetUrl}\u2026`, {
-                            plain: true,
-                        });
-                        const config = readWebSearchConfig(this._settings);
-                        const page = await this._webSearchRuntime.fetchPage(
-                            targetUrl,
-                            config,
-                            cancellable,
-                        );
-                        resultText = buildReadUrlResultBlock(page);
-                        const contentLen = page?.text?.length || 0;
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'success',
-                            detail:
-                                contentLen > 0
-                                    ? `Read ${(contentLen / 1024).toFixed(1)} KB`
-                                    : 'Page fetched',
-                        });
-                    }
-                } else if (toolName === CRAWL4AI_TOOL_NAME) {
-                    const targetUrl = String(args.url ?? '').trim();
-                    if (!targetUrl) {
-                        resultText = 'No URL was provided to scrape.';
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'error',
-                            error: resultText,
-                        });
-                    } else {
-                        totalReadUrlAttemptsThisTurn++;
-                        this._totalReadUrlAttemptsThisTurn = totalReadUrlAttemptsThisTurn;
-                        this._applyAssistantRender(uiElements, `Scraping ${targetUrl}\u2026`, {
-                            plain: true,
-                        });
-                        const crawlConfig = readCrawl4AIConfig(this._settings);
-                        // Decision-based extraction (Oct 2026): the tool-call
-                        // path returns RAW content by default; the model opts
-                        // into server-side LLM extraction with mode='extract'
-                        // (optionally supplying an instruction).  The global
-                        // llm-* settings configure HOW extraction runs, not
-                        // whether every crawl is summarized.  Manual /crawl
-                        // keeps honoring the configured mode (explicit user
-                        // action).
-                        const requestedMode = String(args.mode ?? '')
-                            .trim()
-                            .toLowerCase();
-                        const instruction = String(args.instruction ?? '').trim();
-                        if (requestedMode === 'extract') {
-                            if (instruction || !isLLMExtractionMode(crawlConfig)) {
-                                crawlConfig.extractionMode = 'llm-block';
-                            }
-                            if (instruction) {
-                                crawlConfig.llmInstruction = instruction;
-                            }
-                        } else {
-                            // Default ('content') and any unknown value: raw markdown.
-                            crawlConfig.extractionMode = 'markdown';
-                        }
-                        if (crawlConfig.fitMarkdownMode === 'bm25') {
-                            crawlConfig.query = String(args.query ?? '').trim();
-                        }
-                        log(
-                            `[Katab:crawl4ai] Tool crawl mode=${crawlConfig.extractionMode} for ${targetUrl}`,
-                        );
-                        const crawlResults = await this._crawl4aiRuntime.crawl(
-                            targetUrl,
-                            crawlConfig,
-                            cancellable,
-                        );
-                        resultText = buildCrawlResultBlock(crawlResults[0]);
-                        const contentLen = crawlResults?.[0]
-                            ? getCrawlResultText(crawlResults[0]).length
-                            : 0;
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'success',
-                            detail:
-                                contentLen > 0
-                                    ? `Scraped ${(contentLen / 1024).toFixed(1)} KB`
-                                    : 'Page scraped',
-                        });
-                    }
-                } else if (toolName === EXPLORE_DOCS_TOOL_NAME) {
-                    const targetUrl = String(args.url ?? '').trim();
-                    if (!targetUrl) {
-                        resultText = 'No URL was provided to explore.';
-                        this._updateToolCallLogEntry(logEntry, {
-                            status: 'error',
-                            error: resultText,
-                        });
-                    } else {
-                        const query = String(args.query ?? args.q ?? '').trim();
-                        this._applyAssistantRender(uiElements, `Exploring ${targetUrl}\u2026`, {
-                            plain: true,
-                        });
-                        const crawlConfig = readCrawl4AIConfig(this._settings);
-                        const exploreResult = await this._exploreDocsRuntime.explore(
-                            targetUrl,
-                            crawlConfig,
-                            query,
-                            cancellable,
-                        );
-                        resultText = buildExploreDocsResultBlock(exploreResult, { query });
-                        if (exploreResult && exploreResult.success) {
-                            const tocCount = exploreResult?.tableOfContents?.length || 0;
-                            const suggestedCount = exploreResult?.suggestedLinks?.length || 0;
-                            this._updateToolCallLogEntry(logEntry, {
-                                status: 'success',
-                                detail:
-                                    tocCount > 0
-                                        ? `Found ${tocCount} TOC link${tocCount !== 1 ? 's' : ''}${suggestedCount > 0 ? `, ${suggestedCount} suggested` : ''}`
-                                        : 'No TOC links found',
-                            });
-                        } else {
-                            // The model still receives the failure text via
-                            // resultText; the log chip should reflect it too
-                            // instead of claiming a green "success".
-                            this._updateToolCallLogEntry(logEntry, {
-                                status: 'error',
-                                error: exploreResult?.errorMessage || 'Exploration failed',
-                            });
-                        }
-                    }
-                } else if (toolName === RAG_TOOL_NAME) {
-                    const query = String(args.query ?? '').trim();
-                    const collection = ['conversations', 'documents', 'research_cache'].includes(
-                        String(args.collection ?? ''),
-                    )
-                        ? String(args.collection)
-                        : '';
-                    if (!query) {
-                        resultText = 'No search query was provided for knowledge base search.';
-                        knowledgeUsage = {
-                            kind: 'search',
-                            query: '',
-                            status: 'error',
-                            error: resultText,
-                        };
-                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                    } else {
-                        this._applyAssistantRender(
-                            uiElements,
-                            `Searching knowledge base for \u201c${query}\u201d\u2026`,
-                            { plain: true },
-                        );
-                        const ragConfig = readRagConfig(this._settings);
-                        const searchConfig = collection ? { ...ragConfig, collection } : ragConfig;
-                        // Bound the autonomous KB search too — a hung RAG service
-                        // would otherwise stall the whole tool-call turn for 30s.
-                        const searchOutcome = await this._withTimeout(
-                            this._ragRuntime.search(query, searchConfig, cancellable),
-                            RAG_TOOL_SEARCH_TIMEOUT_MS,
-                        );
-                        if (searchOutcome.kind === 'timeout') {
-                            log(
-                                `[Katab:rag] Autonomous knowledge_search timed out after ${RAG_TOOL_SEARCH_TIMEOUT_MS}ms`,
-                            );
-                            resultText =
-                                'Knowledge base search timed out — the RAG service is unresponsive. Do NOT keep calling knowledge_search; answer from your existing knowledge or use web_search instead.';
-                            knowledgeUsage = {
-                                kind: 'search',
-                                query,
-                                status: 'error',
-                                error: 'RAG service timed out',
-                            };
-                            this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                        } else {
-                            const searchResult = searchOutcome.value;
-                            const searchMode = searchResult?.mode || '';
-                            resultText = buildRagResultBlock(query, searchResult, {
-                                mode: searchMode,
-                            });
-                            const resultCount = searchResult?.results?.length || 0;
-
-                            // Phase 3: Coverage fallback — when KB results are poor, auto-trigger web search
-                            const coverageScore = computeRagCoverageScore(
-                                searchResult?.results || [],
-                            );
-                            const kbResults = searchResult?.results || [];
-                            const hasAnyMeaningfulResult = kbResults.some(
-                                (r) => (r.score || 0) >= RAG_FALLBACK_MIN_RESULT_SCORE,
-                            );
-                            const shouldFallback =
-                                ragConfig.fallbackEnabled &&
-                                hasAnyMeaningfulResult &&
-                                coverageScore < ragConfig.fallbackThreshold &&
-                                this._isWebSearchEnabled() &&
-                                this._webSearchMode !== TOOL_MODE_OFF &&
-                                !this._kbSuppressWebSearch;
-
-                            if (shouldFallback) {
-                                log(
-                                    `[Katab:rag] Tool KB coverage low (${coverageScore.toFixed(2)}) — fallback to web search for "${query.substring(0, 80)}"`,
-                                );
-                                try {
-                                    const webConfig = readWebSearchConfig(this._settings);
-                                    const webPayload = await this._webSearchRuntime.search(
-                                        query,
-                                        webConfig,
-                                        cancellable,
-                                    );
-                                    const webResultCount = webPayload?.results?.length || 0;
-
-                                    totalWebSearchesThisTurn++;
-                                    this._totalWebSearchesThisTurn = totalWebSearchesThisTurn;
-
-                                    if (
-                                        webResultCount > 0 ||
-                                        (webPayload?.answers?.length || 0) > 0
-                                    ) {
-                                        const webContext = buildWebSearchResultBlock(
-                                            query,
-                                            webPayload,
-                                            { includeGuard: true },
-                                        );
-                                        resultText +=
-                                            '\n\n---\n\n[AUTO-FALLBACK: Web search supplement because knowledge base coverage was low]\n\n' +
-                                            (webContext || '');
-                                    } else {
-                                        // 0 results — skip injection (same reasoning as the send-path
-                                        // auto-fallback): telling the model "search returned nothing"
-                                        // suppresses its own web_search / read_url tool use.
-                                        log(
-                                            `[Katab:rag] Tool KB web fallback returned 0 results — skipping injection so the model can decide to search.`,
-                                        );
-                                    }
-                                    log(
-                                        `[Katab:rag] Tool KB web fallback returned ${webResultCount} results`,
-                                    );
-                                } catch (webErr) {
-                                    log(
-                                        `[Katab:rag] Tool KB web fallback failed: ${webErr.message}`,
-                                    );
-                                    // Continue with just KB results
-                                }
-                            }
-
-                            knowledgeUsage = {
-                                kind: 'search',
-                                query,
-                                collection,
-                                resultCount,
-                                mode: searchMode,
-                                status: 'success',
-                            };
-                            this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                        }
-                    }
-                } else if (toolName === UPDATE_KNOWLEDGE_TOOL_NAME) {
-                    const about = String(args.about ?? '').trim();
-                    const newFact = String(args.new_fact ?? '').trim();
-                    if (!about || !newFact) {
-                        resultText =
-                            'Both "about" and "new_fact" are required to update the knowledge base.';
-                        knowledgeUsage = {
-                            kind: 'update',
-                            about: about || 'memory',
-                            status: 'error',
-                            error: resultText,
-                        };
-                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                    } else {
-                        // Record a pending update entry; _handleKnowledgeUpdate will
-                        // either run it immediately (auto mode) or leave it pending
-                        // so the KB drawer renders Update / Dismiss actions.
-                        knowledgeUsage = { kind: 'update', about, newFact, status: 'pending' };
-                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                        const updateOutcome = await this._handleKnowledgeUpdate(
-                            about,
-                            newFact,
-                            uiElements,
-                            knowledgeUsage,
-                        );
-                        if (updateOutcome?.pending) {
-                            resultText = `The update for "${about}" is QUEUED FOR USER CONFIRMATION — it is not saved yet. Do not assume the knowledge base contains it.`;
-                        } else if (updateOutcome?.ok) {
-                            resultText = `Knowledge base updated: "${about}" saved to long-term memory.`;
-                        } else {
-                            resultText = `Knowledge base update FAILED for "${about}": ${updateOutcome?.error || 'unknown error'}. Tell the user the update was not saved.`;
-                        }
-                    }
-                } else if (toolName === FORGET_KNOWLEDGE_TOOL_NAME) {
-                    const about = String(args.about ?? '').trim();
-                    if (!about) {
-                        resultText = 'The "about" topic is required to forget a memory.';
-                        knowledgeUsage = {
-                            kind: 'forget',
-                            about: 'memory',
-                            status: 'error',
-                            error: resultText,
-                        };
-                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                    } else {
-                        knowledgeUsage = { kind: 'forget', about, status: 'pending' };
-                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                        const forgetOutcome = await this._handleKnowledgeForget(
-                            about,
-                            uiElements,
-                            knowledgeUsage,
-                        );
-                        if (forgetOutcome?.pending) {
-                            resultText = `The forget request for "${about}" is QUEUED FOR USER CONFIRMATION — the memory is not deleted yet. Do not assume it is gone.`;
-                        } else if (forgetOutcome?.ok) {
-                            resultText = `Memory "${about}" was deleted from the knowledge base (${forgetOutcome.deleted} chunk(s) removed).`;
-                        } else {
-                            resultText = `Could not delete the memory "${about}": ${forgetOutcome?.error || 'unknown error'}.`;
-                        }
-                    }
-                } else {
-                    resultText = `Tool ${toolName || 'unknown'} is not implemented locally in Katab.`;
-                    this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
-                }
-            } catch (e) {
-                if (this._isRequestCancelled(e)) {
+                const query = String(args.query ?? args.q ?? '').trim();
+                if (!query) {
+                    resultText = 'No search query was provided.';
                     this._updateToolCallLogEntry(logEntry, {
-                        status: 'stopped',
-                        detail: 'Stopped',
+                        status: 'error',
+                        error: resultText,
                     });
-                    throw e; // re-throw cancellation to abort the batch
-                }
-
-                const isFetchFailure =
-                    toolName === READ_URL_TOOL_NAME || toolName === CRAWL4AI_TOOL_NAME;
-                if (isFetchFailure) {
-                    totalReadUrlFailuresThisTurn++;
-                    consecutiveReadUrlFailures++;
-                    log(
-                        `[Katab:webSearch] ${toolName} failed: ${e?.code || e?.name || 'error'} — ${e?.message || String(e)}`,
-                    );
                 } else {
-                    consecutiveReadUrlFailures = 0;
+                    this._applyAssistantRender(
+                        uiElements,
+                        `Searching the web for \u201c${query}\u201d\u2026`,
+                        { plain: true },
+                    );
+                    const config = readWebSearchConfig(this._settings);
+                    // Honor the schema-advertised optional arguments so a
+                    // model-requested time filter / category / limit is not
+                    // silently ignored.
+                    const timeRange = String(args.time_range ?? '')
+                        .trim()
+                        .toLowerCase();
+                    if (['day', 'week', 'month', 'year'].includes(timeRange)) {
+                        config.timeRange = timeRange;
+                    }
+                    const categoriesValue = Array.isArray(args.categories)
+                        ? args.categories
+                              .map((c) => String(c ?? '').trim())
+                              .filter(Boolean)
+                              .join(',')
+                        : String(args.categories ?? '').trim();
+                    if (categoriesValue) {
+                        // Explicit categories replace the default category
+                        // fan-out and intent routing.
+                        config.categories = categoriesValue;
+                        config.parallelCategories = null;
+                        config.intentRoute = null;
+                    }
+                    const limitArg = Number(args.limit);
+                    if (Number.isFinite(limitArg) && limitArg > 0) {
+                        config.resultLimit = Math.floor(limitArg);
+                    }
+                    const searchPayload = await this._webSearchRuntime.search(
+                        query,
+                        config,
+                        cancellable,
+                    );
+                    turn.totalWebSearchesThisTurn++;
+                    const resultCount = searchPayload?.results?.length || 0;
+                    const unresponsiveEngines = Array.isArray(searchPayload?.unresponsiveEngines)
+                        ? searchPayload.unresponsiveEngines
+                        : [];
+                    if (resultCount === 0) {
+                        turn.consecutiveEmptySearches++;
+                        // Detect when ALL configured engines are dead (not just "no results")
+                        if (
+                            unresponsiveEngines.length > 0 &&
+                            (searchPayload?.answers || []).length === 0
+                        ) {
+                            this._allEnginesDown = true;
+                            log(
+                                `[Katab:search] ALL engines unresponsive — ${unresponsiveEngines.map((e) => e.name || 'unknown').join(', ')}`,
+                            );
+                        }
+                    } else {
+                        turn.consecutiveEmptySearches = 0;
+                        this._allEnginesDown = false;
+                    }
+                    this._totalWebSearchesThisTurn = turn.totalWebSearchesThisTurn;
+                    this._consecutiveEmptySearches = turn.consecutiveEmptySearches;
+                    resultText = buildWebSearchResultBlock(query, searchPayload, {
+                        includeGuard: true,
+                        consecutiveEmptySearches: turn.consecutiveEmptySearches,
+                        totalSearchesThisTurn: turn.totalWebSearchesThisTurn,
+                        totalReadUrlFailuresThisTurn: turn.totalReadUrlFailuresThisTurn,
+                        totalReadUrlAttemptsThisTurn: turn.totalReadUrlAttemptsThisTurn,
+                    });
+                    this._updateToolCallLogEntry(logEntry, {
+                        status: 'success',
+                        detail:
+                            resultCount > 0
+                                ? `Found ${resultCount} result${resultCount !== 1 ? 's' : ''}`
+                                : 'No results found',
+                    });
                 }
-                this._totalReadUrlFailuresThisTurn = totalReadUrlFailuresThisTurn;
-                this._consecutiveReadUrlFailures = consecutiveReadUrlFailures;
-
-                let errorBase =
-                    e instanceof WebSearchToolError
-                        ? `Web search error: ${e.message}`
-                        : e instanceof Crawl4AIError
-                          ? `Web scraping error: ${e.message}`
-                          : `Error executing tool: ${e.message}`;
-
-                if (isFetchFailure && consecutiveReadUrlFailures >= 2) {
-                    errorBase += `\n\nNOTE: This is the ${consecutiveReadUrlFailures}th consecutive page that could not be read — these sites may require JavaScript, block scraping, or use paywalls. Prefer crawl_url for JavaScript-heavy pages, try different sources, or follow links from pages you have already read.`;
-                } else if (isFetchFailure) {
-                    errorBase +=
-                        '\n\nThis page could not be read (the site may block scraping or require JavaScript). Try crawl_url for JavaScript-heavy pages, a different URL, or a link from a page you have already read.';
+            } else if (toolName === READ_URL_TOOL_NAME) {
+                const targetUrl = String(args.url ?? '').trim();
+                if (!targetUrl) {
+                    resultText = 'No URL was provided.';
+                    this._updateToolCallLogEntry(logEntry, {
+                        status: 'error',
+                        error: resultText,
+                    });
+                } else {
+                    turn.totalReadUrlAttemptsThisTurn++;
+                    this._totalReadUrlAttemptsThisTurn = turn.totalReadUrlAttemptsThisTurn;
+                    this._applyAssistantRender(uiElements, `Reading ${targetUrl}\u2026`, {
+                        plain: true,
+                    });
+                    const config = readWebSearchConfig(this._settings);
+                    const page = await this._webSearchRuntime.fetchPage(
+                        targetUrl,
+                        config,
+                        cancellable,
+                    );
+                    resultText = buildReadUrlResultBlock(page);
+                    const contentLen = page?.text?.length || 0;
+                    this._updateToolCallLogEntry(logEntry, {
+                        status: 'success',
+                        detail:
+                            contentLen > 0
+                                ? `Read ${(contentLen / 1024).toFixed(1)} KB`
+                                : 'Page fetched',
+                    });
                 }
-
-                resultText = errorBase;
-                this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
-
-                if (isKbTool) {
-                    const kbArg =
-                        toolName === RAG_TOOL_NAME
-                            ? String(args?.query ?? '').trim()
-                            : String(args?.about ?? '').trim();
+            } else if (toolName === CRAWL4AI_TOOL_NAME) {
+                const targetUrl = String(args.url ?? '').trim();
+                if (!targetUrl) {
+                    resultText = 'No URL was provided to scrape.';
+                    this._updateToolCallLogEntry(logEntry, {
+                        status: 'error',
+                        error: resultText,
+                    });
+                } else {
+                    turn.totalReadUrlAttemptsThisTurn++;
+                    this._totalReadUrlAttemptsThisTurn = turn.totalReadUrlAttemptsThisTurn;
+                    this._applyAssistantRender(uiElements, `Scraping ${targetUrl}\u2026`, {
+                        plain: true,
+                    });
+                    const crawlConfig = readCrawl4AIConfig(this._settings);
+                    // Decision-based extraction (Oct 2026): the tool-call
+                    // path returns RAW content by default; the model opts
+                    // into server-side LLM extraction with mode='extract'
+                    // (optionally supplying an instruction).  The global
+                    // llm-* settings configure HOW extraction runs, not
+                    // whether every crawl is summarized.  Manual /crawl
+                    // keeps honoring the configured mode (explicit user
+                    // action).
+                    const requestedMode = String(args.mode ?? '')
+                        .trim()
+                        .toLowerCase();
+                    const instruction = String(args.instruction ?? '').trim();
+                    if (requestedMode === 'extract') {
+                        if (instruction || !isLLMExtractionMode(crawlConfig)) {
+                            crawlConfig.extractionMode = 'llm-block';
+                        }
+                        if (instruction) {
+                            crawlConfig.llmInstruction = instruction;
+                        }
+                    } else {
+                        // Default ('content') and any unknown value: raw markdown.
+                        crawlConfig.extractionMode = 'markdown';
+                    }
+                    if (crawlConfig.fitMarkdownMode === 'bm25') {
+                        crawlConfig.query = String(args.query ?? '').trim();
+                    }
+                    log(
+                        `[Katab:crawl4ai] Tool crawl mode=${crawlConfig.extractionMode} for ${targetUrl}`,
+                    );
+                    const crawlResults = await this._crawl4aiRuntime.crawl(
+                        targetUrl,
+                        crawlConfig,
+                        cancellable,
+                    );
+                    resultText = buildCrawlResultBlock(crawlResults[0]);
+                    const contentLen = crawlResults?.[0]
+                        ? getCrawlResultText(crawlResults[0]).length
+                        : 0;
+                    this._updateToolCallLogEntry(logEntry, {
+                        status: 'success',
+                        detail:
+                            contentLen > 0
+                                ? `Scraped ${(contentLen / 1024).toFixed(1)} KB`
+                                : 'Page scraped',
+                    });
+                }
+            } else if (toolName === EXPLORE_DOCS_TOOL_NAME) {
+                const targetUrl = String(args.url ?? '').trim();
+                if (!targetUrl) {
+                    resultText = 'No URL was provided to explore.';
+                    this._updateToolCallLogEntry(logEntry, {
+                        status: 'error',
+                        error: resultText,
+                    });
+                } else {
+                    const query = String(args.query ?? args.q ?? '').trim();
+                    this._applyAssistantRender(uiElements, `Exploring ${targetUrl}\u2026`, {
+                        plain: true,
+                    });
+                    const crawlConfig = readCrawl4AIConfig(this._settings);
+                    const exploreResult = await this._exploreDocsRuntime.explore(
+                        targetUrl,
+                        crawlConfig,
+                        query,
+                        cancellable,
+                    );
+                    resultText = buildExploreDocsResultBlock(exploreResult, { query });
+                    if (exploreResult && exploreResult.success) {
+                        const tocCount = exploreResult?.tableOfContents?.length || 0;
+                        const suggestedCount = exploreResult?.suggestedLinks?.length || 0;
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'success',
+                            detail:
+                                tocCount > 0
+                                    ? `Found ${tocCount} TOC link${tocCount !== 1 ? 's' : ''}${suggestedCount > 0 ? `, ${suggestedCount} suggested` : ''}`
+                                    : 'No TOC links found',
+                        });
+                    } else {
+                        // The model still receives the failure text via
+                        // resultText; the log chip should reflect it too
+                        // instead of claiming a green "success".
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'error',
+                            error: exploreResult?.errorMessage || 'Exploration failed',
+                        });
+                    }
+                }
+            } else if (toolName === RAG_TOOL_NAME) {
+                const query = String(args.query ?? '').trim();
+                const collection = ['conversations', 'documents', 'research_cache'].includes(
+                    String(args.collection ?? ''),
+                )
+                    ? String(args.collection)
+                    : '';
+                if (!query) {
+                    resultText = 'No search query was provided for knowledge base search.';
                     knowledgeUsage = {
-                        kind: toolName === RAG_TOOL_NAME ? 'search' : 'update',
-                        query: toolName === RAG_TOOL_NAME ? kbArg : undefined,
-                        about: toolName === RAG_TOOL_NAME ? undefined : kbArg || 'memory',
+                        kind: 'search',
+                        query: '',
                         status: 'error',
                         error: resultText,
                     };
                     this._recordKnowledgeUsage(uiElements, knowledgeUsage);
-                }
-            }
-
-            // Progressive truncation
-            if (resultText && typeof resultText === 'string' && resultText.length > 200) {
-                const truncated = this._truncateToolResultForIteration(resultText, toolName);
-                if (truncated !== resultText) {
-                    log(
-                        `[Katab:truncate] Tool result for ${toolName} trimmed from ${resultText.length} to ${truncated.length} chars (iteration ${this._toolIterations})`,
+                } else {
+                    this._applyAssistantRender(
+                        uiElements,
+                        `Searching knowledge base for \u201c${query}\u201d\u2026`,
+                        { plain: true },
                     );
+                    const ragConfig = readRagConfig(this._settings);
+                    const searchConfig = collection ? { ...ragConfig, collection } : ragConfig;
+                    // Bound the autonomous KB search too — a hung RAG service
+                    // would otherwise stall the whole tool-call turn for 30s.
+                    const searchOutcome = await this._withTimeout(
+                        this._ragRuntime.search(query, searchConfig, cancellable),
+                        RAG_TOOL_SEARCH_TIMEOUT_MS,
+                    );
+                    if (searchOutcome.kind === 'timeout') {
+                        log(
+                            `[Katab:rag] Autonomous knowledge_search timed out after ${RAG_TOOL_SEARCH_TIMEOUT_MS}ms`,
+                        );
+                        resultText =
+                            'Knowledge base search timed out — the RAG service is unresponsive. Do NOT keep calling knowledge_search; answer from your existing knowledge or use web_search instead.';
+                        knowledgeUsage = {
+                            kind: 'search',
+                            query,
+                            status: 'error',
+                            error: 'RAG service timed out',
+                        };
+                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                    } else {
+                        const searchResult = searchOutcome.value;
+                        const searchMode = searchResult?.mode || '';
+                        resultText = buildRagResultBlock(query, searchResult, {
+                            mode: searchMode,
+                        });
+                        const resultCount = searchResult?.results?.length || 0;
+
+                        // Phase 3: Coverage fallback — when KB results are poor, auto-trigger web search
+                        const coverageScore = computeRagCoverageScore(searchResult?.results || []);
+                        const kbResults = searchResult?.results || [];
+                        const hasAnyMeaningfulResult = kbResults.some(
+                            (r) => (r.score || 0) >= RAG_FALLBACK_MIN_RESULT_SCORE,
+                        );
+                        const shouldFallback =
+                            ragConfig.fallbackEnabled &&
+                            hasAnyMeaningfulResult &&
+                            coverageScore < ragConfig.fallbackThreshold &&
+                            this._isWebSearchEnabled() &&
+                            this._webSearchMode !== TOOL_MODE_OFF &&
+                            !this._kbSuppressWebSearch;
+
+                        if (shouldFallback) {
+                            log(
+                                `[Katab:rag] Tool KB coverage low (${coverageScore.toFixed(2)}) — fallback to web search for "${query.substring(0, 80)}"`,
+                            );
+                            try {
+                                const webConfig = readWebSearchConfig(this._settings);
+                                const webPayload = await this._webSearchRuntime.search(
+                                    query,
+                                    webConfig,
+                                    cancellable,
+                                );
+                                const webResultCount = webPayload?.results?.length || 0;
+
+                                turn.totalWebSearchesThisTurn++;
+                                this._totalWebSearchesThisTurn = turn.totalWebSearchesThisTurn;
+
+                                if (webResultCount > 0 || (webPayload?.answers?.length || 0) > 0) {
+                                    const webContext = buildWebSearchResultBlock(
+                                        query,
+                                        webPayload,
+                                        { includeGuard: true },
+                                    );
+                                    resultText +=
+                                        '\n\n---\n\n[AUTO-FALLBACK: Web search supplement because knowledge base coverage was low]\n\n' +
+                                        (webContext || '');
+                                } else {
+                                    // 0 results — skip injection (same reasoning as the send-path
+                                    // auto-fallback): telling the model "search returned nothing"
+                                    // suppresses its own web_search / read_url tool use.
+                                    log(
+                                        `[Katab:rag] Tool KB web fallback returned 0 results — skipping injection so the model can decide to search.`,
+                                    );
+                                }
+                                log(
+                                    `[Katab:rag] Tool KB web fallback returned ${webResultCount} results`,
+                                );
+                            } catch (webErr) {
+                                log(`[Katab:rag] Tool KB web fallback failed: ${webErr.message}`);
+                                // Continue with just KB results
+                            }
+                        }
+
+                        knowledgeUsage = {
+                            kind: 'search',
+                            query,
+                            collection,
+                            resultCount,
+                            mode: searchMode,
+                            status: 'success',
+                        };
+                        this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                    }
                 }
-                resultText = truncated;
+            } else if (toolName === UPDATE_KNOWLEDGE_TOOL_NAME) {
+                const about = String(args.about ?? '').trim();
+                const newFact = String(args.new_fact ?? '').trim();
+                if (!about || !newFact) {
+                    resultText =
+                        'Both "about" and "new_fact" are required to update the knowledge base.';
+                    knowledgeUsage = {
+                        kind: 'update',
+                        about: about || 'memory',
+                        status: 'error',
+                        error: resultText,
+                    };
+                    this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                } else {
+                    // Record a pending update entry; _handleKnowledgeUpdate will
+                    // either run it immediately (auto mode) or leave it pending
+                    // so the KB drawer renders Update / Dismiss actions.
+                    knowledgeUsage = { kind: 'update', about, newFact, status: 'pending' };
+                    this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                    const updateOutcome = await this._handleKnowledgeUpdate(
+                        about,
+                        newFact,
+                        uiElements,
+                        knowledgeUsage,
+                    );
+                    if (updateOutcome?.pending) {
+                        resultText = `The update for "${about}" is QUEUED FOR USER CONFIRMATION — it is not saved yet. Do not assume the knowledge base contains it.`;
+                    } else if (updateOutcome?.ok) {
+                        resultText = `Knowledge base updated: "${about}" saved to long-term memory.`;
+                    } else {
+                        resultText = `Knowledge base update FAILED for "${about}": ${updateOutcome?.error || 'unknown error'}. Tell the user the update was not saved.`;
+                    }
+                }
+            } else if (toolName === FORGET_KNOWLEDGE_TOOL_NAME) {
+                const about = String(args.about ?? '').trim();
+                if (!about) {
+                    resultText = 'The "about" topic is required to forget a memory.';
+                    knowledgeUsage = {
+                        kind: 'forget',
+                        about: 'memory',
+                        status: 'error',
+                        error: resultText,
+                    };
+                    this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                } else {
+                    knowledgeUsage = { kind: 'forget', about, status: 'pending' };
+                    this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+                    const forgetOutcome = await this._handleKnowledgeForget(
+                        about,
+                        uiElements,
+                        knowledgeUsage,
+                    );
+                    if (forgetOutcome?.pending) {
+                        resultText = `The forget request for "${about}" is QUEUED FOR USER CONFIRMATION — the memory is not deleted yet. Do not assume it is gone.`;
+                    } else if (forgetOutcome?.ok) {
+                        resultText = `Memory "${about}" was deleted from the knowledge base (${forgetOutcome.deleted} chunk(s) removed).`;
+                    } else {
+                        resultText = `Could not delete the memory "${about}": ${forgetOutcome?.error || 'unknown error'}.`;
+                    }
+                }
+            } else {
+                resultText = `Tool ${toolName || 'unknown'} is not implemented locally in Katab.`;
+                this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+            }
+        } catch (e) {
+            if (this._isRequestCancelled(e)) {
+                this._updateToolCallLogEntry(logEntry, {
+                    status: 'stopped',
+                    detail: 'Stopped',
+                });
+                throw e; // re-throw cancellation to abort the batch
             }
 
-            return { tc, toolName, resultText, knowledgeUsage };
-        };
+            const isFetchFailure =
+                toolName === READ_URL_TOOL_NAME || toolName === CRAWL4AI_TOOL_NAME;
+            if (isFetchFailure) {
+                turn.totalReadUrlFailuresThisTurn++;
+                turn.consecutiveReadUrlFailures++;
+                log(
+                    `[Katab:webSearch] ${toolName} failed: ${e?.code || e?.name || 'error'} — ${e?.message || String(e)}`,
+                );
+            } else {
+                turn.consecutiveReadUrlFailures = 0;
+            }
+            this._totalReadUrlFailuresThisTurn = turn.totalReadUrlFailuresThisTurn;
+            this._consecutiveReadUrlFailures = turn.consecutiveReadUrlFailures;
 
+            let errorBase =
+                e instanceof WebSearchToolError
+                    ? `Web search error: ${e.message}`
+                    : e instanceof Crawl4AIError
+                      ? `Web scraping error: ${e.message}`
+                      : `Error executing tool: ${e.message}`;
+
+            if (isFetchFailure && turn.consecutiveReadUrlFailures >= 2) {
+                errorBase += `\n\nNOTE: This is the ${turn.consecutiveReadUrlFailures}th consecutive page that could not be read — these sites may require JavaScript, block scraping, or use paywalls. Prefer crawl_url for JavaScript-heavy pages, try different sources, or follow links from pages you have already read.`;
+            } else if (isFetchFailure) {
+                errorBase +=
+                    '\n\nThis page could not be read (the site may block scraping or require JavaScript). Try crawl_url for JavaScript-heavy pages, a different URL, or a link from a page you have already read.';
+            }
+
+            resultText = errorBase;
+            this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+
+            if (isKbTool) {
+                const kbArg =
+                    toolName === RAG_TOOL_NAME
+                        ? String(args?.query ?? '').trim()
+                        : String(args?.about ?? '').trim();
+                knowledgeUsage = {
+                    kind: toolName === RAG_TOOL_NAME ? 'search' : 'update',
+                    query: toolName === RAG_TOOL_NAME ? kbArg : undefined,
+                    about: toolName === RAG_TOOL_NAME ? undefined : kbArg || 'memory',
+                    status: 'error',
+                    error: resultText,
+                };
+                this._recordKnowledgeUsage(uiElements, knowledgeUsage);
+            }
+        }
+
+        // Progressive truncation
+        if (resultText && typeof resultText === 'string' && resultText.length > 200) {
+            const truncated = truncateToolResultForIteration(resultText, {
+                toolName,
+                iteration: this._toolIterations || 0,
+                tiers: this._getEffectiveSynthesisThresholds().truncationTiers,
+            });
+            if (truncated !== resultText) {
+                log(
+                    `[Katab:truncate] Tool result for ${toolName} trimmed from ${resultText.length} to ${truncated.length} chars (iteration ${this._toolIterations})`,
+                );
+            }
+            resultText = truncated;
+        }
+
+        return { tc, toolName, resultText, knowledgeUsage };
+    }
+
+    /** Run the parsed tool batch (parallel read-only + serial unsafe), push the
+     *  result messages to history, and continue the turn (synthesis checks +
+     *  re-stream). */
+    async _finishToolBatch({
+        executeOneTool,
+        readOnlyCalls,
+        unsafeCalls,
+        activeProvider,
+        anthropicResultBlocks,
+        pendingMessages,
+        uiElements,
+    }) {
         // ── Execute read_only tools in parallel, then potentially_unsafe sequentially ──
         const allResults = [];
 

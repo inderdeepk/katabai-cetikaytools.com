@@ -26,6 +26,7 @@ src/
 │   ├── catalog.js               ← Provider labels/meta/model catalogs (single source)
 │   ├── chatRequest.js           ← Streaming request builders (all providers)
 │   ├── nonStreamingRequest.js   ← Non-streaming request builders + response extraction
+│   ├── historyPayload.js        ← Token estimates, context truncators, attachment payloads, provider-dialect sanitization
 │   └── streamParse.js           ← SSE/NDJSON line parsing + tool-call accumulation
 ├── ui/            # Render-model helpers + preferences pages
 │   ├── markdownRender.js        ← Markdown segmentation + inline formatting
@@ -80,7 +81,7 @@ src/
 - **ES Modules**: All JS files use `import`/`export` (no CommonJS). The GNOME Shell 46+ JS engine supports ES modules natively.
 - **GObject Classes**: UI actors extend `GObject.Object` and register with `GObject.registerClass()`.
 - **Soup v3**: All HTTP communication uses `Soup.Session` v3 (`gi://Soup?version=3.0`).
-- **Provider Dialect Pattern**: Each provider's payload builder, auth headers, and stream parser live in `src/providers/` (`chatRequest.js`, `nonStreamingRequest.js`, `streamParse.js`, `catalog.js`). The dialog assembles config snapshots and owns the send/redirect/cancel plumbing.
+- **Provider Dialect Pattern**: Each provider's payload builder, auth headers, and stream parser live in `src/providers/` (`chatRequest.js`, `nonStreamingRequest.js`, `streamParse.js`, `historyPayload.js`, `catalog.js`). The dialog assembles config snapshots and owns the send/redirect/cancel plumbing. `historyPayload.js` additionally owns history → payload shaping (estimates, truncators, attachment blocks, `sanitizeHistoryMessage`) so the dialog supplies provider state through small callbacks.
 - **Request Lifecycle**: send/stop state is a single state machine (`src/core/requestLifecycle.js` — idle → enriching → awaiting-model ⇄ tool-loop → synthesis → stopping → done/error). Guards and UI decisions read lifecycle predicates (`canSend`, `canStop`, `isResponding`); `_setStreamingState` only applies UI and asserts consistency (`[Katab:lifecycle] state mismatch` in the journal).
 - **Host-Bag Boundaries**: extracted research/provider modules are pure functions taking an injected dependency bag (e.g. `_pipelineHost()`, `_researchBranchHost()`, or a context object for the synthesis prompt) — runtimes, UI callbacks, config readers, and stores stay in the dialog.
 - **Tool Registry**: Tools are declared in `src/tools/toolDefinitions.js` via `registerTool()` and dispatched by `extension.js::_handleToolCalls()`.
@@ -261,7 +262,8 @@ _handleToolCalls(toolCalls, uiElements)
     ├── Partition by dangerLevel
     ├── read_only tools → Promise.all() parallel execution
     ├── potentially_unsafe tools → sequential with delay
-    ├── Each tool result truncated via _truncateToolResultForIteration()
+    ├── Each tool result truncated via truncateToolResultForIteration()
+    │   (src/providers/historyPayload.js)
     ├── Push results to _messageHistory + flushSync()
     ├── Check force-synthesis thresholds
     └── Recurse _streamResponse() with updated context

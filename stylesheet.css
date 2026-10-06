@@ -349,10 +349,10 @@
    ════════════════════════════════════════════ */
 
 .katab-header-box {
-    margin-bottom: 14px;
-    padding-bottom: 10px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    spacing: 7px;
+    spacing: 8px;
 }
 
 .katab-title-wrapper {
@@ -373,11 +373,12 @@
 
 /* ── Unified header chip — all pill-shaped header controls share this base ── */
 .katab-header-chip {
-    padding: 6px 13px;
-    border-radius: 11px;
+    padding: 8px 14px;
+    border-radius: 12px;
     border: 1px solid rgba(255, 255, 255, 0.10);
     background-color: rgba(255, 255, 255, 0.06);
-    spacing: 7px;
+    spacing: 8px;
+    height: 40px;
 }
 
 .katab-header-chip:hover {
@@ -396,7 +397,7 @@
 }
 
 .katab-provider-status-icon {
-    icon-size: 20px;
+    icon-size: 22px;
 }
 
 /* Health is a micro-label — the chip surface itself stays neutral so the
@@ -514,11 +515,11 @@
 .katab-close-btn,
 .katab-settings-btn,
 .katab-new-chat-btn {
-    padding: 6px;
-    border-radius: 9px;
+    padding: 8px;
+    border-radius: 10px;
     background-color: transparent;
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
 }
 
 .katab-close-btn:hover,
@@ -531,7 +532,7 @@
 .katab-settings-icon,
 .katab-new-chat-icon,
 .katab-history-icon {
-    icon-size: 17px;
+    icon-size: 18px;
     color: rgba(255, 255, 255, 0.68);
 }
 
@@ -541,11 +542,12 @@
 
 /* ── History Button + Hover Dropdown ───── */
 .katab-history-dropdown-btn {
-    spacing: 4px;
-    padding: 4px 8px;
-    border-radius: 9px;
+    spacing: 5px;
+    padding: 8px 10px;
+    border-radius: 10px;
     margin-left: 2px;
     margin-right: 2px;
+    height: 40px;
 }
 
 .katab-history-dropdown-btn:hover {
@@ -1772,12 +1774,13 @@
 }
 
 .katab-cache-session-chip {
-    spacing: 4px;
+    spacing: 5px;
     margin-right: 4px;
-    padding: 4px 9px;
-    border-radius: 10px;
+    padding: 6px 10px;
+    border-radius: 11px;
     background-color: rgba(166, 227, 161, 0.10);
     border: 1px solid rgba(166, 227, 161, 0.18);
+    height: 40px;
 }
 
 .katab-cache-session-chip-icon {
@@ -3983,32 +3986,34 @@
    AI TOKEN BREAKDOWN
    ════════════════════════════════════════════ */
 
-/* Centered header button — compact pet indicator + usage label */
+/* Header button — neutral chip surface (matches .katab-header-chip); the teal
+   accent lives on the pet avatar ring + hover only. */
 .katab-usage-btn {
-    padding: 6px 13px;
-    border-radius: 11px;
-    border: 1px solid rgba(148, 226, 213, 0.24);
-    background-color: rgba(148, 226, 213, 0.08);
+    padding: 8px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background-color: rgba(255, 255, 255, 0.06);
     spacing: 8px;
+    height: 40px;
 }
 
 .katab-usage-btn:hover {
-    border-color: rgba(148, 226, 213, 0.44);
-    background-color: rgba(148, 226, 213, 0.14);
+    border-color: rgba(148, 226, 213, 0.42);
+    background-color: rgba(148, 226, 213, 0.10);
 }
 
-/* Small pet indicator dot */
+/* Pet avatar — the usage button's teal accent carrier */
 .katab-usage-btn-pet-box {
-    width: 18px;
-    height: 18px;
-    border-radius: 9px;
+    width: 22px;
+    height: 22px;
+    border-radius: 11px;
     background-color: rgba(148, 226, 213, 0.20);
-    border: 1.5px solid rgba(148, 226, 213, 0.50);
+    border: 1.5px solid rgba(148, 226, 213, 0.55);
     margin: 0;
 }
 
 .katab-usage-btn-pet-fallback {
-    font-size: 9pt;
+    font-size: 10pt;
     font-weight: bold;
     color: rgba(255, 255, 255, 0.85);
 }
@@ -4046,9 +4051,9 @@
 }
 
 .katab-usage-btn-label {
-    font-size: 9pt;
+    font-size: 0.95em;
     font-weight: 600;
-    color: #94e2d5;
+    color: rgba(255, 255, 255, 0.85);
 }
 
 /* Panel body — cards inside the picker-shell list */
@@ -4841,18 +4846,18 @@
 
 /* ── Token breakdown light-theme overrides ──────────────────────────────── */
 .katab-theme-light .katab-usage-btn {
-    border-color: rgba(23, 146, 130, 0.32);
-    background-color: rgba(23, 146, 130, 0.09);
+    border-color: rgba(0, 0, 0, 0.10);
+    background-color: rgba(0, 0, 0, 0.04);
 }
 
 .katab-theme-light .katab-usage-btn:hover {
-    border-color: rgba(23, 146, 130, 0.52);
-    background-color: rgba(23, 146, 130, 0.16);
+    border-color: rgba(23, 146, 130, 0.45);
+    background-color: rgba(23, 146, 130, 0.12);
 }
 
 .katab-theme-light .katab-usage-btn-pet-box {
     background-color: rgba(23, 146, 130, 0.16);
-    border-color: rgba(23, 146, 130, 0.40);
+    border-color: rgba(23, 146, 130, 0.45);
 }
 
 .katab-theme-light .katab-usage-btn-pet-fallback {
@@ -4890,8 +4895,7 @@
 }
 
 .katab-theme-light .katab-usage-btn-label {
-    color: #116b5e;
-    font-size: 9pt;
+    color: rgba(0, 0, 0, 0.78);
 }
 
 .katab-theme-light .katab-usage-card {
