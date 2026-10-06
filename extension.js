@@ -167,6 +167,15 @@ import { WelcomePanel } from './src/ui/welcomePanel.js';
 import { UsagePanel } from './src/ui/usagePanel.js';
 import { HistoryView } from './src/ui/historyView.js';
 import { SessionInfoPopup } from './src/ui/sessionInfoPopup.js';
+import { ToolsPopup } from './src/ui/toolsPopup.js';
+import { RecentChatsPopup } from './src/ui/recentChatsPopup.js';
+import {
+    DEEP_RESEARCH_MODE_SEQUENCE,
+    TOOL_MODE_AUTO,
+    TOOL_MODE_OFF,
+    TOOL_MODE_ON,
+    TOOL_MODE_SEQUENCE,
+} from './src/shared/toolModes.js';
 import {
     RagRuntime,
     readRagConfig,
@@ -293,24 +302,6 @@ const RAG_LOCAL_TOOL = {
     icon: RAG_TOOL_ICON,
     gicon: null, // Set dynamically in KatabDialog constructor
     toolName: RAG_TOOL_NAME,
-};
-
-const TOOL_MODE_AUTO = 'auto';
-const TOOL_MODE_ON = 'on';
-const TOOL_MODE_OFF = 'off';
-const TOOL_MODE_SEQUENCE = [TOOL_MODE_AUTO, TOOL_MODE_ON, TOOL_MODE_OFF];
-const TOOL_MODE_LABELS = {
-    [TOOL_MODE_AUTO]: 'Auto',
-    [TOOL_MODE_ON]: 'On',
-    [TOOL_MODE_OFF]: 'Off',
-};
-
-// Deep Research is a binary toggle (On/Off) — "Auto" doesn't make sense
-// for a comprehensive multi-step research pipeline.
-const DEEP_RESEARCH_MODE_SEQUENCE = [TOOL_MODE_OFF, TOOL_MODE_ON];
-const DEEP_RESEARCH_MODE_LABELS = {
-    [TOOL_MODE_ON]: 'On',
-    [TOOL_MODE_OFF]: 'Off',
 };
 
 // Default fallback cap for sequential tool-call rounds a single user turn may
@@ -1666,14 +1657,11 @@ class KatabDialog {
         // (system, user context, research, tool usage) on click/hover.
         this._sessionInfoPopup = null;
         this._sessionInfo = null; // session-info popup module (src/ui/sessionInfoPopup.js)
+        this._tools = null; // tools popup module (src/ui/toolsPopup.js)
         // Recent chats hover dropdown — shows last 5 conversations below
         // the history button on hover (same pattern as session info popup).
         this._recentChatsPopup = null;
-        this._recentChatsClickLocked = false;
-        this._recentChatsHoverTimeout = 0;
-        this._recentChatsLeaveTimeout = 0;
-        this._recentChatsRepositionId = 0;
-        this._recentChatsCloseHandler = null;
+        this._recentChats = null; // recent-chats preview module (src/ui/recentChatsPopup.js)
         this._tokenUpdateTimeout = 0;
         this._promptScrollFollowIdleId = 0;
         this._promptScrollHeightIdleId = 0;
@@ -6036,31 +6024,13 @@ class KatabDialog {
 
         // Hover: show recent chats preview after 250 ms
         this._historyBtn.connect('enter-event', () => {
-            if (this._recentChatsLeaveTimeout) {
-                GLib.source_remove(this._recentChatsLeaveTimeout);
-                this._recentChatsLeaveTimeout = 0;
-            }
-            if (!this._recentChatsClickLocked && !this._recentChatsPopup?.visible) {
-                this._recentChatsHoverTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
-                    this._recentChatsHoverTimeout = 0;
-                    this._showRecentChatsPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+            this._ensureRecentChats();
+            this._recentChats.noteTriggerEnter();
             return Clutter.EVENT_PROPAGATE;
         });
         this._historyBtn.connect('leave-event', () => {
-            if (this._recentChatsHoverTimeout) {
-                GLib.source_remove(this._recentChatsHoverTimeout);
-                this._recentChatsHoverTimeout = 0;
-            }
-            if (!this._recentChatsClickLocked) {
-                this._recentChatsLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this._recentChatsLeaveTimeout = 0;
-                    this._hideRecentChatsPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+            this._ensureRecentChats();
+            this._recentChats.noteTriggerLeave();
             return Clutter.EVENT_PROPAGATE;
         });
 
@@ -6458,31 +6428,13 @@ class KatabDialog {
             return Clutter.EVENT_STOP;
         });
         this._toolsGearWrap.connect('enter-event', () => {
-            if (this._toolsLeaveTimeout) {
-                GLib.source_remove(this._toolsLeaveTimeout);
-                this._toolsLeaveTimeout = 0;
-            }
-            if (!this._toolsClickLocked && !this._toolsPopup?.visible) {
-                this._toolsHoverTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
-                    this._toolsHoverTimeout = 0;
-                    this._showToolsPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+            this._ensureToolsPopup();
+            this._tools.noteTriggerEnter();
             return Clutter.EVENT_PROPAGATE;
         });
         this._toolsGearWrap.connect('leave-event', () => {
-            if (this._toolsHoverTimeout) {
-                GLib.source_remove(this._toolsHoverTimeout);
-                this._toolsHoverTimeout = 0;
-            }
-            if (!this._toolsClickLocked) {
-                this._toolsLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this._toolsLeaveTimeout = 0;
-                    this._hideToolsPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+            this._ensureToolsPopup();
+            this._tools.noteTriggerLeave();
             return Clutter.EVENT_PROPAGATE;
         });
 
@@ -7016,16 +6968,8 @@ class KatabDialog {
 
     destroy() {
         this.close({ cancelStream: true, saveConversation: true });
-        this._hideRecentChatsPopup();
-        this._clearRecentChatsTimeouts();
-        if (this._recentChatsCloseHandler) {
-            global.stage.disconnect(this._recentChatsCloseHandler);
-            this._recentChatsCloseHandler = null;
-        }
-        if (this._recentChatsPopup) {
-            this._recentChatsPopup.destroy();
-            this._recentChatsPopup = null;
-        }
+        this._recentChats?.destroy();
+        this._recentChatsPopup = null;
         this._historyBtn = null;
         this._disconnectProviderStatus();
         this._stopWelcomeAnimation();
@@ -7035,7 +6979,7 @@ class KatabDialog {
         this._sessionInfoPopup = null;
 
         // Clean up Tools popup timeouts
-        this._clearToolsTimeouts();
+        this._tools?.destroy();
         this._toolsPopup = null;
 
         // Stop any pending KB health retry (background timer)
@@ -7852,383 +7796,70 @@ class KatabDialog {
     // Floating panel that lists all available tools with their mode
     // toggles (Auto/On/Off).  Pattern mirrors _sessionInfoPopup.
 
-    _buildToolsPopup() {
-        const popup = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-tools-popup',
-            visible: false,
-            reactive: true,
-            can_focus: true,
-        });
+    // ── Tools popup wrappers ─────────────────────────────────────────────
+    // Popup implementation lives in src/ui/toolsPopup.js; these keep the
+    // dialog's visibility checks + call sites unchanged.
 
-        // Header
-        const header = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-tools-popup-header',
-        });
-        const title = new St.Label({
-            text: 'Tools',
-            style_class: 'katab-tools-popup-title',
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        header.add_child(title);
-        const closeBtn = new St.Button({
-            child: new St.Icon({
-                icon_name: 'window-close-symbolic',
-                style_class: 'katab-tools-popup-close-icon',
-            }),
-            style_class: 'katab-tools-popup-close-btn',
-            can_focus: true,
-        });
-        closeBtn.connect('clicked', () => this._hideToolsPopup());
-        header.add_child(closeBtn);
-        popup.add_child(header);
-
-        // Tool rows container — rebuilt by _refreshToolsPopup
-        this._toolsPopupRows = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-tools-popup-rows',
-        });
-        popup.add_child(this._toolsPopupRows);
-
-        // Hover on the popup cancels pending leave timeout
-        popup.connect('enter-event', () => {
-            if (this._toolsLeaveTimeout) {
-                GLib.source_remove(this._toolsLeaveTimeout);
-                this._toolsLeaveTimeout = 0;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-        popup.connect('leave-event', () => {
-            if (!this._toolsClickLocked) {
-                this._toolsLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this._toolsLeaveTimeout = 0;
-                    this._hideToolsPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-
-        return popup;
+    _ensureToolsPopup() {
+        if (!this._tools) {
+            this._tools = new ToolsPopup(this._buildToolsHost());
+            this._toolsPopup = this._tools.popup;
+        }
+        return this._tools;
     }
 
+    // Host surface for the tools popup module.
+    _buildToolsHost() {
+        return {
+            addToOverlay: (actor) => this.actor.add_child(actor),
+            getAnchor: () => this._toolsGearWrap,
+            stageToOverlayCoords: (x, y) => this._stageToOverlayCoords(x, y),
+            overlaySize: () => this._overlaySize(),
+            getDialogRect: () => [this._dialogX, this._dialogY, this._dialogW, this._dialogH],
+            getAvailableTools: () => this._getAvailableTools(),
+            isModeControlledTool: (name) => this._isModeControlledTool(name),
+            getToolMode: (name) => this._getToolMode(name),
+            isDocumentToolEnabled: () => this._isDocumentToolEnabled(),
+            toolModeAvailable: (tool, mode) => this._toolModeAvailable(tool, mode),
+            getToolButtonLabel: (tool) => this._getToolButtonLabel(tool),
+            cycleToolMode: (name) => this._cycleToolMode(name),
+            updateToolsBadge: () => this._updateToolsBadge(),
+            addSystemMessage: (text) => this._addSystemMessage(text),
+            pickDocumentForAttachment: () => this._pickDocumentForAttachment(),
+            getEntryText: () => this._entry.get_text().trim(),
+            setEntryText: (text) => this._entry.set_text(text),
+            focusPrompt: () => this.focusPrompt(),
+            placeCursorAtEnd: () => this._entry.set_cursor_position(-1),
+        };
+    }
+
+    // Show the popup (click or hover).  Builds it on first call.
     _showToolsPopup() {
-        if (!this._toolsPopup) {
-            this._toolsPopup = this._buildToolsPopup();
-            this.actor.add_child(this._toolsPopup);
-        }
-        this._toolsPopup.visible = true;
-        const parent = this._toolsPopup.get_parent();
-        if (parent) parent.set_child_above_sibling(this._toolsPopup, null);
-        this._refreshToolsPopup();
-        this._positionToolsPopup();
-        // Diagnostics for the floating-popup geometry (overlay-local units) —
-        // popups are children of the overlay, not the dialog container, so
-        // placement bugs are invisible without this trace.  One line per open.
-        try {
-            const [opW, opH] = this._overlaySize();
-            log(
-                `[Katab:tools] Popup placed at ${Math.round(this._toolsPopup.x)},${Math.round(this._toolsPopup.y)} · overlay ${Math.round(opW)}×${Math.round(opH)} · dialog ${this._dialogX},${this._dialogY} ${this._dialogW}×${this._dialogH}`,
-            );
-        } catch (_e) {
-            /* diagnostics only */
-        }
-        if (this._toolsRepositionId) GLib.source_remove(this._toolsRepositionId);
-        this._toolsRepositionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            this._toolsRepositionId = 0;
-            this._positionToolsPopup();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._ensureToolsPopup();
+        this._tools.show();
+        this._toolsPopup = this._tools.popup;
     }
 
+    // Hide the popup (hover leave, close button, Escape, outside click).
     _hideToolsPopup() {
-        if (this._toolsPopup) {
-            this._toolsPopup.visible = false;
-        }
-        this._toolsClickLocked = false;
-        this._clearToolsTimeouts();
+        this._tools?.hide();
     }
 
+    // Toggle open/close on click.
     _toggleToolsPopup() {
-        this._clearToolsTimeouts();
-
-        // A visible popup always closes on a trigger click (same rationale
-        // as the Session Info toggle) — a hover-opened popup used to swallow
-        // the first click as a silent "pin" no-op.
-        if (this._toolsPopup?.visible) {
-            this._hideToolsPopup();
-            return;
-        }
-
-        this._toolsClickLocked = true;
-        this._showToolsPopup();
+        this._ensureToolsPopup();
+        this._tools.toggle();
+        this._toolsPopup = this._tools.popup;
     }
 
-    _clearToolsTimeouts() {
-        if (this._toolsHoverTimeout) {
-            GLib.source_remove(this._toolsHoverTimeout);
-            this._toolsHoverTimeout = 0;
-        }
-        if (this._toolsLeaveTimeout) {
-            GLib.source_remove(this._toolsLeaveTimeout);
-            this._toolsLeaveTimeout = 0;
-        }
-        if (this._toolsRepositionId) {
-            GLib.source_remove(this._toolsRepositionId);
-            this._toolsRepositionId = 0;
-        }
-    }
-
+    // Position the popup above the gear button, clamped to overlay bounds.
     _positionToolsPopup() {
-        if (!this._toolsPopup || !this._toolsGearWrap) return;
-
-        let [, popupWidth] = this._toolsPopup.get_preferred_width(-1);
-        let [, popupHeight] = this._toolsPopup.get_preferred_height(popupWidth);
-
-        // Gear anchor, converted from stage space into the overlay's local
-        // space (the overlay is pinned to the primary monitor origin, which
-        // is not necessarily the stage origin — see _stageToOverlayCoords).
-        // Skipping this conversion used to push the lower tool rows outside
-        // the dialog rectangle, where clicks closed the chat window instead
-        // of toggling the tool (e.g. the Deep Research row).
-        let [gbX, gbY] = this._stageToOverlayCoords(
-            ...this._toolsGearWrap.get_transformed_position(),
-        );
-        let [gbW, gbH] = this._toolsGearWrap.get_transformed_size();
-
-        const [overlayWidth, overlayHeight] = this._overlaySize();
-        const margin = 12;
-
-        // Position above the gear button, right-aligned
-        let popupX = gbX + gbW - popupWidth;
-        let popupY = gbY - popupHeight - 8;
-
-        if (popupX + popupWidth > overlayWidth - margin) {
-            popupX = overlayWidth - popupWidth - margin;
-        }
-        if (popupX < margin) {
-            popupX = margin;
-        }
-        if (popupY < margin) {
-            // Not enough room above — place below the gear button instead
-            popupY = gbY + gbH + 8;
-            if (popupY + popupHeight > overlayHeight - margin) {
-                popupY = overlayHeight - popupHeight - margin;
-            }
-        }
-        if (popupY < margin) {
-            popupY = margin;
-        }
-
-        this._toolsPopup.set_position(Math.round(popupX), Math.round(popupY));
+        this._tools?.position();
     }
 
+    // Rebuild/patch the tool rows with current availability + modes.
     _refreshToolsPopup() {
-        if (!this._toolsPopupRows) return;
-
-        const tools = this._getAvailableTools();
-        const primaryTools = tools.filter((t) => t.toolName !== RAG_TOOL_NAME);
-        const moreTools = tools.filter((t) => t.toolName === RAG_TOOL_NAME);
-        const hasSeparator = moreTools.length > 0;
-        const totalRows = primaryTools.length + (hasSeparator ? 1 : 0) + moreTools.length;
-
-        const existingChildren = this._toolsPopupRows.get_n_children();
-
-        // Full rebuild only when the tool list changes (row count differs)
-        // or on first render.  Otherwise patch mode labels in-place.
-        if (existingChildren !== totalRows) {
-            this._toolsPopupRows.destroy_all_children();
-            this._toolsPopupModeLabels = {};
-
-            // ── Build a single tool row ──────────────────────────────
-            const buildRow = (tool) => {
-                const isModeControlled = this._isModeControlledTool(tool.toolName);
-                const mode = this._getToolMode(tool.toolName);
-                const documentToolDisabled =
-                    tool.toolName === DOCUMENT_TOOL_NAME && !this._isDocumentToolEnabled();
-                const isDeepResearch = tool.toolName === DEEP_RESEARCH_TOOL_NAME;
-                const modeLabels = isDeepResearch ? DEEP_RESEARCH_MODE_LABELS : TOOL_MODE_LABELS;
-                const defaultModeLabel = isDeepResearch
-                    ? DEEP_RESEARCH_MODE_LABELS[TOOL_MODE_OFF]
-                    : TOOL_MODE_LABELS[TOOL_MODE_AUTO];
-                const modeToolDisabled =
-                    isModeControlled &&
-                    mode === (isDeepResearch ? TOOL_MODE_OFF : TOOL_MODE_AUTO) &&
-                    !this._toolModeAvailable(tool, mode);
-
-                const row = new St.Button({
-                    style_class: 'katab-tools-popup-row',
-                    can_focus: true,
-                    x_expand: true,
-                });
-
-                const iconProps = {};
-                if (tool.gicon) {
-                    iconProps.gicon = tool.gicon;
-                } else {
-                    iconProps.icon_name = tool.icon;
-                }
-                const icon = new St.Icon({
-                    ...iconProps,
-                    style_class: 'katab-tools-popup-row-icon',
-                    x_align: Clutter.ActorAlign.CENTER,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-
-                const nameLabel = new St.Label({
-                    text: this._getToolButtonLabel(tool),
-                    style_class: 'katab-tools-popup-row-label',
-                    x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-
-                const modeWrap = new St.Widget({
-                    style_class: isModeControlled
-                        ? `katab-tools-popup-row-mode katab-tools-mode-${mode}`
-                        : 'katab-tools-popup-row-mode',
-                    layout_manager: new Clutter.BinLayout(),
-                });
-                const modeLabel = new St.Label({
-                    text: isModeControlled ? modeLabels[mode] || defaultModeLabel : '',
-                    style_class: 'katab-tools-popup-row-mode-label',
-                });
-                modeWrap.add_child(modeLabel);
-
-                // Store references for in-place updates
-                if (isModeControlled) {
-                    this._toolsPopupModeLabels[tool.toolName] = {
-                        wrap: modeWrap,
-                        label: modeLabel,
-                    };
-                }
-
-                const rowContent = new St.BoxLayout({
-                    vertical: false,
-                    style_class: 'katab-tools-popup-row-content',
-                    x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                rowContent.add_child(icon);
-                rowContent.add_child(nameLabel);
-                rowContent.add_child(modeWrap);
-
-                if (documentToolDisabled || modeToolDisabled) {
-                    row.add_style_class_name('katab-tools-popup-row-disabled');
-                }
-
-                row.set_child(rowContent);
-
-                row.connect('clicked', async () => {
-                    if (isModeControlled) {
-                        // Deep Research needs at least one research-capable
-                        // tool underneath.  When neither Web Search nor Web
-                        // Scraper is available the row renders disabled and
-                        // must not silently flip a mode that cannot run —
-                        // explain how to make it usable instead.
-                        if (isDeepResearch && !this._toolModeAvailable(tool, TOOL_MODE_ON)) {
-                            this._addSystemMessage(
-                                'Deep Research needs Web Search or Web Scraper. Enable one in Settings → Tools, or switch its mode to On from this popup.',
-                            );
-                            return;
-                        }
-                        this._cycleToolMode(tool.toolName);
-                        this._patchToolsPopupMode(tool.toolName);
-                        this._updateToolsBadge();
-                        return;
-                    }
-
-                    if (tool.toolName === DOCUMENT_TOOL_NAME) {
-                        if (!this._isDocumentToolEnabled()) {
-                            this._addSystemMessage(
-                                'Document tool is available, but it is currently off. Enable it in Settings > Tools to use the /doc command.',
-                            );
-                            return;
-                        }
-                        this._hideToolsPopup();
-                        await this._pickDocumentForAttachment();
-                        return;
-                    }
-
-                    let currentText = this._entry.get_text().trim();
-                    if (!currentText) {
-                        this._entry.set_text(`${tool.command} `);
-                    } else if (
-                        currentText === tool.command ||
-                        currentText.startsWith(`${tool.command} `) ||
-                        currentText.endsWith(` ${tool.command}`)
-                    ) {
-                        this._entry.set_text(currentText);
-                    } else {
-                        this._entry.set_text(`${tool.command} ${currentText}`);
-                    }
-                    this._hideToolsPopup();
-                    this.focusPrompt();
-                    this._entry.set_cursor_position(-1);
-                });
-
-                return row;
-            };
-
-            // ── Primary tools ────────────────────────────────────────
-            for (const tool of primaryTools) {
-                this._toolsPopupRows.add_child(buildRow(tool));
-            }
-
-            // ── "More Tools:" section ────────────────────────────────
-            if (hasSeparator) {
-                const moreHeader = new St.Label({
-                    text: 'More Tools:',
-                    style_class: 'katab-tools-popup-section-header',
-                    x_expand: true,
-                });
-                this._toolsPopupRows.add_child(moreHeader);
-
-                for (const tool of moreTools) {
-                    this._toolsPopupRows.add_child(buildRow(tool));
-                }
-            }
-
-            // Full rebuild may change popup dimensions — reposition.
-            if (this._toolsPopup?.visible) {
-                if (this._toolsRepositionId) GLib.source_remove(this._toolsRepositionId);
-                this._toolsRepositionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-                    this._toolsRepositionId = 0;
-                    this._positionToolsPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
-        } else {
-            // In-place patch: update mode labels without destroying rows
-            for (const tool of tools) {
-                if (this._isModeControlledTool(tool.toolName)) {
-                    this._patchToolsPopupMode(tool.toolName);
-                }
-            }
-        }
-    }
-
-    // Update a single tool's mode label and styling in-place.
-    _patchToolsPopupMode(toolName) {
-        const refs = this._toolsPopupModeLabels?.[toolName];
-        if (!refs) return;
-
-        const mode = this._getToolMode(toolName);
-        const isDeepResearch = toolName === DEEP_RESEARCH_TOOL_NAME;
-        const labels = isDeepResearch ? DEEP_RESEARCH_MODE_LABELS : TOOL_MODE_LABELS;
-        const defaultLabel = isDeepResearch
-            ? DEEP_RESEARCH_MODE_LABELS[TOOL_MODE_OFF]
-            : TOOL_MODE_LABELS[TOOL_MODE_AUTO];
-        const text = labels[mode] || defaultLabel;
-
-        refs.label.set_text(text);
-
-        // Swap style classes on the wrapper
-        ['katab-tools-mode-auto', 'katab-tools-mode-on', 'katab-tools-mode-off'].forEach((c) => {
-            refs.wrap.remove_style_class_name(c);
-        });
-        refs.wrap.add_style_class_name(`katab-tools-mode-${mode}`);
+        this._tools?.refresh();
     }
 
     // Trim message history to keep the first system message + the most
@@ -9537,221 +9168,46 @@ class KatabDialog {
     // session info popup pattern.  Clicking the button still opens the
     // full history view.
 
+    // ── Recent chats preview wrappers ────────────────────────────────────
+    // Popup implementation lives in src/ui/recentChatsPopup.js; these keep
+    // the dialog's visibility checks + call sites unchanged.
+
+    _ensureRecentChats() {
+        if (!this._recentChats) {
+            this._recentChats = new RecentChatsPopup(this._buildRecentChatsHost());
+            this._recentChatsPopup = this._recentChats.popup;
+        }
+        return this._recentChats;
+    }
+
+    // Host surface for the recent-chats preview module.
+    _buildRecentChatsHost() {
+        return {
+            addToOverlay: (actor) => this.actor.add_child(actor),
+            getHistoryButton: () => this._historyBtn,
+            isChatViewVisible: () => !!this._chatScroll?.visible,
+            getCurrentConversationId: () => this._currentConversationId,
+            loadConversation: (entry) => this._loadConversation(entry),
+            stageToOverlayCoords: (x, y) => this._stageToOverlayCoords(x, y),
+            overlaySize: () => this._overlaySize(),
+        };
+    }
+
+    // Show the preview (hover).  Builds it on first call.
     _showRecentChatsPopup() {
-        if (!this._historyBtn) return;
-        // Only preview from the chat view — never over the history list or
-        // another auxiliary panel (the popup would cover the panel's first
-        // rows and intercept clicks meant for them).
-        if (!this._chatScroll?.visible) return;
-        let history = HistoryManager.getCached();
-        let recentEntries = history
-            .filter((e) => e.id !== this._currentConversationId && !e.archived)
-            .slice(0, 5);
-        if (recentEntries.length === 0) return;
-
-        // Build once, reuse thereafter
-        if (!this._recentChatsPopup) {
-            this._recentChatsPopup = this._buildRecentChatsPopup();
-            this.actor.add_child(this._recentChatsPopup);
-        }
-
-        // Refresh row labels (titles / timestamps may have changed)
-        this._refreshRecentChatsPopupRows(recentEntries);
-
-        this._recentChatsPopup.visible = true;
-        const parent = this._recentChatsPopup.get_parent();
-        if (parent) parent.set_child_above_sibling(this._recentChatsPopup, null);
-        this._positionRecentChatsPopup();
-
-        // Deferred reposition — after the frame paints the allocation is available
-        if (this._recentChatsRepositionId) GLib.source_remove(this._recentChatsRepositionId);
-        this._recentChatsRepositionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            this._recentChatsRepositionId = 0;
-            this._positionRecentChatsPopup();
-            return GLib.SOURCE_REMOVE;
-        });
-
-        // Auto-close when clicking elsewhere on the stage
-        if (!this._recentChatsCloseHandler) {
-            this._recentChatsCloseHandler = global.stage.connect(
-                'button-press-event',
-                (actor, _event) => {
-                    if (
-                        this._recentChatsPopup?.visible &&
-                        !this._recentChatsPopup.contains(actor) &&
-                        actor !== this._historyBtn &&
-                        !this._historyBtn.contains(actor)
-                    ) {
-                        this._hideRecentChatsPopup();
-                    }
-                },
-            );
-        }
+        this._ensureRecentChats();
+        this._recentChats.show();
+        this._recentChatsPopup = this._recentChats.popup;
     }
 
+    // Hide the preview (hover leave, outside click, history-view open).
     _hideRecentChatsPopup() {
-        if (this._recentChatsPopup) {
-            this._recentChatsPopup.visible = false;
-        }
-        this._recentChatsClickLocked = false;
-        this._clearRecentChatsTimeouts();
+        this._recentChats?.hide();
     }
 
-    _clearRecentChatsTimeouts() {
-        if (this._recentChatsHoverTimeout) {
-            GLib.source_remove(this._recentChatsHoverTimeout);
-            this._recentChatsHoverTimeout = 0;
-        }
-        if (this._recentChatsLeaveTimeout) {
-            GLib.source_remove(this._recentChatsLeaveTimeout);
-            this._recentChatsLeaveTimeout = 0;
-        }
-        if (this._recentChatsRepositionId) {
-            GLib.source_remove(this._recentChatsRepositionId);
-            this._recentChatsRepositionId = 0;
-        }
-    }
-
-    _buildRecentChatsPopup() {
-        const popup = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-recent-chats-popup',
-            visible: false,
-            reactive: true,
-            can_focus: true,
-        });
-
-        // 5 placeholder rows — titles/dates refreshed by _refreshRecentChatsPopupRows
-        for (let i = 0; i < 5; i++) {
-            let row = new St.BoxLayout({
-                vertical: true,
-                style_class: 'katab-recent-chats-row',
-                reactive: true,
-                can_focus: true,
-                track_hover: true,
-            });
-
-            let titleLabel = new St.Label({
-                text: '',
-                style_class: 'katab-recent-chats-row-title',
-                x_expand: true,
-            });
-            titleLabel.clutter_text.line_wrap = false;
-            titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            row.add_child(titleLabel);
-
-            let dateLabel = new St.Label({
-                text: '',
-                style_class: 'katab-recent-chats-row-date',
-            });
-            row.add_child(dateLabel);
-
-            // Store refs for later refresh via _refreshRecentChatsPopupRows
-            row._katabTitleLabel = titleLabel;
-            row._katabDateLabel = dateLabel;
-            row._katabEntry = null;
-
-            row.connect('button-press-event', () => {
-                if (row._katabEntry) {
-                    this._hideRecentChatsPopup();
-                    this._loadConversation(row._katabEntry);
-                }
-                return Clutter.EVENT_STOP;
-            });
-
-            popup.add_child(row);
-        }
-
-        // Hover on the popup itself cancels the leave timeout so the user
-        // can move the mouse from the button onto the dropdown.
-        popup.connect('enter-event', () => {
-            if (this._recentChatsLeaveTimeout) {
-                GLib.source_remove(this._recentChatsLeaveTimeout);
-                this._recentChatsLeaveTimeout = 0;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-        popup.connect('leave-event', () => {
-            if (!this._recentChatsClickLocked) {
-                this._recentChatsLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this._recentChatsLeaveTimeout = 0;
-                    this._hideRecentChatsPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-
-        return popup;
-    }
-
-    _refreshRecentChatsPopupRows(entries) {
-        if (!this._recentChatsPopup) return;
-        let children = this._recentChatsPopup.get_children();
-        for (let i = 0; i < children.length; i++) {
-            let row = children[i];
-            let entry = entries[i];
-            if (entry) {
-                let title = String(entry.title || 'Untitled').trim();
-                if (title.length > 48) title = title.slice(0, 45) + '…';
-                row._katabTitleLabel.set_text(title);
-                row._katabDateLabel.set_text(this._formatRelativeTime(entry.timestamp));
-                row._katabEntry = entry;
-                row.visible = true;
-            } else {
-                row.visible = false;
-            }
-        }
-    }
-
+    // Position the popup below the history button, clamped to overlay bounds.
     _positionRecentChatsPopup() {
-        if (!this._recentChatsPopup || !this._historyBtn) return;
-
-        let [, popupWidth] = this._recentChatsPopup.get_preferred_width(-1);
-        let [, popupHeight] = this._recentChatsPopup.get_preferred_height(popupWidth);
-
-        // History button anchor, converted from stage space into the
-        // overlay's local space (see _stageToOverlayCoords).
-        let [btnX, btnY] = this._stageToOverlayCoords(
-            ...this._historyBtn.get_transformed_position(),
-        );
-        let [btnW, btnH] = this._historyBtn.get_transformed_size();
-
-        const [overlayWidth, overlayHeight] = this._overlaySize();
-        const margin = 12;
-
-        // Position below the button, left-aligned
-        let popupX = btnX;
-        let popupY = btnY + btnH + 6;
-
-        if (popupX + popupWidth > overlayWidth - margin) {
-            popupX = btnX + btnW - popupWidth;
-        }
-        if (popupX < margin) {
-            popupX = margin;
-        }
-        if (popupY + popupHeight > overlayHeight - margin) {
-            // Not enough room below — position above instead
-            popupY = btnY - popupHeight - 6;
-            if (popupY < margin) {
-                popupY = overlayHeight - popupHeight - margin;
-            }
-        }
-        if (popupY < margin) {
-            popupY = margin;
-        }
-
-        this._recentChatsPopup.set_position(Math.round(popupX), Math.round(popupY));
-    }
-
-    _formatRelativeTime(timestamp) {
-        let now = Date.now() / 1000;
-        let diff = Math.max(0, now - timestamp);
-        if (diff < 60) return 'Just now';
-        if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-        if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
-        if (diff < 604800) return `${Math.floor(diff / 86400)} days ago`;
-        return new Date(timestamp * 1000).toLocaleDateString();
+        this._recentChats?.position();
     }
 
     /** Extract searchable plain-text from a message object (string or

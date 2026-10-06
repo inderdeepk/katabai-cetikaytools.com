@@ -34,6 +34,8 @@ src/
 │   ├── usagePanel.js            ← "AI Token Breakdown" panel — tabs, range dropdown, companion/activity/spending cards
 │   ├── historyView.js           ← History panel — list/search/tabs, KB search, conversation metadata editor
 │   ├── sessionInfoPopup.js      ← Floating Session Info panel — context breakdown + summarize/compact actions
+│   ├── toolsPopup.js            ← Floating Tools panel — tool rows + Auto/On/Off mode cycling
+│   ├── recentChatsPopup.js      ← Header history-button hover preview — recent conversations
 │   └── prefs/                   ← Preferences window modules (prefs.js is an 86-line orchestrator)
 │       ├── widgets.js           ← createPrefsContext: shared page/group/row builders + watch()/dispose()
 │       ├── generalPage.js       ← General page (provider cards, appearance, shortcut, budget)
@@ -67,10 +69,11 @@ src/
 │   └── petSpriteActor.js        ← Clutter sprite renderer
 └── shared/        # Shared utilities
     ├── httpBody.js              ← Capped HTTP body reader (shared by all tool runtimes)
+    ├── toolModes.js             ← Auto/On/Off mode constants + labels (dialog cycling + tools popup)
     └── networkGuard.js          ← SSRF protection (IPv4/IPv6 blocklists)
 ```
 
-> **Decomposition status (Oct 2026)**: `prefs.js` is fully split — an 86-line orchestrator plus the `src/ui/prefs/` modules above. Provider payload shaping lives in `src/providers/historyPayload.js` (43 unit tests), the welcome scene in `src/ui/welcomePanel.js`, the token-breakdown panel in `src/ui/usagePanel.js`, the history panel (list + KB search + metadata editor) in `src/ui/historyView.js`, the Session Info popup in `src/ui/sessionInfoPopup.js`. In `extension.js`, `_buildUI`, `_addChatMessage`, the SSE stream-end finalization (`_handleStreamEnd`), `_sendMessage` (203-line coordinator over six phases: attachments, tool commands, knowledge context, vision pre-analysis, research planner, pipeline), and `_handleToolCalls` (64-line coordinator over `_executeToolCall` + `_finishToolBatch`) are extracted into focused methods. Remaining candidates: the tools popup, the header bar, and the picker shells.
+> **Decomposition status (Oct 2026)**: `prefs.js` is fully split — an 86-line orchestrator plus the `src/ui/prefs/` modules above. Provider payload shaping lives in `src/providers/historyPayload.js` (43 unit tests), the welcome scene in `src/ui/welcomePanel.js`, the token-breakdown panel in `src/ui/usagePanel.js`, the history panel (list + KB search + metadata editor) in `src/ui/historyView.js`, the Session Info popup in `src/ui/sessionInfoPopup.js`, the tools popup in `src/ui/toolsPopup.js`, the recent-chats preview in `src/ui/recentChatsPopup.js`. In `extension.js`, `_buildUI`, `_addChatMessage`, the SSE stream-end finalization (`_handleStreamEnd`), `_sendMessage` (203-line coordinator over six phases: attachments, tool commands, knowledge context, vision pre-analysis, research planner, pipeline), and `_handleToolCalls` (64-line coordinator over `_executeToolCall` + `_finishToolBatch`) are extracted into focused methods. Remaining candidates: the header bar and the picker shells.
 
 ## Assets
 

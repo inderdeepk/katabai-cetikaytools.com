@@ -17,6 +17,8 @@ const EXCLUDED_FILES = new Set([
     'src/ui/usagePanel.js',
     'src/ui/historyView.js',
     'src/ui/sessionInfoPopup.js',
+    'src/ui/toolsPopup.js',
+    'src/ui/recentChatsPopup.js',
 ]);
 
 // GTK4/libadwaita are imported by the preferences-side modules
