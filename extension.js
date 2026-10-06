@@ -68,7 +68,6 @@ import {
 import { ExploreDocsRuntime, buildExploreDocsResultBlock } from './src/tools/exploreDocsTools.js';
 import {
     loadPresets,
-    deletePreset,
     applyPresetToSettings,
     updatePresetFromSettings,
     reconcileActivePreset,
@@ -98,7 +97,6 @@ import { HistoryManager } from './src/core/historyManager.js';
 import { splitLinksSection } from './src/shared/pageLinks.js';
 import { createRequestLifecycle, REQUEST_STATES } from './src/core/requestLifecycle.js';
 import {
-    DEEPSEEK_MODELS,
     PROVIDER_ACCENT_CLASSES,
     PROVIDER_ICON_STYLE_CLASSES,
     PROVIDER_LABELS,
@@ -169,6 +167,8 @@ import { HistoryView } from './src/ui/historyView.js';
 import { SessionInfoPopup } from './src/ui/sessionInfoPopup.js';
 import { ToolsPopup } from './src/ui/toolsPopup.js';
 import { RecentChatsPopup } from './src/ui/recentChatsPopup.js';
+import { buildHeaderBar } from './src/ui/headerBar.js';
+import { Pickers } from './src/ui/pickers.js';
 import {
     DEEP_RESEARCH_MODE_SEQUENCE,
     TOOL_MODE_AUTO,
@@ -1671,6 +1671,7 @@ class KatabDialog {
         this._promptHistoryIndex = -1;
         this._promptDraftBackup = '';
         this._usage = null;
+        this._pickers = null; // picker module (src/ui/pickers.js)
         this._headerPetSprite = null;
         this._headerPetBox = null;
         this._headerPetFallback = null;
@@ -5162,319 +5163,52 @@ class KatabDialog {
     }
 
     _togglePresetPicker() {
-        if (!this._presetPicker) return;
-
-        if (this._presetPicker.visible) {
-            this._showChatView();
-            return;
-        }
-
-        this._refreshPresetPicker();
-        this._openAuxPanel(this._presetPicker);
-    }
-
-    _refreshPresetPicker() {
-        if (!this._presetListBox) return;
-
-        // Destroy all current rows
-        let child = this._presetListBox.get_first_child();
-        while (child) {
-            const next = child.get_next_sibling();
-            this._presetListBox.remove_child(child);
-            child.destroy();
-            child = next;
-        }
-
-        const presets = loadPresets();
-        const activePresetId = this._settings.get_string('ollama-active-preset');
-
-        if (presets.length === 0) {
-            const emptyLabel = new St.Label({
-                text: 'No presets saved yet.\nCreate presets in the Preferences → Ollama page.',
-                style_class: 'katab-preset-empty-label',
-                x_align: Clutter.ActorAlign.CENTER,
-                y_align: Clutter.ActorAlign.CENTER,
-                x_expand: true,
-            });
-            emptyLabel.clutter_text.line_wrap = true;
-            emptyLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-            emptyLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-            this._presetListBox.add_child(emptyLabel);
-            return;
-        }
-
-        for (const preset of presets) {
-            const isActive = preset.id === activePresetId;
-
-            const row = new St.BoxLayout({
-                style_class: isActive
-                    ? 'katab-preset-row katab-preset-row-active katab-accent-ollama'
-                    : 'katab-preset-row',
-                vertical: false,
-                x_expand: true,
-            });
-
-            const infoBox = new St.BoxLayout({
-                vertical: true,
-                x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            row.add_child(infoBox);
-
-            const nameLabel = new St.Label({
-                text: preset.name || 'Unnamed Preset',
-                style_class: 'katab-preset-row-name',
-            });
-            infoBox.add_child(nameLabel);
-
-            const model = preset['model'] || '';
-            const ctx = preset['num-ctx'] ? `${preset['num-ctx']} ctx` : '';
-            const temp =
-                preset['temperature'] !== undefined
-                    ? `temp ${Number(preset['temperature']).toFixed(2)}`
-                    : '';
-            const meta = [model, ctx, temp].filter(Boolean).join('  ·  ');
-            if (meta) {
-                const metaLabel = new St.Label({
-                    text: meta,
-                    style_class: 'katab-preset-row-meta',
-                });
-                infoBox.add_child(metaLabel);
-            }
-
-            const btnBox = new St.BoxLayout({
-                vertical: false,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            row.add_child(btnBox);
-
-            const loadBtn = new St.Button({
-                label: isActive ? '✓ Active' : 'Load',
-                style_class: isActive
-                    ? 'katab-preset-load-btn katab-preset-load-btn-active'
-                    : 'katab-preset-load-btn',
-                can_focus: !isActive,
-                reactive: !isActive,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            if (!isActive) {
-                loadBtn.connect('clicked', () => {
-                    this._applyPreset(preset);
-                    const modelName = preset['model'] || 'unchanged model';
-                    this._addSystemMessage(`Loaded preset "${preset.name}" (${modelName}).`);
-                    this._togglePresetPicker();
-                });
-            }
-            btnBox.add_child(loadBtn);
-
-            const deleteBtn = new St.Button({
-                child: new St.Icon({
-                    icon_name: 'edit-delete-symbolic',
-                    style_class: 'katab-preset-delete-icon',
-                }),
-                style_class: 'katab-preset-delete-btn',
-                can_focus: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            deleteBtn.connect('clicked', () => {
-                deletePreset(preset.id);
-                if (isActive) {
-                    this._settings.set_string('ollama-active-preset', '');
-                    this._updatePresetButton();
-                }
-                this._refreshPresetPicker();
-            });
-            btnBox.add_child(deleteBtn);
-
-            this._presetListBox.add_child(row);
-        }
+        this._pickers?.togglePresetPicker();
     }
 
     _buildPresetPicker() {
-        const picker = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-preset-picker',
-            x_expand: true,
-            y_expand: true,
-            visible: false,
-        });
-
-        // ── Header ────────────────────────────────────────────────────────────
-        const pickerHeader = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-preset-picker-header',
-        });
-        picker.add_child(pickerHeader);
-
-        const pickerTitle = new St.Label({
-            text: 'Ollama Presets',
-            style_class: 'katab-preset-picker-title',
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        pickerHeader.add_child(pickerTitle);
-
-        const closePickerBtn = new St.Button({
-            child: new St.Icon({
-                icon_name: 'window-close-symbolic',
-                style_class: 'katab-preset-picker-close-icon',
-            }),
-            style_class: 'katab-preset-picker-close-btn',
-            can_focus: true,
-        });
-        closePickerBtn.connect('clicked', () => this._togglePresetPicker());
-        pickerHeader.add_child(closePickerBtn);
-
-        // ── Preset list ────────────────────────────────────────────────────────
-        const pickerScroll = new St.ScrollView({
-            style_class: 'katab-preset-picker-scroll',
-            hscrollbar_policy: St.PolicyType.NEVER,
-            vscrollbar_policy: St.PolicyType.AUTOMATIC,
-            x_expand: true,
-            y_expand: true,
-        });
-        picker.add_child(pickerScroll);
-
-        this._presetListBox = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-preset-list',
-            x_expand: true,
-        });
-        pickerScroll.add_child(this._presetListBox);
-
-        return picker;
+        return this._pickers.buildPresetPicker();
     }
 
     // ── Shared picker shell (provider + DeepSeek model dropdowns) ─────────────
     _buildPickerShell(titleText) {
-        const picker = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-preset-picker',
-            x_expand: true,
-            y_expand: true,
-            visible: false,
-        });
-
-        const pickerHeader = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-preset-picker-header',
-        });
-        picker.add_child(pickerHeader);
-
-        const pickerTitle = new St.Label({
-            text: titleText,
-            style_class: 'katab-preset-picker-title',
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        pickerHeader.add_child(pickerTitle);
-
-        const closePickerBtn = new St.Button({
-            child: new St.Icon({
-                icon_name: 'window-close-symbolic',
-                style_class: 'katab-preset-picker-close-icon',
-            }),
-            style_class: 'katab-preset-picker-close-btn',
-            can_focus: true,
-        });
-        pickerHeader.add_child(closePickerBtn);
-
-        const pickerScroll = new St.ScrollView({
-            style_class: 'katab-preset-picker-scroll',
-            hscrollbar_policy: St.PolicyType.NEVER,
-            vscrollbar_policy: St.PolicyType.AUTOMATIC,
-            x_expand: true,
-            y_expand: true,
-        });
-        picker.add_child(pickerScroll);
-
-        const listBox = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-preset-list',
-            x_expand: true,
-        });
-        pickerScroll.add_child(listBox);
-
-        return { picker, listBox, closePickerBtn, pickerTitle };
+        return this._pickers.buildShell(titleText);
     }
 
-    _createSelectionRow({ icon, title, meta, isActive, accentProvider, status, onActivate }) {
-        const row = new St.BoxLayout({
-            style_class: isActive
-                ? 'katab-preset-row katab-selection-row katab-preset-row-active'
-                : 'katab-preset-row katab-selection-row',
-            vertical: false,
-            x_expand: true,
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-        });
-
-        // Active rows carry the provider's brand accent as a micro-detail
-        // (thin left bar + tinted badge) instead of a full colored surface.
-        if (isActive && accentProvider) {
-            syncProviderAccentClasses(row, accentProvider);
-        }
-
-        if (icon) {
-            row.add_child(icon);
-        }
-
-        const textCol = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'katab-selection-row-text',
-        });
-
-        textCol.add_child(
-            new St.Label({
-                text: title,
-                style_class: 'katab-preset-row-name',
-            }),
-        );
-
-        if (meta) {
-            const metaLabel = new St.Label({
-                text: meta,
-                style_class: 'katab-preset-row-meta',
-            });
-            metaLabel.clutter_text.line_wrap = true;
-            metaLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-            metaLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-            textCol.add_child(metaLabel);
-        }
-        row.add_child(textCol);
-
-        // Small per-row health text (e.g. "Online") for the engine picker.
-        if (status && status.text) {
-            const statusLabel = new St.Label({
-                text: status.text,
-                style_class: 'katab-selection-row-status',
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            if (status.status) {
-                syncProviderStatusClasses(statusLabel, status.status);
-            }
-            row.add_child(statusLabel);
-        }
-
-        if (isActive) {
-            row.add_child(
-                new St.Label({
-                    text: 'Active',
-                    style_class: 'katab-selection-row-badge',
-                    y_align: Clutter.ActorAlign.CENTER,
-                }),
-            );
-        }
-
-        row.connect('button-press-event', () => {
-            onActivate();
-            return Clutter.EVENT_STOP;
-        });
-
-        return row;
+    // Host surface for the picker module — everything the pickers need from
+    // the dialog flows through this bag so the module stays decoupled.
+    _buildPickersHost() {
+        return {
+            settings: this._settings,
+            showChatView: () => this._showChatView(),
+            openAuxPanel: (panel) => this._openAuxPanel(panel),
+            applyPreset: (preset) => this._applyPreset(preset),
+            addSystemMessage: (text) => this._addSystemMessage(text),
+            updatePresetButton: () => this._updatePresetButton(),
+            getCurrentProvider: () => this._currentProvider,
+            createProviderIcon: (provider, extensionPath, styleClass) =>
+                createProviderIcon(provider, extensionPath, styleClass),
+            getProviderStatusText: (status) => getProviderStatusText(status),
+            syncProviderAccentClasses: (actor, provider) =>
+                syncProviderAccentClasses(actor, provider),
+            syncProviderStatusClasses: (actor, status) => syncProviderStatusClasses(actor, status),
+            getProviderHealthStates: () => {
+                try {
+                    return this._extension.providerHealthMonitor?.getAllStates() || {};
+                } catch (e) {
+                    return {};
+                }
+            },
+            refreshProviderHealth: () => {
+                try {
+                    this._extension.providerHealthMonitor?.refreshAll({ immediate: true });
+                } catch (e) {
+                    logError(e, 'Katab: provider health refresh failed');
+                }
+            },
+            getDeepseekModelButton: () => this._deepseekModelBtn,
+            getDeepseekModelButtonLabel: () => this._deepseekModelBtnLabel,
+        };
     }
 
     // Hide the chat scroll and every auxiliary panel, then reveal the requested one.
@@ -5499,131 +5233,28 @@ class KatabDialog {
 
     // ── Provider (engine) picker ─────────────────────────────────────────────
     _buildProviderPicker() {
-        const { picker, listBox, closePickerBtn } = this._buildPickerShell('Choose Engine');
-        this._providerPickerListBox = listBox;
-        closePickerBtn.connect('clicked', () => this._showChatView());
-        return picker;
-    }
-
-    _getProviderModelSummary(provider) {
-        const model = this._settings.get_string(`${provider}-model`) || '';
-        if (provider === 'deepseek') {
-            const meta = DEEPSEEK_MODELS.find((m) => m.id === model);
-            if (meta) return `${meta.label} model`;
-        }
-        return model || 'No model set';
+        return this._pickers.buildProviderPicker();
     }
 
     _refreshProviderPicker() {
-        if (!this._providerPickerListBox) return;
-        this._providerPickerListBox.destroy_all_children();
-
-        let states = {};
-        try {
-            states = this._extension.providerHealthMonitor?.getAllStates() || {};
-        } catch (e) {
-            states = {};
-        }
-
-        for (const [key, label] of Object.entries(PROVIDER_LABELS)) {
-            const icon = createProviderIcon(
-                key,
-                this._extension.path,
-                'katab-provider-badge-icon katab-selection-row-icon',
-            );
-            const state = states[key];
-            const row = this._createSelectionRow({
-                icon,
-                title: label,
-                meta: this._getProviderModelSummary(key),
-                isActive: key === this._currentProvider,
-                accentProvider: key,
-                status: state
-                    ? { text: getProviderStatusText(state.status), status: state.status }
-                    : null,
-                onActivate: () => this._selectProvider(key),
-            });
-            this._providerPickerListBox.add_child(row);
-        }
-    }
-
-    _selectProvider(provider) {
-        if (provider !== this._currentProvider) {
-            this._settings.set_string('provider', provider);
-        }
-        this._showChatView();
+        this._pickers?.refreshProviderPicker();
     }
 
     _toggleProviderPicker() {
-        if (!this._providerPicker) return;
-        if (this._providerPicker.visible) {
-            this._showChatView();
-            return;
-        }
-        // Probe every provider before rendering so the picker rows show fresh
-        // health text instead of the last polled snapshot.
-        try {
-            this._extension.providerHealthMonitor?.refreshAll({ immediate: true });
-        } catch (e) {
-            logError(e, 'Katab: provider health refresh failed');
-        }
-        this._refreshProviderPicker();
-        this._openAuxPanel(this._providerPicker);
+        this._pickers?.toggleProviderPicker();
     }
 
     // ── DeepSeek model picker (Flash / Pro) ──────────────────────────────────
     _buildDeepseekModelPicker() {
-        const { picker, listBox, closePickerBtn } = this._buildPickerShell('DeepSeek Model');
-        this._deepseekModelListBox = listBox;
-        closePickerBtn.connect('clicked', () => this._showChatView());
-        return picker;
-    }
-
-    _refreshDeepseekModelPicker() {
-        if (!this._deepseekModelListBox) return;
-        this._deepseekModelListBox.destroy_all_children();
-
-        const activeModel = this._settings.get_string('deepseek-model') || '';
-        for (const model of DEEPSEEK_MODELS) {
-            const row = this._createSelectionRow({
-                icon: null,
-                title: model.label,
-                meta: model.description,
-                isActive: model.id === activeModel,
-                accentProvider: 'deepseek',
-                onActivate: () => this._selectDeepseekModel(model.id),
-            });
-            this._deepseekModelListBox.add_child(row);
-        }
-    }
-
-    _selectDeepseekModel(modelId) {
-        if (this._settings.get_string('deepseek-model') !== modelId) {
-            this._settings.set_string('deepseek-model', modelId);
-        }
-        this._updateDeepseekModelButton();
-        this._showChatView();
+        return this._pickers.buildDeepseekModelPicker();
     }
 
     _toggleDeepseekModelPicker() {
-        if (!this._deepseekModelPicker) return;
-        if (this._deepseekModelPicker.visible) {
-            this._showChatView();
-            return;
-        }
-        this._refreshDeepseekModelPicker();
-        this._openAuxPanel(this._deepseekModelPicker);
+        this._pickers?.toggleDeepseekModelPicker();
     }
 
     _updateDeepseekModelButton() {
-        if (!this._deepseekModelBtn) return;
-        const isDeepseek = this._currentProvider === 'deepseek';
-        this._deepseekModelBtn.visible = isDeepseek;
-        if (!isDeepseek) return;
-
-        const model = this._settings.get_string('deepseek-model') || '';
-        const meta = DEEPSEEK_MODELS.find((m) => m.id === model);
-        this._deepseekModelBtnLabel.set_text(meta ? meta.label : model || 'Model');
+        this._pickers?.updateDeepseekModelButton();
     }
 
     // ── AI Token Breakdown panel ─────────────────────────────────────────────
@@ -5773,318 +5404,62 @@ class KatabDialog {
         this._applyInitialChatUI();
     }
 
+    // ── Header bar ───────────────────────────────────────────────────────
+    // Builders live in src/ui/headerBar.js; this wrapper re-attaches the
+    // returned widget refs to the dialog fields the live-update methods
+    // (_renderProviderStatus, _updateDeepseekModelButton, _updatePresetButton,
+    // _renderSessionCacheSavings, _updateHeaderPetSprite) keep mutating.
+
     _buildHeaderBar() {
-        let headerBox = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-header-box',
-        });
-        this.contentLayout.add_child(headerBox);
+        const widgets = buildHeaderBar(this._buildHeaderHost());
+        this._cacheSavingsChip = widgets.cacheSavingsChip;
+        this._cacheSavingsChipLabel = widgets.cacheSavingsChipLabel;
+        this._providerStatusBox = widgets.providerStatusBox;
+        this._providerStatusIcon = widgets.providerStatusIcon;
+        this._providerStatusLabel = widgets.providerStatusLabel;
+        this._providerStatusText = widgets.providerStatusText;
+        this._balanceLabel = widgets.balanceLabel;
+        this._presetBtn = widgets.presetBtn;
+        this._presetBtnLabel = widgets.presetBtnLabel;
+        this._deepseekModelBtn = widgets.deepseekModelBtn;
+        this._deepseekModelBtnLabel = widgets.deepseekModelBtnLabel;
+        this._usageBtn = widgets.usageBtn;
+        this._headerPetBox = widgets.headerPetBox;
+        this._headerPetSprite = widgets.headerPetSprite;
+        this._headerPetFallback = widgets.headerPetFallback;
+        this._historyBtn = widgets.historyBtn;
+    }
 
-        let titleWrapper = new St.BoxLayout({
-            style_class: 'katab-title-wrapper',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        headerBox.add_child(titleWrapper);
-
-        let logoGicon = Gio.icon_new_for_string(`${this._extension.path}/icons/katab-logo.svg`);
-        let logoIcon = new St.Icon({
-            gicon: logoGicon,
-            style_class: 'katab-logo-icon',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        titleWrapper.add_child(logoIcon);
-
-        let titleLabel = new St.Label({
-            text: 'Katab AI',
-            style_class: 'katab-title-label',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        titleWrapper.add_child(titleLabel);
-
-        // Flexible gap — the title stays left, all controls cluster on the right.
-        let headerSpacer = new St.Widget({
-            x_expand: true,
-        });
-        headerBox.add_child(headerSpacer);
-
-        // Subtle running total of prompt-cache savings for the current chat.
-        // Only shown for DeepSeek once at least a little has been saved.
-        this._cacheSavingsChip = new St.BoxLayout({
-            style_class: 'katab-cache-session-chip',
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-        });
-        this._cacheSavingsChip.add_child(
-            new St.Icon({
-                icon_name: 'emblem-ok-symbolic',
-                style_class: 'katab-cache-session-chip-icon',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        this._cacheSavingsChipLabel = new St.Label({
-            text: '',
-            style_class: 'katab-cache-session-chip-label',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._cacheSavingsChip.add_child(this._cacheSavingsChipLabel);
-        headerBox.add_child(this._cacheSavingsChip);
-
-        // Provider chip doubles as an engine switcher — clicking it opens the
-        // provider picker so the active engine can be changed from the chat window.
-        this._providerStatusBox = new St.BoxLayout({
-            style_class: 'katab-header-chip katab-provider-status-box',
-            y_align: Clutter.ActorAlign.CENTER,
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            accessible_name: 'Switch AI Provider',
-        });
-        this._providerStatusBox.connect('button-press-event', () => {
-            this._toggleProviderPicker();
-            return Clutter.EVENT_STOP;
-        });
-
-        this._providerStatusIcon = createProviderIcon(
-            this._currentProvider,
-            this._extension.path,
-            'katab-provider-badge-icon katab-provider-status-icon',
-        );
-        this._providerStatusBox.add_child(this._providerStatusIcon);
-
-        this._providerStatusLabel = new St.Label({
-            text: getProviderLabel(this._currentProvider),
-            style_class: 'katab-provider-status-label',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._providerStatusBox.add_child(this._providerStatusLabel);
-
-        // Health is its own micro-label (e.g. "Online") separated from the
-        // provider name — the chip surface itself stays part of the neutral
-        // glass theme and only this text carries the status color.
-        this._providerStatusBox.add_child(
-            new St.Label({
-                text: '·',
-                style_class: 'katab-provider-status-sep',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-
-        this._providerStatusText = new St.Label({
-            text: '',
-            style_class: 'katab-provider-status-text',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._providerStatusBox.add_child(this._providerStatusText);
-
-        // DeepSeek balance badge — compact currency + total shown next to the
-        // provider name when balance data is available.
-        this._balanceLabel = new St.Label({
-            text: '',
-            style_class: 'katab-provider-balance-label',
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-        });
-        this._providerStatusBox.add_child(this._balanceLabel);
-
-        this._providerStatusBox.add_child(
-            new St.Label({
-                text: '▾',
-                style_class: 'katab-provider-status-arrow',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        headerBox.add_child(this._providerStatusBox);
-
-        // Preset selector button — visible only when Ollama is the active provider
-        this._presetBtn = new St.BoxLayout({
-            style_class: 'katab-header-chip katab-preset-btn',
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            vertical: false,
-            y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: 'Load Preset',
-        });
-        this._presetBtn.connect('button-press-event', () => {
-            this._togglePresetPicker();
-            return Clutter.EVENT_STOP;
-        });
-        this._presetBtnLabel = new St.Label({
-            text: 'Presets',
-            style_class: 'katab-preset-btn-label',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._presetBtn.add_child(this._presetBtnLabel);
-        this._presetBtn.add_child(
-            new St.Label({
-                text: '▾',
-                style_class: 'katab-preset-btn-arrow',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        headerBox.add_child(this._presetBtn);
-
-        // DeepSeek model selector — visible only when DeepSeek is the active provider
-        this._deepseekModelBtn = new St.BoxLayout({
-            style_class: 'katab-header-chip katab-preset-btn katab-deepseek-model-btn',
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            vertical: false,
-            visible: false,
-            y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: 'Switch Model',
-        });
-        this._deepseekModelBtn.connect('button-press-event', () => {
-            this._toggleDeepseekModelPicker();
-            return Clutter.EVENT_STOP;
-        });
-        this._deepseekModelBtnLabel = new St.Label({
-            text: 'Model',
-            style_class: 'katab-preset-btn-label',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._deepseekModelBtn.add_child(this._deepseekModelBtnLabel);
-        this._deepseekModelBtn.add_child(
-            new St.Label({
-                text: '▾',
-                style_class: 'katab-preset-btn-arrow',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        headerBox.add_child(this._deepseekModelBtn);
-
-        // AI Token Breakdown — header button opening the usage panel. Sits after
-        // the provider/model chips, right before the window actions.
-        this._usageBtn = new St.BoxLayout({
-            style_class: 'katab-usage-btn',
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            vertical: false,
-            y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: 'Token Usage & Analytics',
-        });
-        this._usageBtn.connect('button-press-event', () => {
-            this._toggleUsagePanel();
-            return Clutter.EVENT_STOP;
-        });
-
-        // Circular pet avatar — pet sprite with fallback face
-        this._headerPetBox = new St.Widget({
-            style_class: 'katab-usage-btn-pet-box',
-            layout_manager: new Clutter.BinLayout(),
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.CENTER,
-        });
-        this._headerPetSprite = null;
-        this._headerPetFallback = new St.Label({
-            text: '─ ‿ ─',
-            style_class: 'katab-usage-btn-pet-fallback',
-            y_align: Clutter.ActorAlign.CENTER,
-            x_align: Clutter.ActorAlign.CENTER,
-        });
-        this._headerPetBox.add_child(this._headerPetFallback);
-        this._usageBtn.add_child(this._headerPetBox);
-
-        this._usageBtn.add_child(
-            new St.Label({
-                text: 'Usage',
-                style_class: 'katab-usage-btn-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        headerBox.add_child(this._usageBtn);
-
-        // History button — hover shows last 5 conversations dropdown,
-        // click opens the full history view.  Single button replaces the
-        // old split history-icon + hidden dropdown toggle.
-        this._historyBtn = new St.BoxLayout({
-            style_class: 'katab-history-dropdown-btn',
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            vertical: false,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._historyBtn.add_child(
-            new St.Icon({
-                icon_name: 'document-open-recent-symbolic',
-                style_class: 'katab-history-icon',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        this._historyBtn.add_child(
-            new St.Label({
-                text: '▾',
-                style_class: 'katab-history-dropdown-arrow',
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-
-        // Hover: show recent chats preview after 250 ms
-        this._historyBtn.connect('enter-event', () => {
-            this._ensureRecentChats();
-            this._recentChats.noteTriggerEnter();
-            return Clutter.EVENT_PROPAGATE;
-        });
-        this._historyBtn.connect('leave-event', () => {
-            this._ensureRecentChats();
-            this._recentChats.noteTriggerLeave();
-            return Clutter.EVENT_PROPAGATE;
-        });
-
-        // Click: open full history view
-        this._historyBtn.connect('button-press-event', () => {
-            this._hideRecentChatsPopup();
-            this._toggleHistoryView();
-            return Clutter.EVENT_STOP;
-        });
-
-        headerBox.add_child(this._historyBtn);
-
-        let newChatBtn = new St.Button({
-            child: new St.Icon({
-                icon_name: 'document-new-symbolic',
-                style_class: 'katab-new-chat-icon',
-            }),
-            style_class: 'katab-new-chat-btn',
-            can_focus: true,
-            reactive: true,
-            accessible_name: 'New Chat',
-        });
-        newChatBtn.connect('clicked', () => this._newChat());
-        headerBox.add_child(newChatBtn);
-
-        let settingsBtn = new St.Button({
-            child: new St.Icon({
-                icon_name: 'emblem-system-symbolic',
-                style_class: 'katab-settings-icon',
-            }),
-            style_class: 'katab-settings-btn',
-            can_focus: true,
-            accessible_name: 'Extension Settings',
-        });
-        headerBox.add_child(settingsBtn);
-
-        settingsBtn.connect('clicked', () => {
-            this.close();
-            this._extension.showPreferences();
-        });
-
-        let closeBtn = new St.Button({
-            child: new St.Icon({
-                icon_name: 'window-close-symbolic',
-                style_class: 'katab-close-icon',
-            }),
-            style_class: 'katab-close-btn',
-            can_focus: true,
-            accessible_name: 'Close Chat',
-        });
-        closeBtn.connect('clicked', () => this.close());
-        headerBox.add_child(closeBtn);
-
-        log('[Katab:ui] Header bar built (usage right of model chip)');
+    // Host surface for the header-bar module (src/ui/headerBar.js).
+    _buildHeaderHost() {
+        return {
+            addToContentLayout: (actor) => this.contentLayout.add_child(actor),
+            extensionPath: this._extension.path,
+            getCurrentProvider: () => this._currentProvider,
+            createProviderIcon: (provider, extensionPath, styleClass) =>
+                createProviderIcon(provider, extensionPath, styleClass),
+            getProviderLabel: (provider) => getProviderLabel(provider),
+            toggleProviderPicker: () => this._toggleProviderPicker(),
+            togglePresetPicker: () => this._togglePresetPicker(),
+            toggleDeepseekModelPicker: () => this._toggleDeepseekModelPicker(),
+            toggleUsagePanel: () => this._toggleUsagePanel(),
+            recentChatsEnter: () => {
+                this._ensureRecentChats();
+                this._recentChats.noteTriggerEnter();
+            },
+            recentChatsLeave: () => {
+                this._ensureRecentChats();
+                this._recentChats.noteTriggerLeave();
+            },
+            hideRecentChatsPopup: () => this._hideRecentChatsPopup(),
+            toggleHistoryView: () => this._toggleHistoryView(),
+            newChat: () => this._newChat(),
+            closeDialog: () => this.close(),
+            openPreferences: () => {
+                this.close();
+                this._extension.showPreferences();
+            },
+        };
     }
 
     _buildChatArea() {
@@ -6165,6 +5540,8 @@ class KatabDialog {
     }
 
     _buildPanelsAndFooter() {
+        this._pickers = new Pickers(this._buildPickersHost());
+
         // Preset picker panel (hidden by default, replaces chat scroll like history)
         this._presetPicker = this._buildPresetPicker();
         this.contentLayout.add_child(this._presetPicker);
