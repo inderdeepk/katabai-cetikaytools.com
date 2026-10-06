@@ -76,12 +76,8 @@ import {
 } from './src/usage/presetManager.js';
 import {
     buildCompanionState,
-    buildUsageMilestones,
-    estimateSummaryCost,
-    formatCost,
     formatTokenCount,
     isLocalModelEndpoint,
-    TOKEN_USAGE_RANGES,
     TokenUsageManager,
 } from './src/usage/tokenUsageManager.js';
 import {
@@ -89,12 +85,7 @@ import {
     deepseekPricingForTimestamp,
 } from './src/usage/deepseekPricing.js';
 import { PetSpriteActor } from './src/pets/petSpriteActor.js';
-import {
-    parsePetForm,
-    PET_PROVIDERS,
-    PET_SELECTION_MODES,
-    providerFormId,
-} from './src/pets/petCollection.js';
+import { PET_SELECTION_MODES } from './src/pets/petCollection.js';
 import { getAllToolNames, lookupTool, buildToolSchemasFor } from './src/tools/toolRegistry.js';
 import './src/tools/toolDefinitions.js'; // side-effect: registers all tool definitions
 import {
@@ -103,16 +94,7 @@ import {
     stillLooksLikeToolMarkup,
     stripTruncatedToolCallMarkup,
 } from './src/core/toolCallMarkup.js';
-import {
-    HistoryManager,
-    HISTORY_TITLE_MAX_CHARS,
-    HISTORY_DESCRIPTION_MAX_CHARS,
-} from './src/core/historyManager.js';
-import {
-    buildTitleGenerationMessages,
-    parseTitleDescriptionResponse,
-    TITLE_GEN_MAX_TOKENS,
-} from './src/core/titleGenerator.js';
+import { HistoryManager } from './src/core/historyManager.js';
 import { splitLinksSection } from './src/shared/pageLinks.js';
 import { createRequestLifecycle, REQUEST_STATES } from './src/core/requestLifecycle.js';
 import {
@@ -181,6 +163,10 @@ import {
     normalizeUrl,
     splitTextIntoBoundedChunks,
 } from './src/ui/markdownRender.js';
+import { WelcomePanel } from './src/ui/welcomePanel.js';
+import { UsagePanel } from './src/ui/usagePanel.js';
+import { HistoryView } from './src/ui/historyView.js';
+import { SessionInfoPopup } from './src/ui/sessionInfoPopup.js';
 import {
     RagRuntime,
     readRagConfig,
@@ -1455,23 +1441,13 @@ class KatabDialog {
         // ── Performance caches ─────────────────────────────────────────
         this._webSourcesCache = null; // cached result of _collectWebSources
         this._webSourcesCacheGen = 0; // generation counter for invalidation
-        this._historyListCacheIds = null; // cached history entry IDs for diff
-        this._historySearchQuery = ''; // current history search filter
-        this._historySearchTimeoutId = 0; // debounce ID for search re-render
-        this._historyTab = 'active'; // history list tab: 'active' | 'archived'
-        this._historyEditorTargetId = null; // conversation id being edited (title/description)
-        this._titleGenInFlight = false; // manual title/description generation running
-        this._historyEditorCancellable = null; // Gio.Cancellable for the generation request
+        this._history = null; // history view module (src/ui/historyView.js)
         this._notifyIdleId = 0; // debounce ID for _notifyCurrentChatChanged
 
         // ── RAG Phase 2: conversation indexing state ────────────────────
         this._indexedConversationIds = new Map(); // id → messageCount at last index
         this._ragIndexStateLoaded = false; // sentinel file loaded?
         this._ragIndexFlushTimeoutId = 0; // debounce ID for sentinel flush
-        this._kbSearchEntry = null; // KB search entry in history view
-        this._kbSearchQuery = ''; // current KB search filter
-        this._kbSearchTimeoutId = 0; // debounce for KB search
-        this._kbSearchViewActive = false; // showing KB results vs history list
         this._kbSuppressWebSearch = false; // suppress the AUTO web fallback when the KB has high-relevance results
         this._ragHasContent = null; // null=unknown, true/false cached from /health
         this._ragEmbeddingOk = null; // null=unknown; false when /health reports embeddings down
@@ -1593,7 +1569,7 @@ class KatabDialog {
             if (this._usagePanel?.visible) this._refreshUsagePanel();
         });
         this._connectSetting('changed::token-usage-default-range', () => {
-            this._usageRangeKey = this._getDefaultUsageRange();
+            this._usage?.resetRangeToDefault();
             if (this._usagePanel?.visible) this._refreshUsagePanel();
         });
         this._connectSetting('changed::token-usage-retention-days', () => {
@@ -1689,10 +1665,7 @@ class KatabDialog {
         // token box.  Shows a comprehensive context-window breakdown
         // (system, user context, research, tool usage) on click/hover.
         this._sessionInfoPopup = null;
-        this._sessionInfoClickLocked = false;
-        this._sessionInfoHoverTimeout = 0;
-        this._sessionInfoLeaveTimeout = 0;
-        this._siRepositionId = 0;
+        this._sessionInfo = null; // session-info popup module (src/ui/sessionInfoPopup.js)
         // Recent chats hover dropdown — shows last 5 conversations below
         // the history button on hover (same pattern as session info popup).
         this._recentChatsPopup = null;
@@ -1709,20 +1682,13 @@ class KatabDialog {
         this._promptHistory = [];
         this._promptHistoryIndex = -1;
         this._promptDraftBackup = '';
-        this._usageRangeKey = null;
-        this._usageCompanionSprite = null;
+        this._usage = null;
         this._headerPetSprite = null;
         this._headerPetBox = null;
         this._headerPetFallback = null;
-        this._usageTab = 'overview';
-        this._usageView = 'overview';
-        this._usageDetailFormId = null;
-        this._usageRangeDropdown = null;
-        this._usageRangeDropdownOpen = false;
-        this._usageProviderModelTab = 'provider';
         this._hasConversationStarted = false;
+        this._welcome = null;
         this._welcomePanel = null;
-        this._welcomeStage = null;
         this._messageList = null;
         // Monotonically-increasing chat generation. Bumped every time the
         // message list is rebuilt (new conversation / history switch /
@@ -1730,11 +1696,6 @@ class KatabDialog {
         // captured bubbles have been destroyed and bail instead of touching
         // disposed St widgets.
         this._chatGeneration = 0;
-        this._welcomeAura = null;
-        this._welcomePageActors = [];
-        this._welcomeDustActors = [];
-        this._welcomeAnimationLoopId = 0;
-        this._welcomeAnimationSourceIds = [];
 
         this.actor = new St.Widget({
             style_class: 'katab-shell-overlay',
@@ -2226,7 +2187,7 @@ class KatabDialog {
         }
 
         if (messages.length === 0) return;
-        this._usageCompanionSprite?.showPose('celebrate', 2400);
+        this._usage?.showCompanionPose('celebrate', 2400);
         if (showInChat) {
             for (const message of messages) this._addSystemMessage(message, { variant: 'success' });
         }
@@ -2438,7 +2399,7 @@ class KatabDialog {
             this._toolsPopup,
             this._sessionInfoPopup,
             this._recentChatsPopup,
-            this._usageRangeDropdown,
+            this._usage?.rangeDropdown,
         ];
         for (const popup of popups) {
             if (popup && popup.visible && this._isPointInActor(popup, cx, cy)) {
@@ -5679,13 +5640,26 @@ class KatabDialog {
 
     // ── AI Token Breakdown panel ─────────────────────────────────────────────
     _buildUsagePanel() {
-        const { picker, listBox, closePickerBtn, pickerTitle } =
-            this._buildPickerShell('AI Token Breakdown');
-        picker.add_style_class_name('katab-usage-panel');
-        this._usagePanelListBox = listBox;
-        this._usagePanelTitle = pickerTitle;
-        closePickerBtn.connect('clicked', () => this._showChatView());
-        return picker;
+        this._usage = new UsagePanel(this._buildUsageHost());
+        return this._usage.panel;
+    }
+
+    // Host surface for the usage-panel module — everything the panel needs
+    // from the dialog flows through this bag so the module stays decoupled.
+    _buildUsageHost() {
+        return {
+            settings: this._settings,
+            extensionPath: this._extension.path,
+            buildPickerShell: (titleText) => this._buildPickerShell(titleText),
+            showChatView: () => this._showChatView(),
+            openAuxPanel: (panel) => this._openAuxPanel(panel),
+            getCurrentProvider: () => this._currentProvider,
+            getPetSelection: () => this._getPetSelection(),
+            switchToLocalDraft: () => this._switchToLocalDraft(),
+            createProviderIcon: (provider, extensionPath, styleClass) =>
+                createProviderIcon(provider, extensionPath, styleClass),
+            getProviderLabel: (provider) => getProviderLabel(provider),
+        };
     }
 
     _updateHeaderPetSprite() {
@@ -5749,180 +5723,16 @@ class KatabDialog {
     }
 
     _toggleUsagePanel() {
-        if (!this._usagePanel) return;
-        if (this._usagePanel.visible) {
-            this._showChatView();
-            return;
-        }
-        this._openUsagePanel();
+        this._usage?.toggle();
     }
 
     // Also used by the top-panel indicator to jump straight to the breakdown.
     _openUsagePanel() {
-        if (!this._usagePanel) return;
-        this._usageTab = 'overview';
-        this._usageView = 'overview';
-        this._usageDetailFormId = null;
-        this._refreshUsagePanel();
-        this._openAuxPanel(this._usagePanel);
+        this._usage?.open();
     }
 
     _refreshUsagePanel() {
-        if (!this._usagePanelListBox) return;
-        this._closeUsageRangeDropdown();
-        this._usagePanelListBox.destroy_all_children();
-
-        // ── Tab bar (always visible) ──────────────────────────────────
-        this._usagePanelListBox.add_child(this._buildUsageTabBar());
-
-        // ── Collection tab ────────────────────────────────────────────
-        if (this._usageTab === 'collection') {
-            if (this._usageView === 'detail' && this._usageDetailFormId) {
-                this._renderUsagePetDetail(this._usageDetailFormId);
-            } else {
-                this._renderUsageCollection();
-            }
-            return;
-        }
-
-        // ── Spending tab ──────────────────────────────────────────────
-        if (this._usageTab === 'spending') {
-            this._renderUsageSpending();
-            return;
-        }
-
-        // ── Overview tab ──────────────────────────────────────────────
-        this._setUsagePanelTitle('AI Token Breakdown');
-
-        if (!this._usageRangeKey || !this._isValidUsageRange(this._usageRangeKey)) {
-            this._usageRangeKey = this._getDefaultUsageRange();
-        }
-
-        let summary;
-        let allSummary;
-        try {
-            allSummary = TokenUsageManager.getSummary('all');
-            summary =
-                this._usageRangeKey === 'all'
-                    ? allSummary
-                    : TokenUsageManager.getSummary(this._usageRangeKey);
-        } catch (e) {
-            this._usagePanelListBox.add_child(
-                new St.Label({
-                    text: `Could not load usage data: ${e.message || e}`,
-                    style_class: 'katab-usage-privacy-note',
-                }),
-            );
-            return;
-        }
-
-        const box = this._usagePanelListBox;
-        const trackingEnabled = this._settings.get_boolean('token-usage-enabled');
-        if (!trackingEnabled) {
-            box.add_child(this._buildUsagePausedCard());
-        }
-
-        // Empty state — tracking starts with the first recorded reply.
-        if (allSummary.totalTokens === 0) {
-            const emptyCard = this._createUsageCard(null);
-            emptyCard.add_child(
-                new St.Label({
-                    text: 'No tokens tracked yet',
-                    style_class: 'katab-usage-hero-value',
-                }),
-            );
-            const emptyHint = new St.Label({
-                text: trackingEnabled
-                    ? 'Tracking starts with your next reply. Old chats are not scanned or backfilled, and the ledger stays on this computer.'
-                    : 'Tracking is paused. Turn it back on in Settings > General > AI Token Breakdown when you want the companion to start counting again.',
-                style_class: 'katab-usage-note',
-            });
-            emptyHint.clutter_text.line_wrap = true;
-            emptyHint.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-            emptyCard.add_child(emptyHint);
-            box.add_child(emptyCard);
-            box.add_child(this._buildUsagePrivacyNote());
-            return;
-        }
-
-        box.add_child(this._buildUsageRangeDropdown());
-        box.add_child(this._buildUsageActivityCard(summary));
-        if (summary.providers.length > 0 && summary.models.length > 0) {
-            box.add_child(this._buildUsageProviderModelCard(summary));
-        }
-        box.add_child(this._buildUsageTipRow(summary));
-        box.add_child(this._buildUsagePrivacyNote());
-    }
-
-    // ── Tab bar ──────────────────────────────────────────────────────────────
-
-    _buildUsageTabBar() {
-        const bar = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: 'katab-usage-tab-bar',
-        });
-
-        const tabs = [
-            { key: 'overview', label: 'Overview' },
-            { key: 'collection', label: 'Collection' },
-            { key: 'spending', label: 'Spending' },
-        ];
-
-        for (const tab of tabs) {
-            const active = tab.key === this._usageTab;
-            const btn = new St.Button({
-                label: tab.label,
-                style_class: active
-                    ? 'katab-usage-tab-btn katab-usage-tab-btn-active'
-                    : 'katab-usage-tab-btn',
-                can_focus: true,
-                reactive: true,
-                x_expand: true,
-            });
-            btn.connect('clicked', () => {
-                if (tab.key === 'collection') {
-                    this._showUsageCollection();
-                } else if (tab.key === 'spending') {
-                    this._showUsageSpending();
-                } else {
-                    this._showUsageOverview();
-                }
-            });
-            bar.add_child(btn);
-        }
-        return bar;
-    }
-
-    _setUsagePanelTitle(title) {
-        if (this._usagePanelTitle) this._usagePanelTitle.set_text(title);
-    }
-
-    _showUsageOverview() {
-        this._usageTab = 'overview';
-        this._usageView = 'overview';
-        this._usageDetailFormId = null;
-        this._refreshUsagePanel();
-    }
-
-    _showUsageCollection() {
-        this._usageTab = 'collection';
-        this._usageView = 'collection';
-        this._usageDetailFormId = null;
-        this._refreshUsagePanel();
-    }
-
-    _showUsageSpending() {
-        this._usageTab = 'spending';
-        this._usageView = 'overview';
-        this._usageDetailFormId = null;
-        this._refreshUsagePanel();
-    }
-
-    _showUsagePetDetail(formId) {
-        this._usageView = 'detail';
-        this._usageDetailFormId = formId;
-        this._refreshUsagePanel();
+        this._usage?.refresh();
     }
 
     _getPetSelection() {
@@ -5951,937 +5761,8 @@ class KatabDialog {
         };
     }
 
-    _followCurrentProviderPet() {
-        this._settings.set_string('pet-pinned-form', '');
-        this._settings.set_string('pet-selection-mode', PET_SELECTION_MODES.FOLLOW_PROVIDER);
-        this._showUsageCollection();
-    }
-
-    _pinPetForm(formId) {
-        this._settings.set_string('pet-pinned-form', formId);
-        this._settings.set_string('pet-selection-mode', PET_SELECTION_MODES.PINNED);
-        this._showUsageOverview();
-    }
-
-    _buildUsageBackRow(label, onBack) {
-        const row = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: 'katab-usage-subview-header',
-        });
-        const backButton = new St.Button({
-            child: new St.Icon({ icon_name: 'go-previous-symbolic' }),
-            style_class: 'katab-usage-back-btn',
-            can_focus: true,
-            accessible_name: 'Back',
-        });
-        backButton.connect('clicked', onBack);
-        row.add_child(backButton);
-        row.add_child(
-            new St.Label({
-                text: label,
-                style_class: 'katab-usage-subview-title',
-                x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        return row;
-    }
-
-    _renderUsageCollection() {
-        this._setUsagePanelTitle('Your Companions');
-        const box = this._usagePanelListBox;
-        const collection = TokenUsageManager.getCollectionState();
-        const selection = this._getPetSelection();
-
-        // Companion hero card (moved from Overview tab)
-        let allSummary;
-        try {
-            allSummary = TokenUsageManager.getSummary('all');
-        } catch (_e) {
-            allSummary = TokenUsageManager.getSummary('all');
-        }
-        box.add_child(this._buildUsageCompanionCard(allSummary, allSummary, true));
-
-        const followButton = new St.Button({
-            label: `Follow ${getProviderLabel(this._currentProvider)}`,
-            style_class:
-                selection.selectionMode === PET_SELECTION_MODES.FOLLOW_PROVIDER
-                    ? 'katab-usage-follow-btn katab-usage-follow-btn-active'
-                    : 'katab-usage-follow-btn',
-            can_focus: true,
-            x_expand: true,
-        });
-        followButton.connect('clicked', () => this._followCurrentProviderPet());
-        box.add_child(followButton);
-
-        const entries = PET_PROVIDERS.map((provider) => {
-            const pet = collection.pets[provider];
-            return {
-                formId: providerFormId(provider),
-                companion: { id: providerFormId(provider), ...pet },
-                status: `${pet.stageLabel} · ${formatTokenCount(pet.xp)} XP`,
-                locked: false,
-            };
-        });
-
-        const grid = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            style_class: 'katab-pet-collection-grid',
-        });
-        for (let index = 0; index < entries.length; index += 2) {
-            const row = new St.BoxLayout({
-                vertical: false,
-                x_expand: true,
-                style_class: 'katab-pet-collection-row',
-            });
-            for (const entry of entries.slice(index, index + 2)) {
-                row.add_child(this._buildPetCollectionItem(entry, selection.companion.id));
-            }
-            if (entries.slice(index, index + 2).length === 1) {
-                row.add_child(new St.Widget({ x_expand: true }));
-            }
-            grid.add_child(row);
-        }
-        box.add_child(grid);
-
-        // Milestones (moved from Overview to Collection)
-        allSummary = TokenUsageManager.getSummary('all');
-        box.add_child(this._buildUsageMilestoneCard(allSummary));
-    }
-
-    _buildPetCollectionItem(entry, activeFormId) {
-        const isActive = entry.formId === activeFormId;
-        const button = new St.Button({
-            style_class: `katab-pet-collection-item${isActive ? ' katab-pet-collection-item-active' : ''}${entry.locked ? ' katab-pet-collection-item-locked' : ''}`,
-            can_focus: !entry.locked,
-            reactive: !entry.locked,
-            x_expand: true,
-        });
-        const content = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            y_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'katab-pet-collection-item-content',
-        });
-        const sprite = new PetSpriteActor(this._extension.path, {
-            slotSize: 100,
-            animate: false,
-            fallbackText: entry.locked ? '·' : '?',
-        });
-        sprite.setCompanion(entry.companion);
-        content.add_child(sprite);
-        content.add_child(
-            new St.Label({
-                text: entry.companion.name,
-                style_class: 'katab-pet-collection-name',
-                x_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        content.add_child(
-            new St.Label({
-                text: entry.status,
-                style_class: 'katab-pet-collection-status',
-                x_align: Clutter.ActorAlign.CENTER,
-            }),
-        );
-        if (isActive) {
-            content.add_child(
-                new St.Label({
-                    text: 'Active',
-                    style_class: 'katab-pet-collection-active-label',
-                    x_align: Clutter.ActorAlign.CENTER,
-                }),
-            );
-        }
-        button.set_child(content);
-        if (!entry.locked) button.connect('clicked', () => this._showUsagePetDetail(entry.formId));
-        return button;
-    }
-
-    _renderUsagePetDetail(formId) {
-        const form = parsePetForm(formId);
-        if (!form) {
-            this._showUsageCollection();
-            return;
-        }
-
-        const companion = TokenUsageManager.getActiveCompanion({
-            currentProvider: this._currentProvider,
-            selectionMode: PET_SELECTION_MODES.PINNED,
-            pinnedForm: formId,
-        });
-        if (companion.id !== formId) {
-            this._showUsageCollection();
-            return;
-        }
-
-        this._setUsagePanelTitle(companion.name);
-        const box = this._usagePanelListBox;
-        const collection = TokenUsageManager.getCollectionState();
-        const selection = this._getPetSelection();
-        box.add_child(
-            this._buildUsageBackRow(companion.stageLabel, () => this._showUsageCollection()),
-        );
-
-        const preview = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: 'katab-usage-card katab-pet-detail-preview',
-        });
-        const sprite = new PetSpriteActor(this._extension.path, {
-            slotSize: 128,
-            animate: true,
-        });
-        sprite.setCompanion(companion);
-        preview.add_child(sprite);
-
-        const info = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'katab-pet-detail-info',
-        });
-        info.add_child(
-            new St.Label({ text: companion.name, style_class: 'katab-pet-detail-name' }),
-        );
-        info.add_child(
-            new St.Label({
-                text: `${companion.stageLabel} · ${formatTokenCount(companion.xp)} XP`,
-                style_class: 'katab-pet-detail-stage',
-            }),
-        );
-
-        const progressTrack = new St.Widget({
-            style_class: 'katab-pet-detail-progress-track',
-            width: 260,
-            height: 7,
-        });
-        if (companion.progress > 0) {
-            progressTrack.add_child(
-                new St.Widget({
-                    style_class: 'katab-pet-detail-progress-fill',
-                    width: Math.max(3, Math.round(companion.progress * 260)),
-                    height: 7,
-                }),
-            );
-        }
-        info.add_child(progressTrack);
-
-        const basePet = form.baseProvider ? collection.pets[form.baseProvider] : null;
-        if (basePet) {
-            info.add_child(
-                new St.Label({
-                    text: `${basePet.replyCount} replies · ${basePet.lastFedAt ? `Last fed ${this._formatUsageDate(basePet.lastFedAt)}` : 'Not fed yet'}`,
-                    style_class: 'katab-pet-detail-meta',
-                }),
-            );
-        }
-
-        const isActive =
-            selection.selectionMode === PET_SELECTION_MODES.PINNED &&
-            selection.companion.id === formId;
-        const makeActiveButton = new St.Button({
-            label: isActive ? 'Current Companion' : 'Make Companion',
-            style_class: isActive
-                ? 'katab-usage-action-btn katab-usage-action-btn-active'
-                : 'katab-usage-action-btn',
-            can_focus: !isActive,
-            reactive: !isActive,
-        });
-        if (!isActive) makeActiveButton.connect('clicked', () => this._pinPetForm(formId));
-        info.add_child(makeActiveButton);
-        preview.add_child(info);
-        box.add_child(preview);
-    }
-
-    _createUsageCard(titleText = null) {
-        const card = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            style_class: 'katab-usage-card',
-        });
-        if (titleText) {
-            card.add_child(
-                new St.Label({
-                    text: titleText,
-                    style_class: 'katab-usage-card-title',
-                }),
-            );
-        }
-        return card;
-    }
-
-    _getDefaultUsageRange() {
-        try {
-            const saved = this._settings.get_string('token-usage-default-range');
-            if (this._isValidUsageRange(saved)) {
-                return saved;
-            }
-        } catch (_e) {
-            /* fallback below */
-        }
-        return 'month';
-    }
-
-    _isValidUsageRange(rangeKey) {
-        return TOKEN_USAGE_RANGES.some((range) => range.key === rangeKey);
-    }
-
-    _buildUsagePausedCard() {
-        const card = this._createUsageCard('Tracking Paused');
-        const label = new St.Label({
-            text: 'Token analytics are disabled. Existing local data remains here, but new replies will not be counted until you turn tracking back on.',
-            style_class: 'katab-usage-note',
-        });
-        label.clutter_text.line_wrap = true;
-        label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        card.add_child(label);
-        return card;
-    }
-
-    _buildUsageRangeDropdown() {
-        // Clean up any stale dropdown first
-        this._closeUsageRangeDropdown();
-
-        const activeRange =
-            TOKEN_USAGE_RANGES.find((r) => r.key === this._usageRangeKey) || TOKEN_USAGE_RANGES[2]; // default month
-        const chip = new St.Button({
-            label: `${activeRange.label} ▾`,
-            style_class: 'katab-usage-range-chip',
-            can_focus: true,
-            reactive: true,
-        });
-        chip.connect('clicked', () => {
-            if (this._usageRangeDropdownOpen) {
-                this._closeUsageRangeDropdown();
-            } else {
-                this._openUsageRangeDropdown(chip);
-            }
-        });
-        return chip;
-    }
-
-    _openUsageRangeDropdown(anchor) {
-        this._closeUsageRangeDropdown();
-
-        const dropdown = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-usage-range-dropdown',
-            reactive: true,
-        });
-        this._usageRangeDropdown = dropdown;
-        this._usageRangeDropdownOpen = true;
-
-        for (const range of TOKEN_USAGE_RANGES) {
-            const active = range.key === this._usageRangeKey;
-            const row = new St.Button({
-                style_class: active
-                    ? 'katab-usage-range-dropdown-item katab-usage-range-dropdown-item-active'
-                    : 'katab-usage-range-dropdown-item',
-                can_focus: true,
-                reactive: true,
-            });
-            const content = new St.BoxLayout({
-                vertical: false,
-                x_expand: true,
-                style_class: 'katab-usage-range-dropdown-content',
-            });
-            content.add_child(
-                new St.Label({
-                    text: range.label,
-                    style_class: 'katab-usage-range-dropdown-label',
-                    x_expand: true,
-                }),
-            );
-            if (active) {
-                content.add_child(
-                    new St.Icon({
-                        icon_name: 'object-select-symbolic',
-                        style_class: 'katab-usage-range-dropdown-check',
-                    }),
-                );
-            }
-            row.set_child(content);
-            row.connect('clicked', () => {
-                this._usageRangeKey = range.key;
-                this._closeUsageRangeDropdown();
-                this._refreshUsagePanel();
-            });
-            dropdown.add_child(row);
-        }
-
-        // Position the dropdown relative to the anchor in the parent list box
-        if (this._usagePanelListBox) {
-            this._usagePanelListBox.insert_child_above(dropdown, anchor);
-        }
-
-        // Close when clicking outside
-        const captureId = global.stage.connect('captured-event', (_actor, event) => {
-            if (!this._usageRangeDropdownOpen) return Clutter.EVENT_PROPAGATE;
-            if (event.type() === Clutter.EventType.BUTTON_PRESS) {
-                const target = event.get_source();
-                if (target && !this._isDescendantOf(target, this._usageRangeDropdown)) {
-                    this._closeUsageRangeDropdown();
-                }
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-        this._usageRangeDropdownCaptureId = captureId;
-    }
-
     _closeUsageRangeDropdown() {
-        if (this._usageRangeDropdownCaptureId) {
-            global.stage.disconnect(this._usageRangeDropdownCaptureId);
-            this._usageRangeDropdownCaptureId = 0;
-        }
-        if (this._usageRangeDropdown) {
-            try {
-                this._usageRangeDropdown.destroy();
-            } catch (_e) {
-                /* disposed */
-            }
-            this._usageRangeDropdown = null;
-        }
-        this._usageRangeDropdownOpen = false;
-    }
-
-    _isDescendantOf(actor, ancestor) {
-        let current = actor;
-        while (current) {
-            if (current === ancestor) return true;
-            current = current.get_parent();
-        }
-        return false;
-    }
-
-    // The active provider pet grows from permanent per-provider collection XP.
-    // Recent range data only supplies mood and local/cloud flavor text.
-    _buildUsageCompanionCard(allSummary, recentSummary = null, inCollection = false) {
-        const moodState = buildCompanionState(allSummary, recentSummary || allSummary);
-        const selection = this._getPetSelection();
-        const companion = selection.companion;
-
-        const card = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: inCollection
-                ? 'katab-usage-card katab-usage-companion-card katab-usage-companion-card-collection'
-                : 'katab-usage-card katab-usage-companion-card',
-        });
-
-        const body = new St.BoxLayout({
-            vertical: true,
-            style_class: `katab-usage-companion-body katab-usage-companion-body-${companion.stageKey} katab-usage-companion-provider-${companion.baseProvider || 'mixie'}${moodState.recentLocalShare >= 0.5 ? ' katab-usage-companion-local' : ''}`,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        const sprite = new PetSpriteActor(this._extension.path, {
-            slotSize: 112,
-            animate: true,
-            fallbackText: moodState.face,
-        });
-        sprite.setCompanion({ ...companion, fallbackText: moodState.face });
-        this._usageCompanionSprite = sprite;
-        sprite.connect('destroy', () => {
-            if (this._usageCompanionSprite === sprite) this._usageCompanionSprite = null;
-        });
-        body.add_child(sprite);
-        card.add_child(body);
-
-        const textCol = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'katab-usage-companion-text',
-        });
-        textCol.add_child(
-            new St.Label({
-                text: `${companion.name} · ${companion.stageLabel}`,
-                style_class: 'katab-usage-companion-name',
-            }),
-        );
-        textCol.add_child(
-            new St.Label({
-                text: moodState.mood,
-                style_class: 'katab-usage-companion-mood',
-            }),
-        );
-        const remainingXp =
-            companion.nextStageXp === null
-                ? null
-                : Math.max(0, companion.nextStageXp - companion.xp);
-        textCol.add_child(
-            new St.Label({
-                text:
-                    remainingXp === null
-                        ? `${formatTokenCount(companion.xp)} XP · Maximum stage`
-                        : `${formatTokenCount(companion.xp)} XP · ${formatTokenCount(remainingXp)} to ${companion.nextStageLabel}`,
-                style_class: 'katab-usage-companion-progress',
-            }),
-        );
-        const flavor = new St.Label({
-            text: moodState.flavorText,
-            style_class: 'katab-usage-companion-flavor',
-        });
-        flavor.clutter_text.line_wrap = true;
-        flavor.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        textCol.add_child(flavor);
-
-        if (!inCollection) {
-            const collectionButton = new St.Button({
-                label:
-                    selection.selectionMode === PET_SELECTION_MODES.PINNED
-                        ? 'View Collection · Pinned'
-                        : 'View Collection',
-                style_class: 'katab-usage-collection-btn',
-                can_focus: true,
-                x_align: Clutter.ActorAlign.START,
-            });
-            collectionButton.connect('clicked', () => this._showUsageCollection());
-            textCol.add_child(collectionButton);
-        }
-        card.add_child(textCol);
-
-        if (
-            companion.baseProvider ||
-            companion.accentProvider ||
-            moodState.recentLocalShare >= 0.5
-        ) {
-            const badgeCol = new St.BoxLayout({
-                vertical: true,
-                y_align: Clutter.ActorAlign.CENTER,
-                style_class: 'katab-usage-companion-badges',
-            });
-            if (companion.baseProvider) {
-                badgeCol.add_child(
-                    createProviderIcon(
-                        companion.baseProvider,
-                        this._extension.path,
-                        'katab-usage-companion-provider-icon',
-                    ),
-                );
-            }
-            if (companion.accentProvider) {
-                badgeCol.add_child(
-                    createProviderIcon(
-                        companion.accentProvider,
-                        this._extension.path,
-                        'katab-usage-companion-secondary-icon',
-                    ),
-                );
-            }
-            if (moodState.recentLocalShare >= 0.5) {
-                badgeCol.add_child(
-                    new St.Icon({
-                        icon_name: 'user-home-symbolic',
-                        style_class: 'katab-usage-companion-home-icon',
-                    }),
-                );
-            }
-            card.add_child(badgeCol);
-        }
-
-        return card;
-    }
-
-    _buildUsageActivityCard(summary) {
-        const card = this._createUsageCard(summary.label);
-
-        // ═══ TOP: Hero ═══
-        const topRow = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: 'katab-usage-activity-top',
-        });
-
-        const heroCol = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            style_class: 'katab-usage-activity-hero',
-        });
-        heroCol.add_child(
-            new St.Label({
-                text: `${formatTokenCount(summary.totalTokens)} tokens`,
-                style_class: 'katab-usage-hero-value',
-            }),
-        );
-        heroCol.add_child(
-            new St.Label({
-                text: summary.label || 'Selected range',
-                style_class: 'katab-usage-hero-range',
-            }),
-        );
-
-        let detailText = `${formatTokenCount(summary.promptTokens)} prompt · ${formatTokenCount(summary.completionTokens)} reply`;
-        if (summary.cachedHitTokens > 0) {
-            detailText += ` · ${formatTokenCount(summary.cachedHitTokens)} cached`;
-        }
-        heroCol.add_child(
-            new St.Label({
-                text: detailText,
-                style_class: 'katab-usage-note',
-            }),
-        );
-
-        const exPct = Math.round(summary.exactShare * 100);
-        heroCol.add_child(
-            new St.Label({
-                text: `${exPct}% measured · since ${this._formatUsageDate(summary.trackingStartedAt)}`,
-                style_class: 'katab-usage-meta',
-            }),
-        );
-        topRow.add_child(heroCol);
-        card.add_child(topRow);
-
-        // ═══ Sleek ratio bar — labels flanking outside ═══
-        const localPct = Math.round(summary.localShare * 100);
-        const remotePct = 100 - localPct;
-        const localW = summary.localShare > 0 ? Math.round(summary.localShare * 230) : 0;
-        const remoteW = 230 - localW;
-        const barHeight = 12;
-
-        const barWrap = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'katab-usage-ratio-row',
-        });
-        barWrap.add_child(
-            new St.Label({ text: `${localPct}% local`, style_class: 'katab-usage-ratio-label' }),
-        );
-        const bar = new St.BoxLayout({ vertical: false, style_class: 'katab-usage-ratio-bar' });
-        if (localW > 0)
-            bar.add_child(
-                new St.Widget({
-                    style_class: 'katab-usage-ratio-seg katab-usage-local-fill',
-                    width: Math.max(2, localW),
-                    height: barHeight,
-                }),
-            );
-        if (remoteW > 0)
-            bar.add_child(
-                new St.Widget({
-                    style_class: 'katab-usage-ratio-seg katab-usage-remote-fill',
-                    width: Math.max(2, remoteW),
-                    height: barHeight,
-                }),
-            );
-        barWrap.add_child(bar);
-        barWrap.add_child(
-            new St.Label({ text: `${remotePct}% cloud`, style_class: 'katab-usage-ratio-label' }),
-        );
-        card.add_child(barWrap);
-
-        // One-click switch to a local draft (kept from the legacy local card,
-        // which was removed as dead code). Only useful off Ollama.
-        if (this._currentProvider !== 'ollama') {
-            const localAction = new St.Button({
-                label: 'Try Next Draft Locally',
-                style_class: 'katab-usage-action-btn',
-                can_focus: true,
-                reactive: true,
-            });
-            localAction.connect('clicked', () => this._switchToLocalDraft());
-            card.add_child(localAction);
-        }
-
-        // ═══ Trend stats — each one a clear, human-readable sentence ═══
-        const trendCol = new St.BoxLayout({
-            vertical: true,
-            x_expand: true,
-            style_class: 'katab-usage-activity-trends',
-        });
-
-        const _trendLine = (cls, text) => {
-            const lbl = new St.Label({
-                text,
-                style_class: `katab-usage-trend-line ${cls}`,
-            });
-            lbl.clutter_text.line_wrap = true;
-            lbl.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-            return lbl;
-        };
-
-        // Today vs daily average
-        if (summary.todayVsAverage !== null) {
-            const p = Math.round(summary.todayVsAverage * 100);
-            if (Math.abs(summary.todayVsAverage) < 0.03) {
-                trendCol.add_child(
-                    _trendLine('katab-usage-trend-flat', 'Today on par with your daily average'),
-                );
-            } else if (p > 0) {
-                trendCol.add_child(
-                    _trendLine('katab-usage-trend-up', `Today ${p}% above your daily average`),
-                );
-            } else {
-                trendCol.add_child(
-                    _trendLine(
-                        'katab-usage-trend-down',
-                        `Today ${Math.abs(p)}% below your daily average`,
-                    ),
-                );
-            }
-        } else {
-            trendCol.add_child(
-                _trendLine('katab-usage-trend-flat', 'Today: no tokens recorded yet'),
-            );
-        }
-
-        // Token trend vs previous range
-        if (summary.tokenTrend !== null) {
-            const p = Math.round(summary.tokenTrend * 100);
-            const rangeLabel = (summary.label || 'this range').toLowerCase();
-            if (Math.abs(summary.tokenTrend) < 0.03) {
-                trendCol.add_child(
-                    _trendLine(
-                        'katab-usage-trend-flat',
-                        `About the same as previous ${rangeLabel}`,
-                    ),
-                );
-            } else if (p > 0) {
-                trendCol.add_child(
-                    _trendLine(
-                        'katab-usage-trend-up',
-                        `${p}% more tokens than previous ${rangeLabel}`,
-                    ),
-                );
-            } else {
-                trendCol.add_child(
-                    _trendLine(
-                        'katab-usage-trend-down',
-                        `${Math.abs(p)}% fewer tokens than previous ${rangeLabel}`,
-                    ),
-                );
-            }
-        }
-
-        // Local streak
-        if (summary.localStreakDays >= 3) {
-            trendCol.add_child(
-                _trendLine(
-                    'katab-usage-trend-up',
-                    `${summary.localStreakDays} straight days using local models`,
-                ),
-            );
-        } else if (summary.localStreakDays > 0) {
-            trendCol.add_child(
-                _trendLine(
-                    'katab-usage-trend-up',
-                    `${summary.localStreakDays} day local streak — keep going`,
-                ),
-            );
-        } else {
-            trendCol.add_child(
-                _trendLine('katab-usage-trend-flat', 'No local streak yet — try Ollama'),
-            );
-        }
-
-        card.add_child(trendCol);
-
-        // ═══ Divider ═══
-        card.add_child(
-            new St.Widget({
-                style_class: 'katab-usage-activity-divider',
-                height: 1,
-                x_expand: true,
-            }),
-        );
-
-        // ═══ 14-day bar chart (bars + labels in same columns = perfect alignment) ═══
-        const max = Math.max(...summary.timeline.map((d) => d.total), 1);
-        const todayKey = GLib.DateTime.new_now_local().format('%Y-%m-%d');
-        const BAR_H = 40;
-
-        const chartRow = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: 'katab-usage-activity-chart',
-        });
-
-        for (const day of summary.timeline) {
-            const isToday = day.dayKey === todayKey;
-            const h = day.total > 0 ? Math.max(3, Math.round((day.total / max) * BAR_H)) : 2;
-
-            const col = new St.BoxLayout({
-                vertical: true,
-                x_expand: true,
-                x_align: Clutter.ActorAlign.CENTER,
-                style_class: 'katab-usage-activity-col',
-            });
-
-            // Bar — anchored to bottom of the column
-            col.add_child(
-                new St.Widget({
-                    style_class: isToday
-                        ? 'katab-usage-activity-bar katab-usage-activity-bar-today'
-                        : day.total > 0
-                          ? 'katab-usage-activity-bar'
-                          : 'katab-usage-activity-bar katab-usage-activity-bar-empty',
-                    width: 12,
-                    height: h,
-                    y_align: Clutter.ActorAlign.END,
-                }),
-            );
-
-            // Label — directly below its bar
-            col.add_child(
-                new St.Label({
-                    text: (day.weekday || '·').charAt(0),
-                    style_class: isToday
-                        ? 'katab-usage-activity-label katab-usage-activity-label-today'
-                        : 'katab-usage-activity-label',
-                    x_align: Clutter.ActorAlign.CENTER,
-                }),
-            );
-
-            chartRow.add_child(col);
-        }
-
-        card.add_child(chartRow);
-
-        // ═══ Stats footer ═══
-        const statsRow = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: 'katab-usage-activity-stats',
-        });
-        statsRow.add_child(
-            new St.Label({
-                text: `${summary.activeDays} active ${summary.activeDays === 1 ? 'day' : 'days'} · ${summary.events} ${summary.events === 1 ? 'reply' : 'replies'}`,
-                style_class: 'katab-usage-meta',
-                x_expand: true,
-            }),
-        );
-        if (summary.mostActiveDay) {
-            statsRow.add_child(
-                new St.Label({
-                    text: `Most active: ${this._formatUsageDay(summary.mostActiveDay.dayKey)}`,
-                    style_class: 'katab-usage-meta',
-                }),
-            );
-        }
-        card.add_child(statsRow);
-
-        return card;
-    }
-
-    _buildUsageProviderModelCard(summary) {
-        const card = this._createUsageCard(null);
-
-        // Mini subtabs
-        const subtabBar = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-usage-subtab-bar',
-        });
-        const providerTab = new St.Button({
-            label: 'By Provider',
-            style_class:
-                this._usageProviderModelTab === 'provider'
-                    ? 'katab-usage-subtab-btn katab-usage-subtab-btn-active'
-                    : 'katab-usage-subtab-btn',
-            can_focus: true,
-            reactive: true,
-        });
-        const modelTab = new St.Button({
-            label: 'By Model',
-            style_class:
-                this._usageProviderModelTab === 'model'
-                    ? 'katab-usage-subtab-btn katab-usage-subtab-btn-active'
-                    : 'katab-usage-subtab-btn',
-            can_focus: true,
-            reactive: true,
-        });
-        providerTab.connect('clicked', () => {
-            this._usageProviderModelTab = 'provider';
-            this._refreshUsagePanel();
-        });
-        modelTab.connect('clicked', () => {
-            this._usageProviderModelTab = 'model';
-            this._refreshUsagePanel();
-        });
-        subtabBar.add_child(providerTab);
-        subtabBar.add_child(modelTab);
-        card.add_child(subtabBar);
-
-        if (this._usageProviderModelTab === 'provider') {
-            // Clean stacked ratio bar — labels are in the provider rows below
-            const bar = new St.BoxLayout({
-                vertical: false,
-                style_class: 'katab-usage-ratio-bar',
-            });
-            for (const entry of summary.providers) {
-                if (entry.share <= 0) continue;
-                bar.add_child(
-                    new St.Widget({
-                        style_class: `katab-usage-ratio-seg katab-usage-fill-${entry.provider}`,
-                        width: Math.max(4, Math.round(entry.share * 230)),
-                        height: 12,
-                    }),
-                );
-            }
-            card.add_child(bar);
-
-            for (const entry of summary.providers) {
-                const row = new St.BoxLayout({
-                    vertical: false,
-                    x_expand: true,
-                    style_class: 'katab-usage-provider-row katab-usage-provider-row-compact',
-                });
-                row.add_child(
-                    createProviderIcon(
-                        entry.provider,
-                        this._extension.path,
-                        'katab-usage-provider-row-icon katab-usage-provider-row-icon-sm',
-                    ),
-                );
-                row.add_child(
-                    new St.Label({
-                        text: getProviderLabel(entry.provider),
-                        style_class: 'katab-usage-provider-name',
-                        x_expand: true,
-                        y_align: Clutter.ActorAlign.CENTER,
-                    }),
-                );
-                row.add_child(
-                    new St.Label({
-                        text: `${entry.estimated > 0 ? '~' : ''}${formatTokenCount(entry.total)} · ${Math.round(entry.share * 100)}%`,
-                        style_class: 'katab-usage-provider-value',
-                        y_align: Clutter.ActorAlign.CENTER,
-                    }),
-                );
-                card.add_child(row);
-            }
-        } else {
-            // Model tab
-            for (const entry of summary.models) {
-                const row = new St.BoxLayout({
-                    vertical: false,
-                    x_expand: true,
-                    style_class: 'katab-usage-model-row katab-usage-model-row-compact',
-                });
-                const nameLabel = new St.Label({
-                    text: entry.model,
-                    style_class: 'katab-usage-model-name',
-                    x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-                nameLabel.clutter_text.single_line_mode = true;
-                row.add_child(nameLabel);
-                row.add_child(
-                    new St.Label({
-                        text: `${entry.estimated > 0 ? '~' : ''}${formatTokenCount(entry.total)} · ${Math.round(entry.share * 100)}%`,
-                        style_class: 'katab-usage-provider-value',
-                        y_align: Clutter.ActorAlign.CENTER,
-                    }),
-                );
-                card.add_child(row);
-            }
-        }
-
-        return card;
+        this._usage?.closeRangeDropdown();
     }
 
     _switchToLocalDraft() {
@@ -6889,361 +5770,6 @@ class KatabDialog {
             this._settings.set_string('provider', 'ollama');
         }
         this._showChatView();
-    }
-
-    _buildUsageMilestoneCard(allSummary) {
-        const card = this._createUsageCard('Milestones');
-        const row = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-usage-milestone-row',
-        });
-        for (const milestone of buildUsageMilestones(allSummary)) {
-            row.add_child(
-                new St.Label({
-                    text: milestone.label,
-                    style_class: milestone.achieved
-                        ? 'katab-usage-milestone katab-usage-milestone-achieved'
-                        : 'katab-usage-milestone',
-                }),
-            );
-        }
-        card.add_child(row);
-        return card;
-    }
-
-    _formatUsageDay(dayKey) {
-        try {
-            const parts = String(dayKey).split('-').map(Number);
-            const dt = GLib.DateTime.new_local(parts[0], parts[1], parts[2], 0, 0, 0);
-            return `${dt.format('%b')} ${dt.get_day_of_month()}`;
-        } catch (_e) {
-            return dayKey || 'Unknown day';
-        }
-    }
-
-    _buildUsagePrivacyNote() {
-        const note = new St.Label({
-            text: 'All usage data stays on this computer — nothing is uploaded anywhere.',
-            style_class: 'katab-usage-privacy-note',
-        });
-        note.clutter_text.line_wrap = true;
-        note.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        return note;
-    }
-
-    // ── Context-aware tip row (Overview) ─────────────────────────────────
-
-    _buildUsageTipRow(summary) {
-        const tips = [];
-        const budgetEnabled = this._settings.get_boolean('token-budget-enabled');
-
-        if (budgetEnabled) {
-            const budgetUsd = this._settings.get_double('token-budget-monthly-usd');
-            const warningPct = this._settings.get_int('token-budget-warning-pct') / 100;
-            const monthSummary =
-                this._usageRangeKey === 'month' ? summary : TokenUsageManager.getSummary('month');
-            if (monthSummary.totalTokens > 0) {
-                try {
-                    const costData = estimateSummaryCost(monthSummary);
-                    const budgetUsed = costData.total / budgetUsd;
-                    if (budgetUsed >= warningPct) {
-                        tips.push(
-                            `💰 You've used ${Math.round(budgetUsed * 100)}% of your $${budgetUsd.toFixed(2)} monthly budget — check the Spending tab.`,
-                        );
-                    }
-                } catch (_e) {
-                    /* pricing unavailable */
-                }
-            }
-        }
-
-        if (summary.localShare >= 0.75) {
-            tips.push('🏠 100% self-hosted champion — your data never leaves your machine.');
-        } else if (summary.localShare >= 0.4) {
-            tips.push('⚖️ Great balance! Each local token is one you fully own.');
-        } else if (summary.localShare > 0) {
-            tips.push('🌱 Local share is growing! Try Ollama for even more private replies.');
-        } else {
-            tips.push(
-                '💡 Try a local Ollama model for private, offline replies that cost nothing.',
-            );
-        }
-
-        if (summary.activeDays >= 7) {
-            tips.push(`🔥 ${summary.activeDays} active days — you're on a roll!`);
-        }
-
-        if (tips.length === 0) return null;
-
-        // Pick one tip to show (rotate if multiple)
-        const idx = Math.floor(Date.now() / (3600 * 1000)) % tips.length;
-        const tip = tips[idx];
-
-        const row = new St.BoxLayout({
-            vertical: false,
-            x_expand: true,
-            style_class: 'katab-usage-tip-row',
-        });
-        row.add_child(
-            new St.Label({
-                text: tip,
-                style_class: 'katab-usage-tip-text',
-                x_expand: true,
-            }),
-        );
-        return row;
-    }
-
-    // ── Spending tab ─────────────────────────────────────────────────────
-
-    _renderUsageSpending() {
-        this._setUsagePanelTitle('Token Spending');
-        const box = this._usagePanelListBox;
-
-        if (!this._usageRangeKey || !this._isValidUsageRange(this._usageRangeKey)) {
-            this._usageRangeKey = this._getDefaultUsageRange();
-        }
-        box.add_child(this._buildUsageRangeDropdown());
-
-        let summary;
-        try {
-            summary =
-                this._usageRangeKey === 'all'
-                    ? TokenUsageManager.getSummary('all')
-                    : TokenUsageManager.getSummary(this._usageRangeKey);
-        } catch (e) {
-            box.add_child(
-                new St.Label({
-                    text: `Could not load usage data: ${e.message || e}`,
-                    style_class: 'katab-usage-privacy-note',
-                }),
-            );
-            return;
-        }
-
-        if (summary.totalTokens === 0) {
-            const emptyCard = this._createUsageCard(null);
-            emptyCard.add_child(
-                new St.Label({
-                    text: 'No spending yet',
-                    style_class: 'katab-usage-hero-value',
-                }),
-            );
-            emptyCard.add_child(
-                new St.Label({
-                    text: 'Send some messages and cost estimates will appear here.',
-                    style_class: 'katab-usage-note',
-                }),
-            );
-            box.add_child(emptyCard);
-            box.add_child(this._buildUsagePrivacyNote());
-            return;
-        }
-
-        let costData;
-        try {
-            costData = estimateSummaryCost(summary);
-        } catch (_e) {
-            costData = { total: 0, perProvider: {}, perModel: [], localSavings: 0 };
-        }
-
-        // Cost hero
-        const heroCard = this._createUsageCard('Estimated Cost');
-        heroCard.add_child(
-            new St.Label({
-                text: formatCost(costData.total),
-                style_class: 'katab-usage-cost-hero',
-            }),
-        );
-        heroCard.add_child(
-            new St.Label({
-                text: `${summary.events} ${summary.events === 1 ? 'reply' : 'replies'} in ${summary.label.toLowerCase()}`,
-                style_class: 'katab-usage-note',
-            }),
-        );
-        heroCard.add_child(
-            new St.Label({
-                text: 'Estimated from published model pricing — actual costs may vary.',
-                style_class: 'katab-usage-meta',
-            }),
-        );
-        box.add_child(heroCard);
-
-        // Budget progress (if enabled)
-        const budgetEnabled = this._settings.get_boolean('token-budget-enabled');
-        if (budgetEnabled) {
-            const budgetUsd = this._settings.get_double('token-budget-monthly-usd');
-            const warningPct = this._settings.get_int('token-budget-warning-pct') / 100;
-            const monthSummary =
-                this._usageRangeKey === 'month' ? summary : TokenUsageManager.getSummary('month');
-            let monthCost = costData.total;
-            if (this._usageRangeKey !== 'month') {
-                try {
-                    monthCost = estimateSummaryCost(monthSummary).total;
-                } catch (_e) {
-                    /* ok */
-                }
-            }
-            const budgetUsed = budgetUsd > 0 ? monthCost / budgetUsd : 0;
-            const budgetPct = Math.round(Math.min(budgetUsed, 1) * 100);
-
-            const budgetCard = this._createUsageCard('Monthly Budget');
-            // We'll use nested widgets
-            const budgetTrack = new St.BoxLayout({
-                vertical: false,
-                x_expand: true,
-            });
-            const fillWidth = Math.round(Math.min(budgetUsed, 1) * 320);
-            const fillClass =
-                budgetUsed >= 0.9
-                    ? 'katab-usage-budget-fill-danger'
-                    : budgetUsed >= warningPct
-                      ? 'katab-usage-budget-fill-warn'
-                      : 'katab-usage-budget-fill';
-            if (fillWidth > 0) {
-                budgetTrack.add_child(
-                    new St.Widget({
-                        style_class: `katab-usage-budget-fill ${fillClass}`,
-                        width: fillWidth,
-                        height: 12,
-                    }),
-                );
-            }
-            const remainWidth = 320 - fillWidth;
-            if (remainWidth > 0) {
-                budgetTrack.add_child(
-                    new St.Widget({
-                        style_class: 'katab-usage-budget-remain',
-                        width: remainWidth,
-                        height: 12,
-                    }),
-                );
-            }
-            budgetCard.add_child(budgetTrack);
-            budgetCard.add_child(
-                new St.Label({
-                    text: `${budgetPct}% of $${budgetUsd.toFixed(2)} monthly budget · ${formatCost(monthCost)} used`,
-                    style_class: 'katab-usage-note',
-                }),
-            );
-            budgetCard.add_child(
-                new St.Label({
-                    text: `Warning at ${this._settings.get_int('token-budget-warning-pct')}%`,
-                    style_class: 'katab-usage-meta',
-                }),
-            );
-            box.add_child(budgetCard);
-        }
-
-        // Per-provider cost breakdown
-        if (summary.providers.length > 0) {
-            const providerCard = this._createUsageCard('By Provider');
-            for (const entry of summary.providers) {
-                const providerCost = costData.perProvider[entry.provider]?.cost || 0;
-                const row = new St.BoxLayout({
-                    vertical: false,
-                    x_expand: true,
-                    style_class: 'katab-usage-provider-row',
-                });
-                row.add_child(
-                    createProviderIcon(
-                        entry.provider,
-                        this._extension.path,
-                        'katab-usage-provider-row-icon',
-                    ),
-                );
-                const nameCol = new St.BoxLayout({
-                    vertical: true,
-                    x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                nameCol.add_child(
-                    new St.Label({
-                        text: getProviderLabel(entry.provider),
-                        style_class: 'katab-usage-provider-name',
-                    }),
-                );
-                nameCol.add_child(
-                    new St.Label({
-                        text: `${formatTokenCount(entry.total)} · ${entry.events} ${entry.events === 1 ? 'reply' : 'replies'}`,
-                        style_class: 'katab-usage-provider-meta',
-                    }),
-                );
-                row.add_child(nameCol);
-                row.add_child(
-                    new St.Label({
-                        text: formatCost(providerCost),
-                        style_class: 'katab-usage-cost-value',
-                        y_align: Clutter.ActorAlign.CENTER,
-                    }),
-                );
-                providerCard.add_child(row);
-            }
-            box.add_child(providerCard);
-        }
-
-        // Per-model cost breakdown
-        if (costData.perModel.length > 0) {
-            const modelCard = this._createUsageCard('By Model');
-            for (const entry of costData.perModel.slice(0, 8)) {
-                const row = new St.BoxLayout({
-                    vertical: false,
-                    x_expand: true,
-                    style_class: 'katab-usage-model-row',
-                });
-                const nameLabel = new St.Label({
-                    text: entry.model,
-                    style_class: 'katab-usage-model-name',
-                    x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER,
-                });
-                nameLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-                nameLabel.clutter_text.single_line_mode = true;
-                row.add_child(nameLabel);
-                row.add_child(
-                    new St.Label({
-                        text: formatCost(entry.cost),
-                        style_class: 'katab-usage-cost-value',
-                        y_align: Clutter.ActorAlign.CENTER,
-                    }),
-                );
-                modelCard.add_child(row);
-            }
-            box.add_child(modelCard);
-        }
-
-        // Savings card
-        if (costData.localSavings > 0.01) {
-            const savingsCard = this._createUsageCard('Local Savings');
-            savingsCard.add_child(
-                new St.Label({
-                    text: `~${formatCost(costData.localSavings)} saved by using local models`,
-                    style_class: 'katab-usage-nudge',
-                }),
-            );
-            savingsCard.add_child(
-                new St.Label({
-                    text: `${formatTokenCount(summary.localTokens)} local tokens × estimated cloud equivalent cost`,
-                    style_class: 'katab-usage-meta',
-                }),
-            );
-            box.add_child(savingsCard);
-        }
-
-        box.add_child(this._buildUsageTipRow(summary));
-        box.add_child(this._buildUsagePrivacyNote());
-    }
-
-    _formatUsageDate(unixSeconds) {
-        if (!unixSeconds) {
-            return 'today';
-        }
-        try {
-            const dt = GLib.DateTime.new_from_unix_local(unixSeconds);
-            return `${dt.format('%b')} ${dt.get_day_of_month()}, ${dt.get_year()}`;
-        } catch (_e) {
-            return 'recently';
-        }
     }
 
     _buildUI() {
@@ -7620,162 +6146,35 @@ class KatabDialog {
     }
 
     _buildHistoryView() {
-        // History view (hidden by default) — wrapper with search bar + scrollable list
-        this._historyView = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-history-view',
-            x_expand: true,
-            y_expand: true,
-            visible: false,
-        });
+        this._history = new HistoryView(this._buildHistoryHost());
+        this._historyView = this._history.view;
         this.contentLayout.add_child(this._historyView);
+    }
 
-        // Search bar for filtering conversations
-        this._historySearchBox = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-history-search-box',
-            x_expand: true,
-        });
-        this._historyView.add_child(this._historySearchBox);
-
-        let searchIcon = new St.Icon({
-            icon_name: 'edit-find-symbolic',
-            style_class: 'katab-history-search-icon',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._historySearchBox.add_child(searchIcon);
-
-        this._historySearchEntry = new St.Entry({
-            style_class: 'katab-history-search-entry',
-            hint_text: 'Search conversations…',
-            x_expand: true,
-            can_focus: true,
-            track_hover: true,
-        });
-        this._historySearchBox.add_child(this._historySearchEntry);
-
-        // Debounced search: re-render history list ~200ms after typing stops
-        this._historySearchEntry.clutter_text.connect('text-changed', () => {
-            if (this._historySearchTimeoutId) {
-                GLib.source_remove(this._historySearchTimeoutId);
-            }
-            this._historySearchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
-                this._historySearchTimeoutId = 0;
-                let q = this._historySearchEntry.get_text();
-                this._historySearchQuery = q;
-                this._renderHistoryList(q || null);
-                return GLib.SOURCE_REMOVE;
-            });
-        });
-
-        // Escape closes the dialog (consistent with other ESC handling)
-        this._historySearchEntry.clutter_text.connect('key-press-event', (entry, event) => {
-            let keyval = event.get_key_symbol();
-            if (keyval === Clutter.KEY_Escape) {
-                this.close();
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-
-        // ── Active / Archived tabs ───────────────────────────────────────
-        this._historyTabRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-history-tabs',
-            x_expand: true,
-        });
-        this._historyView.add_child(this._historyTabRow);
-
-        this._historyActiveTabBtn = new St.Button({
-            label: 'Active',
-            style_class: 'katab-history-tab',
-            can_focus: true,
-        });
-        this._historyActiveTabBtn.connect('clicked', () => this._setHistoryTab('active'));
-        this._historyTabRow.add_child(this._historyActiveTabBtn);
-
-        this._historyArchivedTabBtn = new St.Button({
-            label: 'Archived',
-            style_class: 'katab-history-tab',
-            can_focus: true,
-        });
-        this._historyArchivedTabBtn.connect('clicked', () => this._setHistoryTab('archived'));
-        this._historyTabRow.add_child(this._historyArchivedTabBtn);
-
-        this._syncHistoryTabButtons();
-
-        // ── Knowledge Base search bar (Phase 2) ──────────────────────────
-        this._kbSearchBox = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-kb-search-box',
-            x_expand: true,
-            visible: false,
-        });
-        this._historyView.add_child(this._kbSearchBox);
-
-        let kbSearchIcon = new St.Icon({
-            gicon: createRagGicon(this._extension.path),
-            style_class: 'katab-kb-search-icon',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._kbSearchBox.add_child(kbSearchIcon);
-
-        this._kbSearchEntry = new St.Entry({
-            style_class: 'katab-kb-search-entry',
-            hint_text: 'Search knowledge base…',
-            x_expand: true,
-            can_focus: true,
-            track_hover: true,
-        });
-        this._kbSearchBox.add_child(this._kbSearchEntry);
-
-        let kbSearchBtn = new St.Button({
-            label: 'Search',
-            style_class: 'katab-kb-search-btn',
-            can_focus: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._kbSearchBox.add_child(kbSearchBtn);
-
-        kbSearchBtn.connect('clicked', () => {
-            const query = (this._kbSearchEntry?.get_text() || '').trim();
-            if (query) this._executeKbSearch(query);
-        });
-
-        this._kbSearchEntry.clutter_text.connect('key-press-event', (entry, event) => {
-            let keyval = event.get_key_symbol();
-            if (keyval === Clutter.KEY_Return || keyval === Clutter.KEY_KP_Enter) {
-                const query = (entry.get_text() || '').trim();
-                if (query) this._executeKbSearch(query);
-                return Clutter.EVENT_STOP;
-            }
-            if (keyval === Clutter.KEY_Escape) {
-                // If KB results are showing, return to history list
-                if (this._kbSearchViewActive) {
-                    this._renderHistoryList(this._historySearchQuery || null);
-                    return Clutter.EVENT_STOP;
-                }
-                this.close();
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-
-        // Scrollable history list
-        let historyScroll = new St.ScrollView({
-            style_class: 'katab-history-scroll',
-            hscrollbar_policy: St.PolicyType.NEVER,
-            vscrollbar_policy: St.PolicyType.AUTOMATIC,
-            x_expand: true,
-            y_expand: true,
-        });
-        this._historyView.add_child(historyScroll);
-
-        this._historyContainer = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-history-container',
-        });
-        historyScroll.add_child(this._historyContainer);
+    // Host surface for the history-view module (src/ui/historyView.js).
+    _buildHistoryHost() {
+        return {
+            settings: this._settings,
+            extensionPath: this._extension.path,
+            buildPickerShell: (titleText) => this._buildPickerShell(titleText),
+            closeDialog: () => this.close(),
+            openAuxPanel: (panel) => this._openAuxPanel(panel),
+            showChatView: () => this._showChatView(),
+            showHistoryView: () => this._showHistoryView(),
+            loadConversation: (entry) => this._loadConversation(entry),
+            deleteConversation: (id) => this._deleteConversation(id),
+            notifyCurrentChatChanged: () => this._notifyCurrentChatChanged(),
+            hideRecentChatsPopup: () => {
+                if (this._recentChatsPopup?.visible) this._hideRecentChatsPopup();
+            },
+            addSystemMessage: (text, opts) => this._addSystemMessage(text, opts),
+            requestNonStreamingCompletion: (messages, opts) =>
+                this._requestNonStreamingCompletion(messages, opts),
+            isActorDisposed: (actor) => this._isActorDisposed(actor),
+            getRagRuntime: () => this._ragRuntime,
+            withTimeout: (promise, ms) => this._withTimeout(promise, ms),
+            ragManualSearchTimeoutMs: RAG_MANUAL_SEARCH_TIMEOUT_MS,
+        };
     }
 
     // ── Conversation metadata editor (title / description) ────────────────
@@ -7784,283 +6183,15 @@ class KatabDialog {
     // suggested pair (the user reviews the fields before pressing Save).
 
     _buildHistoryEditorPanel() {
-        const { picker, listBox, closePickerBtn } = this._buildPickerShell('Edit Conversation');
-        closePickerBtn.connect('clicked', () => this._closeHistoryEditor());
-
-        const form = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-history-editor-form',
-            x_expand: true,
-        });
-        listBox.add_child(form);
-
-        form.add_child(
-            new St.Label({ text: 'Title', style_class: 'katab-history-editor-field-label' }),
-        );
-        this._historyEditorTitleEntry = new St.Entry({
-            style_class: 'katab-history-editor-entry',
-            hint_text: 'Conversation title',
-            x_expand: true,
-            can_focus: true,
-        });
-        this._historyEditorTitleEntry.clutter_text.max_length = HISTORY_TITLE_MAX_CHARS;
-        form.add_child(this._historyEditorTitleEntry);
-
-        form.add_child(
-            new St.Label({
-                text: 'Description',
-                style_class: 'katab-history-editor-field-label',
-            }),
-        );
-        this._historyEditorDescEntry = new St.Entry({
-            style_class: 'katab-history-editor-entry',
-            hint_text: 'Short one-line summary (optional)',
-            x_expand: true,
-            can_focus: true,
-        });
-        this._historyEditorDescEntry.clutter_text.max_length = HISTORY_DESCRIPTION_MAX_CHARS;
-        form.add_child(this._historyEditorDescEntry);
-
-        const hint = new St.Label({
-            text: 'Leave the title empty to restore the automatic title. The AI generator uses the active provider and only changes these fields once you press Save.',
-            style_class: 'katab-history-editor-hint',
-            x_expand: true,
-        });
-        hint.clutter_text.line_wrap = true;
-        hint.clutter_text.single_line_mode = false;
-        form.add_child(hint);
-
-        const actions = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-history-editor-actions',
-            x_expand: true,
-        });
-        form.add_child(actions);
-
-        this._historyEditorGenerateBtn = new St.Button({
-            label: 'Generate with AI',
-            style_class: 'katab-history-editor-generate-btn',
-            can_focus: true,
-        });
-        this._historyEditorGenerateBtn.connect('clicked', () => this._generateConversationMeta());
-        actions.add_child(this._historyEditorGenerateBtn);
-
-        this._historyEditorSaveBtn = new St.Button({
-            label: 'Save',
-            style_class: 'katab-history-editor-save-btn',
-            can_focus: true,
-        });
-        this._historyEditorSaveBtn.connect('clicked', () => this._saveHistoryEditor());
-        actions.add_child(this._historyEditorSaveBtn);
-
-        this._historyEditorCancelBtn = new St.Button({
-            label: 'Cancel',
-            style_class: 'katab-history-editor-cancel-btn',
-            can_focus: true,
-        });
-        this._historyEditorCancelBtn.connect('clicked', () => this._closeHistoryEditor());
-        actions.add_child(this._historyEditorCancelBtn);
-
-        this._historyEditorStatus = new St.Label({
-            text: '',
-            style_class: 'katab-history-editor-status',
-            x_expand: true,
-        });
-        this._historyEditorStatus.clutter_text.line_wrap = true;
-        this._historyEditorStatus.clutter_text.single_line_mode = false;
-        form.add_child(this._historyEditorStatus);
-
-        // Enter in either field saves; Escape returns to the history list.
-        for (const entry of [this._historyEditorTitleEntry, this._historyEditorDescEntry]) {
-            entry.clutter_text.connect('key-press-event', (actor, event) => {
-                const keyval = event.get_key_symbol();
-                if (keyval === Clutter.KEY_Return || keyval === Clutter.KEY_KP_Enter) {
-                    this._saveHistoryEditor();
-                    return Clutter.EVENT_STOP;
-                }
-                if (keyval === Clutter.KEY_Escape) {
-                    this._closeHistoryEditor();
-                    return Clutter.EVENT_STOP;
-                }
-                return Clutter.EVENT_PROPAGATE;
-            });
-        }
-
-        return picker;
-    }
-
-    _openHistoryEditor(entry) {
-        if (!this._historyEditorPanel || !entry) return;
-        this._cancelTitleGeneration();
-        this._historyEditorTargetId = entry.id;
-        this._historyEditorTitleEntry.set_text(String(entry.title || ''));
-        this._historyEditorDescEntry.set_text(String(entry.description || ''));
-        this._historyEditorStatus.set_text('');
-        this._openAuxPanel(this._historyEditorPanel);
-        this._historyEditorTitleEntry.grab_key_focus();
+        return this._history.buildEditorPanel();
     }
 
     _closeHistoryEditor() {
-        this._cancelTitleGeneration();
-        this._historyEditorTargetId = null;
-        this._showHistoryView();
-    }
-
-    _saveHistoryEditor() {
-        const id = this._historyEditorTargetId;
-        if (!id) return;
-        const title = (this._historyEditorTitleEntry?.get_text() || '').trim();
-        const description = (this._historyEditorDescEntry?.get_text() || '').trim();
-        const ok = HistoryManager.updateConversationMeta(id, { title, description });
-        if (!ok) {
-            this._historyEditorStatus.set_text(
-                'This conversation is no longer in history — nothing was saved.',
-            );
-            return;
-        }
-        this._cancelTitleGeneration();
-        this._historyEditorTargetId = null;
-        this._historyListCacheIds = null;
-        this._showHistoryView();
-        this._notifyCurrentChatChanged();
-    }
-
-    async _generateConversationMeta() {
-        if (this._titleGenInFlight) return;
-        const id = this._historyEditorTargetId;
-        const entry = id ? HistoryManager.getCached().find((e) => e.id === id) : null;
-        if (!entry) {
-            this._historyEditorStatus.set_text('This conversation is no longer in history.');
-            return;
-        }
-        const messages = buildTitleGenerationMessages(entry.messages);
-        if (!messages) {
-            this._historyEditorStatus.set_text(
-                'There is nothing to summarize in this conversation yet.',
-            );
-            return;
-        }
-
-        const request = { cancellable: new Gio.Cancellable(), id };
-        this._historyEditorCancellable = request.cancellable;
-        this._titleGenInFlight = true;
-        this._setTitleGenBusy(true);
-        this._historyEditorStatus.set_text('Generating a title and description…');
-        try {
-            const raw = await this._requestNonStreamingCompletion(messages, {
-                cancellable: request.cancellable,
-                maxTokens: TITLE_GEN_MAX_TOKENS,
-                countAsPipeline: false,
-            });
-            if (request.cancellable.is_cancelled()) return;
-            if (
-                this._historyEditorTargetId !== id ||
-                this._isActorDisposed(this._historyEditorTitleEntry)
-            ) {
-                return;
-            }
-            const parsed = parseTitleDescriptionResponse(raw);
-            if (parsed) {
-                this._historyEditorTitleEntry.set_text(parsed.title);
-                if (parsed.description) {
-                    this._historyEditorDescEntry.set_text(parsed.description);
-                }
-                this._historyEditorStatus.set_text('Generated — review the fields and press Save.');
-            } else if (raw && raw.trim()) {
-                this._historyEditorStatus.set_text(
-                    'Could not parse the model response. Edit the fields manually or try again.',
-                );
-            } else {
-                this._historyEditorStatus.set_text(
-                    'The model returned an empty response. Check the provider settings and try again.',
-                );
-            }
-        } catch (e) {
-            if (
-                !request.cancellable.is_cancelled() &&
-                !this._isActorDisposed(this._historyEditorStatus)
-            ) {
-                this._historyEditorStatus.set_text(
-                    `Generation failed: ${e.message || 'unknown error'}`,
-                );
-            }
-        } finally {
-            // Only clear the busy state when this request is still the current
-            // one — a cancelled request has already been reset by the caller.
-            if (this._historyEditorCancellable === request.cancellable) {
-                this._historyEditorCancellable = null;
-                this._titleGenInFlight = false;
-                this._setTitleGenBusy(false);
-            }
-        }
+        this._history?.closeEditor();
     }
 
     _cancelTitleGeneration() {
-        if (this._historyEditorCancellable) {
-            try {
-                this._historyEditorCancellable.cancel();
-            } catch (_e) {
-                /* already cancelled */
-            }
-        }
-        this._historyEditorCancellable = null;
-        this._titleGenInFlight = false;
-        this._setTitleGenBusy(false);
-    }
-
-    _setTitleGenBusy(busy) {
-        const btn = this._historyEditorGenerateBtn;
-        if (!btn || this._isActorDisposed(btn)) return;
-        btn.set_label(busy ? 'Generating…' : 'Generate with AI');
-        btn.reactive = !busy;
-        if (busy) {
-            btn.add_style_class_name('katab-history-editor-generate-busy');
-        } else {
-            btn.remove_style_class_name('katab-history-editor-generate-busy');
-        }
-    }
-
-    // ── History tabs (Active / Archived) ─────────────────────────────────
-
-    _setHistoryTab(tab) {
-        const next = tab === 'archived' ? 'archived' : 'active';
-        if (this._historyTab === next) return;
-        this._historyTab = next;
-        this._syncHistoryTabButtons();
-        this._renderHistoryList(this._historySearchQuery || null);
-    }
-
-    _syncHistoryTabButtons() {
-        const archived = this._historyTab === 'archived';
-        const apply = (btn, active) => {
-            if (!btn) return;
-            if (active) {
-                btn.add_style_class_name('katab-history-tab-active');
-            } else {
-                btn.remove_style_class_name('katab-history-tab-active');
-            }
-        };
-        apply(this._historyActiveTabBtn, !archived);
-        apply(this._historyArchivedTabBtn, archived);
-    }
-
-    _updateHistoryTabLabels(entries = HistoryManager.getCached()) {
-        const archivedCount = entries.filter((e) => e.archived === true).length;
-        const activeCount = entries.length - archivedCount;
-        if (this._historyActiveTabBtn) {
-            this._historyActiveTabBtn.set_label(`Active (${activeCount})`);
-        }
-        if (this._historyArchivedTabBtn) {
-            this._historyArchivedTabBtn.set_label(`Archived (${archivedCount})`);
-        }
-    }
-
-    _setConversationArchived(id, archived) {
-        if (!HistoryManager.setConversationArchived(id, archived)) return;
-        this._historyListCacheIds = null;
-        if (this._recentChatsPopup?.visible) this._hideRecentChatsPopup();
-        this._renderHistoryList(this._historySearchQuery || null);
-        this._notifyCurrentChatChanged();
+        this._history?.cancelTitleGeneration();
     }
 
     _buildPanelsAndFooter() {
@@ -8175,31 +6306,13 @@ class KatabDialog {
             return Clutter.EVENT_STOP;
         });
         this._tokenBox.connect('enter-event', () => {
-            if (this._sessionInfoLeaveTimeout) {
-                GLib.source_remove(this._sessionInfoLeaveTimeout);
-                this._sessionInfoLeaveTimeout = 0;
-            }
-            if (!this._sessionInfoClickLocked && !this._sessionInfoPopup?.visible) {
-                this._sessionInfoHoverTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
-                    this._sessionInfoHoverTimeout = 0;
-                    this._showSessionInfoPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+            this._ensureSessionInfo();
+            this._sessionInfo.noteTriggerEnter();
             return Clutter.EVENT_PROPAGATE;
         });
         this._tokenBox.connect('leave-event', () => {
-            if (this._sessionInfoHoverTimeout) {
-                GLib.source_remove(this._sessionInfoHoverTimeout);
-                this._sessionInfoHoverTimeout = 0;
-            }
-            if (!this._sessionInfoClickLocked) {
-                this._sessionInfoLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this._sessionInfoLeaveTimeout = 0;
-                    this._hideSessionInfoPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+            this._ensureSessionInfo();
+            this._sessionInfo.noteTriggerLeave();
             return Clutter.EVENT_PROPAGATE;
         });
 
@@ -8626,399 +6739,20 @@ class KatabDialog {
     }
 
     _buildWelcomePanel() {
-        let panel = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-welcome-panel',
-            x_expand: true,
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
-        this._welcomeStage = new St.Widget({
-            style_class: 'katab-welcome-stage',
-            layout_manager: new Clutter.BinLayout(),
-            x_align: Clutter.ActorAlign.CENTER,
-        });
-        this._welcomeStage.set_size(280, 200);
-        panel.add_child(this._welcomeStage);
-
-        let scene = new St.Widget({
-            style_class: 'katab-welcome-scene',
-            layout_manager: new Clutter.FixedLayout(),
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        scene.set_size(280, 200);
-        this._welcomeStage.add_child(scene);
-
-        this._welcomeAura = new St.Widget({
-            style_class: 'katab-welcome-aura',
-            opacity: 120,
-        });
-        this._welcomeAura.set_size(184, 86);
-        this._welcomeAura.set_position(48, 92);
-        scene.add_child(this._welcomeAura);
-
-        let shadow = new St.Widget({
-            style_class: 'katab-welcome-book-shadow',
-        });
-        shadow.set_size(172, 18);
-        shadow.set_position(54, 146);
-        scene.add_child(shadow);
-
-        let book = new St.Widget({
-            style_class: 'katab-welcome-book',
-            layout_manager: new Clutter.FixedLayout(),
-        });
-        book.set_size(172, 110);
-        book.set_position(54, 52);
-        scene.add_child(book);
-
-        let leftCover = new St.Widget({
-            style_class: 'katab-welcome-cover katab-welcome-cover-left',
-        });
-        leftCover.set_size(79, 96);
-        leftCover.set_position(8, 8);
-        book.add_child(leftCover);
-
-        let rightCover = new St.Widget({
-            style_class: 'katab-welcome-cover katab-welcome-cover-right',
-        });
-        rightCover.set_size(79, 96);
-        rightCover.set_position(86, 8);
-        book.add_child(rightCover);
-
-        let leftPaper = new St.Widget({
-            style_class: 'katab-welcome-paper katab-welcome-paper-left',
-        });
-        leftPaper.set_size(64, 82);
-        leftPaper.set_position(16, 15);
-        book.add_child(leftPaper);
-
-        let rightPaper = new St.Widget({
-            style_class: 'katab-welcome-paper katab-welcome-paper-right',
-        });
-        rightPaper.set_size(62, 80);
-        rightPaper.set_position(96, 16);
-        book.add_child(rightPaper);
-
-        let spine = new St.Widget({
-            style_class: 'katab-welcome-spine',
-        });
-        spine.set_size(8, 96);
-        spine.set_position(82, 8);
-        book.add_child(spine);
-
-        let backPage = new St.Widget({
-            style_class: 'katab-welcome-flip-page katab-welcome-flip-page-secondary',
-            opacity: 170,
-        });
-        backPage.set_size(68, 84);
-        backPage.set_position(90, 13);
-        backPage.set_pivot_point(0.04, 0.5);
-        book.add_child(backPage);
-
-        let frontPage = new St.Widget({
-            style_class: 'katab-welcome-flip-page katab-welcome-flip-page-primary',
-            opacity: 235,
-        });
-        frontPage.set_size(72, 88);
-        frontPage.set_position(88, 11);
-        frontPage.set_pivot_point(0.04, 0.5);
-        book.add_child(frontPage);
-
-        this._welcomePageActors = [backPage, frontPage];
-
-        let dustLayer = new St.Widget({
-            style_class: 'katab-welcome-dust-layer',
-            layout_manager: new Clutter.FixedLayout(),
-        });
-        dustLayer.set_size(280, 200);
-        scene.add_child(dustLayer);
-
-        const dustSpecs = [
-            {
-                x: 94,
-                y: 122,
-                size: 8,
-                driftX: -18,
-                driftY: -74,
-                delay: 40,
-                duration: 1120,
-                peakOpacity: 180,
-                scale: 1.22,
-            },
-            {
-                x: 112,
-                y: 128,
-                size: 5,
-                driftX: -8,
-                driftY: -92,
-                delay: 180,
-                duration: 1260,
-                peakOpacity: 150,
-                scale: 1.28,
-            },
-            {
-                x: 126,
-                y: 124,
-                size: 7,
-                driftX: 6,
-                driftY: -86,
-                delay: 320,
-                duration: 1180,
-                peakOpacity: 168,
-                scale: 1.24,
-            },
-            {
-                x: 138,
-                y: 130,
-                size: 5,
-                driftX: 14,
-                driftY: -96,
-                delay: 460,
-                duration: 1320,
-                peakOpacity: 142,
-                scale: 1.3,
-            },
-            {
-                x: 152,
-                y: 126,
-                size: 6,
-                driftX: 22,
-                driftY: -76,
-                delay: 620,
-                duration: 1080,
-                peakOpacity: 154,
-                scale: 1.18,
-            },
-            {
-                x: 118,
-                y: 138,
-                size: 4,
-                driftX: -24,
-                driftY: -66,
-                delay: 780,
-                duration: 980,
-                peakOpacity: 132,
-                scale: 1.16,
-            },
-            {
-                x: 142,
-                y: 140,
-                size: 4,
-                driftX: 20,
-                driftY: -70,
-                delay: 930,
-                duration: 1020,
-                peakOpacity: 128,
-                scale: 1.18,
-            },
-            {
-                x: 130,
-                y: 118,
-                size: 9,
-                driftX: 0,
-                driftY: -98,
-                delay: 1080,
-                duration: 1380,
-                peakOpacity: 176,
-                scale: 1.34,
-            },
-        ];
-
-        this._welcomeDustActors = dustSpecs.map((spec) => {
-            let dust = new St.Widget({
-                style_class: 'katab-welcome-dust',
-                opacity: 0,
-            });
-            dust.set_size(spec.size, spec.size);
-            dust.set_position(spec.x, spec.y);
-            dustLayer.add_child(dust);
-            return { actor: dust, ...spec };
-        });
-
-        let caption = new St.Label({
-            text: 'Open a page. Ask anything.',
-            style_class: 'katab-welcome-caption',
-            x_align: Clutter.ActorAlign.CENTER,
-        });
-        caption.clutter_text.line_wrap = true;
-        caption.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        caption.clutter_text.single_line_mode = false;
-        caption.clutter_text.can_focus = false;
-        panel.add_child(caption);
-
-        return panel;
+        this._welcome = new WelcomePanel(this);
+        return this._welcome.panel;
     }
 
     _setWelcomeVisible(visible) {
-        if (!this._welcomePanel) {
-            return;
-        }
-
-        this._welcomePanel.visible = visible;
-
-        if (visible && this.isOpen && this._chatScroll?.visible) {
-            this._startWelcomeAnimation();
-        } else {
-            this._stopWelcomeAnimation();
-        }
-    }
-
-    _scheduleWelcomeCallback(delayMs, callback) {
-        let sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
-            this._welcomeAnimationSourceIds = this._welcomeAnimationSourceIds.filter(
-                (id) => id !== sourceId,
-            );
-
-            if (this._welcomePanel?.visible && this.isOpen && this._chatScroll?.visible) {
-                callback();
-            }
-
-            return GLib.SOURCE_REMOVE;
-        });
-
-        this._welcomeAnimationSourceIds.push(sourceId);
-    }
-
-    _resetWelcomeAnimation() {
-        if (this._welcomeAura) {
-            this._welcomeAura.remove_all_transitions();
-            this._welcomeAura.opacity = 120;
-            this._welcomeAura.scale_x = 0.9;
-            this._welcomeAura.scale_y = 0.9;
-        }
-
-        for (let [index, actor] of this._welcomePageActors.entries()) {
-            actor.remove_all_transitions();
-            actor.rotation_angle_y = 0;
-            actor.translation_x = 0;
-            actor.translation_y = 0;
-            actor.scale_x = 1;
-            actor.scale_y = 1;
-            actor.opacity = index === 0 ? 170 : 235;
-        }
-
-        for (let dust of this._welcomeDustActors) {
-            dust.actor.remove_all_transitions();
-            dust.actor.translation_x = 0;
-            dust.actor.translation_y = 0;
-            dust.actor.scale_x = 0.72;
-            dust.actor.scale_y = 0.72;
-            dust.actor.opacity = 0;
-        }
-    }
-
-    _runWelcomeAnimationCycle() {
-        if (!this._welcomePanel?.visible || !this.isOpen || !this._chatScroll?.visible) {
-            return;
-        }
-
-        this._resetWelcomeAnimation();
-
-        if (this._welcomeAura) {
-            this._welcomeAura.ease({
-                duration: 920,
-                opacity: 210,
-                scale_x: 1.08,
-                scale_y: 1.08,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            });
-
-            this._scheduleWelcomeCallback(980, () => {
-                if (!this._welcomeAura) {
-                    return;
-                }
-
-                this._welcomeAura.ease({
-                    duration: 1220,
-                    opacity: 120,
-                    scale_x: 0.9,
-                    scale_y: 0.9,
-                    mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
-                });
-            });
-        }
-
-        const pageAnimations = [
-            {
-                actor: this._welcomePageActors[0],
-                delay: 180,
-                duration: 840,
-                translationX: -10,
-                rotation: -156,
-                opacity: 68,
-                scaleY: 1.03,
-            },
-            {
-                actor: this._welcomePageActors[1],
-                delay: 560,
-                duration: 980,
-                translationX: -14,
-                rotation: -176,
-                opacity: 0,
-                scaleY: 1.05,
-            },
-        ];
-
-        for (let animation of pageAnimations) {
-            this._scheduleWelcomeCallback(animation.delay, () => {
-                animation.actor.ease({
-                    duration: animation.duration,
-                    translation_x: animation.translationX,
-                    rotation_angle_y: animation.rotation,
-                    opacity: animation.opacity,
-                    scale_y: animation.scaleY,
-                    mode: Clutter.AnimationMode.EASE_IN_OUT_SINE,
-                });
-            });
-        }
-
-        for (let dust of this._welcomeDustActors) {
-            this._scheduleWelcomeCallback(dust.delay, () => {
-                dust.actor.opacity = dust.peakOpacity;
-                dust.actor.ease({
-                    duration: dust.duration,
-                    translation_x: dust.driftX,
-                    translation_y: dust.driftY,
-                    opacity: 0,
-                    scale_x: dust.scale,
-                    scale_y: dust.scale,
-                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                });
-            });
-        }
+        this._welcome?.setVisible(visible);
     }
 
     _startWelcomeAnimation() {
-        if (!this._welcomePanel?.visible || !this.isOpen || !this._chatScroll?.visible) {
-            return;
-        }
-
-        if (this._welcomeAnimationLoopId) {
-            return;
-        }
-
-        this._runWelcomeAnimationCycle();
-        this._welcomeAnimationLoopId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2600, () => {
-            this._runWelcomeAnimationCycle();
-            return GLib.SOURCE_CONTINUE;
-        });
+        this._welcome?.startAnimation();
     }
 
     _stopWelcomeAnimation() {
-        if (this._welcomeAnimationLoopId) {
-            GLib.source_remove(this._welcomeAnimationLoopId);
-            this._welcomeAnimationLoopId = 0;
-        }
-
-        for (let sourceId of this._welcomeAnimationSourceIds) {
-            GLib.source_remove(sourceId);
-        }
-        this._welcomeAnimationSourceIds = [];
-
-        this._resetWelcomeAnimation();
+        this._welcome?.stopAnimation();
     }
 
     open() {
@@ -9297,7 +7031,7 @@ class KatabDialog {
         this._stopWelcomeAnimation();
 
         // Clean up Session Info popup timeouts
-        this._clearSessionInfoTimeouts();
+        this._sessionInfo?.destroy();
         this._sessionInfoPopup = null;
 
         // Clean up Tools popup timeouts
@@ -9359,10 +7093,7 @@ class KatabDialog {
             GLib.source_remove(this._promptCursorScrollId);
             this._promptCursorScrollId = 0;
         }
-        if (this._historySearchTimeoutId) {
-            GLib.source_remove(this._historySearchTimeoutId);
-            this._historySearchTimeoutId = 0;
-        }
+        this._history?.destroy();
         if (this._ragIndexFlushTimeoutId) {
             GLib.source_remove(this._ragIndexFlushTimeoutId);
             this._ragIndexFlushTimeoutId = 0;
@@ -10063,531 +7794,58 @@ class KatabDialog {
         return toolDefTokens;
     }
 
-    // Create the Session Info floating popup.  Built once, updated in-place
-    // via _refreshSessionInfoPopup().  Floats on this.actor (the glass overlay)
-    // so it can overflow the dialog bounds freely.
-    _buildSessionInfoPopup() {
-        const popup = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-session-info-popup',
-            visible: false,
-            reactive: true,
-            can_focus: true,
-        });
+    // ── Session Info popup wrappers ──────────────────────────────────────
+    // Popup implementation lives in src/ui/sessionInfoPopup.js; these keep
+    // the dialog's visibility checks + call sites unchanged.
 
-        // ── Header ────────────────────────────────────────────────────
-        const header = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-header',
-        });
-        const title = new St.Label({
-            text: 'Session Info',
-            style_class: 'katab-session-info-title',
-            x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        header.add_child(title);
-        const closeBtn = new St.Button({
-            child: new St.Icon({
-                icon_name: 'window-close-symbolic',
-                style_class: 'katab-session-info-close-icon',
-            }),
-            style_class: 'katab-session-info-close-btn',
-            can_focus: true,
-        });
-        closeBtn.connect('clicked', () => this._hideSessionInfoPopup());
-        header.add_child(closeBtn);
-        popup.add_child(header);
+    _ensureSessionInfo() {
+        if (!this._sessionInfo) {
+            this._sessionInfo = new SessionInfoPopup(this._buildSessionInfoHost());
+            this._sessionInfoPopup = this._sessionInfo.popup;
+        }
+        return this._sessionInfo;
+    }
 
-        // ── Context Window section ────────────────────────────────────
-        const cwSection = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-session-info-section',
-        });
-        const cwTitle = new St.Label({
-            text: 'CONTEXT WINDOW',
-            style_class: 'katab-session-info-section-title',
-        });
-        cwSection.add_child(cwTitle);
-
-        const cwRow = new St.BoxLayout({ vertical: false, style_class: 'katab-session-info-row' });
-        this._siCwLabel = new St.Label({
-            text: '—',
-            style_class: 'katab-session-info-row-label',
-            x_expand: true,
-        });
-        cwRow.add_child(this._siCwLabel);
-        this._siCwPct = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        cwRow.add_child(this._siCwPct);
-        cwSection.add_child(cwRow);
-
-        // Progress bar: filled + reserved sections
-        this._siProgress = new St.Widget({
-            style_class: 'katab-session-info-progress',
-            layout_manager: new Clutter.BinLayout(),
-            x_expand: true,
-            height: 6,
-        });
-        const progressTrack = new St.BoxLayout({
-            style_class: 'katab-session-info-progress-track',
-            x_expand: true,
-            height: 6,
-        });
-        this._siProgressFill = new St.Widget({
-            style_class: 'katab-session-info-progress-fill',
-            width: 0,
-            height: 6,
-        });
-        // Hatched "reserved for response" segment — mirrors the bottom gauge.
-        this._siReservedFill = new St.Widget({
-            style_class: 'katab-session-info-progress-reserved',
-            width: 0,
-            height: 6,
-        });
-        progressTrack.add_child(this._siProgressFill);
-        progressTrack.add_child(this._siReservedFill);
-        this._siProgress.add_child(progressTrack);
-        cwSection.add_child(this._siProgress);
-
-        const reservedLabel = new St.Label({
-            text: 'Reserved for response',
-            style_class: 'katab-session-info-reserved-label',
-        });
-        cwSection.add_child(reservedLabel);
-
-        popup.add_child(cwSection);
-
-        // ── System section ────────────────────────────────────────────
-        const sysSection = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-session-info-section',
-        });
-        const sysTitle = new St.Label({
-            text: 'SYSTEM',
-            style_class: 'katab-session-info-section-title',
-        });
-        sysSection.add_child(sysTitle);
-        this._siSysSection = sysSection;
-
-        const sysInstrRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-row',
-        });
-        sysInstrRow.add_child(
-            new St.Label({
-                text: 'System Instructions',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siSysInstr = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        sysInstrRow.add_child(this._siSysInstr);
-        sysSection.add_child(sysInstrRow);
-
-        const sysToolRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-row',
-        });
-        sysToolRow.add_child(
-            new St.Label({
-                text: 'Tool Definitions',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siSysTools = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        sysToolRow.add_child(this._siSysTools);
-        sysSection.add_child(sysToolRow);
-
-        popup.add_child(sysSection);
-
-        // ── User Context section ──────────────────────────────────────
-        const ucSection = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-session-info-section',
-        });
-        const ucTitle = new St.Label({
-            text: 'USER CONTEXT',
-            style_class: 'katab-session-info-section-title',
-        });
-        ucSection.add_child(ucTitle);
-
-        const msgRow = new St.BoxLayout({ vertical: false, style_class: 'katab-session-info-row' });
-        msgRow.add_child(
-            new St.Label({
-                text: 'Messages',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siUcMsgs = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        msgRow.add_child(this._siUcMsgs);
-        ucSection.add_child(msgRow);
-
-        const toolRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-row',
-        });
-        toolRow.add_child(
-            new St.Label({
-                text: 'Tool Results',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siUcTools = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        toolRow.add_child(this._siUcTools);
-        ucSection.add_child(toolRow);
-
-        popup.add_child(ucSection);
-
-        // ── Session Memory section ──────────────────────────────────
-        const memSection = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-session-info-section',
-        });
-        const memTitle = new St.Label({
-            text: 'SESSION MEMORY',
-            style_class: 'katab-session-info-section-title',
-        });
-        memSection.add_child(memTitle);
-
-        const memRow = new St.BoxLayout({ vertical: false, style_class: 'katab-session-info-row' });
-        memRow.add_child(
-            new St.Label({
-                text: 'Folded summary',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siMemValue = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        memRow.add_child(this._siMemValue);
-        memSection.add_child(memRow);
-
-        this._siMemStatus = new St.Label({
-            text: 'No session memory yet — grows automatically as the chat gets long.',
-            style_class: 'katab-session-info-mem-status',
-        });
-        this._siMemStatus.clutter_text.line_wrap = true;
-        this._siMemStatus.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        memSection.add_child(this._siMemStatus);
-
-        popup.add_child(memSection);
-
-        // ── Research section (built lazily, shown only when active) ──
-        this._siResearchSection = new St.BoxLayout({
-            vertical: true,
-            style_class: 'katab-session-info-section',
-            visible: false,
-        });
-        const rsTitle = new St.Label({
-            text: 'RESEARCH',
-            style_class: 'katab-session-info-section-title',
-        });
-        this._siResearchSection.add_child(rsTitle);
-
-        const resCumRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-row',
-        });
-        resCumRow.add_child(
-            new St.Label({
-                text: 'Pipeline (cumulative)',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siResCumulative = new St.Label({
-            text: '—',
-            style_class: 'katab-session-info-row-value',
-        });
-        resCumRow.add_child(this._siResCumulative);
-        this._siResearchSection.add_child(resCumRow);
-
-        const resIterRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-row',
-        });
-        resIterRow.add_child(
-            new St.Label({
-                text: 'Tool Iterations this turn',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siResIter = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        resIterRow.add_child(this._siResIter);
-        this._siResearchSection.add_child(resIterRow);
-
-        const resSynthRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-row',
-        });
-        resSynthRow.add_child(
-            new St.Label({
-                text: 'Synthesis Active',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siResSynth = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        resSynthRow.add_child(this._siResSynth);
-        this._siResearchSection.add_child(resSynthRow);
-
-        const resCtxRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-row',
-        });
-        resCtxRow.add_child(
-            new St.Label({
-                text: 'Context Payload Size',
-                style_class: 'katab-session-info-row-label',
-                x_expand: true,
-            }),
-        );
-        this._siResCtx = new St.Label({ text: '—', style_class: 'katab-session-info-row-value' });
-        resCtxRow.add_child(this._siResCtx);
-        this._siResearchSection.add_child(resCtxRow);
-
-        popup.add_child(this._siResearchSection);
-
-        // ── Summarize now + Compact Conversation buttons ─────────────
-        // NOTE: St.BoxLayout has no 'spacing' GObject property — passing it
-        // here throws "No property spacing on StBoxLayout" at construction
-        // time, which aborted the whole popup build and made the token-box
-        // hover/click look broken.  Spacing is set via the CSS class.
-        const actionRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-session-info-action-row',
-            x_expand: true,
-        });
-        const summarizeBtn = new St.Button({
-            label: 'Summarize Now',
-            style_class: 'katab-session-info-action-btn',
-            can_focus: true,
-            reactive: true,
-            x_expand: true,
-        });
-        summarizeBtn.connect('clicked', () => this._summarizeNow());
-        actionRow.add_child(summarizeBtn);
-
-        const compactBtn = new St.Button({
-            label: 'Compact Conversation',
-            style_class: 'katab-session-info-action-btn',
-            can_focus: true,
-            reactive: true,
-            x_expand: true,
-        });
-        compactBtn.connect('clicked', () => this._compactConversation());
-        actionRow.add_child(compactBtn);
-        popup.add_child(actionRow);
-
-        // Hover on the popup itself cancels any pending leave timeout so
-        // the user can move the mouse from the token box onto the popup.
-        popup.connect('enter-event', () => {
-            if (this._sessionInfoLeaveTimeout) {
-                GLib.source_remove(this._sessionInfoLeaveTimeout);
-                this._sessionInfoLeaveTimeout = 0;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-        popup.connect('leave-event', () => {
-            if (!this._sessionInfoClickLocked) {
-                this._sessionInfoLeaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this._sessionInfoLeaveTimeout = 0;
-                    this._hideSessionInfoPopup();
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-
-        return popup;
+    // Host surface for the session-info popup module.
+    _buildSessionInfoHost() {
+        return {
+            addToOverlay: (actor) => this.actor.add_child(actor),
+            getSessionInfo: () => this._computeSessionInfo(),
+            getAnchor: () => this._tokenBox,
+            stageToOverlayCoords: (x, y) => this._stageToOverlayCoords(x, y),
+            overlaySize: () => this._overlaySize(),
+            summarizeNow: () => this._summarizeNow(),
+            compactConversation: () => this._compactConversation(),
+        };
     }
 
     // Show the popup (click or hover).  Builds it on first call.
     _showSessionInfoPopup() {
-        if (!this._sessionInfoPopup) {
-            this._sessionInfoPopup = this._buildSessionInfoPopup();
-            this.actor.add_child(this._sessionInfoPopup);
-        }
-        this._sessionInfoPopup.visible = true;
-        const parent = this._sessionInfoPopup.get_parent();
-        if (parent) parent.set_child_above_sibling(this._sessionInfoPopup, null);
-        this._refreshSessionInfoPopup();
-        this._positionSessionInfoPopup();
-        // Deferred reposition: after this frame paints, the actual
-        // allocation is available — re-anchor for pixel-perfect placement.
-        if (this._siRepositionId) GLib.source_remove(this._siRepositionId);
-        this._siRepositionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            this._siRepositionId = 0;
-            this._positionSessionInfoPopup();
-            return GLib.SOURCE_REMOVE;
-        });
+        this._ensureSessionInfo();
+        this._sessionInfo.show();
+        this._sessionInfoPopup = this._sessionInfo.popup;
     }
 
     // Hide the popup (hover leave, close button, Escape, outside click).
     _hideSessionInfoPopup() {
-        if (this._sessionInfoPopup) {
-            this._sessionInfoPopup.visible = false;
-        }
-        this._sessionInfoClickLocked = false;
-        this._clearSessionInfoTimeouts();
+        this._sessionInfo?.hide();
     }
 
     // Toggle open/close on click.
     _toggleSessionInfoPopup() {
-        this._clearSessionInfoTimeouts();
-
-        // A visible popup always closes on a trigger click — whether it was
-        // opened by hover or by click.  The old "click while hover-shown
-        // pins it open" branch turned the click into a silent no-op, which
-        // read as a stuck button (users clicked again and again).
-        if (this._sessionInfoPopup?.visible) {
-            this._hideSessionInfoPopup();
-            return;
-        }
-
-        // Click while closed → show; the click lock keeps it open while the
-        // pointer moves onto it (hover-opened previews still auto-hide).
-        this._sessionInfoClickLocked = true;
-        this._showSessionInfoPopup();
-    }
-
-    // Clear any pending hover/leave timeouts.
-    _clearSessionInfoTimeouts() {
-        if (this._sessionInfoHoverTimeout) {
-            GLib.source_remove(this._sessionInfoHoverTimeout);
-            this._sessionInfoHoverTimeout = 0;
-        }
-        if (this._sessionInfoLeaveTimeout) {
-            GLib.source_remove(this._sessionInfoLeaveTimeout);
-            this._sessionInfoLeaveTimeout = 0;
-        }
-        if (this._siRepositionId) {
-            GLib.source_remove(this._siRepositionId);
-            this._siRepositionId = 0;
-        }
+        this._ensureSessionInfo();
+        this._sessionInfo.toggle();
+        this._sessionInfoPopup = this._sessionInfo.popup;
     }
 
     // Position the popup above the token box, clamped to overlay bounds.
     _positionSessionInfoPopup() {
-        if (!this._sessionInfoPopup) return;
-
-        // Use preferred size — works on first paint, no layout pass needed
-        let [, popupWidth] = this._sessionInfoPopup.get_preferred_width(-1);
-        let [, popupHeight] = this._sessionInfoPopup.get_preferred_height(popupWidth);
-
-        // Token box anchor, converted from stage space into the overlay's
-        // local space (the overlay is pinned to the primary monitor origin,
-        // which is not necessarily the stage origin — see
-        // _stageToOverlayCoords).
-        let [tbX, tbY] = this._stageToOverlayCoords(...this._tokenBox.get_transformed_position());
-        let [tbW, tbH] = this._tokenBox.get_transformed_size();
-
-        const [overlayWidth, overlayHeight] = this._overlaySize();
-        const margin = 12;
-
-        // Position above the token box, right-aligned
-        let popupX = tbX + tbW - popupWidth;
-        let popupY = tbY - popupHeight - 8;
-
-        if (popupX + popupWidth > overlayWidth - margin) {
-            popupX = overlayWidth - popupWidth - margin;
-        }
-        if (popupX < margin) {
-            popupX = margin;
-        }
-        if (popupY < margin) {
-            // Not enough room above — position below instead
-            popupY = tbY + tbH + 8;
-            if (popupY + popupHeight > overlayHeight - margin) {
-                popupY = overlayHeight - popupHeight - margin;
-            }
-        }
-        if (popupY < margin) {
-            popupY = margin;
-        }
-
-        this._sessionInfoPopup.set_position(Math.round(popupX), Math.round(popupY));
+        this._sessionInfo?.position();
     }
 
-    // Refresh the popup contents with current data.  Only updates UI
-    // labels — does not rebuild the widget tree.
+    // Refresh the popup contents with current data.
     _refreshSessionInfoPopup() {
-        // Only recompute/redraw while visible — hidden-widget updates on every
-        // keystroke would repeatedly serialize + truncate the whole history.
-        if (!this._sessionInfoPopup || !this._sessionInfoPopup.visible) return;
-
-        const info = this._computeSessionInfo();
-
-        // ── Context Window ────────────────────────────────────────────
-        const { contextWindow: cw } = info;
-        this._siCwLabel.set_text(`${cw.fmtUsed} / ${cw.fmtMax} tokens`);
-        this._siCwPct.set_text(`${cw.pct}%`);
-
-        // Progress bar: filled portion + hatched reserved-for-response segment
-        const trackWidth = this._siProgress.width;
-        const effectiveWidth = trackWidth > 0 ? trackWidth : 300;
-        const fillWidth = Math.max(
-            cw.used > 0 ? (cw.pct / 100) * effectiveWidth : 0,
-            cw.used > 0 ? 4 : 0,
-        );
-        const reservedWidth = Math.max(0, effectiveWidth - fillWidth);
-        this._siProgressFill.set_width(Math.min(fillWidth, effectiveWidth));
-        this._siReservedFill.set_width(reservedWidth);
-
-        // Color the fill based on ratio
-        ['medium', 'warn', 'high', 'danger'].forEach((c) =>
-            this._siProgressFill.remove_style_class_name(c),
-        );
-        if (cw.pct >= 95) this._siProgressFill.add_style_class_name('danger');
-        else if (cw.pct >= 75) this._siProgressFill.add_style_class_name('high');
-        else if (cw.pct >= 50) this._siProgressFill.add_style_class_name('warn');
-        else if (cw.pct > 0) this._siProgressFill.add_style_class_name('medium');
-
-        // ── System ────────────────────────────────────────────────────
-        const { system: sys } = info;
-        this._siSysInstr.set_text(`${sys.instructionTokens} · ${sys.instructionPct}%`);
-        if (sys.hasToolDefs) {
-            this._siSysTools.set_text(`${sys.toolDefTokens} · ${sys.toolDefPct}%`);
-        } else {
-            this._siSysTools.set_text('None');
-        }
-
-        // ── User Context ──────────────────────────────────────────────
-        const { userContext: uc } = info;
-        this._siUcMsgs.set_text(`${uc.messageTokens} · ${uc.messagePct}%`);
-        this._siUcTools.set_text(`${uc.toolResultTokens} · ${uc.toolResultPct}%`);
-
-        // ── Session Memory ────────────────────────────────────────────
-        const { sessionMemory: mem } = info;
-        if (mem.status === 'active') {
-            this._siMemValue.set_text(`${mem.tokens} · ${mem.pct}%`);
-            this._siMemStatus.set_text(
-                'Session memory active — older turns are summarized automatically so the model keeps full context.',
-            );
-        } else if (mem.status === 'compacting') {
-            this._siMemValue.set_text('…');
-            this._siMemStatus.set_text('Summarizing earlier turns…');
-        } else {
-            this._siMemValue.set_text('None');
-            this._siMemStatus.set_text(
-                'No session memory yet — it grows automatically as the chat gets long.',
-            );
-        }
-
-        // ── Research ──────────────────────────────────────────────────
-        const { research: res } = info;
-        if (res) {
-            this._siResearchSection.visible = true;
-            this._siResCumulative.set_text(`${res.cumulative} (Σ)`);
-            this._siResIter.set_text(String(res.toolIterations));
-            this._siResSynth.set_text(res.synthesisActive ? 'Yes (tools suppressed)' : 'No');
-            this._siResCtx.set_text(res.contextTokens);
-        } else {
-            this._siResearchSection.visible = false;
-        }
+        this._sessionInfo?.refresh();
     }
 
     // ── Tools Popup ──────────────────────────────────────────────────
@@ -11945,7 +9203,7 @@ class KatabDialog {
         if (newId) {
             this._currentConversationId = newId;
         }
-        this._historyListCacheIds = null;
+        this._history?.invalidateList();
         this._notifyCurrentChatChanged();
 
         // Phase 2: index conversation into RAG vector DB (fire-and-forget)
@@ -11977,7 +9235,7 @@ class KatabDialog {
         if (this._currentConversationId === id) {
             this._currentConversationId = null;
         }
-        this._historyListCacheIds = null;
+        this._history?.invalidateList();
         this._notifyCurrentChatChanged();
 
         // Phase 2: purge conversation chunks from the RAG vector DB
@@ -12211,21 +9469,9 @@ class KatabDialog {
 
     _showChatView() {
         this._historyView.visible = false;
-        // Clear any active history search so the user gets a fresh list
+        // Clear any active history/KB search so the user gets a fresh list
         // next time they open the history panel.
-        if (this._historySearchEntry) {
-            this._historySearchEntry.set_text('');
-        }
-        if (this._historySearchTimeoutId) {
-            GLib.source_remove(this._historySearchTimeoutId);
-            this._historySearchTimeoutId = 0;
-        }
-        this._historySearchQuery = '';
-        // Phase 2: reset KB search state
-        this._kbSearchViewActive = false;
-        if (this._kbSearchEntry) {
-            this._kbSearchEntry.set_text('');
-        }
+        this._history?.resetViewState();
         if (this._presetPicker) this._presetPicker.visible = false;
         if (this._providerPicker) this._providerPicker.visible = false;
         if (this._deepseekModelPicker) this._deepseekModelPicker.visible = false;
@@ -12267,24 +9513,9 @@ class KatabDialog {
         this._cancelTitleGeneration();
         if (this._usagePanel) this._usagePanel.visible = false;
         this._historyView.visible = true;
-        // Phase 2: show KB search box if RAG is enabled, reset KB search state
-        this._kbSearchViewActive = false;
-        try {
-            const ragConfig = readRagConfig(this._settings);
-            if (this._kbSearchBox) {
-                this._kbSearchBox.visible = ragConfig.enabled;
-            }
-            if (this._kbSearchEntry) {
-                this._kbSearchEntry.set_text('');
-            }
-        } catch (_) {
-            if (this._kbSearchBox) this._kbSearchBox.visible = false;
-        }
-        this._renderHistoryList(this._historySearchQuery || null);
-        // Auto-focus the search bar so the user can start typing immediately
-        if (this._historySearchEntry) {
-            this._historySearchEntry.grab_key_focus();
-        }
+        // Show/hide the KB search box, reset KB search state, render the list
+        // and auto-focus the search bar.
+        this._history?.prepareForShow();
     }
 
     _toggleHistoryView() {
@@ -12530,376 +9761,6 @@ class KatabDialog {
         return extractMessageText(msg);
     }
 
-    _renderHistoryList(filterQuery = null) {
-        let allEntries = HistoryManager.getCached();
-        const tab = this._historyTab === 'archived' ? 'archived' : 'active';
-        this._updateHistoryTabLabels(allEntries);
-        // The normal conversation list replaces any KB search results view.
-        this._kbSearchViewActive = false;
-
-        // Filter by tab first, then by search query (case-insensitive match
-        // against title, description, and message text).
-        let arr =
-            tab === 'archived'
-                ? HistoryManager.getArchivedConversations()
-                : HistoryManager.getActiveConversations();
-
-        // Avoid redundant rebuilds when neither the cached history, the tab,
-        // nor the search query has changed. Titles/descriptions/timestamps are
-        // part of the key so metadata edits always refresh the rows.
-        let currentIds = arr
-            .map(
-                (e) =>
-                    `${e.id}:${e.archived ? 1 : 0}:${e.timestamp}:${e.title}:${e.description || ''}`,
-            )
-            .join(',');
-        let cacheKey = `${tab}|${currentIds}|${filterQuery || ''}`;
-        if (this._historyListCacheIds === cacheKey && this._historyContainer.get_n_children() > 0) {
-            return;
-        }
-        this._historyListCacheIds = cacheKey;
-
-        if (filterQuery) {
-            let q = filterQuery.toLowerCase();
-            arr = arr.filter((entry) => {
-                if ((entry.title || '').toLowerCase().includes(q)) {
-                    return true;
-                }
-                if ((entry.description || '').toLowerCase().includes(q)) {
-                    return true;
-                }
-                return entry.messages.some((msg) =>
-                    this._extractMessageText(msg).toLowerCase().includes(q),
-                );
-            });
-        }
-
-        this._historyContainer.destroy_all_children();
-
-        if (arr.length === 0) {
-            let msg;
-            if (filterQuery) {
-                msg =
-                    tab === 'archived'
-                        ? 'No archived conversations match your search.'
-                        : 'No conversations match your search.';
-            } else {
-                msg =
-                    tab === 'archived'
-                        ? 'No archived conversations yet.\nArchive a conversation to keep it out of the main list.'
-                        : 'No saved conversations yet.\nStart chatting and use New Chat to save.';
-            }
-            let emptyLabel = new St.Label({
-                text: msg,
-                style_class: 'katab-history-empty',
-                x_align: Clutter.ActorAlign.CENTER,
-                y_align: Clutter.ActorAlign.CENTER,
-                x_expand: true,
-            });
-            emptyLabel.clutter_text.line_wrap = true;
-            emptyLabel.clutter_text.single_line_mode = false;
-            this._historyContainer.add_child(emptyLabel);
-            return;
-        }
-
-        for (let entry of arr) {
-            let row = new St.BoxLayout({
-                vertical: false,
-                style_class: 'katab-history-row',
-                x_expand: true,
-            });
-
-            let textCol = new St.BoxLayout({
-                vertical: true,
-                x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER,
-                style_class: 'katab-history-text-col',
-            });
-
-            let titleLabel = new St.Label({
-                text: entry.title || 'Untitled',
-                style_class: 'katab-history-title',
-                x_expand: true,
-            });
-            titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            titleLabel.clutter_text.single_line_mode = true;
-            textCol.add_child(titleLabel);
-
-            if (entry.description) {
-                let descriptionLabel = new St.Label({
-                    text: entry.description,
-                    style_class: 'katab-history-description',
-                    x_expand: true,
-                });
-                descriptionLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-                descriptionLabel.clutter_text.single_line_mode = true;
-                textCol.add_child(descriptionLabel);
-            }
-
-            let date = new Date(entry.timestamp * 1000);
-            let dateStr =
-                date.toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                }) +
-                ' · ' +
-                date.toLocaleTimeString(undefined, {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                });
-            let dateLabel = new St.Label({
-                text: dateStr,
-                style_class: 'katab-history-date',
-            });
-            textCol.add_child(dateLabel);
-            row.add_child(textCol);
-
-            let loadBtn = new St.Button({
-                label: 'Load',
-                style_class: 'katab-history-load-btn',
-                can_focus: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            loadBtn.connect('clicked', () => this._loadConversation(entry));
-            row.add_child(loadBtn);
-
-            let archiveBtn = new St.Button({
-                label: tab === 'archived' ? 'Unarchive' : 'Archive',
-                style_class: 'katab-history-archive-btn',
-                can_focus: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            archiveBtn.connect('clicked', () =>
-                this._setConversationArchived(entry.id, tab !== 'archived'),
-            );
-            row.add_child(archiveBtn);
-
-            let editBtn = new St.Button({
-                child: new St.Icon({
-                    icon_name: 'document-edit-symbolic',
-                    style_class: 'katab-history-edit-icon',
-                }),
-                style_class: 'katab-history-edit-btn',
-                can_focus: true,
-                y_align: Clutter.ActorAlign.CENTER,
-                accessible_name: 'Edit title and description',
-            });
-            editBtn.connect('clicked', () => this._openHistoryEditor(entry));
-            row.add_child(editBtn);
-
-            let deleteBtn = new St.Button({
-                child: new St.Icon({
-                    icon_name: 'user-trash-symbolic',
-                    style_class: 'katab-history-delete-icon',
-                }),
-                style_class: 'katab-history-delete-btn',
-                can_focus: true,
-                y_align: Clutter.ActorAlign.CENTER,
-            });
-            deleteBtn.connect('clicked', () => {
-                this._deleteConversation(entry.id);
-                this._renderHistoryList(this._historySearchQuery || null);
-            });
-            row.add_child(deleteBtn);
-
-            this._historyContainer.add_child(row);
-        }
-    }
-
-    // ── Knowledge Base search (Phase 2: cross-session retrieval) ──────────
-
-    /** Execute a KB search query and render the results in the history view. */
-    async _executeKbSearch(query) {
-        const ragConfig = readRagConfig(this._settings);
-        if (!ragConfig.enabled) {
-            this._addSystemMessage(
-                'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base.',
-                { variant: 'warning' },
-            );
-            return;
-        }
-
-        // Show loading state in the history container
-        this._historyContainer.destroy_all_children();
-        let loadingLabel = new St.Label({
-            text: `Searching knowledge base for "${query}"…`,
-            style_class: 'katab-history-empty',
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-            x_expand: true,
-        });
-        this._historyContainer.add_child(loadingLabel);
-
-        try {
-            const searchOutcome = await this._withTimeout(
-                this._ragRuntime.search(query, ragConfig, null),
-                RAG_MANUAL_SEARCH_TIMEOUT_MS,
-            );
-            if (searchOutcome.kind === 'timeout') {
-                log(`[Katab:rag] KB search timed out after ${RAG_MANUAL_SEARCH_TIMEOUT_MS}ms`);
-                this._historyContainer.destroy_all_children();
-                let timeoutLabel = new St.Label({
-                    text: `Knowledge Base search timed out — the RAG service is unresponsive.`,
-                    style_class: 'katab-history-empty',
-                    x_align: Clutter.ActorAlign.CENTER,
-                    y_align: Clutter.ActorAlign.CENTER,
-                    x_expand: true,
-                });
-                this._historyContainer.add_child(timeoutLabel);
-            } else {
-                this._renderKbSearchResults(query, searchOutcome.value);
-            }
-        } catch (e) {
-            log(`[Katab:rag] KB search failed: ${e.message}`);
-            this._historyContainer.destroy_all_children();
-            let errorLabel = new St.Label({
-                text: `Search failed: ${e.message}`,
-                style_class: 'katab-history-empty',
-                x_align: Clutter.ActorAlign.CENTER,
-                y_align: Clutter.ActorAlign.CENTER,
-                x_expand: true,
-            });
-            this._historyContainer.add_child(errorLabel);
-        }
-    }
-
-    /** Render KB search results as clickable rows in the history container.
-     *  Each row shows: score badge, source collection, snippet, timestamp. */
-    _renderKbSearchResults(query, searchResult) {
-        this._kbSearchViewActive = true;
-        this._historyContainer.destroy_all_children();
-
-        const results = Array.isArray(searchResult?.results) ? searchResult.results : [];
-
-        // Back button to return to normal history view
-        let backRow = new St.BoxLayout({
-            vertical: false,
-            style_class: 'katab-kb-back-row',
-            x_expand: true,
-        });
-        let backBtn = new St.Button({
-            label: '← Back to conversations',
-            style_class: 'katab-kb-back-btn',
-            can_focus: true,
-        });
-        backBtn.connect('clicked', () => {
-            this._renderHistoryList(this._historySearchQuery || null);
-        });
-        backRow.add_child(backBtn);
-        this._historyContainer.add_child(backRow);
-
-        if (results.length === 0) {
-            let emptyLabel = new St.Label({
-                text: `No results found for "${query}".`,
-                style_class: 'katab-history-empty',
-                x_align: Clutter.ActorAlign.CENTER,
-                y_align: Clutter.ActorAlign.CENTER,
-                x_expand: true,
-            });
-            this._historyContainer.add_child(emptyLabel);
-            return;
-        }
-
-        let resultCountLabel = new St.Label({
-            text: `${results.length} result${results.length !== 1 ? 's' : ''} for "${query}"`,
-            style_class: 'katab-kb-result-count',
-            x_expand: true,
-        });
-        this._historyContainer.add_child(resultCountLabel);
-
-        for (const result of results) {
-            const meta = result.metadata || {};
-            const sourceLabel = meta.source || 'document';
-            const scorePct = Math.round((result.score || 0) * 100);
-            const snippet = (result.content || '').substring(0, 200);
-            const title = meta.title || '';
-            const ts = meta.timestamp || '';
-
-            let row = new St.BoxLayout({
-                vertical: false,
-                style_class: 'katab-kb-result-row',
-                x_expand: true,
-                reactive: true,
-                track_hover: true,
-            });
-
-            // Score badge
-            let scoreClass =
-                scorePct >= 80
-                    ? 'katab-kb-score-high'
-                    : scorePct >= 60
-                      ? 'katab-kb-score-mid'
-                      : 'katab-kb-score-low';
-            let scoreBadge = new St.Label({
-                text: `${scorePct}%`,
-                style_class: `katab-kb-score-badge ${scoreClass}`,
-                y_align: Clutter.ActorAlign.START,
-            });
-            row.add_child(scoreBadge);
-
-            // Text column
-            let textCol = new St.BoxLayout({
-                vertical: true,
-                x_expand: true,
-                style_class: 'katab-kb-result-text-col',
-            });
-
-            if (title) {
-                let titleLabel = new St.Label({
-                    text: title,
-                    style_class: 'katab-kb-result-title',
-                    x_expand: true,
-                });
-                titleLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-                titleLabel.clutter_text.single_line_mode = true;
-                textCol.add_child(titleLabel);
-            }
-
-            let sourceAndDate = sourceLabel;
-            if (ts) {
-                try {
-                    const d = new Date(ts);
-                    sourceAndDate += ` · ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
-                } catch (_) {
-                    /* use raw ts */
-                }
-            }
-            let sourceLabelWidget = new St.Label({
-                text: sourceAndDate,
-                style_class: 'katab-kb-result-source',
-            });
-            textCol.add_child(sourceLabelWidget);
-
-            let snippetLabel = new St.Label({
-                text: snippet + (result.content && result.content.length > 200 ? '…' : ''),
-                style_class: 'katab-kb-result-snippet',
-                x_expand: true,
-            });
-            snippetLabel.clutter_text.line_wrap = true;
-            snippetLabel.clutter_text.single_line_mode = false;
-            snippetLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            textCol.add_child(snippetLabel);
-
-            row.add_child(textCol);
-
-            // Click: navigate to source conversation or expand snippet
-            row.connect('button-press-event', () => {
-                if (sourceLabel === 'conversation' && meta.sessionId) {
-                    // Find and load the conversation
-                    const allEntries = HistoryManager.getCached();
-                    const entry = allEntries.find((e) => e.id === meta.sessionId);
-                    if (entry) {
-                        this._loadConversation(entry);
-                        this._showChatView();
-                    }
-                }
-                return Clutter.EVENT_STOP;
-            });
-
-            this._historyContainer.add_child(row);
-        }
-    }
-
     // ── Chat management ──────────────────────────────────────────────────
 
     _newChat() {
@@ -12943,7 +9804,7 @@ class KatabDialog {
         this._groundednessWarningCard = null;
         this._allEnginesDown = false;
         this._invalidateWebSourcesCache();
-        this._historyListCacheIds = null;
+        this._history?.invalidateList();
         this._sessionDocuments.clear();
         this._documentToolRuntime.clearCache();
         this._setPendingDocument(null);
@@ -18022,7 +14883,7 @@ class KatabDialog {
         }
 
         this._recordSentPrompt(rawPromptText);
-        this._usageCompanionSprite?.showPose('tip', 1200);
+        this._usage?.showCompanionPose('tip', 1200);
         this._entry.set_text('');
         this._resetOneShotToolModes(webSearchModeForPrompt, crawl4aiModeForPrompt);
         this._resetDraftUsage();

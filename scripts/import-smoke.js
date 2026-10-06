@@ -13,6 +13,10 @@ import System from 'system';
 const EXCLUDED_FILES = new Set([
     // Uses St/Clutter — only importable inside the GNOME Shell process.
     'src/pets/petSpriteActor.js',
+    'src/ui/welcomePanel.js',
+    'src/ui/usagePanel.js',
+    'src/ui/historyView.js',
+    'src/ui/sessionInfoPopup.js',
 ]);
 
 // GTK4/libadwaita are imported by the preferences-side modules

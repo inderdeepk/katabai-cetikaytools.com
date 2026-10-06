@@ -28,8 +28,12 @@ src/
 │   ├── nonStreamingRequest.js   ← Non-streaming request builders + response extraction
 │   ├── historyPayload.js        ← Token estimates, context truncators, attachment payloads, provider-dialect sanitization
 │   └── streamParse.js           ← SSE/NDJSON line parsing + tool-call accumulation
-├── ui/            # Render-model helpers + preferences pages
+├── ui/            # Render-model helpers + shell widgets + preferences pages
 │   ├── markdownRender.js        ← Markdown segmentation + inline formatting
+│   ├── welcomePanel.js          ← Animated welcome scene (book, pages, dust) — owns actor tree + GLib timers
+│   ├── usagePanel.js            ← "AI Token Breakdown" panel — tabs, range dropdown, companion/activity/spending cards
+│   ├── historyView.js           ← History panel — list/search/tabs, KB search, conversation metadata editor
+│   ├── sessionInfoPopup.js      ← Floating Session Info panel — context breakdown + summarize/compact actions
 │   └── prefs/                   ← Preferences window modules (prefs.js is an 86-line orchestrator)
 │       ├── widgets.js           ← createPrefsContext: shared page/group/row builders + watch()/dispose()
 │       ├── generalPage.js       ← General page (provider cards, appearance, shortcut, budget)
@@ -66,7 +70,7 @@ src/
     └── networkGuard.js          ← SSRF protection (IPv4/IPv6 blocklists)
 ```
 
-> **Decomposition status (Oct 2026)**: `prefs.js` is fully split — an 86-line orchestrator plus the `src/ui/prefs/` modules above. In `extension.js`, `_buildUI`, `_addChatMessage`, the SSE stream-end finalization (`_handleStreamEnd`), and the tool-call partition/recording logic are extracted into focused methods; `_sendMessage` and the tool-execution loop remain single large methods pending a context-object refactor (no behavioral issues).
+> **Decomposition status (Oct 2026)**: `prefs.js` is fully split — an 86-line orchestrator plus the `src/ui/prefs/` modules above. Provider payload shaping lives in `src/providers/historyPayload.js` (43 unit tests), the welcome scene in `src/ui/welcomePanel.js`, the token-breakdown panel in `src/ui/usagePanel.js`, the history panel (list + KB search + metadata editor) in `src/ui/historyView.js`, the Session Info popup in `src/ui/sessionInfoPopup.js`. In `extension.js`, `_buildUI`, `_addChatMessage`, the SSE stream-end finalization (`_handleStreamEnd`), `_sendMessage` (203-line coordinator over six phases: attachments, tool commands, knowledge context, vision pre-analysis, research planner, pipeline), and `_handleToolCalls` (64-line coordinator over `_executeToolCall` + `_finishToolBatch`) are extracted into focused methods. Remaining candidates: the tools popup, the header bar, and the picker shells.
 
 ## Assets
 
