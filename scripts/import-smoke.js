@@ -21,6 +21,7 @@ const EXCLUDED_FILES = new Set([
     'src/ui/recentChatsPopup.js',
     'src/ui/headerBar.js',
     'src/ui/pickers.js',
+    'src/ui/messageBubble.js',
 ]);
 
 // GTK4/libadwaita are imported by the preferences-side modules
