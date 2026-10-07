@@ -10,9 +10,14 @@
 // `_toggleProviderPicker`, `_toggleDeepseekModelPicker`, `_refreshProviderPicker`,
 // `_updateDeepseekModelButton`) plus the three actor fields for its visibility
 // checks; every dialog dependency flows through the host bag.
+//
+// NOTE (a11y): use `Atk.Role` for accessibility roles — on GNOME 46
+// `Clutter.AccessibleRole` does not exist (mutter 47+ API) and referencing it
+// throws at widget construction.
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
+import Atk from 'gi://Atk';
 
 import { DEEPSEEK_MODELS, PROVIDER_LABELS } from '../providers/catalog.js';
 import { loadPresets, deletePreset } from '../usage/presetManager.js';
@@ -107,7 +112,7 @@ export class Pickers {
             can_focus: true,
             track_hover: true,
             accessible_name: title,
-            accessible_role: Clutter.AccessibleRole.PUSH_BUTTON,
+            accessible_role: Atk.Role.PUSH_BUTTON,
         });
 
         // Active rows carry the provider's brand accent as a micro-detail

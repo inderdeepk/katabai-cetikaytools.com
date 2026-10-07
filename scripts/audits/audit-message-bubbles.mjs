@@ -75,6 +75,7 @@ const NEW_A11Y = [
     "accessible_name:entry.companion?.name||'Petcompanion'",
     'accessible_name:range.label',
     'accessible_role:Clutter.AccessibleRole.PUSH_BUTTON',
+    'accessible_role:Atk.Role.PUSH_BUTTON',
 ];
 function stripA11y(s) {
     for (const frag of NEW_A11Y) s = s.split(frag).join('');

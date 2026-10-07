@@ -10,11 +10,17 @@
 // wrappers (`_addChatMessage`, `_scrollToBottom`, `_applyAssistantMetrics`,
 // `_isDisposedWidgetError`) and a `_buildBubblesHost()` bag for everything
 // the builders need back from the dialog.
+//
+// NOTE (a11y): on GNOME 46 accessibility roles are exposed via `Atk.Role`
+// (`Atk.Role.PUSH_BUTTON`). `Clutter.AccessibleRole` is a mutter 47+ API —
+// referencing it on 46 throws a TypeError at widget construction and takes
+// the whole send flow down with it. Keep the Atk form.
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import Atk from 'gi://Atk';
 
 import { createRagGicon } from '../tools/ragTools.js';
 
@@ -395,7 +401,7 @@ export class MessageBubble {
                 track_hover: true,
                 visible: false,
                 accessible_name: 'Cache savings details',
-                accessible_role: Clutter.AccessibleRole.PUSH_BUTTON,
+                accessible_role: Atk.Role.PUSH_BUTTON,
             });
             cacheSavingsPill.add_child(
                 new St.Icon({
@@ -437,7 +443,7 @@ export class MessageBubble {
                 track_hover: true,
                 visible: false,
                 accessible_name: 'Knowledge base usage',
-                accessible_role: Clutter.AccessibleRole.PUSH_BUTTON,
+                accessible_role: Atk.Role.PUSH_BUTTON,
             });
             kbPillIcon = new St.Icon({
                 gicon: createRagGicon(this._host.getExtensionPath()),
