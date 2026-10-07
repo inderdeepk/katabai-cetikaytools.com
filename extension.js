@@ -14111,371 +14111,29 @@ class KatabDialog {
             let finalContent = responseState.accumulatedText;
             let effectiveToolCalls = responseState.accumulatedToolCalls;
 
-            // If we have thinking but no content and no structured tool calls,
-            // try to recover tool invocations embedded in the thinking trace.
-            if (
-                responseState.accumulatedThink &&
-                !finalContent &&
-                effectiveToolCalls.length === 0
-            ) {
-                const knownNames = responseState._knownToolNames || [];
-                if (knownNames.length > 0) {
-                    const thinkTools = parseTextToolCalls(
-                        responseState.accumulatedThink,
-                        knownNames,
-                    );
-                    if (thinkTools !== null && thinkTools.length > 0) {
-                        log(
-                            `[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content: ${thinkTools.map((tc) => tc.function?.name).join(', ')}`,
-                        );
-                        effectiveToolCalls = thinkTools;
-                        finalContent = ''; // suppress the "no response" fallback text
-                    }
-                }
-                if (effectiveToolCalls.length === 0) {
-                    // If Ollama returned a mid-stream error, include it so the user
-                    // knows why the response is empty instead of just seeing
-                    // "Finished thinking, but no response provided."
-                    if (responseState._ollamaStreamError) {
-                        finalContent =
-                            provider === 'deepseek'
-                                ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
-                                : `Finished thinking, but Ollama returned an error before the response could be generated.\n\nThe model may have tried to use tools in a format that Ollama rejected (e.g. XML-style tool calls instead of JSON). Try disabling Ollama \u201cthink\u201d mode or using a different model for tool-based queries.\n\nError details: ${responseState._ollamaStreamError}`;
-                    } else {
-                        finalContent =
-                            provider === 'deepseek'
-                                ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
-                                : 'Finished thinking, but no response provided.';
-                    }
-                }
-            }
+            ({ finalContent, effectiveToolCalls } = this._recoverThinkingOnlyFallback(
+                responseState,
+                provider,
+                finalContent,
+                effectiveToolCalls,
+            ));
 
-            // If no structured tool_calls were streamed, check whether the
-            // model embedded tool invocations as text (seen with some
-            // reasoning models). Uses the known-tool list stashed on the
-            // response state by _streamResponse.
-            if (effectiveToolCalls.length === 0 && finalContent) {
-                const knownNames = responseState._knownToolNames || [];
-                const parsed = parseTextToolCalls(finalContent, knownNames);
-                if (parsed !== null && parsed.length > 0) {
-                    log(
-                        `[Katab] Text-based tool-call fallback recovered ${parsed.length} call(s): ${parsed.map((tc) => tc.function?.name).join(', ')}`,
-                    );
-                    effectiveToolCalls = parsed;
-                    // Strip the raw tool-call text from the content so only
-                    // the model's natural-language framing remains visible.
-                    finalContent = '';
-                }
-            }
-            // Also scan accumulatedThink if content didn't yield tool calls.
-            if (effectiveToolCalls.length === 0 && finalContent) {
-                const knownNames = responseState._knownToolNames || [];
-                if (knownNames.length > 0 && responseState.accumulatedThink) {
-                    const thinkTools = parseTextToolCalls(
-                        responseState.accumulatedThink,
-                        knownNames,
-                    );
-                    if (thinkTools !== null && thinkTools.length > 0) {
-                        log(
-                            `[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content (secondary scan): ${thinkTools.map((tc) => tc.function?.name).join(', ')}`,
-                        );
-                        effectiveToolCalls = thinkTools;
-                    }
-                }
-            }
+            ({ finalContent, effectiveToolCalls } = this._recoverTextBasedToolCalls(
+                responseState,
+                finalContent,
+                effectiveToolCalls,
+            ));
 
             if (effectiveToolCalls.length > 0) {
-                // Hard-enforce the tool-iteration cap AND force-synthesis.
-                // If the model emits tool calls (structured or text-based) after
-                // we've stopped advertising them due to force synthesis, suppress
-                // them and force a final answer instead of looping endlessly.
-                const maxToolIterations = this._getMaxToolIterations();
-                const synthesising = this._forceSynthesisActive;
-                if ((this._toolIterations || 0) >= maxToolIterations || synthesising) {
-                    const reason = synthesising
-                        ? 'synthesis forced'
-                        : `tool iteration cap (${maxToolIterations}) reached`;
-                    log(
-                        `[Katab] Suppressing ${effectiveToolCalls.length} tool call(s) — ${reason}.`,
-                    );
-
-                    // Force synthesis is active but the model STILL emitted
-                    // structured tool calls (Ollama thinking mode can do this
-                    // even with tools removed from the payload).  Don't render
-                    // "[Maximum research depth reached…]" as the answer — retry
-                    // the synthesis turn once with the tool-call history
-                    // trimmed, mirroring the text-markup synthesis retry below.
-                    if (synthesising && (this._synthesisRetries || 0) < 1) {
-                        this._synthesisRetries = (this._synthesisRetries || 0) + 1;
-                        log(
-                            `[Katab:synthesis] Model emitted ${effectiveToolCalls.length} tool call(s) during forced synthesis — retrying with trimmed context.`,
-                        );
-                        this._trimToolHistoryForSynthesis();
-                        const retryMsg = {
-                            role: 'user',
-                            content:
-                                "[SYNTHESIS RETRY — Answer the user's question directly using the information already gathered. " +
-                                'Produce ONLY natural-language prose. No XML. No JSON. No tool calls. Just prose.]',
-                        };
-                        retryMsg._synthesisRetry = true;
-                        this._messageHistory.push(retryMsg);
-                        this._saveCurrentConversation();
-                        HistoryManager.flushSync();
-                        this._applyAssistantRender(uiElements, 'Retrying synthesis…', {
-                            plain: true,
-                        });
-                        this._streamResponse(uiElements);
-                        return;
-                    }
-
-                    const capMessage = synthesising
-                        ? '\n\n[Maximum research depth reached. Please answer based on the information you already have.]'
-                        : '\n\n[Maximum tool iterations reached. Please answer based on the information you already have.]';
-                    this._applyAssistantRender(uiElements, (finalContent || '') + capMessage, {
-                        final: true,
-                    });
-                    const assistantMsg = this._buildAssistantHistoryMessage(
-                        (finalContent || '') + capMessage,
-                        responseState.assistantMeta,
-                    );
-                    if (provider === 'deepseek' && responseState.accumulatedThink) {
-                        assistantMsg.reasoning_content = responseState.accumulatedThink;
-                    }
-                    this._messageHistory.push(assistantMsg);
-                    this._saveCurrentConversation();
-                    HistoryManager.flushSync();
-                    this._recordUsageEvent(responseState, 'completed');
-                    this._clearQualityCheckFlag();
-                    this._clearActiveResponseState();
-                } else {
-                    responseState.mode = 'tool';
-                    responseState.accumulatedToolCalls = effectiveToolCalls;
-                    this._recordUsageEvent(responseState, 'tool-call-turn');
-                    this._applyAssistantRender(uiElements, 'Running local tools...', {
-                        plain: true,
-                    });
-                    this._handleToolCalls(
-                        effectiveToolCalls,
-                        uiElements,
-                        responseState.accumulatedThink,
-                        provider,
-                    ).catch((error) => {
-                        if (this._isRequestCancelled(error)) {
-                            return;
-                        }
-                        this._renderLocalAssistantError(
-                            uiElements,
-                            error?.message || 'Local tool execution failed.',
-                        );
-                        this._clearQualityCheckFlag();
-                        this._clearActiveResponseState();
-                    });
-                }
-            } else {
-                // ── Synthesis fallback: handle degraded model output ─────
-                // DeepSeek V4 Pro under context pressure emits raw XML
-                // tool-call markup instead of prose.  Regex-based detection
-                // (contentLooksLikeToolCalls) is fragile because Unicode
-                // whitespace characters (U+00A0, U+2009, etc.) survive the
-                // cleaning steps and break JavaScript's \s matching.
-                //
-                // Strategy: when synthesis is forced, ALWAYS run aggressive
-                // XML stripping unconditionally.  If the model produced
-                // legitimate prose, the stripping is mostly a no-op.  If it
-                // produced tool-call XML, we catch it regardless of regex
-                // quirks.  The retry trims the tool-call history to break
-                // the pattern at its source.
-
-                if (
-                    finalContent &&
-                    this._forceSynthesisActive &&
-                    !contentLooksLikeToolCalls(finalContent) &&
-                    isSynthesisRegurgitation(finalContent, provider)
-                ) {
-                    // ── Synthesis quality gate (non-XML garbage) ──────────
-                    // The model regurgitated search-query fragments instead of
-                    // synthesizing. Give it one retry with a stricter prompt
-                    // and a trimmed tool-call history; if the retry also fails,
-                    // the log below accepts the current response as-is.
-                    // XML-style tool markup is excluded here so it still flows
-                    // through the unconditional stripping branch below.
-                    const synthRetries = this._synthesisRetries || 0;
-                    if (synthRetries < 1) {
-                        this._synthesisRetries = synthRetries + 1;
-                        log(
-                            `[Katab:synth-gate] Synthesis regurgitation detected (${finalContent.length} chars) — retrying with trimmed context.`,
-                        );
-                        this._trimToolHistoryForSynthesis();
-                        const retryMsg = {
-                            role: 'user',
-                            content:
-                                '[QUALITY GATE — Produce a COMPREHENSIVE report with: ' +
-                                'executive summary, detailed analysis, technical details, ' +
-                                'source citations with URLs, and recommendations. ' +
-                                'At least 500 words of substantive prose. No XML or tool calls.]',
-                        };
-                        retryMsg._synthesisRetry = true;
-                        this._messageHistory.push(retryMsg);
-                        this._saveCurrentConversation();
-                        HistoryManager.flushSync();
-                        this._applyAssistantRender(uiElements, 'Refining synthesis…', {
-                            plain: true,
-                        });
-                        this._streamResponse(uiElements);
-                        return;
-                    }
-                    log(
-                        `[Katab:synth-gate] Synthesis retry exhausted — accepting current response.`,
-                    );
-                } else if (finalContent && this._forceSynthesisActive) {
-                    // ── Force-synthesis: unconditional stripping ──────────
-                    // Tools were NOT advertised.  Any tool-call XML is noise.
-                    // Strip first, then decide what to do with the remains.
-                    log(
-                        `[Katab:synthesis] Force-synthesis response received (${finalContent.length} chars) — stripping XML unconditionally.`,
-                    );
-                    const stripped = stripTruncatedToolCallMarkup(finalContent);
-                    const strippedLen = stripped ? stripped.trim().length : 0;
-                    const strippedRatio =
-                        finalContent.length > 0 ? strippedLen / finalContent.length : 0;
-                    // If stripping was a NO-OP (ratio ≈ 1.0) but the
-                    // content is still tool-call markup (possibly
-                    // obfuscated with fullwidth pipes / a |DSML|
-                    // prefix), the "recovered prose" heuristic would
-                    // misclassify it as 100% good prose and render
-                    // the raw XML as the answer.  Detect that and
-                    // fall through to the synthesis retry instead.
-                    const stillMarkup = stillLooksLikeToolMarkup(stripped || '');
-
-                    if (!stillMarkup && strippedLen > 200 && strippedRatio > 0.15) {
-                        // Substantial prose remained after stripping.
-                        // The response had some XML noise but the core
-                        // synthesis is usable.
-                        finalContent = stripped.trim();
-                        log(
-                            `[Katab:synthesis] Stripping recovered ${strippedLen} chars of prose (${Math.round(strippedRatio * 100)}% of original).`,
-                        );
-                    } else if (!stillMarkup && strippedLen > 40) {
-                        // Marginal recovery — some text but not much.
-                        // Accept it but add a note.
-                        finalContent =
-                            stripped.trim() +
-                            '\n\n[Note: The model produced output with embedded tool-call syntax ' +
-                            'that was stripped. The response may be incomplete.]';
-                        log(
-                            `[Katab:synthesis] Marginal stripping recovery: ${strippedLen} chars (${Math.round(strippedRatio * 100)}% of ${finalContent.length}).`,
-                        );
-                    } else {
-                        // The response was entirely tool-call XML.
-                        // Retry ONCE with trimmed context.
-                        const synthRetries = this._synthesisRetries || 0;
-                        if (synthRetries < 1) {
-                            this._synthesisRetries = synthRetries + 1;
-                            log(
-                                `[Katab:synthesis] Response was ${Math.round((1 - strippedRatio) * 100)}% tool-call XML — retrying with trimmed context.`,
-                            );
-                            this._trimToolHistoryForSynthesis();
-                            const retryMsg = {
-                                role: 'user',
-                                content:
-                                    '[SYNTHESIS RETRY — Produce ONLY natural-language prose. ' +
-                                    'Write a comprehensive research report with: executive summary, ' +
-                                    'detailed findings by topic, technical analysis, source citations ' +
-                                    'with URLs, and actionable recommendations. ' +
-                                    'No XML. No JSON. No tool calls. Just prose.]',
-                            };
-                            retryMsg._synthesisRetry = true;
-                            this._messageHistory.push(retryMsg);
-                            this._saveCurrentConversation();
-                            HistoryManager.flushSync();
-                            this._applyAssistantRender(uiElements, 'Retrying synthesis…', {
-                                plain: true,
-                            });
-                            this._streamResponse(uiElements);
-                            return;
-                        }
-                        log(`[Katab:synthesis] Synthesis retry exhausted — showing fallback.`);
-                        finalContent =
-                            provider === 'deepseek'
-                                ? 'DeepSeek was unable to synthesize a response after gathering information through tool calls. The context may have grown too large.\n\n**Suggestions:**\n- Start a new chat and rephrase your request to be more focused.\n- Break complex multi-step research into separate conversations.\n- Try DeepSeek Flash for tool-heavy tasks.'
-                                : 'The model was unable to synthesize a response. The context may have grown too large.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.\n- Break complex research into separate conversations.';
-                    }
-                } else if (finalContent && contentLooksLikeToolCalls(finalContent)) {
-                    // ── Non-synthesis: normal tool-call markup recovery ──
-                    const healingRetries = this._healingRetries || 0;
-                    if (healingRetries < MAX_HEALING_RETRIES) {
-                        this._healingRetries = healingRetries + 1;
-                        log(
-                            `[Katab:heal] Self-healing retry ${this._healingRetries}/${MAX_HEALING_RETRIES} — model emitted raw tool-call markup (${finalContent.length} chars)`,
-                        );
-                        const healingAssistantMsg = this._buildAssistantHistoryMessage(
-                            finalContent,
-                            responseState.assistantMeta,
-                        );
-                        this._messageHistory.push(healingAssistantMsg);
-                        const healingUserMsg = {
-                            role: 'user',
-                            content: TOOL_CALL_HEALING_INSTRUCTION,
-                        };
-                        healingUserMsg._healingInjection = true;
-                        this._messageHistory.push(healingUserMsg);
-                        this._saveCurrentConversation();
-                        HistoryManager.flushSync();
-                        this._applyAssistantRender(
-                            uiElements,
-                            'Retrying with corrected tool format…',
-                            {
-                                plain: true,
-                            },
-                        );
-                        this._streamResponse(uiElements);
-                        return;
-                    }
-                    log(`[Katab:heal] Healing retries exhausted — stripping markup.`);
-                    const stripped = stripTruncatedToolCallMarkup(finalContent);
-                    if (stripped && stripped.trim().length > 20) {
-                        finalContent =
-                            stripped.trim() +
-                            '\n\n[Note: The model attempted to use tools in a malformed format.]';
-                    } else {
-                        finalContent =
-                            provider === 'deepseek'
-                                ? 'DeepSeek was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.'
-                                : 'The model was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.';
-                    }
-                }
-                this._applyAssistantRender(uiElements, finalContent, { final: true });
-                const assistantMsg = this._buildAssistantHistoryMessage(
+                this._finalizeToolCallTurn(
+                    responseState,
+                    provider,
+                    uiElements,
                     finalContent,
-                    responseState.assistantMeta,
+                    effectiveToolCalls,
                 );
-                // DeepSeek requires reasoning_content to be echoed back on
-                // subsequent turns when thinking is enabled. Store it on the
-                // history message so _sanitizeHistoryMessage can pick it up.
-                if (provider === 'deepseek' && responseState.accumulatedThink) {
-                    assistantMsg.reasoning_content = responseState.accumulatedThink;
-                }
-                this._messageHistory.push(assistantMsg);
-                this._saveCurrentConversation();
-                // Flush immediately so the assistant response is durable
-                // even if the dialog is closed or a new chat is started
-                // before the debounce timer fires.
-                HistoryManager.flushSync();
-                this._recordUsageEvent(responseState, 'completed');
-                this._clearActiveResponseState();
-
-                // Between-turn checkpoint: fold older turns into session
-                // memory once the verbatim tail approaches the budget.
-                this._maybeCompactSessionMemory();
-
-                // ── Post-synthesis quality check ────────────
-                if (this._qualityCheckPending && finalContent) {
-                    this._qualityCheckPending = false;
-                    this._runQualityCheck(finalContent);
-                } else {
-                    // Always clear the flag even if content was empty
-                    this._qualityCheckPending = false;
-                }
+            } else {
+                this._finalizeSynthesisTurn(responseState, provider, uiElements, finalContent);
             }
         } catch (eofError) {
             log(
@@ -14500,6 +14158,374 @@ class KatabDialog {
             this._recordUsageEvent(responseState, 'completed');
             this._clearQualityCheckFlag();
             this._clearActiveResponseState();
+        }
+    }
+
+    // Thinking-only fallback: when the stream produced reasoning but no
+    // content and no structured tool calls, recover tool invocations embedded
+    // in the thinking trace and synthesize an explanatory empty-response
+    // message. Returns the possibly-updated content/tool-call pair.
+    _recoverThinkingOnlyFallback(responseState, provider, finalContent, effectiveToolCalls) {
+        // If we have thinking but no content and no structured tool calls,
+        // try to recover tool invocations embedded in the thinking trace.
+        if (responseState.accumulatedThink && !finalContent && effectiveToolCalls.length === 0) {
+            const knownNames = responseState._knownToolNames || [];
+            if (knownNames.length > 0) {
+                const thinkTools = parseTextToolCalls(responseState.accumulatedThink, knownNames);
+                if (thinkTools !== null && thinkTools.length > 0) {
+                    log(
+                        `[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content: ${thinkTools.map((tc) => tc.function?.name).join(', ')}`,
+                    );
+                    effectiveToolCalls = thinkTools;
+                    finalContent = ''; // suppress the "no response" fallback text
+                }
+            }
+            if (effectiveToolCalls.length === 0) {
+                // If Ollama returned a mid-stream error, include it so the user
+                // knows why the response is empty instead of just seeing
+                // "Finished thinking, but no response provided."
+                if (responseState._ollamaStreamError) {
+                    finalContent =
+                        provider === 'deepseek'
+                            ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
+                            : `Finished thinking, but Ollama returned an error before the response could be generated.\n\nThe model may have tried to use tools in a format that Ollama rejected (e.g. XML-style tool calls instead of JSON). Try disabling Ollama \u201cthink\u201d mode or using a different model for tool-based queries.\n\nError details: ${responseState._ollamaStreamError}`;
+                } else {
+                    finalContent =
+                        provider === 'deepseek'
+                            ? 'DeepSeek finished the thinking phase but did not send a separate final answer. The thinking panel above contains the provider output for this turn.'
+                            : 'Finished thinking, but no response provided.';
+                }
+            }
+        }
+        return { finalContent, effectiveToolCalls };
+    }
+
+    // Text-based tool-call recovery: some reasoning models embed invocations
+    // as text instead of structured tool_calls. Scans the final content, then
+    // the thinking trace as a secondary pass.
+    _recoverTextBasedToolCalls(responseState, finalContent, effectiveToolCalls) {
+        // If no structured tool_calls were streamed, check whether the
+        // model embedded tool invocations as text (seen with some
+        // reasoning models). Uses the known-tool list stashed on the
+        // response state by _streamResponse.
+        if (effectiveToolCalls.length === 0 && finalContent) {
+            const knownNames = responseState._knownToolNames || [];
+            const parsed = parseTextToolCalls(finalContent, knownNames);
+            if (parsed !== null && parsed.length > 0) {
+                log(
+                    `[Katab] Text-based tool-call fallback recovered ${parsed.length} call(s): ${parsed.map((tc) => tc.function?.name).join(', ')}`,
+                );
+                effectiveToolCalls = parsed;
+                // Strip the raw tool-call text from the content so only
+                // the model's natural-language framing remains visible.
+                finalContent = '';
+            }
+        }
+        // Also scan accumulatedThink if content didn't yield tool calls.
+        if (effectiveToolCalls.length === 0 && finalContent) {
+            const knownNames = responseState._knownToolNames || [];
+            if (knownNames.length > 0 && responseState.accumulatedThink) {
+                const thinkTools = parseTextToolCalls(responseState.accumulatedThink, knownNames);
+                if (thinkTools !== null && thinkTools.length > 0) {
+                    log(
+                        `[Katab] Recovered ${thinkTools.length} tool call(s) from thinking content (secondary scan): ${thinkTools.map((tc) => tc.function?.name).join(', ')}`,
+                    );
+                    effectiveToolCalls = thinkTools;
+                }
+            }
+        }
+        return { finalContent, effectiveToolCalls };
+    }
+
+    // Tool-call turn: enforce the iteration cap / forced synthesis, then
+    // either commit a capped final answer or dispatch the tool calls.
+    _finalizeToolCallTurn(responseState, provider, uiElements, finalContent, effectiveToolCalls) {
+        // Hard-enforce the tool-iteration cap AND force-synthesis.
+        // If the model emits tool calls (structured or text-based) after
+        // we've stopped advertising them due to force synthesis, suppress
+        // them and force a final answer instead of looping endlessly.
+        const maxToolIterations = this._getMaxToolIterations();
+        const synthesising = this._forceSynthesisActive;
+        if ((this._toolIterations || 0) >= maxToolIterations || synthesising) {
+            const reason = synthesising
+                ? 'synthesis forced'
+                : `tool iteration cap (${maxToolIterations}) reached`;
+            log(`[Katab] Suppressing ${effectiveToolCalls.length} tool call(s) — ${reason}.`);
+
+            // Force synthesis is active but the model STILL emitted
+            // structured tool calls (Ollama thinking mode can do this
+            // even with tools removed from the payload).  Don't render
+            // "[Maximum research depth reached…]" as the answer — retry
+            // the synthesis turn once with the tool-call history
+            // trimmed, mirroring the text-markup synthesis retry below.
+            if (synthesising && (this._synthesisRetries || 0) < 1) {
+                this._synthesisRetries = (this._synthesisRetries || 0) + 1;
+                log(
+                    `[Katab:synthesis] Model emitted ${effectiveToolCalls.length} tool call(s) during forced synthesis — retrying with trimmed context.`,
+                );
+                this._trimToolHistoryForSynthesis();
+                const retryMsg = {
+                    role: 'user',
+                    content:
+                        "[SYNTHESIS RETRY — Answer the user's question directly using the information already gathered. " +
+                        'Produce ONLY natural-language prose. No XML. No JSON. No tool calls. Just prose.]',
+                };
+                retryMsg._synthesisRetry = true;
+                this._messageHistory.push(retryMsg);
+                this._saveCurrentConversation();
+                HistoryManager.flushSync();
+                this._applyAssistantRender(uiElements, 'Retrying synthesis…', {
+                    plain: true,
+                });
+                this._streamResponse(uiElements);
+                return;
+            }
+
+            const capMessage = synthesising
+                ? '\n\n[Maximum research depth reached. Please answer based on the information you already have.]'
+                : '\n\n[Maximum tool iterations reached. Please answer based on the information you already have.]';
+            this._applyAssistantRender(uiElements, (finalContent || '') + capMessage, {
+                final: true,
+            });
+            const assistantMsg = this._buildAssistantHistoryMessage(
+                (finalContent || '') + capMessage,
+                responseState.assistantMeta,
+            );
+            if (provider === 'deepseek' && responseState.accumulatedThink) {
+                assistantMsg.reasoning_content = responseState.accumulatedThink;
+            }
+            this._messageHistory.push(assistantMsg);
+            this._saveCurrentConversation();
+            HistoryManager.flushSync();
+            this._recordUsageEvent(responseState, 'completed');
+            this._clearQualityCheckFlag();
+            this._clearActiveResponseState();
+        } else {
+            responseState.mode = 'tool';
+            responseState.accumulatedToolCalls = effectiveToolCalls;
+            this._recordUsageEvent(responseState, 'tool-call-turn');
+            this._applyAssistantRender(uiElements, 'Running local tools...', {
+                plain: true,
+            });
+            this._handleToolCalls(
+                effectiveToolCalls,
+                uiElements,
+                responseState.accumulatedThink,
+                provider,
+            ).catch((error) => {
+                if (this._isRequestCancelled(error)) {
+                    return;
+                }
+                this._renderLocalAssistantError(
+                    uiElements,
+                    error?.message || 'Local tool execution failed.',
+                );
+                this._clearQualityCheckFlag();
+                this._clearActiveResponseState();
+            });
+        }
+    }
+
+    // Synthesis turn: quality-gate degraded synthesis output (regurgitation,
+    // force-synthesis XML stripping, non-synthesis markup healing), then
+    // commit the final answer and run the post-synthesis quality check.
+    _finalizeSynthesisTurn(responseState, provider, uiElements, finalContent) {
+        // ── Synthesis fallback: handle degraded model output ─────
+        // DeepSeek V4 Pro under context pressure emits raw XML
+        // tool-call markup instead of prose.  Regex-based detection
+        // (contentLooksLikeToolCalls) is fragile because Unicode
+        // whitespace characters (U+00A0, U+2009, etc.) survive the
+        // cleaning steps and break JavaScript's \s matching.
+        //
+        // Strategy: when synthesis is forced, ALWAYS run aggressive
+        // XML stripping unconditionally.  If the model produced
+        // legitimate prose, the stripping is mostly a no-op.  If it
+        // produced tool-call XML, we catch it regardless of regex
+        // quirks.  The retry trims the tool-call history to break
+        // the pattern at its source.
+
+        if (
+            finalContent &&
+            this._forceSynthesisActive &&
+            !contentLooksLikeToolCalls(finalContent) &&
+            isSynthesisRegurgitation(finalContent, provider)
+        ) {
+            // ── Synthesis quality gate (non-XML garbage) ──────────
+            // The model regurgitated search-query fragments instead of
+            // synthesizing. Give it one retry with a stricter prompt
+            // and a trimmed tool-call history; if the retry also fails,
+            // the log below accepts the current response as-is.
+            // XML-style tool markup is excluded here so it still flows
+            // through the unconditional stripping branch below.
+            const synthRetries = this._synthesisRetries || 0;
+            if (synthRetries < 1) {
+                this._synthesisRetries = synthRetries + 1;
+                log(
+                    `[Katab:synth-gate] Synthesis regurgitation detected (${finalContent.length} chars) — retrying with trimmed context.`,
+                );
+                this._trimToolHistoryForSynthesis();
+                const retryMsg = {
+                    role: 'user',
+                    content:
+                        '[QUALITY GATE — Produce a COMPREHENSIVE report with: ' +
+                        'executive summary, detailed analysis, technical details, ' +
+                        'source citations with URLs, and recommendations. ' +
+                        'At least 500 words of substantive prose. No XML or tool calls.]',
+                };
+                retryMsg._synthesisRetry = true;
+                this._messageHistory.push(retryMsg);
+                this._saveCurrentConversation();
+                HistoryManager.flushSync();
+                this._applyAssistantRender(uiElements, 'Refining synthesis…', {
+                    plain: true,
+                });
+                this._streamResponse(uiElements);
+                return;
+            }
+            log(`[Katab:synth-gate] Synthesis retry exhausted — accepting current response.`);
+        } else if (finalContent && this._forceSynthesisActive) {
+            // ── Force-synthesis: unconditional stripping ──────────
+            // Tools were NOT advertised.  Any tool-call XML is noise.
+            // Strip first, then decide what to do with the remains.
+            log(
+                `[Katab:synthesis] Force-synthesis response received (${finalContent.length} chars) — stripping XML unconditionally.`,
+            );
+            const stripped = stripTruncatedToolCallMarkup(finalContent);
+            const strippedLen = stripped ? stripped.trim().length : 0;
+            const strippedRatio = finalContent.length > 0 ? strippedLen / finalContent.length : 0;
+            // If stripping was a NO-OP (ratio ≈ 1.0) but the
+            // content is still tool-call markup (possibly
+            // obfuscated with fullwidth pipes / a |DSML|
+            // prefix), the "recovered prose" heuristic would
+            // misclassify it as 100% good prose and render
+            // the raw XML as the answer.  Detect that and
+            // fall through to the synthesis retry instead.
+            const stillMarkup = stillLooksLikeToolMarkup(stripped || '');
+
+            if (!stillMarkup && strippedLen > 200 && strippedRatio > 0.15) {
+                // Substantial prose remained after stripping.
+                // The response had some XML noise but the core
+                // synthesis is usable.
+                finalContent = stripped.trim();
+                log(
+                    `[Katab:synthesis] Stripping recovered ${strippedLen} chars of prose (${Math.round(strippedRatio * 100)}% of original).`,
+                );
+            } else if (!stillMarkup && strippedLen > 40) {
+                // Marginal recovery — some text but not much.
+                // Accept it but add a note.
+                finalContent =
+                    stripped.trim() +
+                    '\n\n[Note: The model produced output with embedded tool-call syntax ' +
+                    'that was stripped. The response may be incomplete.]';
+                log(
+                    `[Katab:synthesis] Marginal stripping recovery: ${strippedLen} chars (${Math.round(strippedRatio * 100)}% of ${finalContent.length}).`,
+                );
+            } else {
+                // The response was entirely tool-call XML.
+                // Retry ONCE with trimmed context.
+                const synthRetries = this._synthesisRetries || 0;
+                if (synthRetries < 1) {
+                    this._synthesisRetries = synthRetries + 1;
+                    log(
+                        `[Katab:synthesis] Response was ${Math.round((1 - strippedRatio) * 100)}% tool-call XML — retrying with trimmed context.`,
+                    );
+                    this._trimToolHistoryForSynthesis();
+                    const retryMsg = {
+                        role: 'user',
+                        content:
+                            '[SYNTHESIS RETRY — Produce ONLY natural-language prose. ' +
+                            'Write a comprehensive research report with: executive summary, ' +
+                            'detailed findings by topic, technical analysis, source citations ' +
+                            'with URLs, and actionable recommendations. ' +
+                            'No XML. No JSON. No tool calls. Just prose.]',
+                    };
+                    retryMsg._synthesisRetry = true;
+                    this._messageHistory.push(retryMsg);
+                    this._saveCurrentConversation();
+                    HistoryManager.flushSync();
+                    this._applyAssistantRender(uiElements, 'Retrying synthesis…', {
+                        plain: true,
+                    });
+                    this._streamResponse(uiElements);
+                    return;
+                }
+                log(`[Katab:synthesis] Synthesis retry exhausted — showing fallback.`);
+                finalContent =
+                    provider === 'deepseek'
+                        ? 'DeepSeek was unable to synthesize a response after gathering information through tool calls. The context may have grown too large.\n\n**Suggestions:**\n- Start a new chat and rephrase your request to be more focused.\n- Break complex multi-step research into separate conversations.\n- Try DeepSeek Flash for tool-heavy tasks.'
+                        : 'The model was unable to synthesize a response. The context may have grown too large.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.\n- Break complex research into separate conversations.';
+            }
+        } else if (finalContent && contentLooksLikeToolCalls(finalContent)) {
+            // ── Non-synthesis: normal tool-call markup recovery ──
+            const healingRetries = this._healingRetries || 0;
+            if (healingRetries < MAX_HEALING_RETRIES) {
+                this._healingRetries = healingRetries + 1;
+                log(
+                    `[Katab:heal] Self-healing retry ${this._healingRetries}/${MAX_HEALING_RETRIES} — model emitted raw tool-call markup (${finalContent.length} chars)`,
+                );
+                const healingAssistantMsg = this._buildAssistantHistoryMessage(
+                    finalContent,
+                    responseState.assistantMeta,
+                );
+                this._messageHistory.push(healingAssistantMsg);
+                const healingUserMsg = {
+                    role: 'user',
+                    content: TOOL_CALL_HEALING_INSTRUCTION,
+                };
+                healingUserMsg._healingInjection = true;
+                this._messageHistory.push(healingUserMsg);
+                this._saveCurrentConversation();
+                HistoryManager.flushSync();
+                this._applyAssistantRender(uiElements, 'Retrying with corrected tool format…', {
+                    plain: true,
+                });
+                this._streamResponse(uiElements);
+                return;
+            }
+            log(`[Katab:heal] Healing retries exhausted — stripping markup.`);
+            const stripped = stripTruncatedToolCallMarkup(finalContent);
+            if (stripped && stripped.trim().length > 20) {
+                finalContent =
+                    stripped.trim() +
+                    '\n\n[Note: The model attempted to use tools in a malformed format.]';
+            } else {
+                finalContent =
+                    provider === 'deepseek'
+                        ? 'DeepSeek was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.'
+                        : 'The model was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.';
+            }
+        }
+        this._applyAssistantRender(uiElements, finalContent, { final: true });
+        const assistantMsg = this._buildAssistantHistoryMessage(
+            finalContent,
+            responseState.assistantMeta,
+        );
+        // DeepSeek requires reasoning_content to be echoed back on
+        // subsequent turns when thinking is enabled. Store it on the
+        // history message so _sanitizeHistoryMessage can pick it up.
+        if (provider === 'deepseek' && responseState.accumulatedThink) {
+            assistantMsg.reasoning_content = responseState.accumulatedThink;
+        }
+        this._messageHistory.push(assistantMsg);
+        this._saveCurrentConversation();
+        // Flush immediately so the assistant response is durable
+        // even if the dialog is closed or a new chat is started
+        // before the debounce timer fires.
+        HistoryManager.flushSync();
+        this._recordUsageEvent(responseState, 'completed');
+        this._clearActiveResponseState();
+
+        // Between-turn checkpoint: fold older turns into session
+        // memory once the verbatim tail approaches the budget.
+        this._maybeCompactSessionMemory();
+
+        // ── Post-synthesis quality check ────────────
+        if (this._qualityCheckPending && finalContent) {
+            this._qualityCheckPending = false;
+            this._runQualityCheck(finalContent);
+        } else {
+            // Always clear the flag even if content was empty
+            this._qualityCheckPending = false;
         }
     }
 

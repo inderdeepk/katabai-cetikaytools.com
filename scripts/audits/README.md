@@ -35,6 +35,7 @@ everywhere; run it locally or in a full-history checkout for real coverage.
 | `audit-message-bubbles.mjs` | message frame → `src/ui/messageBubble.js` | `d3a612f` |
 | `audit-assistant-render.mjs` | render pipeline → `src/ui/assistantRender.js` | `0e3ad5d` |
 | `audit-constructor.mjs` | constructor decomposition (line-coverage style) | `d1879c9` |
+| `audit-handleStreamEnd.mjs` | SSE stream-end decomposition (slice + line-coverage style) | `d3b49ef` |
 
 ## How an audit works
 
