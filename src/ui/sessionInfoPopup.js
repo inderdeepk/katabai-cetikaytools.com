@@ -289,6 +289,7 @@ export class SessionInfoPopup {
             }),
             style_class: 'katab-session-info-close-btn',
             can_focus: true,
+            accessible_name: 'Close session info',
         });
         closeBtn.connect('clicked', () => this.hide());
         header.add_child(closeBtn);

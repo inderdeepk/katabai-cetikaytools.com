@@ -658,6 +658,7 @@ export class HistoryView {
                 style_class: 'katab-history-delete-btn',
                 can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
+                accessible_name: 'Delete conversation',
             });
             deleteBtn.connect('clicked', () => {
                 this._host.deleteConversation(entry.id);

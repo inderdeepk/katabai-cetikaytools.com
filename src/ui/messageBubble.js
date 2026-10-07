@@ -394,6 +394,8 @@ export class MessageBubble {
                 can_focus: true,
                 track_hover: true,
                 visible: false,
+                accessible_name: 'Cache savings details',
+                accessible_role: Clutter.AccessibleRole.PUSH_BUTTON,
             });
             cacheSavingsPill.add_child(
                 new St.Icon({
@@ -434,6 +436,8 @@ export class MessageBubble {
                 can_focus: true,
                 track_hover: true,
                 visible: false,
+                accessible_name: 'Knowledge base usage',
+                accessible_role: Clutter.AccessibleRole.PUSH_BUTTON,
             });
             kbPillIcon = new St.Icon({
                 gicon: createRagGicon(this._host.getExtensionPath()),

@@ -699,6 +699,7 @@ export class AssistantRender {
             toggle_mode: true,
             checked: false,
             x_expand: true,
+            accessible_name: 'Toggle source list',
         });
         toggleBtn.set_child(headerRow);
 

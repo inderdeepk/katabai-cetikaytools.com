@@ -240,6 +240,7 @@ export class ToolsPopup {
                     style_class: 'katab-tools-popup-row',
                     can_focus: true,
                     x_expand: true,
+                    accessible_name: this._host.getToolButtonLabel(tool),
                 });
 
                 const iconProps = {};
@@ -437,6 +438,7 @@ export class ToolsPopup {
             }),
             style_class: 'katab-tools-popup-close-btn',
             can_focus: true,
+            accessible_name: 'Close tools panel',
         });
         closeBtn.connect('clicked', () => this.hide());
         header.add_child(closeBtn);

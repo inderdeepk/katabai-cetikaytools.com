@@ -72,6 +72,7 @@ export class Pickers {
             }),
             style_class: 'katab-preset-picker-close-btn',
             can_focus: true,
+            accessible_name: 'Close picker',
         });
         pickerHeader.add_child(closePickerBtn);
 
@@ -104,6 +105,8 @@ export class Pickers {
             reactive: true,
             can_focus: true,
             track_hover: true,
+            accessible_name: title,
+            accessible_role: Clutter.AccessibleRole.PUSH_BUTTON,
         });
 
         // Active rows carry the provider's brand accent as a micro-detail
@@ -205,6 +208,7 @@ export class Pickers {
             }),
             style_class: 'katab-preset-picker-close-btn',
             can_focus: true,
+            accessible_name: 'Close preset list',
         });
         closePickerBtn.connect('clicked', () => this.togglePresetPicker());
         pickerHeader.add_child(closePickerBtn);
@@ -344,6 +348,7 @@ export class Pickers {
                 style_class: 'katab-preset-delete-btn',
                 can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
+                accessible_name: `Delete preset "${preset.name}"`,
             });
             deleteBtn.connect('clicked', () => {
                 deletePreset(preset.id);

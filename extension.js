@@ -1329,6 +1329,39 @@ class KatabDialog {
             crawl4aiRuntime: this._crawl4aiRuntime,
         });
         this._ragRuntime = new RagRuntime({ timeoutSeconds: 30 });
+        this._scheduleStartupRagTasks();
+        this._initToolRegistry();
+
+        this._initSleepMonitor();
+
+        this._initStateFields();
+
+        this._wireSettingsWatchers();
+
+        this._initInterfaceSettings();
+
+        this._buildActorShell();
+
+        this._installStageCapture();
+
+        this._monitorChangedId = Main.layoutManager.connect('monitors-changed', () => {
+            if (this.isOpen) {
+                this._syncGeometry();
+            }
+        });
+        this._syncGeometry();
+
+        this._buildUI();
+
+        // Initialize the header pet sprite after UI is built
+        this._updateHeaderPetSprite();
+
+        this._subscribeProviderHealth();
+    }
+
+    // Deferred startup work: KB health probe + any file import queued while
+    // no extension was running.
+    _scheduleStartupRagTasks() {
         GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             this._checkRagHealth().catch((e) =>
                 log(`[Katab:rag] Startup health check failed: ${e.message}`),
@@ -1340,11 +1373,12 @@ class KatabDialog {
             );
             return GLib.SOURCE_REMOVE;
         });
-        this._initToolRegistry();
+    }
 
-        // Re-probe the knowledge base after system resume — suspend/resume can
-        // wedge in-flight requests, and Ollama may have gone up/down while the
-        // system slept.  A fresh runtime guarantees fresh connections.
+    // Re-probe the knowledge base after system resume — suspend/resume can
+    // wedge in-flight requests, and Ollama may have gone up/down while the
+    // system slept.  A fresh runtime guarantees fresh connections.
+    _initSleepMonitor() {
         try {
             this._prepareForSleepId = Gio.DBus.system.signal_subscribe(
                 'org.freedesktop.login1',
@@ -1372,7 +1406,11 @@ class KatabDialog {
         } catch (e) {
             log(`[Katab:rag] Sleep monitor unavailable: ${e.message}`);
         }
+    }
 
+    // Every mutable state field the dialog owns. Grouped so the constructor
+    // reads as a shell: core services → state → watchers → shell → UI.
+    _initStateFields() {
         this._sessionDocuments = new Map();
         this._ragReconcileRunning = false;
         this._ollamaVisionCapabilityCache = new Map();
@@ -1436,10 +1474,106 @@ class KatabDialog {
         this._ragLimitsChangedTimeoutId = 0; // debounce for storage-limit changes
         this._focusPromptTimeoutId = 0; // timeout ID for deferred focusPrompt
 
-        // Track settings-handler IDs so destroy() can disconnect them. The
-        // dialog is rebuilt on every enable/reload; leaking handlers on the
-        // long-lived GSettings keeps the old dialog alive and would fire into
-        // disposed widgets on the next settings change.
+        this._monitorChangedId = 0;
+        this._stageCaptureId = 0;
+        this.isOpen = false;
+        this._messageHistory = [];
+        this._soupSession = new Soup.Session();
+        this._soupSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+        // Dedicated session for draft-tokenizer probes so their timeout can
+        // never interact with an in-flight chat request on the shared session.
+        this._tokenizeSession = new Soup.Session();
+        this._tokenizeSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+        // Per-provider tokenize-probe support: null = untested, true = works,
+        // false = endpoint definitively missing (404/405) — skip re-probing and
+        // use the character estimate.  Ollama has no public /api/tokenize
+        // route, so its first probe normally fails and is cached here.
+        this._tokenizeSupported = { unsloth: null, ollama: null };
+        this._cancellable = null;
+        this._retrySourceId = 0;
+        // Request lifecycle: the single source of truth for send/stop state
+        // (idle → enriching → awaiting-model ⇄ tool-loop → synthesis →
+        // stopping → done/error). The pre-stream re-entrancy guard (slow
+        // KB/web enrichment before the stream begins) is the ENRICHING
+        // phase; a new send is dropped while the state is not settled (see
+        // _sendMessage). Chat/UI view-lifecycle (_chatGeneration,
+        // _responseUiAlive, _isChatUiCurrent) stays a separate concern — it
+        // guards UI ownership, not request state.
+        this._lifecycle = createRequestLifecycle();
+        this._lastResponseErrored = false;
+        this._activeResponseState = null;
+        this._sendBtn = null;
+        this._sendIcon = null;
+
+        this._maxContextSize = 0;
+        this._currentUsage = 0;
+        this._draftUsage = 0;
+        // Sequence guard for the async /tokenize draft probe — a slow response
+        // for an older draft must never overwrite a newer count (or resurrect
+        // the draft after it was sent/cleared).
+        this._draftTokenRequestId = 0;
+        this._lastTokenRatio = 0;
+        // Cache for the actual context-payload token estimate, keyed on a cheap
+        // fingerprint so per-keystroke gauge refreshes don't re-serialize and
+        // re-truncate the whole history every time.
+        this._contextPayloadCache = null;
+        // Cumulative token total across all deep research phases (planning,
+        // branch search/compress, gap analysis, refinement, synthesis).
+        // Reset when a new deep research session starts.
+        this._deepResearchCumulativeTokens = 0;
+        // Rolling session memory — older turns are folded into a persistent
+        // summary so the model keeps full context without resending the whole
+        // transcript every request.  `_sessionMemoryStatus` drives the Session
+        // Info popup row ('empty' | 'compacting' | 'active' | 'error').
+        this._sessionMemory = '';
+        this._sessionMemoryStatus = 'empty';
+        this._compactionInFlight = false;
+        // Running total of DeepSeek prompt-cache savings for the current
+        // conversation, surfaced by the subtle header chip.
+        this._sessionCacheSavings = { savedUsd: 0, hitTokens: 0 };
+
+        // Session Info popup — floating detail panel anchored to the
+        // token box.  Shows a comprehensive context-window breakdown
+        // (system, user context, research, tool usage) on click/hover.
+        this._sessionInfoPopup = null;
+        this._sessionInfo = null; // session-info popup module (src/ui/sessionInfoPopup.js)
+        this._tools = null; // tools popup module (src/ui/toolsPopup.js)
+        // Recent chats hover dropdown — shows last 5 conversations below
+        // the history button on hover (same pattern as session info popup).
+        this._recentChatsPopup = null;
+        this._recentChats = null; // recent-chats preview module (src/ui/recentChatsPopup.js)
+        this._tokenUpdateTimeout = 0;
+        this._promptScrollFollowIdleId = 0;
+        this._promptScrollHeightIdleId = 0;
+        this._promptCursorScrollId = 0;
+        // Shell-style recall of previously sent prompts via the Up/Down keys.
+        this._promptHistory = [];
+        this._promptHistoryIndex = -1;
+        this._promptDraftBackup = '';
+        this._usage = null;
+        this._pickers = null; // picker module (src/ui/pickers.js)
+        this._bubbles = null; // message-bubble module (src/ui/messageBubble.js)
+        this._render = null; // assistant-render module (src/ui/assistantRender.js)
+        this._headerPetSprite = null;
+        this._headerPetBox = null;
+        this._headerPetFallback = null;
+        this._hasConversationStarted = false;
+        this._welcome = null;
+        this._welcomePanel = null;
+        this._messageList = null;
+        // Monotonically-increasing chat generation. Bumped every time the
+        // message list is rebuilt (new conversation / history switch /
+        // compaction) so in-flight async renders can detect that their
+        // captured bubbles have been destroyed and bail instead of touching
+        // disposed St widgets.
+        this._chatGeneration = 0;
+    }
+
+    // Track settings-handler IDs so destroy() can disconnect them. The
+    // dialog is rebuilt on every enable/reload; leaking handlers on the
+    // long-lived GSettings keeps the old dialog alive and would fire into
+    // disposed widgets on the next settings change.
+    _wireSettingsWatchers() {
         this._settingsHandlerIds = [];
 
         this._connectSetting('changed::provider', () => {
@@ -1562,7 +1696,9 @@ class KatabDialog {
                 this._queuePresetDriftCheck();
             });
         }
+    }
 
+    _initInterfaceSettings() {
         this._interfaceSettings = null;
         this._themeChangedId = 0;
         this._textScalingChangedId = 0;
@@ -1573,101 +1709,9 @@ class KatabDialog {
         } catch (_e) {
             /* schema not available */
         }
+    }
 
-        this._monitorChangedId = 0;
-        this._stageCaptureId = 0;
-        this.isOpen = false;
-        this._messageHistory = [];
-        this._soupSession = new Soup.Session();
-        this._soupSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
-        // Dedicated session for draft-tokenizer probes so their timeout can
-        // never interact with an in-flight chat request on the shared session.
-        this._tokenizeSession = new Soup.Session();
-        this._tokenizeSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
-        // Per-provider tokenize-probe support: null = untested, true = works,
-        // false = endpoint definitively missing (404/405) — skip re-probing and
-        // use the character estimate.  Ollama has no public /api/tokenize
-        // route, so its first probe normally fails and is cached here.
-        this._tokenizeSupported = { unsloth: null, ollama: null };
-        this._cancellable = null;
-        this._retrySourceId = 0;
-        // Request lifecycle: the single source of truth for send/stop state
-        // (idle → enriching → awaiting-model ⇄ tool-loop → synthesis →
-        // stopping → done/error). The pre-stream re-entrancy guard (slow
-        // KB/web enrichment before the stream begins) is the ENRICHING
-        // phase; a new send is dropped while the state is not settled (see
-        // _sendMessage). Chat/UI view-lifecycle (_chatGeneration,
-        // _responseUiAlive, _isChatUiCurrent) stays a separate concern — it
-        // guards UI ownership, not request state.
-        this._lifecycle = createRequestLifecycle();
-        this._lastResponseErrored = false;
-        this._activeResponseState = null;
-        this._sendBtn = null;
-        this._sendIcon = null;
-
-        this._maxContextSize = 0;
-        this._currentUsage = 0;
-        this._draftUsage = 0;
-        // Sequence guard for the async /tokenize draft probe — a slow response
-        // for an older draft must never overwrite a newer count (or resurrect
-        // the draft after it was sent/cleared).
-        this._draftTokenRequestId = 0;
-        this._lastTokenRatio = 0;
-        // Cache for the actual context-payload token estimate, keyed on a cheap
-        // fingerprint so per-keystroke gauge refreshes don't re-serialize and
-        // re-truncate the whole history every time.
-        this._contextPayloadCache = null;
-        // Cumulative token total across all deep research phases (planning,
-        // branch search/compress, gap analysis, refinement, synthesis).
-        // Reset when a new deep research session starts.
-        this._deepResearchCumulativeTokens = 0;
-        // Rolling session memory — older turns are folded into a persistent
-        // summary so the model keeps full context without resending the whole
-        // transcript every request.  `_sessionMemoryStatus` drives the Session
-        // Info popup row ('empty' | 'compacting' | 'active' | 'error').
-        this._sessionMemory = '';
-        this._sessionMemoryStatus = 'empty';
-        this._compactionInFlight = false;
-        // Running total of DeepSeek prompt-cache savings for the current
-        // conversation, surfaced by the subtle header chip.
-        this._sessionCacheSavings = { savedUsd: 0, hitTokens: 0 };
-
-        // Session Info popup — floating detail panel anchored to the
-        // token box.  Shows a comprehensive context-window breakdown
-        // (system, user context, research, tool usage) on click/hover.
-        this._sessionInfoPopup = null;
-        this._sessionInfo = null; // session-info popup module (src/ui/sessionInfoPopup.js)
-        this._tools = null; // tools popup module (src/ui/toolsPopup.js)
-        // Recent chats hover dropdown — shows last 5 conversations below
-        // the history button on hover (same pattern as session info popup).
-        this._recentChatsPopup = null;
-        this._recentChats = null; // recent-chats preview module (src/ui/recentChatsPopup.js)
-        this._tokenUpdateTimeout = 0;
-        this._promptScrollFollowIdleId = 0;
-        this._promptScrollHeightIdleId = 0;
-        this._promptCursorScrollId = 0;
-        // Shell-style recall of previously sent prompts via the Up/Down keys.
-        this._promptHistory = [];
-        this._promptHistoryIndex = -1;
-        this._promptDraftBackup = '';
-        this._usage = null;
-        this._pickers = null; // picker module (src/ui/pickers.js)
-        this._bubbles = null; // message-bubble module (src/ui/messageBubble.js)
-        this._render = null; // assistant-render module (src/ui/assistantRender.js)
-        this._headerPetSprite = null;
-        this._headerPetBox = null;
-        this._headerPetFallback = null;
-        this._hasConversationStarted = false;
-        this._welcome = null;
-        this._welcomePanel = null;
-        this._messageList = null;
-        // Monotonically-increasing chat generation. Bumped every time the
-        // message list is rebuilt (new conversation / history switch /
-        // compaction) so in-flight async renders can detect that their
-        // captured bubbles have been destroyed and bail instead of touching
-        // disposed St widgets.
-        this._chatGeneration = 0;
-
+    _buildActorShell() {
         this.actor = new St.Widget({
             style_class: 'katab-shell-overlay',
             reactive: true,
@@ -1713,10 +1757,12 @@ class KatabDialog {
         this._connectSetting('changed::ui-glass-translucent', () => this._applyDialogTheme());
 
         this.actor.connect('key-press-event', (_actor, event) => this._handleKeyPress(event));
+    }
 
-        // Stage-level capture for ESC and click-outside-to-close.
-        // Captured-event fires during the capture phase (before children)
-        // so it always reaches us regardless of focus or reactive state.
+    // Stage-level capture for ESC and click-outside-to-close.
+    // Captured-event fires during the capture phase (before children)
+    // so it always reaches us regardless of focus or reactive state.
+    _installStageCapture() {
         this._onStageCapture = (_actor, event) => {
             if (event.type() === Clutter.EventType.KEY_PRESS) {
                 if (event.get_key_symbol() === Clutter.KEY_Escape) {
@@ -1788,19 +1834,9 @@ class KatabDialog {
             }
             return Clutter.EVENT_PROPAGATE;
         };
+    }
 
-        this._monitorChangedId = Main.layoutManager.connect('monitors-changed', () => {
-            if (this.isOpen) {
-                this._syncGeometry();
-            }
-        });
-        this._syncGeometry();
-
-        this._buildUI();
-
-        // Initialize the header pet sprite after UI is built
-        this._updateHeaderPetSprite();
-
+    _subscribeProviderHealth() {
         this._providerHealthListener = null;
         this._providerPickerHealthListener = null;
         if (this._extension.providerHealthMonitor) {
@@ -5748,6 +5784,7 @@ class KatabDialog {
             style_class: 'katab-tools-gear-btn',
             can_focus: true,
             y_align: Clutter.ActorAlign.CENTER,
+            accessible_name: 'Tools and toggles',
         });
 
         // Wrap the button + badge overlay in a container with BinLayout
@@ -17159,6 +17196,7 @@ const Indicator = GObject.registerClass(
                     can_focus: true,
                     y_align: Clutter.ActorAlign.CENTER,
                     x_align: Clutter.ActorAlign.CENTER,
+                    accessible_name: 'Open chat',
                 });
                 loadBtn.connect('clicked', () => {
                     this.menu.close();
@@ -17176,6 +17214,7 @@ const Indicator = GObject.registerClass(
                     can_focus: true,
                     y_align: Clutter.ActorAlign.CENTER,
                     x_align: Clutter.ActorAlign.CENTER,
+                    accessible_name: 'Delete chat',
                 });
                 // Avoid bubbling the clicked event to the main item
                 deleteBtn.connect('clicked', () => {

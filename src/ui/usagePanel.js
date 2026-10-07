@@ -380,6 +380,7 @@ export class UsagePanel {
             can_focus: !entry.locked,
             reactive: !entry.locked,
             x_expand: true,
+            accessible_name: entry.companion?.name || 'Pet companion',
         });
         const content = new St.BoxLayout({
             vertical: true,
@@ -587,6 +588,7 @@ export class UsagePanel {
                     : 'katab-usage-range-dropdown-item',
                 can_focus: true,
                 reactive: true,
+                accessible_name: range.label,
             });
             const content = new St.BoxLayout({
                 vertical: false,
