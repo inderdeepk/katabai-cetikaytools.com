@@ -9,7 +9,7 @@ GETTEXT_DOMAIN := $(UUID)
 POT_FILE       := po/$(GETTEXT_DOMAIN).pot
 PO_FILES       := $(wildcard po/*.po)
 
-.PHONY: all compile-schemas check lint format format-check test test-verbose test-rag-server sync-rag-server pot langs package install reload logs clean help
+.PHONY: all compile-schemas check audit lint format format-check test test-verbose test-rag-server sync-rag-server pot langs package install reload logs clean help
 
 # Every JS file that must parse as an ES module (checked via node --check).
 JS_CHECK_FILES := extension.js prefs.js $(shell find src tests scripts \( -name '*.js' -o -name '*.mjs' \) 2>/dev/null)
@@ -54,6 +54,15 @@ check:
 	else \
 		echo "[WARN] gjs not found - skipping import smoke"; \
 	fi
+
+## audit          : Run the fidelity audits in scripts/audits (needs full git history)
+audit:
+	@echo "=== Fidelity audits (scripts/audits) ==="
+	@for f in scripts/audits/audit-*.mjs; do \
+		echo "--- $$f ---"; \
+		node $$f || exit 1; \
+	done
+	@echo "[OK] All audits passed"
 
 ## lint           : Run ESLint (requires: npm install)
 lint:

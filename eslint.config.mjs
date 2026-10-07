@@ -66,7 +66,7 @@ export default [
     },
     {
         // Node-only check scripts (not part of the GJS runtime).
-        files: ['scripts/check-css.mjs'],
+        files: ['scripts/check-css.mjs', 'scripts/audits/**/*.js', 'scripts/audits/**/*.mjs'],
         languageOptions: {
             globals: { process: 'readonly' },
         },

@@ -9,6 +9,7 @@ This document covers setting up a development environment, understanding the pro
 - [Environment Setup](#environment-setup)
 - [Project Structure Walkthrough](#project-structure-walkthrough)
 - [Coding Conventions](#coding-conventions)
+- [Fidelity Audits for Refactors](#fidelity-audits-for-refactors)
 - [Adding a New Provider](#adding-a-new-provider)
 - [Adding a New Tool](#adding-a-new-tool)
 - [Adding a New Pet](#adding-a-new-pet)
@@ -251,6 +252,36 @@ async _someAsyncMethod() {
     }
 }
 ```
+
+---
+
+## Fidelity Audits for Refactors
+
+The `scripts/audits/` directory holds **fidelity audits**: scripts that prove a
+past refactor was a pure code move by re-extracting the pre-refactor method
+bodies from git history and flat-comparing them against the current sources
+(transformed by the documented renames). One audit exists for each extraction
+in the maintainability program — see `scripts/audits/README.md` for the table
+and the full technique.
+
+```sh
+make audit                              # all audits, from the repo root
+node scripts/audits/audit-pickers.mjs   # a single audit
+```
+
+Guidelines when you refactor code that has an audit coverage:
+
+- **Run `make audit` after the change.** A `DIFF` points at the exact
+  character where the moved text diverged — investigate before shipping.
+- **Intentional drift** (renamed helpers in comments, newly added
+  `accessible_name` / `_()` wrappers) is allowed with *exact-match* entries in
+  the audit's allowance list — never with broad wildcard regexes.
+- **New refactors get a new audit**: note `HEAD` before the move, then write
+  `scripts/audits/audit-<name>.mjs` against that ref (the README has the
+  template and the known pitfalls). In-place reorganizations use the
+  line-coverage variant (multiset of lines + contiguous-slice checks).
+- Audits **skip** (exit 0 with a notice) on shallow clones, so they are a
+  local gate — run them before commit; CI keeps running `make check`/`test`.
 
 ---
 
