@@ -26,7 +26,11 @@ import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import Soup from 'gi://Soup?version=3.0';
 
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import {
+    Extension,
+    gettext as shellGettext,
+    ngettext as shellNgettext,
+} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -95,6 +99,7 @@ import {
 } from './src/core/toolCallMarkup.js';
 import { HistoryManager } from './src/core/historyManager.js';
 import { splitLinksSection } from './src/shared/pageLinks.js';
+import { gettext as _, initI18n } from './src/shared/i18n.js';
 import { createRequestLifecycle, REQUEST_STATES } from './src/core/requestLifecycle.js';
 import {
     PROVIDER_ACCENT_CLASSES,
@@ -5743,7 +5748,7 @@ class KatabDialog {
         this._promptScrollContent.add_child(this._promptEditor);
 
         this._entryHint = new St.Label({
-            text: 'Ask anything...',
+            text: _('Ask anything...'),
             style_class: 'katab-prompt-hint',
             x_expand: true,
             x_align: Clutter.ActorAlign.START,
@@ -17237,6 +17242,7 @@ const Indicator = GObject.registerClass(
 
 export default class KatabExtension extends Extension {
     enable() {
+        initI18n({ gettext: shellGettext, ngettext: shellNgettext });
         this._currentChatListeners = new Set();
         this._settings = this.getSettings('org.gnome.shell.extensions.katabai');
         TokenUsageManager.prune(this._settings.get_int('token-usage-retention-days'));

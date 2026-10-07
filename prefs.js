@@ -1,6 +1,11 @@
 import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
-import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import {
+    ExtensionPreferences,
+    gettext as shellGettext,
+    ngettext as shellNgettext,
+} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import { initI18n } from './src/shared/i18n.js';
 import { buildToolsPage } from './src/ui/prefs/tools/index.js';
 import { createPrefsContext } from './src/ui/prefs/widgets.js';
 import { buildGeneralPage } from './src/ui/prefs/generalPage.js';
@@ -10,6 +15,7 @@ import { buildSimpleProviderPages } from './src/ui/prefs/providerPages.js';
 
 export default class KatabPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
+        initI18n({ gettext: shellGettext, ngettext: shellNgettext });
         window.search_enabled = true;
         window.add_css_class('katab-prefs-window');
         window.default_width = 740;

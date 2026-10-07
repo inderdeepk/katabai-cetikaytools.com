@@ -7,6 +7,7 @@
 //
 // Shell-only module: imports gi://St + Clutter (excluded from the plain-gjs
 // import smoke test, like src/pets/petSpriteActor.js).
+import { gettext as _ } from '../shared/i18n.js';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
@@ -241,7 +242,7 @@ export class WelcomePanel {
         });
 
         let caption = new St.Label({
-            text: 'Open a page. Ask anything.',
+            text: _('Open a page. Ask anything.'),
             style_class: 'katab-welcome-caption',
             x_align: Clutter.ActorAlign.CENTER,
         });

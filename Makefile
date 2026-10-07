@@ -5,8 +5,11 @@ EXTENSION_DIR  := $(shell pwd)
 UUID           := katabai@cetikaytools.com
 INSTALL_DIR    := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 PACKAGE_NAME   := $(UUID).zip
+GETTEXT_DOMAIN := $(UUID)
+POT_FILE       := po/$(GETTEXT_DOMAIN).pot
+PO_FILES       := $(wildcard po/*.po)
 
-.PHONY: all compile-schemas check lint format format-check test test-verbose test-rag-server sync-rag-server package install reload logs clean help
+.PHONY: all compile-schemas check lint format format-check test test-verbose test-rag-server sync-rag-server pot langs package install reload logs clean help
 
 # Every JS file that must parse as an ES module (checked via node --check).
 JS_CHECK_FILES := extension.js prefs.js $(shell find src tests scripts \( -name '*.js' -o -name '*.mjs' \) 2>/dev/null)
@@ -95,13 +98,32 @@ sync-rag-server:
 	@cp rag-service/server.py $(HOME)/.local/share/katabai/rag-service/server.py
 	@echo "[OK] RAG server synced — restart with: systemctl --user restart katabai-rag"
 
+## pot            : Extract translatable strings into po/$(GETTEXT_DOMAIN).pot
+pot:
+	@mkdir -p po
+	xgettext --language=JavaScript --from-code=UTF-8 --package-name="Katab - AI Assistant" \
+		--keyword=_ --keyword=ngettext:1,2 \
+		-f po/POTFILES.in -o $(POT_FILE)
+	@echo "[OK] POT updated: $(POT_FILE)"
+
+## langs          : Compile po/*.po into locale/<lang>/LC_MESSAGES/<uuid>.mo
+langs:
+	@if [ -z "$(PO_FILES)" ]; then echo "[SKIP] No po/*.po files yet"; exit 0; fi
+	@for po in $(PO_FILES); do \
+		lang=$$(basename $$po .po); \
+		mkdir -p locale/$$lang/LC_MESSAGES; \
+		msgfmt -c -o locale/$$lang/LC_MESSAGES/$(GETTEXT_DOMAIN).mo $$po; \
+		echo "[OK] $$lang -> locale/$$lang/LC_MESSAGES/$(GETTEXT_DOMAIN).mo"; \
+	done
+
 ## package        : Create a distributable .zip for extensions.gnome.org
 package:
 	@rm -f $(PACKAGE_NAME)
+	@locale_arg=""; [ -d locale ] && locale_arg="locale/"; \
 	zip -r $(PACKAGE_NAME) \
 		extension.js prefs.js metadata.json README.md \
-		stylesheet.css prefs.css \
-		schemas/ icons/ sprites/ src/ Documentation/ rag-service/ \
+		stylesheet.css prefs.css $$locale_arg \
+		schemas/ icons/ sprites/ src/ po/ Documentation/ rag-service/ \
 		-x "*.git*" "*.swp" ".vscode/*" "schemas/*~" "*.zip" "*__pycache__*" "*.pyc"
 	@echo "[OK] Package created: $(PACKAGE_NAME)"
 
@@ -124,7 +146,7 @@ logs:
 ## clean          : Remove build artifacts
 clean:
 	rm -f $(PACKAGE_NAME)
-	rm -rf .pytest_cache
+	rm -rf .pytest_cache locale
 	@find rag-service -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 	@echo "[OK] Cleaned"
 

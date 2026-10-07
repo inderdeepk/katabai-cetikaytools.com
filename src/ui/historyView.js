@@ -9,6 +9,7 @@
 //
 // Shell-only module: imports gi://St + Clutter (excluded from the plain-gjs
 // import smoke test, like src/pets/petSpriteActor.js).
+import { gettext as _ } from '../shared/i18n.js';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
@@ -221,8 +222,9 @@ export class HistoryView {
     // suggested pair (the user reviews the fields before pressing Save).
 
     buildEditorPanel() {
-        const { picker, listBox, closePickerBtn } =
-            this._host.buildPickerShell('Edit Conversation');
+        const { picker, listBox, closePickerBtn } = this._host.buildPickerShell(
+            _('Edit Conversation'),
+        );
         this.editor = picker;
         closePickerBtn.connect('clicked', () => this.closeEditor());
 

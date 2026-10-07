@@ -9,6 +9,7 @@
 //
 // Shell-only module: imports gi://St + Clutter (excluded from the plain-gjs
 // import smoke test, like src/pets/petSpriteActor.js).
+import { gettext as _ } from '../shared/i18n.js';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
@@ -55,8 +56,9 @@ export class UsagePanel {
         this._providerModelTab = 'provider';
         this._companionSprite = null;
 
-        const { picker, listBox, closePickerBtn, pickerTitle } =
-            this._host.buildPickerShell('AI Token Breakdown');
+        const { picker, listBox, closePickerBtn, pickerTitle } = this._host.buildPickerShell(
+            _('AI Token Breakdown'),
+        );
         picker.add_style_class_name('katab-usage-panel');
         this._listBox = listBox;
         this._title = pickerTitle;
@@ -140,7 +142,7 @@ export class UsagePanel {
         }
 
         // ── Overview tab ──────────────────────────────────────────────
-        this._setTitle('AI Token Breakdown');
+        this._setTitle(_('AI Token Breakdown'));
 
         if (!this._rangeKey || !this._isValidRange(this._rangeKey)) {
             this._rangeKey = this.defaultRange();

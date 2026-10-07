@@ -166,6 +166,25 @@ npm run format:check  # verify (CI gate)
 
 See [TESTING.md](Documentation/Technical/TESTING.md) for detailed testing procedures.
 
+## Translations
+
+Katab uses standard GNOME gettext conventions. Translatable strings are wrapped
+with `_()` / `ngettext()` imported from `src/shared/i18n.js` — a tiny bridge
+that both entry points wire to the shell's own gettext functions
+(`enable()` in `extension.js`, `fillPreferencesWindow()` in `prefs.js`). Until a
+language is installed the bridge passes strings through unchanged.
+
+- **Refresh the template** after adding/removing wrapped strings: `make pot`
+  (updates `po/katabai@cetikaytools.com.pot`; sources are listed in
+  `po/POTFILES.in` — keep it in sync with new files).
+- **Start a new language**: `msginit -i po/katabai@cetikaytools.com.pot -l xx -o po/xx.po`
+  (or copy an existing `.po`), translate, then `make langs` to compile
+  `locale/xx/LC_MESSAGES/katabai@cetikaytools.com.mo`.
+- **Never commit** compiled `.mo` files or the generated `locale/` tree — both
+  are gitignored and rebuilt by `make langs`. Commit `.po` sources only.
+- Test a language with `LANG=xx.UTF-8` plus a shell reload (Alt+F2 → r) and
+  `gnome-extensions prefs katabai@cetikaytools.com`.
+
 ## Release Checklist
 
 For maintainers publishing a release:

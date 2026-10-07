@@ -7,6 +7,7 @@ import {
     TokenUsageManager,
 } from '../../usage/tokenUsageManager.js';
 import { getPetDefinition, parsePetForm, PET_SELECTION_MODES } from '../../pets/petCollection.js';
+import { gettext as _ } from '../../shared/i18n.js';
 
 export function buildGeneralPage(ctx) {
     const {
@@ -27,7 +28,7 @@ export function buildGeneralPage(ctx) {
     } = ctx;
 
     const page = createPreferencesPage({
-        title: 'General',
+        title: _('General'),
         icon_name: 'katab-logo',
     });
     window.add(page);

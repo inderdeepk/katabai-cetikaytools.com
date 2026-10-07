@@ -16,6 +16,7 @@ import Pango from 'gi://Pango';
 
 import { DEEPSEEK_MODELS, PROVIDER_LABELS } from '../providers/catalog.js';
 import { loadPresets, deletePreset } from '../usage/presetManager.js';
+import { gettext as _ } from '../shared/i18n.js';
 
 /**
  * Owns the three picker panels (presets / providers / DeepSeek models).
@@ -194,7 +195,7 @@ export class Pickers {
         picker.add_child(pickerHeader);
 
         const pickerTitle = new St.Label({
-            text: 'Ollama Presets',
+            text: _('Ollama Presets'),
             style_class: 'katab-preset-picker-title',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
@@ -366,7 +367,7 @@ export class Pickers {
 
     // ── Provider (engine) picker ─────────────────────────────────────────────
     buildProviderPicker() {
-        const { picker, listBox, closePickerBtn } = this.buildShell('Choose Engine');
+        const { picker, listBox, closePickerBtn } = this.buildShell(_('Choose Engine'));
         this._providerListBox = listBox;
         closePickerBtn.connect('clicked', () => this._host.showChatView());
         this._providerPicker = picker;
@@ -432,7 +433,7 @@ export class Pickers {
 
     // ── DeepSeek model picker (Flash / Pro) ──────────────────────────────────
     buildDeepseekModelPicker() {
-        const { picker, listBox, closePickerBtn } = this.buildShell('DeepSeek Model');
+        const { picker, listBox, closePickerBtn } = this.buildShell(_('DeepSeek Model'));
         this._deepseekListBox = listBox;
         closePickerBtn.connect('clicked', () => this._host.showChatView());
         this._deepseekModelPicker = picker;

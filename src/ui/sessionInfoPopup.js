@@ -10,6 +10,7 @@
 //
 // Shell-only module: imports gi://St + Clutter (excluded from the plain-gjs
 // import smoke test, like src/pets/petSpriteActor.js).
+import { gettext as _ } from '../shared/i18n.js';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
@@ -276,7 +277,7 @@ export class SessionInfoPopup {
             style_class: 'katab-session-info-header',
         });
         const title = new St.Label({
-            text: 'Session Info',
+            text: _('Session Info'),
             style_class: 'katab-session-info-title',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
