@@ -17,6 +17,7 @@ import {
     settingsMatchPreset,
     updatePresetFromSettings,
 } from '../../usage/presetManager.js';
+import { gettext as _, format } from '../../shared/i18n.js';
 
 export function buildOllamaPage(ctx) {
     const {
@@ -111,38 +112,39 @@ export function buildOllamaPage(ctx) {
     };
 
     const presetOptions = [
-        { label: 'Balanced Assistant', value: 'balanced' },
-        { label: 'Deterministic Programming', value: 'code' },
-        { label: 'Factual Query / RAG', value: 'factual' },
-        { label: 'Creative Ideation', value: 'creative' },
-        { label: 'JSON Extraction', value: 'json' },
-        { label: 'Custom', value: 'custom' },
+        { label: _('Balanced Assistant'), value: 'balanced' },
+        { label: _('Deterministic Programming'), value: 'code' },
+        { label: _('Factual Query / RAG'), value: 'factual' },
+        { label: _('Creative Ideation'), value: 'creative' },
+        { label: _('JSON Extraction'), value: 'json' },
+        { label: _('Custom'), value: 'custom' },
     ];
 
     // --- Ollama Page ---
     const ollamaPage = createProviderPage(
         'ollama',
-        'Local inference with fine-grained hardware, memory, and sampling controls.',
+        _('Local inference with fine-grained hardware, memory, and sampling controls.'),
     );
 
     // ── Model Presets section ──────────────────────────────────────────────
     const modelPresetsGroup = createPreferencesGroup({
-        title: 'Model Presets',
-        description:
+        title: _('Model Presets'),
+        description: _(
             'Save named snapshots of all current Ollama settings (model, context, sampling, etc.). Load a preset to instantly switch configurations.',
+        ),
     });
     ollamaPage.add(modelPresetsGroup);
 
     // Entry row for the new preset name
     const newPresetNameRow = addCssClasses(
         new Adw.EntryRow({
-            title: 'New Preset Name',
+            title: _('New Preset Name'),
         }),
         'katab-prefs-row',
     );
     const saveCurrentBtn = addCssClasses(
         new Gtk.Button({
-            label: 'Save Current Settings',
+            label: _('Save Current Settings'),
             valign: Gtk.Align.CENTER,
         }),
         'katab-prefs-button',
@@ -256,9 +258,10 @@ export function buildOllamaPage(ctx) {
         if (presets.length === 0) {
             const emptyRow = stylePreferenceRow(
                 new Adw.ActionRow({
-                    title: 'No presets saved yet',
-                    subtitle:
+                    title: _('No presets saved yet'),
+                    subtitle: _(
                         'Fill in a name above and click "Save Current Settings" to create your first preset.',
+                    ),
                     activatable: false,
                 }),
                 'katab-prefs-info-row',
@@ -271,9 +274,12 @@ export function buildOllamaPage(ctx) {
         if (pendingPreset) {
             const pendingRow = stylePreferenceRow(
                 new Adw.ActionRow({
-                    title: `${pendingPreset.name || 'Unnamed Preset'} has unsaved changes`,
-                    subtitle:
+                    title: format(_('{name} has unsaved changes'), {
+                        name: pendingPreset.name || _('Unnamed Preset'),
+                    }),
+                    subtitle: _(
                         'Save changes to update this preset, or discard changes to restore its saved values.',
+                    ),
                     activatable: false,
                 }),
                 'katab-prefs-row',
@@ -291,7 +297,7 @@ export function buildOllamaPage(ctx) {
 
             const saveChangesBtn = addCssClasses(
                 new Gtk.Button({
-                    label: 'Save Changes',
+                    label: _('Save Changes'),
                     valign: Gtk.Align.CENTER,
                 }),
                 'katab-prefs-button',
@@ -310,7 +316,7 @@ export function buildOllamaPage(ctx) {
 
             const discardChangesBtn = addCssClasses(
                 new Gtk.Button({
-                    label: 'Discard Changes',
+                    label: _('Discard Changes'),
                     valign: Gtk.Align.CENTER,
                 }),
                 'katab-prefs-button',
@@ -336,16 +342,20 @@ export function buildOllamaPage(ctx) {
                 preset.id === activePresetId &&
                 (applyingSavedPreset || settingsMatchPreset(settings, preset));
             const modelName = preset['model'] || '—';
-            const ctx = preset['num-ctx'] ? `${preset['num-ctx']} ctx` : '';
+            const ctx = preset['num-ctx']
+                ? format(_('{value} ctx'), { value: preset['num-ctx'] })
+                : '';
             const temp =
                 preset['temperature'] !== undefined
-                    ? `temp ${Number(preset['temperature']).toFixed(2)}`
+                    ? format(_('temp {value}'), {
+                          value: Number(preset['temperature']).toFixed(2),
+                      })
                     : '';
             const subtitleParts = [modelName, ctx, temp].filter(Boolean);
 
             const presetRow = stylePreferenceRow(
                 new Adw.ActionRow({
-                    title: preset.name || 'Unnamed Preset',
+                    title: preset.name || _('Unnamed Preset'),
                     subtitle: subtitleParts.join('  ·  '),
                     activatable: false,
                 }),
@@ -364,7 +374,7 @@ export function buildOllamaPage(ctx) {
 
             const applyBtn = addCssClasses(
                 new Gtk.Button({
-                    label: isActive ? 'Active' : 'Load',
+                    label: isActive ? _('Active') : _('Load'),
                     valign: Gtk.Align.CENTER,
                     sensitive: !isActive && !hasPendingPresetChanges,
                 }),
@@ -383,7 +393,7 @@ export function buildOllamaPage(ctx) {
                 new Gtk.Button({
                     icon_name: 'edit-delete-symbolic',
                     valign: Gtk.Align.CENTER,
-                    tooltip_text: 'Delete this preset',
+                    tooltip_text: _('Delete this preset'),
                 }),
                 'katab-prefs-button',
                 'destructive-action',
@@ -433,15 +443,18 @@ export function buildOllamaPage(ctx) {
     // ─────────────────────────────────────────────────────────────────────
 
     const presetGroup = createPreferencesGroup({
-        title: 'Workload Preset',
-        description:
+        title: _('Workload Preset'),
+        description: _(
             'Start from recommended Ollama settings for the kind of output you want Katab to produce.',
+        ),
     });
     ollamaPage.add(presetGroup);
 
     const presetRow = createChoiceRow(
-        'Workload Preset',
-        'Applies recommended settings for desktop assistant chat, coding, factual answers, creativity, or JSON extraction.',
+        _('Workload Preset'),
+        _(
+            'Applies recommended settings for desktop assistant chat, coding, factual answers, creativity, or JSON extraction.',
+        ),
         presetGroup,
     );
     let syncingPresetRow = false;
@@ -519,60 +532,70 @@ export function buildOllamaPage(ctx) {
     syncPresetRow();
 
     // Connection & Model
-    const connectionGroup = createPreferencesGroup({ title: 'Connection &amp; Request Shape' });
+    const connectionGroup = createPreferencesGroup({ title: _('Connection &amp; Request Shape') });
     createStringRow(
-        'Base URL',
-        'The HTTP address where Ollama is hosted.',
+        _('Base URL'),
+        _('The HTTP address where Ollama is hosted.'),
         'ollama-url',
         connectionGroup,
     );
     createStringRow(
-        'Model',
-        'The exact Ollama model tag to load for this provider.',
+        _('Model'),
+        _('The exact Ollama model tag to load for this provider.'),
         'ollama-model',
         connectionGroup,
     );
 
     const formatRow = createChoiceRow(
-        'Response Format',
-        'Keep standard text for chat. Switch to JSON mode when another app needs machine-readable output.',
+        _('Response Format'),
+        _(
+            'Keep standard text for chat. Switch to JSON mode when another app needs machine-readable output.',
+        ),
         connectionGroup,
     );
     bindChoiceRow(
         formatRow,
         'ollama-format',
         [
-            { label: 'Standard Text', value: '' },
-            { label: 'JSON Mode', value: 'json' },
+            { label: _('Standard Text'), value: '' },
+            { label: _('JSON Mode'), value: 'json' },
         ],
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
-        (value) => (value === '' ? 'Standard Text' : `Custom (${value})`),
+        (value) => (value === '' ? _('Standard Text') : format(_('Custom ({value})'), { value })),
     );
 
     createBooleanRow(
-        'Raw Prompt Mode',
-        'Bypass Ollama chat templating. Leave this off unless your prompt is already fully structured.',
+        _('Raw Prompt Mode'),
+        _(
+            'Bypass Ollama chat templating. Leave this off unless your prompt is already fully structured.',
+        ),
         'ollama-raw',
         connectionGroup,
     );
     createBooleanRow(
-        'Thinking Mode',
-        'Enable reasoning traces for models that support hybrid-thinking (Qwen3, DeepSeek-R1, etc.). When off, the model answers directly without a thinking step.',
+        _('Thinking Mode'),
+        _(
+            'Enable reasoning traces for models that support hybrid-thinking (Qwen3, DeepSeek-R1, etc.). When off, the model answers directly without a thinking step.',
+        ),
         'ollama-think',
         connectionGroup,
     );
     createStringRow(
-        'Keep Alive',
-        'How long to keep the model loaded between requests. Must include a time unit (s, m, h), e.g. 5m, 0, or 999999h for indefinite.',
+        _('Keep Alive'),
+        _(
+            'How long to keep the model loaded between requests. Must include a time unit (s, m, h), e.g. 5m, 0, or 999999h for indefinite.',
+        ),
         'ollama-keep-alive',
         connectionGroup,
     );
 
-    const contextGroup = createPreferencesGroup({ title: 'Context Limits' });
+    const contextGroup = createPreferencesGroup({ title: _('Context Limits') });
     const ctxRow = createChoiceRow(
-        'Context Window Size',
-        'Choose a standard context size. If a custom value is already saved, it stays visible instead of snapping back to 4096.',
+        _('Context Window Size'),
+        _(
+            'Choose a standard context size. If a custom value is already saved, it stays visible instead of snapping back to 4096.',
+        ),
         contextGroup,
     );
     const ctxValues = [
@@ -594,7 +617,7 @@ export function buildOllamaPage(ctx) {
 
         if (!values.includes(currentCtx) && currentCtx > 0) {
             values.push(currentCtx);
-            labels.push(`${fmtCtx(currentCtx)} (custom)`);
+            labels.push(format(_('{value} (custom)'), { value: fmtCtx(currentCtx) }));
         }
 
         syncingContextRow = true;
@@ -617,8 +640,8 @@ export function buildOllamaPage(ctx) {
     });
 
     createIntRow(
-        'Predict Tokens',
-        'Maximum number of tokens Ollama may generate for a reply. Use -1 for no hard cap.',
+        _('Predict Tokens'),
+        _('Maximum number of tokens Ollama may generate for a reply. Use -1 for no hard cap.'),
         'ollama-num-predict',
         contextGroup,
         -1,
@@ -626,8 +649,10 @@ export function buildOllamaPage(ctx) {
         100,
     );
     createIntRow(
-        'Keep Tokens',
-        'Preserve this many leading tokens when the context window rolls over so core instructions stay anchored.',
+        _('Keep Tokens'),
+        _(
+            'Preserve this many leading tokens when the context window rolls over so core instructions stay anchored.',
+        ),
         'ollama-num-keep',
         contextGroup,
         0,
@@ -637,9 +662,10 @@ export function buildOllamaPage(ctx) {
     ollamaPage.add(connectionGroup);
 
     const ollamaPromptGroup = createPreferencesGroup({
-        title: 'System Prompt',
-        description:
+        title: _('System Prompt'),
+        description: _(
             'Katab prepends this system prompt to Ollama requests and always appends the current date so the model knows what "today" is. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey. This value is captured by presets.',
+        ),
     });
     createMultilineStringRow('', '', 'ollama-system-prompt', ollamaPromptGroup, 160);
     ollamaPage.add(ollamaPromptGroup);
@@ -648,24 +674,28 @@ export function buildOllamaPage(ctx) {
 
     // Hardware & Memory
     const hardwareExpander = createExpanderRow({
-        title: 'Advanced Hardware Settings',
-        subtitle: 'Control how aggressively Ollama uses RAM, CPU, and GPU resources.',
+        title: _('Advanced Hardware Settings'),
+        subtitle: _('Control how aggressively Ollama uses RAM, CPU, and GPU resources.'),
     });
     createBooleanRow(
-        'Use MMAP',
-        'Map model weights through virtual memory so the kernel can page them in on demand.',
+        _('Use MMAP'),
+        _('Map model weights through virtual memory so the kernel can page them in on demand.'),
         'ollama-use-mmap',
         hardwareExpander,
     );
     createBooleanRow(
-        'Use MLOCK',
-        'Lock model pages in RAM to avoid swap latency. Leave this off unless you are certain your system has headroom.',
+        _('Use MLOCK'),
+        _(
+            'Lock model pages in RAM to avoid swap latency. Leave this off unless you are certain your system has headroom.',
+        ),
         'ollama-use-mlock',
         hardwareExpander,
     );
     createIntRow(
-        'GPU Layers',
-        'Number of transformer layers to offload to the GPU. Use -1 for all layers or 0 for CPU-only runs.',
+        _('GPU Layers'),
+        _(
+            'Number of transformer layers to offload to the GPU. Use -1 for all layers or 0 for CPU-only runs.',
+        ),
         'ollama-num-gpu',
         hardwareExpander,
         -1,
@@ -673,8 +703,10 @@ export function buildOllamaPage(ctx) {
         1,
     );
     createIntRow(
-        'CPU Threads',
-        'Worker threads for inference. Staying near your physical core count usually gives the best latency.',
+        _('CPU Threads'),
+        _(
+            'Worker threads for inference. Staying near your physical core count usually gives the best latency.',
+        ),
         'ollama-num-thread',
         hardwareExpander,
         1,
@@ -686,11 +718,13 @@ export function buildOllamaPage(ctx) {
     ollamaPage.add(hardwareGroup);
 
     // Generation Options
-    const generationGroup = createPreferencesGroup({ title: 'Model Behavior &amp; Sampling' });
+    const generationGroup = createPreferencesGroup({ title: _('Model Behavior &amp; Sampling') });
 
     const tempRow = createDoubleRow(
-        'Temperature',
-        'Controls randomness. Lower values stay focused and predictable; higher values explore more unusual tokens.',
+        _('Temperature'),
+        _(
+            'Controls randomness. Lower values stay focused and predictable; higher values explore more unusual tokens.',
+        ),
         'ollama-temperature',
         generationGroup,
         0.0,
@@ -699,8 +733,8 @@ export function buildOllamaPage(ctx) {
         2,
     );
     const topKRow = createIntRow(
-        'Top-K',
-        'Keep only the K most likely next tokens before sampling. Lower values are stricter.',
+        _('Top-K'),
+        _('Keep only the K most likely next tokens before sampling. Lower values are stricter.'),
         'ollama-top-k',
         generationGroup,
         0,
@@ -708,8 +742,10 @@ export function buildOllamaPage(ctx) {
         1,
     );
     const topPRow = createDoubleRow(
-        'Top-P',
-        'Nucleus sampling. Keeps the smallest token set whose combined probability reaches this value.',
+        _('Top-P'),
+        _(
+            'Nucleus sampling. Keeps the smallest token set whose combined probability reaches this value.',
+        ),
         'ollama-top-p',
         generationGroup,
         0.0,
@@ -718,8 +754,10 @@ export function buildOllamaPage(ctx) {
         2,
     );
     const minPRow = createDoubleRow(
-        'Min-P',
-        'Alternative to Top-P. Filters out tokens that fall too far below the most likely option.',
+        _('Min-P'),
+        _(
+            'Alternative to Top-P. Filters out tokens that fall too far below the most likely option.',
+        ),
         'ollama-min-p',
         generationGroup,
         0.0,
@@ -729,30 +767,35 @@ export function buildOllamaPage(ctx) {
     );
 
     const mirostatExpander = createExpanderRow({
-        title: 'Dynamic Entropy (Mirostat)',
-        subtitle:
+        title: _('Dynamic Entropy (Mirostat)'),
+        subtitle: _(
             'Let Ollama adjust sampling on the fly to keep responses near a target creativity level.',
+        ),
     });
     const mirostatRow = createChoiceRow(
-        'Mirostat Mode',
-        'When enabled, Ollama dynamically manages entropy and the static temperature and top-p controls become advisory only.',
+        _('Mirostat Mode'),
+        _(
+            'When enabled, Ollama dynamically manages entropy and the static temperature and top-p controls become advisory only.',
+        ),
         mirostatExpander,
     );
     bindChoiceRow(
         mirostatRow,
         'ollama-mirostat',
         [
-            { label: 'Disabled', value: 0 },
-            { label: 'Mirostat 1.0', value: 1 },
-            { label: 'Mirostat 2.0', value: 2 },
+            { label: _('Disabled'), value: 0 },
+            { label: _('Mirostat 1.0'), value: 1 },
+            { label: _('Mirostat 2.0'), value: 2 },
         ],
         settings.get_int.bind(settings),
         settings.set_int.bind(settings),
-        (value) => `Custom (${value})`,
+        (value) => format(_('Custom ({value})'), { value }),
     );
     const mirostatTauRow = createDoubleRow(
-        'Target Entropy (tau)',
-        'Higher values allow more surprise. Lower values keep text tighter and more predictable.',
+        _('Target Entropy (tau)'),
+        _(
+            'Higher values allow more surprise. Lower values keep text tighter and more predictable.',
+        ),
         'ollama-mirostat-tau',
         mirostatExpander,
         0.0,
@@ -761,8 +804,8 @@ export function buildOllamaPage(ctx) {
         2,
     );
     const mirostatEtaRow = createDoubleRow(
-        'Learning Rate (eta)',
-        'How aggressively Mirostat corrects drift from the target entropy.',
+        _('Learning Rate (eta)'),
+        _('How aggressively Mirostat corrects drift from the target entropy.'),
         'ollama-mirostat-eta',
         mirostatExpander,
         0.0,
@@ -787,12 +830,14 @@ export function buildOllamaPage(ctx) {
     generationGroup.add(mirostatExpander);
 
     const advancedSamplingExpander = createExpanderRow({
-        title: 'Advanced Statistical Sampling',
-        subtitle: 'Extra distribution-shaping controls for power users.',
+        title: _('Advanced Statistical Sampling'),
+        subtitle: _('Extra distribution-shaping controls for power users.'),
     });
     createDoubleRow(
-        'Tail Free Sampling (tfs_z)',
-        'Cuts off the low-value tail of the distribution where choices stop being meaningfully distinct. Set 1.0 to disable it.',
+        _('Tail Free Sampling (tfs_z)'),
+        _(
+            'Cuts off the low-value tail of the distribution where choices stop being meaningfully distinct. Set 1.0 to disable it.',
+        ),
         'ollama-tfs-z',
         advancedSamplingExpander,
         0.0,
@@ -803,12 +848,16 @@ export function buildOllamaPage(ctx) {
     generationGroup.add(advancedSamplingExpander);
 
     const loopMitigationExpander = createExpanderRow({
-        title: 'Degeneration and Loop Mitigation',
-        subtitle: 'Penalize repetition when the model starts circling the same words or phrases.',
+        title: _('Degeneration and Loop Mitigation'),
+        subtitle: _(
+            'Penalize repetition when the model starts circling the same words or phrases.',
+        ),
     });
     createIntRow(
-        'Repeat Last N',
-        'How far back Ollama should look for repetition. Use -1 to scan the full active context.',
+        _('Repeat Last N'),
+        _(
+            'How far back Ollama should look for repetition. Use -1 to scan the full active context.',
+        ),
         'ollama-repeat-last-n',
         loopMitigationExpander,
         -1,
@@ -816,8 +865,10 @@ export function buildOllamaPage(ctx) {
         64,
     );
     createDoubleRow(
-        'Repeat Penalty',
-        'Multiplicative repetition penalty. Keep this near 1.0 for code and raise it gently for chat if loops appear.',
+        _('Repeat Penalty'),
+        _(
+            'Multiplicative repetition penalty. Keep this near 1.0 for code and raise it gently for chat if loops appear.',
+        ),
         'ollama-repeat-penalty',
         loopMitigationExpander,
         1.0,
@@ -826,8 +877,8 @@ export function buildOllamaPage(ctx) {
         2,
     );
     createDoubleRow(
-        'Presence Penalty',
-        'Encourages fresh vocabulary by penalizing any token that has appeared at least once.',
+        _('Presence Penalty'),
+        _('Encourages fresh vocabulary by penalizing any token that has appeared at least once.'),
         'ollama-presence-penalty',
         loopMitigationExpander,
         0.0,
@@ -836,8 +887,8 @@ export function buildOllamaPage(ctx) {
         2,
     );
     createDoubleRow(
-        'Frequency Penalty',
-        'Penalizes tokens in proportion to how often they have already appeared.',
+        _('Frequency Penalty'),
+        _('Penalizes tokens in proportion to how often they have already appeared.'),
         'ollama-frequency-penalty',
         loopMitigationExpander,
         0.0,

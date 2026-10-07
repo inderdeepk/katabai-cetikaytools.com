@@ -17,6 +17,7 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 
 import { PROVIDER_DETAILS } from '../../providers/catalog.js';
+import { gettext as _, format } from '../../shared/i18n.js';
 
 export function createPrefsContext({ settings, window, extensionPath }) {
     const providerDetails = PROVIDER_DETAILS;
@@ -142,7 +143,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
             })
             .filter(Boolean);
 
-        return labels.join(' / ') || 'Disabled';
+        return labels.join(' / ') || _('Disabled');
     };
 
     const isShortcutKeyvalForbidden = (keyval) => {
@@ -319,7 +320,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         );
         const badgeLabel = addCssClasses(
             new Gtk.Label({
-                label: 'Active',
+                label: _('Active'),
                 valign: Gtk.Align.CENTER,
             }),
             'katab-prefs-provider-badge-label',
@@ -337,7 +338,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         'katab-prefs-status-install',
     ];
 
-    const createStatusBadge = (label = 'Checking') =>
+    const createStatusBadge = (label = _('Checking')) =>
         addCssClasses(
             new Gtk.Label({
                 label,
@@ -490,7 +491,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         choices,
         getter,
         setter,
-        formatUnknown = (value) => `Custom (${value})`,
+        formatUnknown = (value) => format(_('Custom ({value})'), { value }),
     ) => {
         let syncing = false;
 
@@ -782,7 +783,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         shortcutButton.connect('clicked', () => {
             shortcutCaptureState.active = true;
             shortcutCaptureState.button = shortcutButton;
-            shortcutButton.set_label('Press shortcut...');
+            shortcutButton.set_label(_('Press shortcut...'));
         });
         buttonBox.append(shortcutButton);
 
@@ -790,7 +791,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
             new Gtk.Button({
                 icon_name: 'edit-clear-symbolic',
                 valign: Gtk.Align.CENTER,
-                tooltip_text: 'Clear shortcut',
+                tooltip_text: _('Clear shortcut'),
             }),
             'katab-prefs-button',
             'katab-prefs-clear-button',
@@ -825,14 +826,14 @@ export function createPrefsContext({ settings, window, extensionPath }) {
             new Gtk.Button({
                 icon_name: 'go-previous-symbolic',
                 valign: Gtk.Align.CENTER,
-                tooltip_text: 'Back to Tools',
+                tooltip_text: _('Back to Tools'),
             }),
             'katab-prefs-button',
             'katab-prefs-tool-back-button',
         );
         const backRow = stylePreferenceRow(
             new Adw.ActionRow({
-                title: 'Back to Tools',
+                title: _('Back to Tools'),
                 subtitle: subpageTitle,
                 activatable: true,
             }),

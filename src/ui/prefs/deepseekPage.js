@@ -5,6 +5,8 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import Soup from 'gi://Soup?version=3.0';
 
+import { gettext as _, format } from '../../shared/i18n.js';
+
 export function buildDeepSeekPage(ctx) {
     const {
         settings,
@@ -26,54 +28,64 @@ export function buildDeepSeekPage(ctx) {
     // --- DeepSeek Settings ---
     const deepseekPage = createProviderPage('deepseek');
 
-    const deepseekConnectionGroup = createPreferencesGroup({ title: 'Connection &amp; Model' });
+    const deepseekConnectionGroup = createPreferencesGroup({ title: _('Connection &amp; Model') });
     createStringRow(
-        'Base URL',
-        'The DeepSeek API endpoint. Change only when routing through a compatible proxy.',
+        _('Base URL'),
+        _('The DeepSeek API endpoint. Change only when routing through a compatible proxy.'),
         'deepseek-url',
         deepseekConnectionGroup,
     );
     createStringRow(
-        'API Key',
-        'Enter your DeepSeek API key. Ensure your account holds a positive prepaid balance — the API operates exclusively on a pre-funded model.',
+        _('API Key'),
+        _(
+            'Enter your DeepSeek API key. Ensure your account holds a positive prepaid balance — the API operates exclusively on a pre-funded model.',
+        ),
         'deepseek-api-key',
         deepseekConnectionGroup,
         true,
     );
     createStringRow(
-        'Model',
-        'Use deepseek-flash (V4.1) for general tasks, rapid coding, and image input, or deepseek-v4-pro for complex reasoning and multi-step workflows.',
+        _('Model'),
+        _(
+            'Use deepseek-flash (V4.1) for general tasks, rapid coding, and image input, or deepseek-v4-pro for complex reasoning and multi-step workflows.',
+        ),
         'deepseek-model',
         deepseekConnectionGroup,
     );
     deepseekPage.add(deepseekConnectionGroup);
 
     const deepseekPromptGroup = createPreferencesGroup({
-        title: 'System Prompt',
-        description:
+        title: _('System Prompt'),
+        description: _(
             'Katab prepends this system prompt to DeepSeek requests. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey.',
+        ),
     });
     createMultilineStringRow('', '', 'deepseek-system-prompt', deepseekPromptGroup, 160);
     deepseekPage.add(deepseekPromptGroup);
 
     const deepseekReasoningGroup = createPreferencesGroup({
-        title: 'Reasoning',
-        description:
+        title: _('Reasoning'),
+        description: _(
             'DeepSeek can perform extended chain-of-thought reasoning before responding. Thinking content is shown in a collapsible panel in chat.',
+        ),
     });
 
     createBooleanRow(
-        'Thinking Mode',
-        'Enable extended reasoning. Increases response time but significantly improves quality on complex tasks.',
+        _('Thinking Mode'),
+        _(
+            'Enable extended reasoning. Increases response time but significantly improves quality on complex tasks.',
+        ),
         'deepseek-thinking-enabled',
         deepseekReasoningGroup,
     );
 
     const effortValues = ['high', 'max'];
-    const effortLabels = ['High (balanced speed and depth)', 'Max (maximum reasoning depth)'];
+    const effortLabels = [_('High (balanced speed and depth)'), _('Max (maximum reasoning depth)')];
     const effortRow = createChoiceRow(
-        'Reasoning Effort',
-        'Computational budget for the thinking phase. ‘High’ is the recommended default; ‘Max’ allocates the deepest analysis.',
+        _('Reasoning Effort'),
+        _(
+            'Computational budget for the thinking phase. ‘High’ is the recommended default; ‘Max’ allocates the deepest analysis.',
+        ),
         deepseekReasoningGroup,
     );
     setStringList(effortRow, effortLabels);
@@ -109,20 +121,23 @@ export function buildDeepSeekPage(ctx) {
     // provider, Katab routes them through a separately-configured vision
     // model (local Ollama or any OpenAI-compatible endpoint).
     const deepseekVisionGroup = createPreferencesGroup({
-        title: 'Image Support (Vision Model)',
-        description:
+        title: _('Image Support (Vision Model)'),
+        description: _(
             'deepseek-flash (V4.1) handles images natively — no setup needed. This section only applies to deepseek-v4-pro, which cannot see images: Katab analyzes attached images with the vision model below, then passes the analysis to Pro, which writes the reply. Text-only DeepSeek models (pro) cannot be used here as the vision model.',
+        ),
     });
 
     // Routing mode: preprocess (default) vs direct.
     const visionModeValues = ['preprocess', 'direct'];
     const visionModeLabels = [
-        'Describe images, then DeepSeek writes the answer',
-        'Route the whole request to the vision model',
+        _('Describe images, then DeepSeek writes the answer'),
+        _('Route the whole request to the vision model'),
     ];
     const visionModeRow = createChoiceRow(
-        'Routing Mode',
-        'In the default mode the vision model describes the image(s) and DeepSeek writes the final answer. In direct mode the whole request is sent to the vision model, which replies directly (no tools or thinking).',
+        _('Routing Mode'),
+        _(
+            'In the default mode the vision model describes the image(s) and DeepSeek writes the final answer. In direct mode the whole request is sent to the vision model, which replies directly (no tools or thinking).',
+        ),
         deepseekVisionGroup,
     );
     setStringList(visionModeRow, visionModeLabels);
@@ -143,10 +158,12 @@ export function buildDeepSeekPage(ctx) {
 
     // Backend selector: off / ollama / openai.
     const visionBackendValues = ['', 'ollama', 'openai'];
-    const visionBackendLabels = ['Disabled', 'Ollama (local)', 'OpenAI-compatible'];
+    const visionBackendLabels = [_('Disabled'), _('Ollama (local)'), _('OpenAI-compatible')];
     const visionBackendRow = createChoiceRow(
-        'Vision Backend',
-        'Ollama reuses your existing Ollama URL, sampling settings (including loaded presets), and installed models. OpenAI-compatible uses any vision-capable endpoint with a URL and optional API key.',
+        _('Vision Backend'),
+        _(
+            'Ollama reuses your existing Ollama URL, sampling settings (including loaded presets), and installed models. OpenAI-compatible uses any vision-capable endpoint with a URL and optional API key.',
+        ),
         deepseekVisionGroup,
     );
     setStringList(visionBackendRow, visionBackendLabels);
@@ -167,9 +184,9 @@ export function buildDeepSeekPage(ctx) {
 
     // "Pick installed Ollama model" helper (Ollama backend only).
     const visionOllamaPickerRow = createButtonRow(
-        'Installed Ollama Models',
-        'Query your Ollama instance for locally installed models and pick a vision-capable one.',
-        'Pick Model…',
+        _('Installed Ollama Models'),
+        _('Query your Ollama instance for locally installed models and pick a vision-capable one.'),
+        _('Pick Model…'),
         () => {
             const ollamaUrl = (settings.get_string('ollama-url') || '').replace(/\/+$/, '');
             if (!ollamaUrl) {
@@ -178,8 +195,8 @@ export function buildDeepSeekPage(ctx) {
                     modal: true,
                     message_type: Gtk.MessageType.ERROR,
                     buttons: Gtk.ButtonsType.CLOSE,
-                    text: 'No Ollama URL configured',
-                    secondary_text: 'Set the Ollama Base URL on the Ollama settings tab first.',
+                    text: _('No Ollama URL configured'),
+                    secondary_text: _('Set the Ollama Base URL on the Ollama settings tab first.'),
                 });
                 dlg.connect('response', () => dlg.destroy());
                 dlg.present();
@@ -192,12 +209,12 @@ export function buildDeepSeekPage(ctx) {
             message.request_headers.append('Accept', 'application/json');
             const btn = visionOllamaPickerRow.activatable_widget;
             if (btn) {
-                btn.set_label('Loading…');
+                btn.set_label(_('Loading…'));
                 btn.sensitive = false;
             }
             session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
                 if (btn) {
-                    btn.set_label('Pick Model…');
+                    btn.set_label(_('Pick Model…'));
                     btn.sensitive = true;
                 }
                 let models = [];
@@ -218,9 +235,10 @@ export function buildDeepSeekPage(ctx) {
                         modal: true,
                         message_type: Gtk.MessageType.ERROR,
                         buttons: Gtk.ButtonsType.CLOSE,
-                        text: 'No models found',
-                        secondary_text:
+                        text: _('No models found'),
+                        secondary_text: _(
                             'Could not list models from the Ollama instance. Is it running and reachable at the configured URL?',
+                        ),
                     });
                     dlg.connect('response', () => dlg.destroy());
                     dlg.present();
@@ -239,8 +257,13 @@ export function buildDeepSeekPage(ctx) {
                     modal: true,
                     message_type: Gtk.MessageType.QUESTION,
                     buttons: Gtk.ButtonsType.OK_CANCEL,
-                    text: 'Pick a vision model',
-                    secondary_text: `Select one of ${models.length} installed Ollama models. Vision-capable models include llava, llama3.2-vision, qwen2.5vl, janus-pro, deepseek-vl2.`,
+                    text: _('Pick a vision model'),
+                    secondary_text: format(
+                        _(
+                            'Select one of {count} installed Ollama models. Vision-capable models include llava, llama3.2-vision, qwen2.5vl, janus-pro, deepseek-vl2.',
+                        ),
+                        { count: models.length },
+                    ),
                 });
                 dialog.get_content_area().append(dropdown);
                 dialog.connect('response', (dlg, responseId) => {
@@ -267,37 +290,45 @@ export function buildDeepSeekPage(ctx) {
 
     // Vision model name (shared by both backends).
     const visionModelRow = createStringRow(
-        'Vision Model',
-        'A vision-capable model. For Ollama: llama3.2-vision, qwen2.5vl, llava, janus-pro, deepseek-vl2, minicpm-v. For OpenAI-compatible: any vision model. DeepSeek text models are rejected.',
+        _('Vision Model'),
+        _(
+            'A vision-capable model. For Ollama: llama3.2-vision, qwen2.5vl, llava, janus-pro, deepseek-vl2, minicpm-v. For OpenAI-compatible: any vision model. DeepSeek text models are rejected.',
+        ),
         'deepseek-vision-model',
         deepseekVisionGroup,
     );
 
     // Optional fallback model (same backend).
     const visionFallbackRow = createStringRow(
-        'Vision Fallback Model',
-        'Optional. Tried if the primary vision model is unavailable or times out. Uses the same backend.',
+        _('Vision Fallback Model'),
+        _(
+            'Optional. Tried if the primary vision model is unavailable or times out. Uses the same backend.',
+        ),
         'deepseek-vision-fallback-model',
         deepseekVisionGroup,
     );
 
     // DeepSeek text-model guard notice.
     const visionGuardRow = createInstructionRow(
-        'DeepSeek text models cannot see images',
-        'The Vision Model is set to a text-only DeepSeek model, which cannot analyze images. Choose a vision-capable model instead (e.g. deepseek-flash).',
+        _('DeepSeek text models cannot see images'),
+        _(
+            'The Vision Model is set to a text-only DeepSeek model, which cannot analyze images. Choose a vision-capable model instead (e.g. deepseek-flash).',
+        ),
         deepseekVisionGroup,
     );
 
     // OpenAI-compatible: URL + API key (only when backend=openai).
     const visionUrlRow = createStringRow(
-        'Vision Base URL',
-        'OpenAI-compatible endpoint root. Leave empty to fall back to the DeepSeek base URL (useful behind a compatible proxy).',
+        _('Vision Base URL'),
+        _(
+            'OpenAI-compatible endpoint root. Leave empty to fall back to the DeepSeek base URL (useful behind a compatible proxy).',
+        ),
         'deepseek-vision-url',
         deepseekVisionGroup,
     );
     const visionKeyRow = createStringRow(
-        'Vision API Key',
-        'Optional bearer token for the vision endpoint.',
+        _('Vision API Key'),
+        _('Optional bearer token for the vision endpoint.'),
         'deepseek-vision-api-key',
         deepseekVisionGroup,
         true,
@@ -327,13 +358,16 @@ export function buildDeepSeekPage(ctx) {
     deepseekPage.add(deepseekVisionGroup);
 
     const deepseekOutputGroup = createPreferencesGroup({
-        title: 'Output',
-        description:
+        title: _('Output'),
+        description: _(
             'Control structured output mode. When JSON mode is on, Katab automatically injects a JSON reminder into the system prompt if needed to satisfy the DeepSeek API requirement.',
+        ),
     });
     createBooleanRow(
-        'JSON Output Mode',
-        'Force the model to return a valid JSON object. Useful for structured data extraction tasks.',
+        _('JSON Output Mode'),
+        _(
+            'Force the model to return a valid JSON object. Useful for structured data extraction tasks.',
+        ),
         'deepseek-json-mode',
         deepseekOutputGroup,
     );
@@ -341,9 +375,10 @@ export function buildDeepSeekPage(ctx) {
 
     // --- DeepSeek Account Balance ---
     const deepseekBalanceGroup = createPreferencesGroup({
-        title: 'Account Balance',
-        description:
+        title: _('Account Balance'),
+        description: _(
             'Current DeepSeek account balance. Refreshed automatically by the provider health check every 30 seconds while the extension is running.',
+        ),
     });
 
     const balanceSyncers = [];
@@ -382,36 +417,40 @@ export function buildDeepSeekPage(ctx) {
 
     // Available indicator
     createBalanceDisplayRow(
-        'Available',
-        'Whether the current balance is sufficient for API calls.',
+        _('Available'),
+        _('Whether the current balance is sufficient for API calls.'),
         () => {
             let ts = settings.get_int64('deepseek-balance-last-checked');
-            if (!ts) return 'Not checked yet';
+            if (!ts) return _('Not checked yet');
             return settings.get_boolean('deepseek-balance-available')
-                ? 'Yes'
-                : 'No — top up needed';
+                ? _('Yes')
+                : _('No — top up needed');
         },
     );
 
     // Currency
     createBalanceDisplayRow(
-        'Currency',
-        'The currency of your DeepSeek account balance.',
+        _('Currency'),
+        _('The currency of your DeepSeek account balance.'),
         () => settings.get_string('deepseek-balance-currency') || '—',
     );
 
     // Total Balance
-    createBalanceDisplayRow('Total Balance', 'Total available funds (granted + topped-up).', () => {
-        let total = settings.get_string('deepseek-balance-total');
-        let currency = settings.get_string('deepseek-balance-currency');
-        if (!total) return '—';
-        return currency ? `${currency} ${total}` : total;
-    });
+    createBalanceDisplayRow(
+        _('Total Balance'),
+        _('Total available funds (granted + topped-up).'),
+        () => {
+            let total = settings.get_string('deepseek-balance-total');
+            let currency = settings.get_string('deepseek-balance-currency');
+            if (!total) return '—';
+            return currency ? `${currency} ${total}` : total;
+        },
+    );
 
     // Granted Balance
     createBalanceDisplayRow(
-        'Granted (Free Credits)',
-        'Promotional or free credits that may expire.',
+        _('Granted (Free Credits)'),
+        _('Promotional or free credits that may expire.'),
         () => {
             let granted = settings.get_string('deepseek-balance-granted');
             let currency = settings.get_string('deepseek-balance-currency');
@@ -421,7 +460,7 @@ export function buildDeepSeekPage(ctx) {
     );
 
     // Topped-Up Balance
-    createBalanceDisplayRow('Topped Up', 'Funds added via top-up that do not expire.', () => {
+    createBalanceDisplayRow(_('Topped Up'), _('Funds added via top-up that do not expire.'), () => {
         let toppedUp = settings.get_string('deepseek-balance-topped-up');
         let currency = settings.get_string('deepseek-balance-currency');
         if (!toppedUp) return '—';
@@ -430,16 +469,16 @@ export function buildDeepSeekPage(ctx) {
 
     // Last Checked
     createBalanceDisplayRow(
-        'Last Checked',
-        'When the balance was last fetched from the DeepSeek API.',
+        _('Last Checked'),
+        _('When the balance was last fetched from the DeepSeek API.'),
         () => {
             let ts = settings.get_int64('deepseek-balance-last-checked');
-            if (!ts) return 'Never';
+            if (!ts) return _('Never');
             try {
                 let date = new Date(ts);
                 return date.toLocaleString();
             } catch (_e) {
-                return 'Unknown';
+                return _('Unknown');
             }
         },
     );
@@ -465,7 +504,7 @@ export function buildDeepSeekPage(ctx) {
     // Refresh Balance button
     const refreshBalanceBtn = addCssClasses(
         new Gtk.Button({
-            label: 'Refresh Balance',
+            label: _('Refresh Balance'),
             valign: Gtk.Align.CENTER,
             halign: Gtk.Align.START,
         }),
@@ -474,9 +513,10 @@ export function buildDeepSeekPage(ctx) {
     );
     const refreshBtnRow = stylePreferenceRow(
         new Adw.ActionRow({
-            title: 'Check Balance Now',
-            subtitle:
+            title: _('Check Balance Now'),
+            subtitle: _(
                 'Makes a direct request to the DeepSeek /user/balance endpoint and updates the display above.',
+            ),
             activatable: false,
         }),
         'katab-prefs-info-row',
@@ -486,10 +526,10 @@ export function buildDeepSeekPage(ctx) {
     addPreferenceRow(deepseekBalanceGroup, refreshBtnRow);
 
     refreshBalanceBtn.connect('clicked', () => {
-        refreshBalanceBtn.set_label('Checking...');
+        refreshBalanceBtn.set_label(_('Checking...'));
         refreshBalanceBtn.sensitive = false;
         refreshDeepSeekBalance(settings, () => {
-            refreshBalanceBtn.set_label('Refresh Balance');
+            refreshBalanceBtn.set_label(_('Refresh Balance'));
             refreshBalanceBtn.sensitive = true;
         });
     });

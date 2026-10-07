@@ -34,3 +34,19 @@ export function gettext(str) {
 export function ngettext(singular, plural, count) {
     return ngettextFn(singular, plural, count);
 }
+
+/**
+ * Substitute `{name}`-style placeholders in a translated string.
+ *
+ *   format(_('Delete preset "{name}"'), { name: preset.name })
+ *
+ * Unknown placeholders are left verbatim (a half-applied call stays visible
+ * instead of silently losing text). Omitting `params` is a no-op, so callers
+ * can pass it through unconditionally.
+ */
+export function format(str, params) {
+    if (typeof str !== 'string' || !params) return str;
+    return str.replace(/\{(\w+)\}/g, (match, key) =>
+        Object.prototype.hasOwnProperty.call(params, key) ? String(params[key]) : match,
+    );
+}

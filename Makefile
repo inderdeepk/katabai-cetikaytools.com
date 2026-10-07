@@ -110,9 +110,7 @@ sync-rag-server:
 ## pot            : Extract translatable strings into po/$(GETTEXT_DOMAIN).pot
 pot:
 	@mkdir -p po
-	xgettext --language=JavaScript --from-code=UTF-8 --package-name="Katab - AI Assistant" \
-		--keyword=_ --keyword=ngettext:1,2 \
-		-f po/POTFILES.in -o $(POT_FILE)
+	node scripts/i18n-extract.mjs
 	@echo "[OK] POT updated: $(POT_FILE)"
 
 ## langs          : Compile po/*.po into locale/<lang>/LC_MESSAGES/<uuid>.mo

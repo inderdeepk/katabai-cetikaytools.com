@@ -7,7 +7,7 @@ import {
     TokenUsageManager,
 } from '../../usage/tokenUsageManager.js';
 import { getPetDefinition, parsePetForm, PET_SELECTION_MODES } from '../../pets/petCollection.js';
-import { gettext as _ } from '../../shared/i18n.js';
+import { gettext as _, format } from '../../shared/i18n.js';
 
 export function buildGeneralPage(ctx) {
     const {
@@ -35,43 +35,50 @@ export function buildGeneralPage(ctx) {
 
     // General Provider Selection
     const generalGroup = createPreferencesGroup({
-        title: 'Active Provider',
-        description:
+        title: _('Active Provider'),
+        description: _(
             'Choose which AI backend powers your conversations. Click a provider to switch; your settings for each are kept separately.',
+        ),
     });
     page.add(generalGroup);
 
     const accessibilityGroup = createPreferencesGroup({
-        title: 'Keyboard Shortcut',
-        description: 'Set a global shortcut to open or hide the chat from anywhere on the desktop.',
+        title: _('Keyboard Shortcut'),
+        description: _(
+            'Set a global shortcut to open or hide the chat from anywhere on the desktop.',
+        ),
     });
     page.add(accessibilityGroup);
 
     const tokenUsageGroup = createPreferencesGroup({
-        title: 'AI Token Breakdown',
-        description:
+        title: _('AI Token Breakdown'),
+        description: _(
             'Control the local-only usage ledger, companion celebrations, default range, retention, reset, and export.',
+        ),
     });
     page.add(tokenUsageGroup);
 
     const petCompanionGroup = createPreferencesGroup({
-        title: 'Pet Companion',
-        description:
+        title: _('Pet Companion'),
+        description: _(
             'Choose whether the visible companion follows the active provider or stays pinned to a form selected in the Pet Collection.',
+        ),
     });
     page.add(petCompanionGroup);
 
     const notificationGroup = createPreferencesGroup({
-        title: 'Notifications',
-        description:
+        title: _('Notifications'),
+        description: _(
             'Control desktop alerts and sounds for chat activity that happens while the window is closed.',
+        ),
     });
     page.add(notificationGroup);
 
     const appearanceGroup = createPreferencesGroup({
-        title: 'Appearance',
-        description:
+        title: _('Appearance'),
+        description: _(
             'Control how chat text is sized and how the glass dialog renders over your desktop.',
+        ),
     });
     page.add(appearanceGroup);
 
@@ -81,54 +88,64 @@ export function buildGeneralPage(ctx) {
     createProviderCardRow('anthropic', generalGroup);
     createProviderCardRow('deepseek', generalGroup);
     createShortcutRow(
-        'Toggle Chat',
-        'Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it.',
+        _('Toggle Chat'),
+        _(
+            'Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it.',
+        ),
         'toggle-current-chat',
         accessibilityGroup,
     );
 
     const chatTextScaleRow = createChoiceRow(
-        'Chat Text Size',
-        'Comfortable is the recommended default for general readability. Compact fits more text on screen; Large is easier to read from a distance.',
+        _('Chat Text Size'),
+        _(
+            'Comfortable is the recommended default for general readability. Compact fits more text on screen; Large is easier to read from a distance.',
+        ),
         appearanceGroup,
     );
     bindChoiceRow(
         chatTextScaleRow,
         'chat-text-scale',
         [
-            { label: 'Compact', value: 'compact' },
-            { label: 'Comfortable (Recommended)', value: 'comfortable' },
-            { label: 'Large', value: 'large' },
+            { label: _('Compact'), value: 'compact' },
+            { label: _('Comfortable (Recommended)'), value: 'comfortable' },
+            { label: _('Large'), value: 'large' },
         ],
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
-        (value) => `Custom (${value})`,
+        (value) => format(_('Custom ({value})'), { value }),
     );
 
     createBooleanRow(
-        'Glassy Translucent Dialog',
-        'Makes the chat dialog slightly see-through for the glass look. Turn this off for maximum text readability — the dialog then uses a more opaque surface.',
+        _('Glassy Translucent Dialog'),
+        _(
+            'Makes the chat dialog slightly see-through for the glass look. Turn this off for maximum text readability — the dialog then uses a more opaque surface.',
+        ),
         'ui-glass-translucent',
         appearanceGroup,
     );
 
     createBooleanRow(
-        'Completion Sound',
-        'Play a short sound when a response finishes while the chat is closed. Uses a different tone when the request fails.',
+        _('Completion Sound'),
+        _(
+            'Play a short sound when a response finishes while the chat is closed. Uses a different tone when the request fails.',
+        ),
         'completion-sound-enabled',
         notificationGroup,
     );
 
     createBooleanRow(
-        'Track Token Usage',
-        'Record local-only token totals for the Tokens panel. Existing data stays on disk when this is off.',
+        _('Track Token Usage'),
+        _(
+            'Record local-only token totals for the Tokens panel. Existing data stays on disk when this is off.',
+        ),
         'token-usage-enabled',
         tokenUsageGroup,
     );
 
     const tokenRangeRow = createChoiceRow(
-        'Default Range',
-        'Initial range shown when opening the AI Token Breakdown panel or top-bar snapshot.',
+        _('Default Range'),
+        _('Initial range shown when opening the AI Token Breakdown panel or top-bar snapshot.'),
         tokenUsageGroup,
     );
     bindChoiceRow(
@@ -137,44 +154,48 @@ export function buildGeneralPage(ctx) {
         TOKEN_USAGE_RANGES.map((range) => ({ label: range.label, value: range.key })),
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
-        (value) => `Custom (${value})`,
+        (value) => format(_('Custom ({value})'), { value }),
     );
 
     const retentionRow = createChoiceRow(
-        'Retention',
-        'How long to keep daily token buckets before pruning. Forever keeps the local ledger until you reset it.',
+        _('Retention'),
+        _(
+            'How long to keep daily token buckets before pruning. Forever keeps the local ledger until you reset it.',
+        ),
         tokenUsageGroup,
     );
     bindChoiceRow(
         retentionRow,
         'token-usage-retention-days',
         [
-            { label: 'Forever', value: 0 },
-            { label: '90 days', value: 90 },
-            { label: '1 year', value: 365 },
+            { label: _('Forever'), value: 0 },
+            { label: _('90 days'), value: 90 },
+            { label: _('1 year'), value: 365 },
         ],
         settings.get_int.bind(settings),
         settings.set_int.bind(settings),
-        (value) => `${value} days`,
+        (value) => format(_('{value} days'), { value }),
     );
 
     createBooleanRow(
-        'Companion Celebrations',
-        'Show in-chat messages for pet hatches and growth stages.',
+        _('Companion Celebrations'),
+        _('Show in-chat messages for pet hatches and growth stages.'),
         'token-usage-celebrations-enabled',
         tokenUsageGroup,
     );
 
     createBooleanRow(
-        'Monthly Budget',
-        'Show a monthly spend budget card in the Token Breakdown panel and warn as spending approaches the limit.',
+        _('Monthly Budget'),
+        _(
+            'Show a monthly spend budget card in the Token Breakdown panel and warn as spending approaches the limit.',
+        ),
         'token-budget-enabled',
         tokenUsageGroup,
     );
 
     const budgetAmountRow = createDoubleRow(
-        'Monthly Budget Amount',
-        'USD budget for a calendar month. Cost estimates use published model pricing.',
+        _('Monthly Budget Amount'),
+        _('USD budget for a calendar month. Cost estimates use published model pricing.'),
         'token-budget-monthly-usd',
         tokenUsageGroup,
         1,
@@ -183,8 +204,8 @@ export function buildGeneralPage(ctx) {
     );
 
     const budgetWarningRow = createIntRow(
-        'Budget Warning Threshold',
-        'Percentage of the monthly budget at which warnings start.',
+        _('Budget Warning Threshold'),
+        _('Percentage of the monthly budget at which warnings start.'),
         'token-budget-warning-pct',
         tokenUsageGroup,
         10,
@@ -202,32 +223,34 @@ export function buildGeneralPage(ctx) {
     settings.connect('changed::token-budget-enabled', syncBudgetVisibility);
 
     createBooleanRow(
-        'Desktop Notifications',
-        'Show a desktop notification when a response finishes while the chat is closed.',
+        _('Desktop Notifications'),
+        _('Show a desktop notification when a response finishes while the chat is closed.'),
         'token-desktop-notifications-enabled',
         notificationGroup,
     );
 
     const petSelectionRow = createChoiceRow(
-        'Active Companion',
-        'Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection.',
+        _('Active Companion'),
+        _(
+            'Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection.',
+        ),
         petCompanionGroup,
     );
     bindChoiceRow(
         petSelectionRow,
         'pet-selection-mode',
         [
-            { label: 'Follow Current Provider', value: PET_SELECTION_MODES.FOLLOW_PROVIDER },
-            { label: 'Pinned', value: PET_SELECTION_MODES.PINNED },
+            { label: _('Follow Current Provider'), value: PET_SELECTION_MODES.FOLLOW_PROVIDER },
+            { label: _('Pinned'), value: PET_SELECTION_MODES.PINNED },
         ],
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
-        (value) => `Custom (${value})`,
+        (value) => format(_('Custom ({value})'), { value }),
     );
 
     const { badge: activePetBadge } = createStatusRow(
-        'Current Form',
-        'Pinned forms are selected from the Pet Collection inside the Token Breakdown panel.',
+        _('Current Form'),
+        _('Pinned forms are selected from the Pet Collection inside the Token Breakdown panel.'),
         petCompanionGroup,
     );
     const refreshActivePetBadge = () => {
@@ -251,10 +274,12 @@ export function buildGeneralPage(ctx) {
             }
             const label = isValidPin
                 ? companion.name
-                : `${getPetDefinition(currentProvider)?.name || companion.name} · Following`;
+                : format(_('{pet} · Following'), {
+                      pet: getPetDefinition(currentProvider)?.name || companion.name,
+                  });
             setStatusBadge(activePetBadge, label, 'katab-prefs-status-detected');
         } catch (_e) {
-            setStatusBadge(activePetBadge, 'Unavailable', 'katab-prefs-status-install');
+            setStatusBadge(activePetBadge, _('Unavailable'), 'katab-prefs-status-install');
         }
     };
     refreshActivePetBadge();
@@ -263,8 +288,8 @@ export function buildGeneralPage(ctx) {
     settings.connect('changed::pet-pinned-form', refreshActivePetBadge);
 
     const { badge: tokenUsageBadge } = createStatusRow(
-        'Usage Ledger',
-        'Private JSON ledger stored under ~/.local/share/katabai/token-usage.json.',
+        _('Usage Ledger'),
+        _('Private JSON ledger stored under ~/.local/share/katabai/token-usage.json.'),
         tokenUsageGroup,
     );
     const refreshTokenUsageBadge = () => {
@@ -272,26 +297,28 @@ export function buildGeneralPage(ctx) {
             const summary = TokenUsageManager.getSummary('all');
             setStatusBadge(
                 tokenUsageBadge,
-                `${formatTokenCount(summary.totalTokens)} tokens`,
+                format(_('{count} tokens'), { count: formatTokenCount(summary.totalTokens) }),
                 'katab-prefs-status-detected',
             );
         } catch (_e) {
-            setStatusBadge(tokenUsageBadge, 'Unavailable', 'katab-prefs-status-install');
+            setStatusBadge(tokenUsageBadge, _('Unavailable'), 'katab-prefs-status-install');
         }
     };
     refreshTokenUsageBadge();
 
     createButtonRow(
-        'Export Usage JSON',
-        'Write a timestamped copy of the local ledger into your Documents folder (or home folder if Documents is unavailable).',
-        'Export',
+        _('Export Usage JSON'),
+        _(
+            'Write a timestamped copy of the local ledger into your Documents folder (or home folder if Documents is unavailable).',
+        ),
+        _('Export'),
         () => {
             try {
                 const path = TokenUsageManager.exportCopy();
-                setStatusBadge(tokenUsageBadge, 'Exported', 'katab-prefs-status-detected');
+                setStatusBadge(tokenUsageBadge, _('Exported'), 'katab-prefs-status-detected');
                 log(`Katab: exported token usage ledger to ${path}`);
             } catch (e) {
-                setStatusBadge(tokenUsageBadge, 'Export failed', 'katab-prefs-status-install');
+                setStatusBadge(tokenUsageBadge, _('Export failed'), 'katab-prefs-status-install');
                 log(`Katab: failed to export token usage ledger: ${e.message || e}`);
             }
         },
@@ -299,9 +326,9 @@ export function buildGeneralPage(ctx) {
     );
 
     createButtonRow(
-        'Reset Usage Ledger',
-        'Delete local token analytics and all pet XP. Chat history is not affected.',
-        'Reset',
+        _('Reset Usage Ledger'),
+        _('Delete local token analytics and all pet XP. Chat history is not affected.'),
+        _('Reset'),
         () => {
             TokenUsageManager.reset();
             settings.set_string('pet-pinned-form', '');

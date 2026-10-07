@@ -176,7 +176,10 @@ language is installed the bridge passes strings through unchanged.
 
 - **Refresh the template** after adding/removing wrapped strings: `make pot`
   (updates `po/katabai@cetikaytools.com.pot`; sources are listed in
-  `po/POTFILES.in` — keep it in sync with new files).
+  `po/POTFILES.in` — keep it in sync with new files). Extraction runs through
+  `scripts/i18n-extract.mjs` — an AST-based scanner (espree) rather than
+  xgettext, whose JavaScript parser silently skips files after “clever”
+  constructs (nested template literals, regexes with quote characters).
 - **Start a new language**: `msginit -i po/katabai@cetikaytools.com.pot -l xx -o po/xx.po`
   (or copy an existing `.po`), translate, then `make langs` to compile
   `locale/xx/LC_MESSAGES/katabai@cetikaytools.com.mo`.
@@ -184,6 +187,26 @@ language is installed the bridge passes strings through unchanged.
   are gitignored and rebuilt by `make langs`. Commit `.po` sources only.
 - Test a language with `LANG=xx.UTF-8` plus a shell reload (Alt+F2 → r) and
   `gnome-extensions prefs katabai@cetikaytools.com`.
+- **Wrap UI strings only.** Never wrap model-facing text — system prompts and
+  instructions in `src/research/prompts.js` and `extension.js`, tool
+  descriptions/schemas, provider payload text. Those are part of the protocol,
+  not the interface.
+- **Dynamic text** uses the `format()` helper on the i18n bridge —
+  `format(_('Delete preset "{name}"'), { name })` — instead of template
+  literals, so the extractor can collect the message and translators keep
+  the placeholder.
+- **Keep wrapped arguments static**: the argument to `_()` / `ngettext()` must
+  be a string literal, a substitution-free template literal, or a `+`
+  concatenation of those. Dynamic arguments are skipped by the extractor —
+  build the final text with `format()` instead.
+- **Module-level data** (catalogs, range tables) must use lazy getters —
+  `get label() { return _('Today'); }`. A plain `_('...')` at module level
+  would run at import time, *before* `initI18n()` wires the real gettext, and
+  freeze the identity fallback.
+- Markup-bearing rows (group titles / row subtitles parse Pango markup) keep
+  their entities (`&amp;`) inside the wrapped string; row *titles* are plain
+  text and must not contain entities. Use `&amp;` rather than `&` in Adw
+  markup positions.
 
 ## Release Checklist
 

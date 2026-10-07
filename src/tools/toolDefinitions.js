@@ -17,6 +17,11 @@ import { RAG_TOOL_NAME, RAG_TOOL_COMMAND, RAG_TOOL_ICON } from './ragTools.js';
 
 // ── Explore Docs (agent-directed documentation navigation) ───────────────────
 import { EXPLORE_DOCS_TOOL_NAME } from './exploreDocsTools.js';
+import { gettext as _ } from '../shared/i18n.js';
+
+// NOTE: only UI-facing `uiLabel` strings are translated (lazy getters — module
+// data must resolve at render time, not import time). The `description`
+// fields are MODEL-facing tool schemas and must stay untranslated.
 
 // ── Web Search (SearxNG) ──────────────────────────────────────────────────────
 
@@ -60,7 +65,9 @@ registerTool({
     parameters: WEB_SEARCH_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('web_search'),
-    uiLabel: 'Search',
+    get uiLabel() {
+        return _('Search');
+    },
     uiIcon: 'system-search-symbolic',
     command: '/search',
     resultTruncationKey: 'search',
@@ -93,7 +100,9 @@ registerTool({
     parameters: READ_URL_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('read_url'),
-    uiLabel: 'Read',
+    get uiLabel() {
+        return _('Read');
+    },
     uiIcon: 'insert-link-symbolic',
     command: null,
     resultTruncationKey: 'readUrl',
@@ -149,7 +158,9 @@ registerTool({
     parameters: CRAWL_URL_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('crawl_url'),
-    uiLabel: 'Scrape',
+    get uiLabel() {
+        return _('Scrape');
+    },
     uiIcon: 'document-open-symbolic',
     command: '/crawl',
     resultTruncationKey: 'crawl',
@@ -167,7 +178,9 @@ registerTool({
     parameters: null, // No API schema — this is a pre-send tool
     dangerLevel: DANGER_POTENTIALLY_UNSAFE,
     handler: createNotReadyHandler('document'),
-    uiLabel: 'Docs',
+    get uiLabel() {
+        return _('Docs');
+    },
     uiIcon: 'folder-open-symbolic',
     command: '/doc',
     resultTruncationKey: null,
@@ -186,7 +199,9 @@ registerTool({
     parameters: null, // No API schema — this is a mode toggle
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler('deep_research'),
-    uiLabel: 'Research',
+    get uiLabel() {
+        return _('Research');
+    },
     uiIcon: 'content-loading-symbolic',
     command: '/research',
     resultTruncationKey: null,
@@ -223,7 +238,9 @@ registerTool({
     parameters: KNOWLEDGE_SEARCH_PARAMS,
     dangerLevel: DANGER_READ_ONLY,
     handler: createNotReadyHandler(RAG_TOOL_NAME),
-    uiLabel: 'Knowledge',
+    get uiLabel() {
+        return _('Knowledge');
+    },
     uiIcon: RAG_TOOL_ICON,
     command: RAG_TOOL_COMMAND,
     resultTruncationKey: 'knowledge',

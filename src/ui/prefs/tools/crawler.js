@@ -1,7 +1,11 @@
 import Gtk from 'gi://Gtk';
 import { Crawl4AIRuntime, readCrawl4AIConfig } from '../../../tools/crawl4aiTools.js';
+import { gettext as _, format } from '../../../shared/i18n.js';
 
 // Web Scraper (Crawl4AI) settings section for the Tools page.
+// NOTE: the four multi-step setup guides below intentionally stay in English —
+// they are shell-command walk-throughs (docker/git/curl) whose body text is
+// dominated by commands; only their titles are translatable.
 export function buildCrawlerSection(ctx) {
     const {
         settings,
@@ -23,14 +27,16 @@ export function buildCrawlerSection(ctx) {
         addCssClasses,
     } = ctx;
 
-    const subpage = createToolSubpage('Web Scraper');
+    const subpage = createToolSubpage(_('Web Scraper'));
     const detailPage = subpage.detailPage;
 
     const noticeGroup = createPreferencesGroup({});
     detailPage.add(noticeGroup);
     const noticeRow = createInfoRow(
-        'How web scraping works',
-        'Crawl4AI is a high-performance, LLM-friendly web crawler that renders pages in a real browser (Chromium), executes JavaScript, and extracts clean Markdown. Katab uses it to deep-scrape page content after SearxNG discovers URLs. Deploy your own Crawl4AI v0.9.x Docker container on any machine with sufficient RAM for Chromium.',
+        _('How web scraping works'),
+        _(
+            'Crawl4AI is a high-performance, LLM-friendly web crawler that renders pages in a real browser (Chromium), executes JavaScript, and extracts clean Markdown. Katab uses it to deep-scrape page content after SearxNG discovers URLs. Deploy your own Crawl4AI v0.9.x Docker container on any machine with sufficient RAM for Chromium.',
+        ),
         noticeGroup,
     );
     noticeRow.add_prefix(
@@ -48,19 +54,20 @@ export function buildCrawlerSection(ctx) {
     crawlSetupExpander.add_prefix(
         addCssClasses(
             new Gtk.Label({
-                label: 'Setup \u2014 Deploy Crawl4AI with Docker',
+                label: _('Setup \u2014 Deploy Crawl4AI with Docker'),
                 xalign: 0,
                 halign: Gtk.Align.START,
             }),
             'katab-prefs-expander-title',
         ),
     );
-    crawlSetupExpander.subtitle =
-        'Crawl4AI must be running in Docker for Katab to deep-scrape web pages.';
+    crawlSetupExpander.subtitle = _(
+        'Crawl4AI must be running in Docker for Katab to deep-scrape web pages.',
+    );
     noticeGroup.add(crawlSetupExpander);
 
     createInstructionRow(
-        'Docker Compose (Recommended)',
+        _('Docker Compose (Recommended)'),
         [
             'The official docker-compose.yml is the simplest way to deploy Crawl4AI.',
             '',
@@ -153,7 +160,7 @@ export function buildCrawlerSection(ctx) {
     );
 
     createInstructionRow(
-        'Minimal Setup (Single Container)',
+        _('Minimal Setup (Single Container)'),
         [
             'If you prefer not to clone the repository, you can run',
             'the official Docker image directly:',
@@ -181,7 +188,7 @@ export function buildCrawlerSection(ctx) {
     );
 
     createInstructionRow(
-        'API Token Authentication',
+        _('API Token Authentication'),
         [
             'Crawl4AI v0.9.x requires an API token for all requests.',
             '',
@@ -208,7 +215,7 @@ export function buildCrawlerSection(ctx) {
     );
 
     createInstructionRow(
-        'Security Notes',
+        _('Security Notes'),
         [
             'The Docker Compose setup is security-hardened:',
             '\u2022 Runs as non-root user (appuser)',
@@ -227,65 +234,74 @@ export function buildCrawlerSection(ctx) {
 
     // ---- Connection ----
     const connectionGroup = createPreferencesGroup({
-        title: 'Connection',
-        description: 'Point Katab at your self-hosted Crawl4AI Docker instance.',
+        title: _('Connection'),
+        description: _('Point Katab at your self-hosted Crawl4AI Docker instance.'),
     });
     detailPage.add(connectionGroup);
 
     createBooleanRow(
-        'Enable Web Scraper',
-        'Allow the /crawl command and let supported models deep-scrape web pages through Crawl4AI.',
+        _('Enable Web Scraper'),
+        _(
+            'Allow the /crawl command and let supported models deep-scrape web pages through Crawl4AI.',
+        ),
         'crawl4ai-enabled',
         connectionGroup,
     );
 
     createStringRow(
-        'Crawl4AI Instance URL',
-        'Base URL of your Crawl4AI v0.9.x instance, e.g. http://localhost:11235.',
+        _('Crawl4AI Instance URL'),
+        _('Base URL of your Crawl4AI v0.9.x instance, e.g. http://localhost:11235.'),
         'crawl4ai-url',
         connectionGroup,
     );
 
     createStringRow(
-        'API Token',
-        'JWT Bearer token set via CRAWL4AI_API_TOKEN when deploying the container. Required only when the instance has security enabled.',
+        _('API Token'),
+        _(
+            'JWT Bearer token set via CRAWL4AI_API_TOKEN when deploying the container. Required only when the instance has security enabled.',
+        ),
         'crawl4ai-api-token',
         connectionGroup,
         true,
     );
 
     const { row: crawlConnStatusRow, badge: crawlConnBadge } = createStatusRow(
-        'Connection Status',
-        'Run a health check to confirm the instance is reachable.',
+        _('Connection Status'),
+        _('Run a health check to confirm the instance is reachable.'),
         connectionGroup,
     );
-    setStatusBadge(crawlConnBadge, 'Untested', null);
+    setStatusBadge(crawlConnBadge, _('Untested'), null);
 
     const crawlTestRuntime = new Crawl4AIRuntime({ timeoutSeconds: 12 });
     createButtonRow(
-        'Test Connection',
-        'Send a health check to verify the Crawl4AI endpoint responds.',
-        'Test',
+        _('Test Connection'),
+        _('Send a health check to verify the Crawl4AI endpoint responds.'),
+        _('Test'),
         () => {
-            setStatusBadge(crawlConnBadge, 'Testing', null);
-            crawlConnStatusRow.subtitle = 'Contacting the Crawl4AI instance\u2026';
+            setStatusBadge(crawlConnBadge, _('Testing'), null);
+            crawlConnStatusRow.subtitle = _('Contacting the Crawl4AI instance\u2026');
             const config = readCrawl4AIConfig(settings);
             crawlTestRuntime
                 .testConnection(config)
                 .then((result) => {
                     if (result.ok) {
-                        setStatusBadge(crawlConnBadge, 'Connected', 'katab-prefs-status-detected');
+                        setStatusBadge(
+                            crawlConnBadge,
+                            _('Connected'),
+                            'katab-prefs-status-detected',
+                        );
                         crawlConnStatusRow.subtitle = result.version
-                            ? `Reachable. Server: ${result.version}`
-                            : 'Reachable.';
+                            ? format(_('Reachable. Server: {version}'), { version: result.version })
+                            : _('Reachable.');
                     } else {
-                        setStatusBadge(crawlConnBadge, 'Failed', 'katab-prefs-status-install');
-                        crawlConnStatusRow.subtitle = result.message || 'Connection test failed.';
+                        setStatusBadge(crawlConnBadge, _('Failed'), 'katab-prefs-status-install');
+                        crawlConnStatusRow.subtitle =
+                            result.message || _('Connection test failed.');
                     }
                 })
                 .catch((error) => {
-                    setStatusBadge(crawlConnBadge, 'Failed', 'katab-prefs-status-install');
-                    crawlConnStatusRow.subtitle = error?.message || 'Connection test failed.';
+                    setStatusBadge(crawlConnBadge, _('Failed'), 'katab-prefs-status-install');
+                    crawlConnStatusRow.subtitle = error?.message || _('Connection test failed.');
                 });
         },
         connectionGroup,
@@ -293,48 +309,49 @@ export function buildCrawlerSection(ctx) {
 
     // ---- Extraction ----
     const extractionGroup = createPreferencesGroup({
-        title: 'Extraction',
-        description:
+        title: _('Extraction'),
+        description: _(
             'How Crawl4AI filters and formats page content before sending it to the model.',
+        ),
     });
     detailPage.add(extractionGroup);
 
     const fitMarkdownRow = createChoiceRow(
-        'Content Filter',
-        'Algorithm used to strip boilerplate and extract the core page content.',
+        _('Content Filter'),
+        _('Algorithm used to strip boilerplate and extract the core page content.'),
         extractionGroup,
     );
     bindChoiceRow(
         fitMarkdownRow,
         'crawl4ai-fit-markdown-mode',
         [
-            { value: 'pruning', label: 'Pruning (Heuristic)' },
-            { value: 'bm25', label: 'BM25 (Query-Focused)' },
+            { value: 'pruning', label: _('Pruning (Heuristic)') },
+            { value: 'bm25', label: _('BM25 (Query-Focused)') },
         ],
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
     );
 
     const cacheRow = createChoiceRow(
-        'Cache Mode',
-        'Controls Crawl4AI\u2019s internal cache behavior.',
+        _('Cache Mode'),
+        _('Controls Crawl4AI\u2019s internal cache behavior.'),
         extractionGroup,
     );
     bindChoiceRow(
         cacheRow,
         'crawl4ai-cache-mode',
         [
-            { value: 'bypass', label: 'Bypass (Always Fresh)' },
-            { value: 'enabled', label: 'Enabled (Faster Repeats)' },
-            { value: 'read_only', label: 'Read-Only (No Network)' },
+            { value: 'bypass', label: _('Bypass (Always Fresh)') },
+            { value: 'enabled', label: _('Enabled (Faster Repeats)') },
+            { value: 'read_only', label: _('Read-Only (No Network)') },
         ],
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
     );
 
     createIntRow(
-        'Minimum Word Count',
-        'Pages with fewer words are discarded before Markdown generation (1\u2013200).',
+        _('Minimum Word Count'),
+        _('Pages with fewer words are discarded before Markdown generation (1\u2013200).'),
         'crawl4ai-word-count-threshold',
         extractionGroup,
         1,
@@ -343,8 +360,8 @@ export function buildCrawlerSection(ctx) {
     );
 
     createIntRow(
-        'Page Timeout',
-        'Maximum seconds to wait for a page to render before giving up (10\u2013300).',
+        _('Page Timeout'),
+        _('Maximum seconds to wait for a page to render before giving up (10\u2013300).'),
         'crawl4ai-page-timeout',
         extractionGroup,
         10,
@@ -353,8 +370,8 @@ export function buildCrawlerSection(ctx) {
     );
 
     createIntRow(
-        'Maximum Output Characters',
-        'Truncation cap on extracted Markdown fed to the model context (500\u2013100000).',
+        _('Maximum Output Characters'),
+        _('Truncation cap on extracted Markdown fed to the model context (500\u2013100000).'),
         'crawl4ai-max-chars',
         extractionGroup,
         500,
@@ -364,84 +381,99 @@ export function buildCrawlerSection(ctx) {
 
     // ---- LLM Extraction (Optional) ----
     const llmGroup = createPreferencesGroup({
-        title: 'LLM Extraction (Optional)',
-        description:
+        title: _('LLM Extraction (Optional)'),
+        description: _(
             'Configure server-side LLM extraction. The crawl tool returns raw Markdown by default and only uses these settings when the model explicitly asks for extraction (mode="extract"); the manual /crawl command follows the Extraction Mode setting below. Fully optional \u2014 raw Markdown never needs an LLM.',
+        ),
     });
     detailPage.add(llmGroup);
 
     createInstructionRow(
-        'How to enable AI extraction',
-        'Models request extraction per crawl (mode="extract"); the Extraction Mode below decides its shape ' +
-            '(Schema for structured JSON, Block for a freeform answer). ' +
-            'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
-            'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
-            'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
-            'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
-            '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
-            'different fields. Katab never sees or stores your API key.',
+        _('How to enable AI extraction'),
+        _(
+            'Models request extraction per crawl (mode="extract"); the Extraction Mode below decides its shape ' +
+                '(Schema for structured JSON, Block for a freeform answer). ' +
+                'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
+                'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
+                'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
+                'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
+                '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
+                'different fields. Katab never sees or stores your API key.',
+        ),
         llmGroup,
     );
 
     const llmModeRow = createChoiceRow(
-        'Extraction Mode',
-        'How Crawl4AI should format page content when LLM extraction is requested. Markdown remains the default fallback.',
+        _('Extraction Mode'),
+        _(
+            'How Crawl4AI should format page content when LLM extraction is requested. Markdown remains the default fallback.',
+        ),
         llmGroup,
     );
     bindChoiceRow(
         llmModeRow,
         'crawl4ai-extraction-mode',
         [
-            { value: 'markdown', label: 'Markdown Only (Default)' },
-            { value: 'llm-schema', label: 'LLM Structured JSON (Schema)' },
-            { value: 'llm-block', label: 'LLM Freeform Answer (Block)' },
+            { value: 'markdown', label: _('Markdown Only (Default)') },
+            { value: 'llm-schema', label: _('LLM Structured JSON (Schema)') },
+            { value: 'llm-block', label: _('LLM Freeform Answer (Block)') },
         ],
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
     );
 
     const llmProviderRow = createStringRow(
-        'LLM Provider',
-        'LiteLLM model identifier. Defaults to DeepSeek V4.1 Flash (deepseek/deepseek-flash). Must match the provider allowed on your Crawl4AI server \u2014 set LLM_PROVIDER=&lt;same value&gt; and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
+        _('LLM Provider'),
+        _(
+            'LiteLLM model identifier. Defaults to DeepSeek V4.1 Flash (deepseek/deepseek-flash). Must match the provider allowed on your Crawl4AI server \u2014 set LLM_PROVIDER=&lt;same value&gt; and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab.',
+        ),
         'crawl4ai-llm-provider',
         llmGroup,
     );
 
     const llmInstructionRow = createMultilineStringRow(
-        'LLM Instruction',
-        'Freeform instruction for Block mode. A default summary instruction is prefilled \u2014 edit it to suit the page type.',
+        _('LLM Instruction'),
+        _(
+            'Freeform instruction for Block mode. A default summary instruction is prefilled \u2014 edit it to suit the page type.',
+        ),
         'crawl4ai-llm-instruction',
         llmGroup,
         100,
     );
 
     const llmSchemaRow = createMultilineStringRow(
-        'LLM Schema (JSON)',
-        'JSON Schema object for Schema mode. A general-purpose schema is prefilled \u2014 edit it to match the fields you want.',
+        _('LLM Schema (JSON)'),
+        _(
+            'JSON Schema object for Schema mode. A general-purpose schema is prefilled \u2014 edit it to match the fields you want.',
+        ),
         'crawl4ai-llm-schema-json',
         llmGroup,
         140,
     );
 
     const validateSchemaRow = createButtonRow(
-        'Validate Schema',
-        'Check that the JSON Schema text parses as valid JSON.',
-        'Validate',
+        _('Validate Schema'),
+        _('Check that the JSON Schema text parses as valid JSON.'),
+        _('Validate'),
         () => {
             const raw = settings.get_string('crawl4ai-llm-schema-json') || '';
             try {
                 JSON.parse(raw);
-                validateSchemaRow.subtitle = 'Schema is valid JSON.';
+                validateSchemaRow.subtitle = _('Schema is valid JSON.');
             } catch (error) {
-                validateSchemaRow.subtitle = `Invalid JSON: ${error?.message || 'parse error'}`;
+                validateSchemaRow.subtitle = format(_('Invalid JSON: {error}'), {
+                    error: error?.message || _('parse error'),
+                });
             }
         },
         llmGroup,
     );
 
     createIntRow(
-        'Chunk Token Threshold',
-        'Maximum tokens per chunk when Crawl4AI splits large pages for LLM extraction (500\u201316000).',
+        _('Chunk Token Threshold'),
+        _(
+            'Maximum tokens per chunk when Crawl4AI splits large pages for LLM extraction (500\u201316000).',
+        ),
         'crawl4ai-llm-chunk-token-threshold',
         llmGroup,
         500,
@@ -450,8 +482,10 @@ export function buildCrawlerSection(ctx) {
     );
 
     createDoubleRow(
-        'Chunk Overlap Rate',
-        'Overlap between consecutive chunks (0.0\u20130.5) to preserve context across boundaries.',
+        _('Chunk Overlap Rate'),
+        _(
+            'Overlap between consecutive chunks (0.0\u20130.5) to preserve context across boundaries.',
+        ),
         'crawl4ai-llm-overlap-rate',
         llmGroup,
         0.0,
@@ -474,35 +508,43 @@ export function buildCrawlerSection(ctx) {
 
     // ---- Advanced ----
     const advancedGroup = createPreferencesGroup({
-        title: 'Advanced',
-        description: 'Anti-bot stealth, autonomous model use, and network address restrictions.',
+        title: _('Advanced'),
+        description: _('Anti-bot stealth, autonomous model use, and network address restrictions.'),
     });
     detailPage.add(advancedGroup);
 
     createBooleanRow(
-        'Stealth Mode',
-        'Mimic human mouse movements, scrolls, and timing to reduce CAPTCHA and bot-detection challenges. Slower but more reliable for protected sites.',
+        _('Stealth Mode'),
+        _(
+            'Mimic human mouse movements, scrolls, and timing to reduce CAPTCHA and bot-detection challenges. Slower but more reliable for protected sites.',
+        ),
         'crawl4ai-simulate-user',
         advancedGroup,
     );
 
     createBooleanRow(
-        'Autonomous Tool Use',
-        'Advertise the crawl_url tool to supported models so they can decide when to deep-scrape a page. With this off, only the manual /crawl command runs.',
+        _('Autonomous Tool Use'),
+        _(
+            'Advertise the crawl_url tool to supported models so they can decide when to deep-scrape a page. With this off, only the manual /crawl command runs.',
+        ),
         'crawl4ai-autonomous-enabled',
         advancedGroup,
     );
 
     createBooleanRow(
-        'Follow Subpage Links in Research',
-        'During deep research, follow the most relevant links found on scraped pages (e.g. a docs index linking to the actual page). Lets research reach details that are one click away.',
+        _('Follow Subpage Links in Research'),
+        _(
+            'During deep research, follow the most relevant links found on scraped pages (e.g. a docs index linking to the actual page). Lets research reach details that are one click away.',
+        ),
         'crawl4ai-follow-links-enabled',
         advancedGroup,
     );
 
     createIntRow(
-        'Max Followed Links per Branch',
-        'How many relevance-scored subpage links a research branch may follow after its initial crawl (0\u201310).',
+        _('Max Followed Links per Branch'),
+        _(
+            'How many relevance-scored subpage links a research branch may follow after its initial crawl (0\u201310).',
+        ),
         'crawl4ai-max-follow-links',
         advancedGroup,
         0,
@@ -511,15 +553,17 @@ export function buildCrawlerSection(ctx) {
     );
 
     createBooleanRow(
-        'Allow Local Addresses',
-        'Permit scraping of private, loopback, and link-local addresses. Leave off unless you fully trust your network.',
+        _('Allow Local Addresses'),
+        _(
+            'Permit scraping of private, loopback, and link-local addresses. Leave off unless you fully trust your network.',
+        ),
         'crawl4ai-allow-local-addresses',
         advancedGroup,
     );
 
     createIntRow(
-        'Async Polling Interval',
-        'Milliseconds between status checks when using async crawl jobs (500\u201310000).',
+        _('Async Polling Interval'),
+        _('Milliseconds between status checks when using async crawl jobs (500\u201310000).'),
         'crawl4ai-job-poll-ms',
         advancedGroup,
         500,

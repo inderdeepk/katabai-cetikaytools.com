@@ -1,6 +1,12 @@
 // catalog.js — Single source of truth for provider identity and branding,
 // shared by the shell extension (extension.js) and the preferences window
 // (prefs.js).  Adding a provider starts here.
+//
+// User-visible *prose* (descriptions) uses lazy getters: the i18n bridge is
+// initialized in the entry points, AFTER module imports — a plain `_('...')`
+// at module level would freeze the identity fallback at load. Brand names,
+// labels and page titles are intentionally left untranslated.
+import { gettext as _ } from '../shared/i18n.js';
 
 export const PROVIDER_META = {
     ollama: { label: 'Ollama', iconFile: 'ollama.svg' },
@@ -15,18 +21,25 @@ export const DEEPSEEK_MODELS = [
     {
         id: 'deepseek-flash',
         label: 'Flash (V4.1)',
-        description:
-            'Fast, efficient model for everyday tasks and quick replies. Supports image input.',
+        get description() {
+            return _(
+                'Fast, efficient model for everyday tasks and quick replies. Supports image input.',
+            );
+        },
     },
     {
         id: 'deepseek-v4-pro',
         label: 'Pro',
-        description: 'Stronger reasoning for complex, multi-step problems.',
+        get description() {
+            return _('Stronger reasoning for complex, multi-step problems.');
+        },
     },
     {
         id: 'deepseek-v4-flash',
         label: 'Flash (legacy)',
-        description: 'Retired alias — served by the V4.1 Flash model and billed at Flash rates.',
+        get description() {
+            return _('Retired alias — served by the V4.1 Flash model and billed at Flash rates.');
+        },
     },
 ];
 
@@ -53,32 +66,47 @@ export const PROVIDER_DETAILS = {
     ollama: {
         ...PROVIDER_META.ollama,
         pageTitle: 'Ollama',
-        description:
-            'Run local models with a fast desktop-native workflow and deep tuning controls.',
+        get description() {
+            return _(
+                'Run local models with a fast desktop-native workflow and deep tuning controls.',
+            );
+        },
     },
     deepseek: {
         ...PROVIDER_META.deepseek,
         pageTitle: 'DeepSeek',
-        description:
-            'Access DeepSeek V4 models with a 1M token context window and advanced reasoning. Requires a funded prepaid account.',
+        get description() {
+            return _(
+                'Access DeepSeek V4 models with a 1M token context window and advanced reasoning. Requires a funded prepaid account.',
+            );
+        },
     },
     unsloth: {
         ...PROVIDER_META.unsloth,
         pageTitle: 'Unsloth',
-        description:
-            'Connect to optimized local Unsloth Studio endpoints for heavier or longer-context jobs.',
+        get description() {
+            return _(
+                'Connect to optimized local Unsloth Studio endpoints for heavier or longer-context jobs.',
+            );
+        },
     },
     openai: {
         ...PROVIDER_META.openai,
         pageTitle: 'OpenAI',
-        description:
-            'Use hosted OpenAI models when you want broad capability and reliable cloud access.',
+        get description() {
+            return _(
+                'Use hosted OpenAI models when you want broad capability and reliable cloud access.',
+            );
+        },
     },
     anthropic: {
         ...PROVIDER_META.anthropic,
         label: 'Anthropic Claude',
         pageTitle: 'Claude',
-        description:
-            'Use Claude models through Anthropic for careful reasoning, writing, and long-context work.',
+        get description() {
+            return _(
+                'Use Claude models through Anthropic for careful reasoning, writing, and long-context work.',
+            );
+        },
     },
 };

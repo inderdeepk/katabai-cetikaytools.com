@@ -2,8 +2,12 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import Soup from 'gi://Soup?version=3.0';
+import { gettext as _, ngettext, format } from '../../../shared/i18n.js';
 
 // Knowledge Base (local RAG) settings section for the Tools page.
+// NOTE: the multi-step Installation / Running / Auto-Start guides below
+// intentionally stay in English — they are shell-command walk-throughs;
+// only their titles are translatable.
 export function buildKnowledgeSection(ctx) {
     const {
         settings,
@@ -24,14 +28,16 @@ export function buildKnowledgeSection(ctx) {
         addCssClasses,
     } = ctx;
 
-    const subpage = createToolSubpage('Knowledge Base');
+    const subpage = createToolSubpage(_('Knowledge Base'));
     const detailPage = subpage.detailPage;
 
     const noticeGroup = createPreferencesGroup({});
     // (added to the page after the Service group — see the Service block)
     const noticeRow = createInfoRow(
-        'How the Knowledge Base works',
-        'Your documents, conversations, and research results are chunked, embedded with Ollama\u2019s nomic-embed-text model, and stored in a local ChromaDB vector database. When you ask a question, Katab finds the most semantically similar chunks and feeds them as context. Everything runs locally \u2014 no data leaves your machine.\n\nPhase 3 adds hybrid BM25 keyword matching, cross-encoder reranking (bge-reranker-v2-m3), and automatic web search fallback when knowledge base results are low-quality. Use the Service section above for one-click setup, or see the Setup section below for manual instructions.',
+        _('How the Knowledge Base works'),
+        _(
+            'Your documents, conversations, and research results are chunked, embedded with Ollama\u2019s nomic-embed-text model, and stored in a local ChromaDB vector database. When you ask a question, Katab finds the most semantically similar chunks and feeds them as context. Everything runs locally \u2014 no data leaves your machine.\n\nPhase 3 adds hybrid BM25 keyword matching, cross-encoder reranking (bge-reranker-v2-m3), and automatic web search fallback when knowledge base results are low-quality. Use the Service section above for one-click setup, or see the Setup section below for manual instructions.',
+        ),
         noticeGroup,
     );
     noticeRow.add_prefix(
@@ -51,29 +57,28 @@ export function buildKnowledgeSection(ctx) {
     setupExpander.add_prefix(
         addCssClasses(
             new Gtk.Label({
-                label: 'Setup \u2014 Install & Run the RAG Service',
+                label: _('Setup \u2014 Install & Run the RAG Service'),
                 xalign: 0,
                 halign: Gtk.Align.START,
             }),
             'katab-prefs-expander-title',
         ),
     );
-    setupExpander.subtitle =
-        'Prefer one-click? Use Set Up &amp; Start in the Service section above. The steps below are the manual alternative.';
+    setupExpander.subtitle = _(
+        'Prefer one-click? Use Set Up &amp; Start in the Service section above. The steps below are the manual alternative.',
+    );
     noticeGroup.add(setupExpander);
 
     createInstructionRow(
-        'One-Click Setup (Recommended)',
-        [
-            'Use the Service section above to install and start the RAG service automatically.',
-            '',
-            'The steps below are only needed for a manual or custom installation.',
-        ].join('\n'),
+        _('One-Click Setup (Recommended)'),
+        _(
+            'Use the Service section above to install and start the RAG service automatically.\n\nThe steps below are only needed for a manual or custom installation.',
+        ),
         setupExpander,
     );
 
     createInstructionRow(
-        'Installation',
+        _('Installation'),
         [
             '1. Create a virtual environment for the RAG service',
             '',
@@ -106,7 +111,7 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createInstructionRow(
-        'Running the Service',
+        _('Running the Service'),
         [
             '5. Start the RAG service from a terminal',
             '',
@@ -127,7 +132,7 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createInstructionRow(
-        'Auto-Start with systemd (Recommended)',
+        _('Auto-Start with systemd (Recommended)'),
         [
             '6. Create a user systemd service so the RAG backend',
             '   starts automatically on login.',
@@ -174,60 +179,68 @@ export function buildKnowledgeSection(ctx) {
 
     // ---- Connection ----
     const connectionGroup = createPreferencesGroup({
-        title: 'Connection',
-        description: 'Point Katab at your local RAG Python service.',
+        title: _('Connection'),
+        description: _('Point Katab at your local RAG Python service.'),
     });
     // (added to the page after the Service group — see the Service block)
 
     createBooleanRow(
-        'Enable Knowledge Base',
-        'Allow the /kb command, Knowledge footer button, and autonomous knowledge searching by supported models.',
+        _('Enable Knowledge Base'),
+        _(
+            'Allow the /kb command, Knowledge footer button, and autonomous knowledge searching by supported models.',
+        ),
         'rag-enabled',
         connectionGroup,
     );
 
     createBooleanRow(
-        'Enable Memory',
-        'Master switch for automatic indexing. When enabled, Katab indexes documents, conversations, and research results (respecting the per-type toggles below). When disabled, no new content is indexed but existing knowledge remains searchable.',
+        _('Enable Memory'),
+        _(
+            'Master switch for automatic indexing. When enabled, Katab indexes documents, conversations, and research results (respecting the per-type toggles below). When disabled, no new content is indexed but existing knowledge remains searchable.',
+        ),
         'rag-memory-enabled',
         connectionGroup,
     );
 
     createStringRow(
-        'RAG Service URL',
-        'Base URL of your local Katabai RAG service, e.g. http://localhost:11435.',
+        _('RAG Service URL'),
+        _('Base URL of your local Katabai RAG service, e.g. http://localhost:11435.'),
         'rag-service-url',
         connectionGroup,
     );
 
     createStringRow(
-        'Ollama URL for Embeddings',
-        'The Ollama instance used for generating text embeddings. Can be remote (e.g. http://192.168.1.100:11434) if Ollama runs on a separate AI PC.',
+        _('Ollama URL for Embeddings'),
+        _(
+            'The Ollama instance used for generating text embeddings. Can be remote (e.g. http://192.168.1.100:11434) if Ollama runs on a separate AI PC.',
+        ),
         'rag-ollama-url',
         connectionGroup,
     );
 
     createStringRow(
-        'Embedding Model',
-        'Ollama model used for generating text embeddings. Must be pulled first with: ollama pull nomic-embed-text.',
+        _('Embedding Model'),
+        _(
+            'Ollama model used for generating text embeddings. Must be pulled first with: ollama pull nomic-embed-text.',
+        ),
         'rag-embedding-model',
         connectionGroup,
     );
 
     const { row: ragConnStatusRow, badge: ragConnBadge } = createStatusRow(
-        'Connection Status',
-        'Run a health check to confirm the RAG service is reachable.',
+        _('Connection Status'),
+        _('Run a health check to confirm the RAG service is reachable.'),
         connectionGroup,
     );
-    setStatusBadge(ragConnBadge, 'Untested', null);
+    setStatusBadge(ragConnBadge, _('Untested'), null);
 
     createButtonRow(
-        'Test Connection',
-        'Send a health check to verify the RAG service responds.',
-        'Test',
+        _('Test Connection'),
+        _('Send a health check to verify the RAG service responds.'),
+        _('Test'),
         () => {
-            setStatusBadge(ragConnBadge, 'Testing', null);
-            ragConnStatusRow.subtitle = 'Contacting the RAG service\u2026';
+            setStatusBadge(ragConnBadge, _('Testing'), null);
+            ragConnStatusRow.subtitle = _('Contacting the RAG service\u2026');
 
             const config = {
                 serviceUrl: settings.get_string('rag-service-url'),
@@ -254,26 +267,37 @@ export function buildKnowledgeSection(ctx) {
                             const rerankerOk = limits.reranker_available ? ' reranker✓' : '';
                             const bm25Ok = limits.bm25_available ? ' BM25✓' : '';
                             const features = `${rerankerOk}${bm25Ok}`.trim();
+                            const featuresSuffix = features
+                                ? ` ${format(_('Features: {features}'), { features })}`
+                                : '';
+                            const collectionsText = format(
+                                ngettext('{count} collection', '{count} collections', colCount),
+                                { count: colCount },
+                            );
                             setStatusBadge(
                                 ragConnBadge,
-                                'Connected',
+                                _('Connected'),
                                 'katab-prefs-status-detected',
                             );
                             ragConnStatusRow.subtitle = body.version
-                                ? `Reachable. v${body.version}, ${colCount} collection${colCount !== 1 ? 's' : ''}.${features ? ` Features: ${features}` : ''}`
-                                : `Reachable.${features ? ` Features: ${features}` : ''}`;
+                                ? format(_('Reachable. v{version}, {collections}.{features}'), {
+                                      version: body.version,
+                                      collections: collectionsText,
+                                      features: featuresSuffix,
+                                  })
+                                : format(_('Reachable.{features}'), { features: featuresSuffix });
                         } else {
-                            setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
-                            ragConnStatusRow.subtitle = 'Service returned an error.';
+                            setStatusBadge(ragConnBadge, _('Failed'), 'katab-prefs-status-install');
+                            ragConnStatusRow.subtitle = _('Service returned an error.');
                         }
                     } catch (e) {
-                        setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
-                        ragConnStatusRow.subtitle = e?.message || 'Connection test failed.';
+                        setStatusBadge(ragConnBadge, _('Failed'), 'katab-prefs-status-install');
+                        ragConnStatusRow.subtitle = e?.message || _('Connection test failed.');
                     }
                 });
             } catch (e) {
-                setStatusBadge(ragConnBadge, 'Failed', 'katab-prefs-status-install');
-                ragConnStatusRow.subtitle = e?.message || 'Connection test failed.';
+                setStatusBadge(ragConnBadge, _('Failed'), 'katab-prefs-status-install');
+                ragConnStatusRow.subtitle = e?.message || _('Connection test failed.');
             }
         },
         connectionGroup,
@@ -326,9 +350,10 @@ export function buildKnowledgeSection(ctx) {
     const runSystemctl = (verb, onDone) => runSystemctlRaw([verb, RAG_SERVICE_UNIT], onDone);
 
     const serviceGroup = createPreferencesGroup({
-        title: 'Service',
-        description:
+        title: _('Service'),
+        description: _(
             'Control the local RAG service (the systemd user unit katabai-rag.service). "Set Up &amp; Start" performs the default install \u2014 create the Python venv, install dependencies, write the unit file, and start the service \u2014 skipping any step already done and leaving an existing (custom) unit file untouched. Start, Restart, and Stop manage an already-installed unit.',
+        ),
     });
     detailPage.add(serviceGroup);
 
@@ -339,14 +364,14 @@ export function buildKnowledgeSection(ctx) {
     detailPage.add(connectionGroup);
 
     const { row: ragServiceStatusRow, badge: ragServiceBadge } = createStatusRow(
-        'Service Status',
-        'Checking the systemd unit\u2026',
+        _('Service Status'),
+        _('Checking the systemd unit\u2026'),
         serviceGroup,
     );
-    setStatusBadge(ragServiceBadge, 'Checking', null);
+    setStatusBadge(ragServiceBadge, _('Checking'), null);
 
     const showServiceError = (msg) => {
-        setStatusBadge(ragServiceBadge, 'Failed', 'katab-prefs-status-install');
+        setStatusBadge(ragServiceBadge, _('Failed'), 'katab-prefs-status-install');
         ragServiceStatusRow.subtitle = msg;
     };
 
@@ -357,7 +382,7 @@ export function buildKnowledgeSection(ctx) {
 
     const setupBtn = addCssClasses(
         new Gtk.Button({
-            label: 'Set Up & Start',
+            label: _('Set Up & Start'),
             valign: Gtk.Align.CENTER,
         }),
         'katab-prefs-button',
@@ -365,21 +390,21 @@ export function buildKnowledgeSection(ctx) {
     );
     const startBtn = addCssClasses(
         new Gtk.Button({
-            label: 'Start',
+            label: _('Start'),
             valign: Gtk.Align.CENTER,
         }),
         'katab-prefs-button',
     );
     const restartBtn = addCssClasses(
         new Gtk.Button({
-            label: 'Restart',
+            label: _('Restart'),
             valign: Gtk.Align.CENTER,
         }),
         'katab-prefs-button',
     );
     const stopBtn = addCssClasses(
         new Gtk.Button({
-            label: 'Stop',
+            label: _('Stop'),
             valign: Gtk.Align.CENTER,
         }),
         'katab-prefs-button',
@@ -402,8 +427,8 @@ export function buildKnowledgeSection(ctx) {
     };
 
     const refreshServiceStatus = () => {
-        setStatusBadge(ragServiceBadge, 'Checking', null);
-        ragServiceStatusRow.subtitle = 'Checking the systemd unit\u2026';
+        setStatusBadge(ragServiceBadge, _('Checking'), null);
+        ragServiceStatusRow.subtitle = _('Checking the systemd unit\u2026');
         const venvReady = Gio.File.new_for_path(venvPython).query_exists(null);
         // `cat` succeeds only when the unit is installed anywhere in the
         // user's systemd search paths; `is-active` succeeds only while it runs.
@@ -411,19 +436,28 @@ export function buildKnowledgeSection(ctx) {
             const installed = catResult.success;
             runSystemctl('is-active', ({ success: active }) => {
                 if (!installed) {
-                    setStatusBadge(ragServiceBadge, 'Not installed', 'katab-prefs-status-install');
+                    setStatusBadge(
+                        ragServiceBadge,
+                        _('Not installed'),
+                        'katab-prefs-status-install',
+                    );
                     ragServiceStatusRow.subtitle = venvReady
-                        ? 'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up &amp; Start" to create it and launch the service.'
-                        : 'No service is set up yet. Use "Set Up &amp; Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).';
+                        ? _(
+                              'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up &amp; Start" to create it and launch the service.',
+                          )
+                        : _(
+                              'No service is set up yet. Use "Set Up &amp; Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).',
+                          );
                     updateServiceButtons(false, false);
                 } else if (active) {
-                    setStatusBadge(ragServiceBadge, 'Running', 'katab-prefs-status-detected');
-                    ragServiceStatusRow.subtitle = 'The katabai-rag.service unit is running.';
+                    setStatusBadge(ragServiceBadge, _('Running'), 'katab-prefs-status-detected');
+                    ragServiceStatusRow.subtitle = _('The katabai-rag.service unit is running.');
                     updateServiceButtons(true, true);
                 } else {
-                    setStatusBadge(ragServiceBadge, 'Stopped', 'katab-prefs-status-install');
-                    ragServiceStatusRow.subtitle =
-                        'The service is installed but stopped. Use Start to launch it.';
+                    setStatusBadge(ragServiceBadge, _('Stopped'), 'katab-prefs-status-install');
+                    ragServiceStatusRow.subtitle = _(
+                        'The service is installed but stopped. Use Start to launch it.',
+                    );
                     updateServiceButtons(true, false);
                 }
             });
@@ -431,7 +465,7 @@ export function buildKnowledgeSection(ctx) {
     };
 
     const runServiceAction = (verb, label) => {
-        setStatusBadge(ragServiceBadge, 'Working', null);
+        setStatusBadge(ragServiceBadge, _('Working'), null);
         ragServiceStatusRow.subtitle = label;
         runSystemctl(verb, (result) => {
             if (result.success) {
@@ -441,7 +475,9 @@ export function buildKnowledgeSection(ctx) {
                     return GLib.SOURCE_REMOVE;
                 });
             } else {
-                showServiceError(result.stderr?.trim() || `systemctl ${verb} failed.`);
+                showServiceError(
+                    result.stderr?.trim() || format(_('systemctl {verb} failed.'), { verb }),
+                );
             }
         });
     };
@@ -486,8 +522,8 @@ export function buildKnowledgeSection(ctx) {
     // Adaptive default setup: only run the missing steps, and never
     // touch an existing unit file (which may be a custom install).
     const autoSetupService = () => {
-        setStatusBadge(ragServiceBadge, 'Setting up', null);
-        ragServiceStatusRow.subtitle = 'Preparing the RAG service\u2026';
+        setStatusBadge(ragServiceBadge, _('Setting up'), null);
+        ragServiceStatusRow.subtitle = _('Preparing the RAG service\u2026');
 
         const venvReady = Gio.File.new_for_path(venvPython).query_exists(null);
 
@@ -496,11 +532,13 @@ export function buildKnowledgeSection(ctx) {
                 done();
                 return;
             }
-            ragServiceStatusRow.subtitle = 'Creating the Python virtual environment\u2026';
+            ragServiceStatusRow.subtitle = _('Creating the Python virtual environment\u2026');
             runCommand([python3Path, '-m', 'venv', venvDir], (res) => {
                 if (!res.success) {
                     showServiceError(
-                        'Could not create the Python venv. Install python3-venv and retry, or follow the Setup section below.',
+                        _(
+                            'Could not create the Python venv. Install python3-venv and retry, or follow the Setup section below.',
+                        ),
                     );
                     return;
                 }
@@ -509,7 +547,7 @@ export function buildKnowledgeSection(ctx) {
         };
 
         const ensureDeps = (done) => {
-            ragServiceStatusRow.subtitle = 'Checking Python dependencies\u2026';
+            ragServiceStatusRow.subtitle = _('Checking Python dependencies\u2026');
             runCommand(
                 [
                     venvPython,
@@ -521,8 +559,9 @@ export function buildKnowledgeSection(ctx) {
                         done();
                         return;
                     }
-                    ragServiceStatusRow.subtitle =
-                        'Installing Python dependencies (this can take a minute)\u2026';
+                    ragServiceStatusRow.subtitle = _(
+                        'Installing Python dependencies (this can take a minute)\u2026',
+                    );
                     runCommand(
                         [
                             venvPython,
@@ -539,7 +578,9 @@ export function buildKnowledgeSection(ctx) {
                             if (!install.success) {
                                 showServiceError(
                                     install.stderr?.trim() ||
-                                        'Dependency installation failed \u2014 install them manually from the Setup section below.',
+                                        _(
+                                            'Dependency installation failed \u2014 install them manually from the Setup section below.',
+                                        ),
                                 );
                                 return;
                             }
@@ -557,31 +598,31 @@ export function buildKnowledgeSection(ctx) {
                     done();
                     return;
                 }
-                ragServiceStatusRow.subtitle = 'Writing the systemd unit file\u2026';
+                ragServiceStatusRow.subtitle = _('Writing the systemd unit file\u2026');
                 try {
                     writeDefaultUnitFile();
                     done();
                 } catch (e) {
-                    showServiceError(e?.message || 'Failed to write the unit file.');
+                    showServiceError(e?.message || _('Failed to write the unit file.'));
                 }
             });
         };
 
         const enableAndStart = (done) => {
-            ragServiceStatusRow.subtitle = 'Enabling and starting the service\u2026';
+            ragServiceStatusRow.subtitle = _('Enabling and starting the service\u2026');
             runSystemctlRaw(['daemon-reload'], (reload) => {
                 if (!reload.success) {
-                    showServiceError(reload.stderr?.trim() || 'systemctl daemon-reload failed.');
+                    showServiceError(reload.stderr?.trim() || _('systemctl daemon-reload failed.'));
                     return;
                 }
                 runSystemctl('enable', (enable) => {
                     if (!enable.success) {
-                        showServiceError(enable.stderr?.trim() || 'systemctl enable failed.');
+                        showServiceError(enable.stderr?.trim() || _('systemctl enable failed.'));
                         return;
                     }
                     runSystemctl('start', (start) => {
                         if (!start.success) {
-                            showServiceError(start.stderr?.trim() || 'systemctl start failed.');
+                            showServiceError(start.stderr?.trim() || _('systemctl start failed.'));
                             return;
                         }
                         done();
@@ -605,15 +646,17 @@ export function buildKnowledgeSection(ctx) {
     };
 
     setupBtn.connect('clicked', autoSetupService);
-    startBtn.connect('clicked', () => runServiceAction('start', 'Starting the service\u2026'));
+    startBtn.connect('clicked', () => runServiceAction('start', _('Starting the service\u2026')));
     restartBtn.connect('clicked', () =>
-        runServiceAction('restart', 'Restarting the service\u2026'),
+        runServiceAction('restart', _('Restarting the service\u2026')),
     );
-    stopBtn.connect('clicked', () => runServiceAction('stop', 'Stopping the service\u2026'));
+    stopBtn.connect('clicked', () => runServiceAction('stop', _('Stopping the service\u2026')));
 
     createInfoRow(
-        'Service Controls',
-        'Set Up &amp; Start performs the default install (Python venv, dependencies, and unit file) and starts the service, adapting to what is already present. Start, Restart, and Stop manage the installed unit.',
+        _('Service Controls'),
+        _(
+            'Set Up &amp; Start performs the default install (Python venv, dependencies, and unit file) and starts the service, adapting to what is already present. Start, Restart, and Stop manage the installed unit.',
+        ),
         serviceGroup,
         serviceButtons,
     );
@@ -625,14 +668,16 @@ export function buildKnowledgeSection(ctx) {
 
     // ---- Indexing ----
     const indexingGroup = createPreferencesGroup({
-        title: 'Indexing',
-        description: 'Control how text is chunked and what gets indexed.',
+        title: _('Indexing'),
+        description: _('Control how text is chunked and what gets indexed.'),
     });
     detailPage.add(indexingGroup);
 
     createIntRow(
-        'Chunk Size',
-        'Characters per text chunk. Larger chunks preserve context but reduce precision. (200–4000)',
+        _('Chunk Size'),
+        _(
+            'Characters per text chunk. Larger chunks preserve context but reduce precision. (200–4000)',
+        ),
         'rag-chunk-size',
         indexingGroup,
         200,
@@ -641,8 +686,8 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createIntRow(
-        'Chunk Overlap',
-        'Character overlap between chunks. Prevents information loss at boundaries. (0–500)',
+        _('Chunk Overlap'),
+        _('Character overlap between chunks. Prevents information loss at boundaries. (0–500)'),
         'rag-chunk-overlap',
         indexingGroup,
         0,
@@ -651,8 +696,8 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createIntRow(
-        'Result Count',
-        'Number of top results to retrieve per query. (1–20)',
+        _('Result Count'),
+        _('Number of top results to retrieve per query. (1–20)'),
         'rag-top-k',
         indexingGroup,
         1,
@@ -662,15 +707,16 @@ export function buildKnowledgeSection(ctx) {
 
     // ---- Storage Limits ----
     const limitsGroup = createPreferencesGroup({
-        title: 'Storage Limits',
-        description:
+        title: _('Storage Limits'),
+        description: _(
             'Prevent the knowledge base from growing beyond your disk budget. Set to 0 to disable a cap. Changes apply immediately.',
+        ),
     });
     detailPage.add(limitsGroup);
 
     createIntRow(
-        'Max Chunks Per Collection',
-        'Hard cap on chunks in any single collection. 0 = unlimited. (0–100000)',
+        _('Max Chunks Per Collection'),
+        _('Hard cap on chunks in any single collection. 0 = unlimited. (0–100000)'),
         'rag-max-chunks-per-collection',
         limitsGroup,
         0,
@@ -679,8 +725,8 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createIntRow(
-        'Max Total Storage (MB)',
-        'Estimated maximum disk usage for the ChromaDB directory. 0 = unlimited. (0–10000)',
+        _('Max Total Storage (MB)'),
+        _('Estimated maximum disk usage for the ChromaDB directory. 0 = unlimited. (0–10000)'),
         'rag-max-total-size-mb',
         limitsGroup,
         0,
@@ -689,79 +735,91 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createBooleanRow(
-        'Auto-Prune Oldest Chunks',
-        'When a collection hits its size cap, automatically remove the oldest chunks to make room. When disabled, new indexing is rejected at the cap.',
+        _('Auto-Prune Oldest Chunks'),
+        _(
+            'When a collection hits its size cap, automatically remove the oldest chunks to make room. When disabled, new indexing is rejected at the cap.',
+        ),
         'rag-auto-prune',
         limitsGroup,
     );
 
     createBooleanRow(
-        'Index Document Attachments',
-        'Automatically add attached documents (txt, md, pdf, docx) to the knowledge base.',
+        _('Index Document Attachments'),
+        _('Automatically add attached documents (txt, md, pdf, docx) to the knowledge base.'),
         'rag-index-documents',
         indexingGroup,
     );
 
     createBooleanRow(
-        'Index Conversations',
-        'Automatically add past conversation turns to the knowledge base for cross-session retrieval.',
+        _('Index Conversations'),
+        _(
+            'Automatically add past conversation turns to the knowledge base for cross-session retrieval.',
+        ),
         'rag-index-conversations',
         indexingGroup,
     );
 
     createBooleanRow(
-        'Index Research Cache',
-        'Automatically add web search and scraping results to the knowledge base.',
+        _('Index Research Cache'),
+        _('Automatically add web search and scraping results to the knowledge base.'),
         'rag-index-research-cache',
         indexingGroup,
     );
 
     // ---- Autonomous ----
     const autonomousGroup = createPreferencesGroup({
-        title: 'Autonomous Tool Use',
-        description:
+        title: _('Autonomous Tool Use'),
+        description: _(
             'Let supported models call knowledge_search on their own when they think it would help.',
+        ),
     });
     detailPage.add(autonomousGroup);
 
     createBooleanRow(
-        'Allow Model-Triggered Knowledge Search',
-        'Advertise the knowledge_search tool to capable models. When disabled, only the manual /kb command works.',
+        _('Allow Model-Triggered Knowledge Search'),
+        _(
+            'Advertise the knowledge_search tool to capable models. When disabled, only the manual /kb command works.',
+        ),
         'rag-autonomous-enabled',
         autonomousGroup,
     );
 
     createBooleanRow(
-        'Auto-Update Knowledge Base',
-        "When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you'll be asked to confirm each update.",
+        _('Auto-Update Knowledge Base'),
+        _(
+            "When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you'll be asked to confirm each update.",
+        ),
         'rag-auto-update-enabled',
         autonomousGroup,
     );
 
     // ---- Advanced Retrieval (Phase 3) ----
     const advancedGroup = createPreferencesGroup({
-        title: 'Advanced Retrieval',
-        description:
+        title: _('Advanced Retrieval'),
+        description: _(
             'Fine-tune how the knowledge base finds and ranks results. These features require additional models and add latency, but significantly improve result quality.',
+        ),
     });
     detailPage.add(advancedGroup);
 
     // -- Coverage Fallback --
     createBooleanRow(
-        'Auto-Fallback to Web Search',
-        'When knowledge base results are low-quality, automatically trigger a web search as a supplement. This is the reverse direction of the existing suppression for high-confidence KB results.',
+        _('Auto-Fallback to Web Search'),
+        _(
+            'When knowledge base results are low-quality, automatically trigger a web search as a supplement. This is the reverse direction of the existing suppression for high-confidence KB results.',
+        ),
         'rag-fallback-enabled',
         advancedGroup,
     );
 
     const fallbackThresholds = [
-        [0.35, 'Strict (only fallback when KB is very poor)'],
-        [0.6, 'Moderate (recommended)'],
-        [0.8, 'Aggressive (fallback frequently)'],
+        [0.35, _('Strict (only fallback when KB is very poor)')],
+        [0.6, _('Moderate (recommended)')],
+        [0.8, _('Aggressive (fallback frequently)')],
     ];
     const { row: fallbackThreshRow } = createDoubleRow(
-        'Fallback Threshold',
-        'Minimum best-result score (0.0–1.0) before auto-triggering web search.',
+        _('Fallback Threshold'),
+        _('Minimum best-result score (0.0–1.0) before auto-triggering web search.'),
         'rag-fallback-threshold',
         advancedGroup,
         0.0,
@@ -782,7 +840,10 @@ export function buildKnowledgeSection(ctx) {
                 }
             }
             if (!desc) desc = fallbackThresholds[fallbackThresholds.length - 1][1];
-            fallbackThreshRow.subtitle = `Current: ${val.toFixed(2)} — ${desc}`;
+            fallbackThreshRow.subtitle = format(_('Current: {value} — {desc}'), {
+                value: val.toFixed(2),
+                desc,
+            });
         } catch (_) {
             /* settings may not be ready */
         }
@@ -792,22 +853,26 @@ export function buildKnowledgeSection(ctx) {
 
     // -- Reranking --
     createBooleanRow(
-        'Reranking',
-        'Re-rank top candidate chunks with a local scoring model (bge-reranker-v2-m3 or similar) on your Ollama host. Chunks are scored in one batched call per 10 candidates. Requires the model to be pulled first.',
+        _('Reranking'),
+        _(
+            'Re-rank top candidate chunks with a local scoring model (bge-reranker-v2-m3 or similar) on your Ollama host. Chunks are scored in one batched call per 10 candidates. Requires the model to be pulled first.',
+        ),
         'rag-rerank-enabled',
         advancedGroup,
     );
 
     createStringRow(
-        'Reranker Model',
-        'Ollama model used for cross-encoder reranking. Must be pulled first.',
+        _('Reranker Model'),
+        _('Ollama model used for cross-encoder reranking. Must be pulled first.'),
         'rag-rerank-model',
         advancedGroup,
     );
 
     createIntRow(
-        'Candidate Pool Multiplier',
-        'How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)',
+        _('Candidate Pool Multiplier'),
+        _(
+            'How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)',
+        ),
         'rag-rerank-candidate-multiplier',
         advancedGroup,
         1,
@@ -817,30 +882,32 @@ export function buildKnowledgeSection(ctx) {
 
     // -- Hybrid BM25 --
     createBooleanRow(
-        'Hybrid BM25 + Dense Retrieval',
-        'Combine keyword matching (BM25) with semantic search (dense embeddings) for better recall. Enabled by default — the service falls back to dense-only if rank-bm25 is not installed.',
+        _('Hybrid BM25 + Dense Retrieval'),
+        _(
+            'Combine keyword matching (BM25) with semantic search (dense embeddings) for better recall. Enabled by default — the service falls back to dense-only if rank-bm25 is not installed.',
+        ),
         'rag-hybrid-enabled',
         advancedGroup,
     );
 
     // ---- Maintenance ----
     const maintenanceGroup = createPreferencesGroup({
-        title: 'Maintenance',
-        description: 'Export, rebuild, or clear the knowledge base.',
+        title: _('Maintenance'),
+        description: _('Export, rebuild, or clear the knowledge base.'),
     });
     detailPage.add(maintenanceGroup);
 
     // Usage summary — refreshed when the page opens or on demand
     const { row: ragUsageRow, badge: ragUsageBadge } = createStatusRow(
-        'Current Usage',
-        'Click "Refresh" to check usage against your storage limits.',
+        _('Current Usage'),
+        _('Click "Refresh" to check usage against your storage limits.'),
         maintenanceGroup,
     );
-    setStatusBadge(ragUsageBadge, 'Unknown', null);
+    setStatusBadge(ragUsageBadge, _('Unknown'), null);
 
     const refreshUsage = () => {
-        setStatusBadge(ragUsageBadge, 'Checking', null);
-        ragUsageRow.subtitle = 'Querying the RAG service\u2026';
+        setStatusBadge(ragUsageBadge, _('Checking'), null);
+        ragUsageRow.subtitle = _('Querying the RAG service\u2026');
 
         const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/health`;
         try {
@@ -862,10 +929,10 @@ export function buildKnowledgeSection(ctx) {
                     let pctText = '';
                     if (maxMb > 0 && estMb > 0) {
                         const pct = Math.round((estMb / maxMb) * 100);
-                        pctText = ` (${pct}% of cap)`;
+                        pctText = format(_(' ({pct}% of cap)'), { pct });
                     }
 
-                    const colNames = Object.keys(body?.collections || {}).join(', ') || '(none)';
+                    const colNames = Object.keys(body?.collections || {}).join(', ') || _('(none)');
 
                     // Phase 3: feature availability
                     const rerankerOk = limits.reranker_available ? '✓rerank' : '';
@@ -874,31 +941,48 @@ export function buildKnowledgeSection(ctx) {
                     const features = [rerankerOk, bm25Info].filter(Boolean).join(' ');
                     const featureStr = features ? ` [${features}]` : '';
 
+                    const usageLine = format(
+                        _('{chunks} chunks, ~{size} MB{cap} — {collections}{features}'),
+                        {
+                            chunks: totalChunks,
+                            size: estMb.toFixed(0),
+                            cap: pctText,
+                            collections: colNames,
+                            features: featureStr,
+                        },
+                    );
+
                     if (totalChunks === 0) {
-                        setStatusBadge(ragUsageBadge, 'Empty', null);
-                        ragUsageRow.subtitle = `Knowledge base is empty.${featureStr}`;
+                        setStatusBadge(ragUsageBadge, _('Empty'), null);
+                        ragUsageRow.subtitle = format(_('Knowledge base is empty.{features}'), {
+                            features: featureStr,
+                        });
                     } else if (maxMb > 0 && estMb >= maxMb * 0.9) {
-                        setStatusBadge(ragUsageBadge, 'Near Limit', 'katab-prefs-status-install');
-                        ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
+                        setStatusBadge(
+                            ragUsageBadge,
+                            _('Near Limit'),
+                            'katab-prefs-status-install',
+                        );
+                        ragUsageRow.subtitle = usageLine;
                     } else {
-                        setStatusBadge(ragUsageBadge, 'Healthy', 'katab-prefs-status-detected');
-                        ragUsageRow.subtitle = `${totalChunks} chunks, ~${estMb.toFixed(0)} MB${pctText} — ${colNames}${featureStr}`;
+                        setStatusBadge(ragUsageBadge, _('Healthy'), 'katab-prefs-status-detected');
+                        ragUsageRow.subtitle = usageLine;
                     }
                 } catch (e) {
-                    setStatusBadge(ragUsageBadge, 'Unavailable', 'katab-prefs-status-install');
-                    ragUsageRow.subtitle = 'Cannot reach RAG service.';
+                    setStatusBadge(ragUsageBadge, _('Unavailable'), 'katab-prefs-status-install');
+                    ragUsageRow.subtitle = _('Cannot reach RAG service.');
                 }
             });
         } catch (e) {
-            setStatusBadge(ragUsageBadge, 'Unavailable', 'katab-prefs-status-install');
-            ragUsageRow.subtitle = 'Cannot reach RAG service.';
+            setStatusBadge(ragUsageBadge, _('Unavailable'), 'katab-prefs-status-install');
+            ragUsageRow.subtitle = _('Cannot reach RAG service.');
         }
     };
 
     createButtonRow(
-        'Refresh Usage',
-        'Query the RAG service for current chunk counts and estimated disk usage.',
-        'Refresh',
+        _('Refresh Usage'),
+        _('Query the RAG service for current chunk counts and estimated disk usage.'),
+        _('Refresh'),
         refreshUsage,
         maintenanceGroup,
     );
@@ -911,19 +995,19 @@ export function buildKnowledgeSection(ctx) {
 
     // Status row shared by Clear and Export operations
     const { row: ragMaintStatusRow, badge: ragMaintBadge } = createStatusRow(
-        'Operation Status',
-        'Idle.',
+        _('Operation Status'),
+        _('Idle.'),
         maintenanceGroup,
     );
-    setStatusBadge(ragMaintBadge, 'Idle', null);
+    setStatusBadge(ragMaintBadge, _('Idle'), null);
 
     createButtonRow(
-        'Export Knowledge Base',
-        'Download all indexed data as a JSON file for backup or inspection.',
-        'Export',
+        _('Export Knowledge Base'),
+        _('Download all indexed data as a JSON file for backup or inspection.'),
+        _('Export'),
         () => {
-            setStatusBadge(ragMaintBadge, 'Running', null);
-            ragMaintStatusRow.subtitle = 'Fetching data from the RAG service\u2026';
+            setStatusBadge(ragMaintBadge, _('Running'), null);
+            ragMaintStatusRow.subtitle = _('Fetching data from the RAG service\u2026');
 
             const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/export`;
             try {
@@ -947,9 +1031,10 @@ export function buildKnowledgeSection(ctx) {
                         }
 
                         if (totalEntries === 0) {
-                            setStatusBadge(ragMaintBadge, 'Empty', null);
-                            ragMaintStatusRow.subtitle =
-                                'Knowledge base is empty — nothing to export.';
+                            setStatusBadge(ragMaintBadge, _('Empty'), null);
+                            ragMaintStatusRow.subtitle = _(
+                                'Knowledge base is empty — nothing to export.',
+                            );
                             return;
                         }
 
@@ -969,35 +1054,41 @@ export function buildKnowledgeSection(ctx) {
                         outStream.close(null);
 
                         const colNames = Object.keys(collections).join(', ');
-                        setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
-                        ragMaintStatusRow.subtitle = `Exported ${totalEntries} entries (${colNames}) to ${filePath}`;
+                        setStatusBadge(ragMaintBadge, _('Done'), 'katab-prefs-status-detected');
+                        ragMaintStatusRow.subtitle = format(
+                            _('Exported {count} entries ({collections}) to {path}'),
+                            { count: totalEntries, collections: colNames, path: filePath },
+                        );
                     } catch (e) {
-                        setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
+                        setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
                         ragMaintStatusRow.subtitle =
-                            e?.message || 'Export failed — is the RAG service running?';
+                            e?.message || _('Export failed — is the RAG service running?');
                     }
                 });
             } catch (e) {
-                setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
-                ragMaintStatusRow.subtitle = e?.message || 'Export failed.';
+                setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
+                ragMaintStatusRow.subtitle = e?.message || _('Export failed.');
             }
         },
         maintenanceGroup,
     );
 
     createButtonRow(
-        'Re-index Knowledge Base',
-        'Reset index tracking and rebuild from your saved conversations and the research cache. Documents are re-indexed as you use them.',
-        'Re-index',
+        _('Re-index Knowledge Base'),
+        _(
+            'Reset index tracking and rebuild from your saved conversations and the research cache. Documents are re-indexed as you use them.',
+        ),
+        _('Re-index'),
         () => {
             const dialog = new Gtk.MessageDialog({
                 transient_for: window,
                 modal: true,
                 message_type: Gtk.MessageType.WARNING,
                 buttons: Gtk.ButtonsType.OK_CANCEL,
-                text: 'Re-index the entire knowledge base?',
-                secondary_text:
+                text: _('Re-index the entire knowledge base?'),
+                secondary_text: _(
                     'This will clear all existing index state and re-process your documents, conversations, and research cache on the next chat message.',
+                ),
             });
             dialog.connect('response', (dlg, responseId) => {
                 if (responseId === Gtk.ResponseType.OK) {
@@ -1029,9 +1120,10 @@ export function buildKnowledgeSection(ctx) {
                         /* schema may be stale */
                     }
 
-                    setStatusBadge(ragMaintBadge, 'Done', 'katab-prefs-status-detected');
-                    ragMaintStatusRow.subtitle =
-                        'Index state cleared — re-indexing will start now.';
+                    setStatusBadge(ragMaintBadge, _('Done'), 'katab-prefs-status-detected');
+                    ragMaintStatusRow.subtitle = _(
+                        'Index state cleared — re-indexing will start now.',
+                    );
                 }
                 dlg.destroy();
             });
@@ -1059,21 +1151,26 @@ export function buildKnowledgeSection(ctx) {
                 'rag-maintenance-generation',
                 settings.get_int('rag-maintenance-generation') + 1,
             );
-            setStatusBadge(ragMaintBadge, 'Queued', 'katab-prefs-status-detected');
-            ragMaintStatusRow.subtitle = `Queued ${paths.length} path(s) — the running extension will import them now.`;
+            setStatusBadge(ragMaintBadge, _('Queued'), 'katab-prefs-status-detected');
+            ragMaintStatusRow.subtitle = format(
+                _('Queued {count} path(s) — the running extension will import them now.'),
+                { count: paths.length },
+            );
         } catch (e) {
-            setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
-            ragMaintStatusRow.subtitle = e?.message || 'Could not queue the import.';
+            setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
+            ragMaintStatusRow.subtitle = e?.message || _('Could not queue the import.');
         }
     };
 
     createButtonRow(
-        'Import Files',
-        'Add files (txt, md, pdf, docx, eml) from disk to the knowledge base. Up to 50 files per import.',
-        'Select Files…',
+        _('Import Files'),
+        _(
+            'Add files (txt, md, pdf, docx, eml) from disk to the knowledge base. Up to 50 files per import.',
+        ),
+        _('Select Files…'),
         () => {
             const dialog = new Gtk.FileDialog({
-                title: 'Import files into the knowledge base',
+                title: _('Import files into the knowledge base'),
             });
             dialog.open_multiple(window, null, (dlg, result) => {
                 try {
@@ -1095,12 +1192,12 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createButtonRow(
-        'Import Folder',
-        'Import every supported file in a folder (and up to 3 levels of subfolders).',
-        'Select Folder…',
+        _('Import Folder'),
+        _('Import every supported file in a folder (and up to 3 levels of subfolders).'),
+        _('Select Folder…'),
         () => {
             const dialog = new Gtk.FileDialog({
-                title: 'Import a folder into the knowledge base',
+                title: _('Import a folder into the knowledge base'),
             });
             dialog.select_folder(window, null, (dlg, result) => {
                 try {
@@ -1116,23 +1213,24 @@ export function buildKnowledgeSection(ctx) {
     );
 
     createButtonRow(
-        'Clear Knowledge Base',
-        'Permanently delete ALL indexed data from the vector database. This cannot be undone.',
-        'Clear',
+        _('Clear Knowledge Base'),
+        _('Permanently delete ALL indexed data from the vector database. This cannot be undone.'),
+        _('Clear'),
         () => {
             const dialog = new Gtk.MessageDialog({
                 transient_for: window,
                 modal: true,
                 message_type: Gtk.MessageType.WARNING,
                 buttons: Gtk.ButtonsType.OK_CANCEL,
-                text: 'Delete the entire knowledge base?',
-                secondary_text:
+                text: _('Delete the entire knowledge base?'),
+                secondary_text: _(
                     'All indexed documents, conversations, and research cache will be permanently removed from the ChromaDB database. This cannot be undone.',
+                ),
             });
             dialog.connect('response', (dlg, responseId) => {
                 if (responseId === Gtk.ResponseType.OK) {
-                    setStatusBadge(ragMaintBadge, 'Running', null);
-                    ragMaintStatusRow.subtitle = 'Clearing all collections\u2026';
+                    setStatusBadge(ragMaintBadge, _('Running'), null);
+                    ragMaintStatusRow.subtitle = _('Clearing all collections\u2026');
 
                     const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/clear`;
                     try {
@@ -1184,29 +1282,38 @@ export function buildKnowledgeSection(ctx) {
                                     if (dropped.length > 0) {
                                         setStatusBadge(
                                             ragMaintBadge,
-                                            'Done',
+                                            _('Done'),
                                             'katab-prefs-status-detected',
                                         );
-                                        ragMaintStatusRow.subtitle = `Cleared ${dropped.length} collection(s): ${dropped.join(', ')}.`;
+                                        ragMaintStatusRow.subtitle = format(
+                                            ngettext(
+                                                'Cleared {count} collection: {names}.',
+                                                'Cleared {count} collections: {names}.',
+                                                dropped.length,
+                                            ),
+                                            { count: dropped.length, names: dropped.join(', ') },
+                                        );
                                     } else {
-                                        setStatusBadge(ragMaintBadge, 'Empty', null);
-                                        ragMaintStatusRow.subtitle =
-                                            'Knowledge base was already empty.';
+                                        setStatusBadge(ragMaintBadge, _('Empty'), null);
+                                        ragMaintStatusRow.subtitle = _(
+                                            'Knowledge base was already empty.',
+                                        );
                                     }
                                 } catch (e) {
                                     setStatusBadge(
                                         ragMaintBadge,
-                                        'Failed',
+                                        _('Failed'),
                                         'katab-prefs-status-install',
                                     );
                                     ragMaintStatusRow.subtitle =
-                                        e?.message || 'Clear failed — is the RAG service running?';
+                                        e?.message ||
+                                        _('Clear failed — is the RAG service running?');
                                 }
                             },
                         );
                     } catch (e) {
-                        setStatusBadge(ragMaintBadge, 'Failed', 'katab-prefs-status-install');
-                        ragMaintStatusRow.subtitle = e?.message || 'Clear failed.';
+                        setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
+                        ragMaintStatusRow.subtitle = e?.message || _('Clear failed.');
                     }
                 }
                 dlg.destroy();

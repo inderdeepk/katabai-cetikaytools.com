@@ -32,7 +32,14 @@ const gjsGlobals = {
 
 export default [
     {
-        ignores: ['node_modules/**', 'schemas/**', 'icons/**', 'sprites/**', 'Documentation/**', 'rag-service/**'],
+        ignores: [
+            'node_modules/**',
+            'schemas/**',
+            'icons/**',
+            'sprites/**',
+            'Documentation/**',
+            'rag-service/**',
+        ],
     },
     {
         files: [
@@ -66,9 +73,14 @@ export default [
     },
     {
         // Node-only check scripts (not part of the GJS runtime).
-        files: ['scripts/check-css.mjs', 'scripts/audits/**/*.js', 'scripts/audits/**/*.mjs'],
+        files: [
+            'scripts/check-css.mjs',
+            'scripts/i18n-extract.mjs',
+            'scripts/audits/**/*.js',
+            'scripts/audits/**/*.mjs',
+        ],
         languageOptions: {
-            globals: { process: 'readonly' },
+            globals: { process: 'readonly', console: 'readonly' },
         },
     },
     prettierConfig,

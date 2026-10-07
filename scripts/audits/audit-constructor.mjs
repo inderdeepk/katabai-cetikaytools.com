@@ -140,6 +140,26 @@ const ALLOWED_EXTRA = new Set([
     ...METHODS.map((n) => `${n}() {`),
 ]);
 
+// (c) i18n wrap allowance (Oct 2026, surface B): the Switched-engine notice
+//     inside _wireSettingsWatchers now builds its text through the shared
+//     format() helper. Exact lines only — accepted when every replacement
+//     line is present on the new side, and subtracted before the extras check.
+const I18N_REPLACEMENTS = new Map([
+    [
+        '`Switched engine to ${getProviderLabel(this._currentProvider)}.`,',
+        [
+            "format(_('Switched engine to {provider}.'), {",
+            'provider: getProviderLabel(this._currentProvider),',
+            '}),',
+        ],
+    ],
+]);
+const i18nNewLines = [...I18N_REPLACEMENTS.values()].flat();
+const newCountsForCheck = new Map(newCounts);
+for (const l of i18nNewLines) {
+    newCountsForCheck.set(l, (newCountsForCheck.get(l) || 0) - 1);
+}
+
 for (const [line, count] of oldCounts) {
     const got = newCounts.get(line) || 0;
     if (got < count) {
@@ -148,12 +168,17 @@ for (const [line, count] of oldCounts) {
         if (line.startsWith('//') && rawGot >= count) {
             continue;
         }
+        if (I18N_REPLACEMENTS.has(line)) {
+            const repl = I18N_REPLACEMENTS.get(line);
+            if (repl.every((l) => (newCounts.get(l) || 0) >= 1)) continue;
+        }
         console.log(`!! LINE COUNT MISMATCH (old=${count} new=${got}): ${line.slice(0, 110)}`);
         fails++;
         if (fails > 12) break;
     }
 }
-for (const [line, count] of newCounts) {
+for (const [line, count] of newCountsForCheck) {
+    if (count <= 0) continue;
     const old = oldCounts.get(line) || 0;
     if (old < count && !ALLOWED_EXTRA.has(line)) {
         console.log(`!! EXTRA LINE in new (new=${count} old=${old}): ${line.slice(0, 110)}`);
@@ -170,7 +195,13 @@ const flatOld = flat(oldCtor);
 for (const name of METHODS) {
     const body = extractMethod(NEW, name);
     if (!body) continue;
-    const fb = flat(body);
+    let fb = flat(body);
+    // i18n allowance (same notice as above): undo the format() wrap so the
+    // _wireSettingsWatchers body stays a contiguous slice of the old code.
+    fb = fb.replace(
+        "this._addSystemMessage(format(_('Switchedengineto{provider}.'),{provider:getProviderLabel(this._currentProvider)}));",
+        'this._addSystemMessage(`Switchedengineto${getProviderLabel(this._currentProvider)}.`);',
+    );
     if (name === '_initStateFields') {
         const j = fb.indexOf('this._monitorChangedId=0;');
         const part1 = fb.slice(0, j);

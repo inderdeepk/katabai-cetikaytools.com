@@ -99,7 +99,7 @@ import {
 } from './src/core/toolCallMarkup.js';
 import { HistoryManager } from './src/core/historyManager.js';
 import { splitLinksSection } from './src/shared/pageLinks.js';
-import { gettext as _, initI18n } from './src/shared/i18n.js';
+import { gettext as _, ngettext, format, initI18n } from './src/shared/i18n.js';
 import { createRequestLifecycle, REQUEST_STATES } from './src/core/requestLifecycle.js';
 import {
     PROVIDER_ACCENT_CLASSES,
@@ -250,19 +250,25 @@ const PROVIDER_TOOLS = {
     deepseek: [],
     unsloth: [
         {
-            label: 'Web Search',
+            get label() {
+                return _('Web Search');
+            },
             command: '/search',
             icon: 'system-search-symbolic',
             toolName: 'web_search',
         },
         {
-            label: 'Python',
+            get label() {
+                return _('Python');
+            },
             command: '/python',
             icon: 'applications-development-symbolic',
             toolName: 'python',
         },
         {
-            label: 'Terminal',
+            get label() {
+                return _('Terminal');
+            },
             command: '/terminal',
             icon: 'utilities-terminal-symbolic',
             toolName: 'terminal',
@@ -275,7 +281,9 @@ const PROVIDER_TOOLS = {
 // Local tools derived from the tool registry at runtime via _getLocalTools().
 const LOCAL_TOOLS = [
     {
-        label: 'Document',
+        get label() {
+            return _('Document');
+        },
         command: DOCUMENT_TOOL_COMMAND,
         icon: DOCUMENT_TOOL_ICON,
         toolName: DOCUMENT_TOOL_NAME,
@@ -283,21 +291,27 @@ const LOCAL_TOOLS = [
 ];
 
 const WEB_SEARCH_LOCAL_TOOL = {
-    label: 'Web Search',
+    get label() {
+        return _('Web Search');
+    },
     command: WEB_SEARCH_TOOL_COMMAND,
     icon: WEB_SEARCH_TOOL_ICON,
     toolName: WEB_SEARCH_TOOL_NAME,
 };
 
 const CRAWL4AI_LOCAL_TOOL = {
-    label: 'Web Scraper',
+    get label() {
+        return _('Web Scraper');
+    },
     command: CRAWL4AI_TOOL_COMMAND,
     icon: CRAWL4AI_TOOL_ICON,
     toolName: CRAWL4AI_TOOL_NAME,
 };
 
 const RAG_LOCAL_TOOL = {
-    label: 'Knowledge',
+    get label() {
+        return _('Knowledge');
+    },
     command: RAG_TOOL_COMMAND,
     icon: RAG_TOOL_ICON,
     gicon: null, // Set dynamically in KatabDialog constructor
@@ -312,7 +326,9 @@ const WEB_SEARCH_MAX_TOOL_ITERATIONS_DEFAULT = 25;
 
 // ── Deep Research mode ───────────────────────────────────────────────────────
 const DEEP_RESEARCH_LOCAL_TOOL = {
-    label: 'Deep Research',
+    get label() {
+        return _('Deep Research');
+    },
     command: DEEP_RESEARCH_TOOL_COMMAND,
     icon: DEEP_RESEARCH_TOOL_ICON,
     toolName: DEEP_RESEARCH_TOOL_NAME,
@@ -1584,7 +1600,9 @@ class KatabDialog {
         this._connectSetting('changed::provider', () => {
             this._currentProvider = this._settings.get_string('provider');
             this._addSystemMessage(
-                `Switched engine to ${getProviderLabel(this._currentProvider)}.`,
+                format(_('Switched engine to {provider}.'), {
+                    provider: getProviderLabel(this._currentProvider),
+                }),
             );
             // Dismiss any stale /help box — the command list may differ for
             // the new provider, and leaving it visible causes it to shrink
@@ -1965,10 +1983,10 @@ class KatabDialog {
         if (this._shouldNotifyOnResponseComplete && !this.isOpen) {
             this._shouldNotifyOnResponseComplete = false;
             if (this._lastResponseErrored) {
-                Main.notify('Katab', 'Request failed — open the chat for details.');
+                Main.notify('Katab', _('Request failed — open the chat for details.'));
                 this._playCompletionSound(true);
             } else {
-                Main.notify('Katab', 'Response ready — open the chat to read it.');
+                Main.notify('Katab', _('Response ready — open the chat to read it.'));
                 this._playCompletionSound(false);
             }
         }
@@ -2190,10 +2208,18 @@ class KatabDialog {
         const messages = [];
         for (const event of result.events) {
             if (event.type === 'pet-hatched') {
-                messages.push(`${event.petName} hatched and joined your collection!`);
+                messages.push(
+                    format(_('{pet} hatched and joined your collection!'), {
+                        pet: event.petName,
+                    }),
+                );
             } else if (event.type === 'pet-stage-up') {
                 messages.push(
-                    `${event.petName} reached ${event.stageLabel} at ${formatTokenCount(event.xp)} XP.`,
+                    format(_('{pet} reached {stage} at {xp} XP.'), {
+                        pet: event.petName,
+                        stage: event.stageLabel,
+                        xp: formatTokenCount(event.xp),
+                    }),
                 );
             }
         }
@@ -2208,7 +2234,14 @@ class KatabDialog {
                 'Katab',
                 messages.length === 1
                     ? messages[0]
-                    : `${messages.length} pet collection milestones unlocked.`,
+                    : format(
+                          ngettext(
+                              '{count} pet collection milestone unlocked.',
+                              '{count} pet collection milestones unlocked.',
+                              messages.length,
+                          ),
+                          { count: messages.length },
+                      ),
             );
         }
     }
@@ -2309,20 +2342,20 @@ class KatabDialog {
         let finalContent = accumulatedText;
         let stopNotice =
             mode === 'pull' && modelName
-                ? `Stopped while downloading model '${modelName}'.`
+                ? format(_("Stopped while downloading model '{model}'."), { model: modelName })
                 : mode === 'document' && modelName
-                  ? `Stopped while preparing '${modelName}'.`
+                  ? format(_("Stopped while preparing '{model}'."), { model: modelName })
                   : mode === 'tool'
-                    ? 'Response stopped while running local tools.'
-                    : 'Response stopped.';
+                    ? _('Response stopped while running local tools.')
+                    : _('Response stopped.');
 
         if (!finalContent) {
             if (mode === 'pull' && modelName) {
                 finalContent = stopNotice;
             } else if (accumulatedThink) {
-                finalContent = 'Response stopped while the model was thinking.';
+                finalContent = _('Response stopped while the model was thinking.');
             } else if (accumulatedToolCalls.length > 0) {
-                finalContent = 'Response stopped before tool execution completed.';
+                finalContent = _('Response stopped before tool execution completed.');
             } else {
                 finalContent = stopNotice;
             }
@@ -2920,17 +2953,17 @@ class KatabDialog {
         if (registered && registered.uiLabel) return registered.uiLabel;
         switch (tool?.toolName) {
             case DOCUMENT_TOOL_NAME:
-                return 'Docs';
+                return _('Docs');
             case WEB_SEARCH_TOOL_NAME:
-                return 'Search';
+                return _('Search');
             case CRAWL4AI_TOOL_NAME:
-                return 'Scrape';
+                return _('Scrape');
             case DEEP_RESEARCH_TOOL_NAME:
-                return 'Research';
+                return _('Research');
             case 'terminal':
-                return 'Term';
+                return _('Term');
             default:
-                return tool?.label || 'Tool';
+                return tool?.label || _('Tool');
         }
     }
 
@@ -3427,8 +3460,8 @@ class KatabDialog {
             texts.push({
                 // Stable id derived from content so re-indexing the same result
                 // REPLACES its chunks instead of duplicating them each turn.
-                id: `research_${this._stableIdHash(`${toolName}|${resultText}`)}`,
-                content: `Tool: ${toolName}${url ? `\nURL: ${url}` : ''}\nResult:\n${resultText}`,
+                id: 'research_' + this._stableIdHash(toolName + '|' + resultText),
+                content: `Tool: ${toolName}${url ? '\nURL: ' + url : ''}\nResult:\n${resultText}`,
                 metadata: {
                     source: 'research_cache',
                     toolName,
@@ -3679,7 +3712,7 @@ class KatabDialog {
         if (!health.ok) {
             const detail = [health.code, health.message].filter(Boolean).join(': ');
             log(
-                `[Katab:rag] RAG service not reachable at ${ragConfig.serviceUrl}${detail ? ` (${detail})` : ''}`,
+                `[Katab:rag] RAG service not reachable at ${ragConfig.serviceUrl}${detail ? ' (' + detail + ')' : ''}`,
             );
             this._ragServiceOk = false;
             // The service may simply still be starting (systemd boot/restart)
@@ -3690,7 +3723,9 @@ class KatabDialog {
             // (~10s in), so a transient hiccup leaves no stale warning.
             if (this.isOpen && this._ragHealthRetryAttempts === 2) {
                 this._addSystemMessage(
-                    'Knowledge Base service is not running. Start it with:\n`systemctl --user start katabai-rag`',
+                    _(
+                        'Knowledge Base service is not running. Start it with:\n`systemctl --user start katabai-rag`',
+                    ),
                     { variant: 'info' },
                 );
             }
@@ -3703,7 +3738,7 @@ class KatabDialog {
                 this._ragHealthRetryId = 0;
             }
             if (recovered && this.isOpen) {
-                this._addSystemMessage('Knowledge Base service is back online.', {
+                this._addSystemMessage(_('Knowledge Base service is back online.'), {
                     variant: 'info',
                 });
             }
@@ -3728,7 +3763,7 @@ class KatabDialog {
                 this._ragEmbedRetryId = 0;
             }
             if (embedRecovered && this.isOpen) {
-                this._addSystemMessage('Knowledge Base embeddings are available again.', {
+                this._addSystemMessage(_('Knowledge Base embeddings are available again.'), {
                     variant: 'info',
                 });
             }
@@ -3758,7 +3793,12 @@ class KatabDialog {
                 this._ragHighUsageWarned = true;
                 const pct = Math.round((convChunks / chunkCap) * 100);
                 this._addSystemMessage(
-                    `Knowledge base is ${pct}% full (${convChunks} of ${chunkCap} chunks). When full, the oldest entries are pruned automatically — raise the cap or clear old data in Settings \u25b8 Tools \u25b8 Knowledge Base.`,
+                    format(
+                        _(
+                            'Knowledge base is {pct}% full ({used} of {cap} chunks). When full, the oldest entries are pruned automatically — raise the cap or clear old data in Settings \u25b8 Tools \u25b8 Knowledge Base.',
+                        ),
+                        { pct, used: convChunks, cap: chunkCap },
+                    ),
                     { variant: 'warning' },
                 );
             }
@@ -3851,11 +3891,15 @@ class KatabDialog {
                 // The service message names the limit but not where to change
                 // it - point at the setting that lifts the block.
                 const hint = /cap\b|storage/i.test(reason)
-                    ? ' Storage limits live in Settings \u25b8 Tools \u25b8 Knowledge Base.'
+                    ? _(' Storage limits live in Settings \u25b8 Tools \u25b8 Knowledge Base.')
                     : '';
-                this._addSystemMessage(`Knowledge base indexing was skipped: ${reason}${hint}`, {
-                    variant: 'warning',
-                });
+                this._addSystemMessage(
+                    format(_('Knowledge base indexing was skipped: {reason}{hint}'), {
+                        reason,
+                        hint,
+                    }),
+                    { variant: 'warning' },
+                );
             }
         } catch (_) {
             /* dialog may be mid-teardown */
@@ -3904,7 +3948,7 @@ class KatabDialog {
         this._ragReconcileFullRequested = true;
         if (this.isOpen) {
             this._addSystemMessage(
-                'Knowledge Base storage limits updated \u2014 applying immediately.',
+                _('Knowledge Base storage limits updated \u2014 applying immediately.'),
             );
         }
         this._checkRagHealth().catch((e) =>
@@ -4076,7 +4120,7 @@ class KatabDialog {
         const files = this._collectImportableFiles(rawPaths, 50);
         if (files.length === 0) {
             this._addSystemMessage(
-                'No importable files found (supported: txt, md, pdf, docx, eml).',
+                _('No importable files found (supported: txt, md, pdf, docx, eml).'),
                 { variant: 'warning' },
             );
             return;
@@ -4099,14 +4143,21 @@ class KatabDialog {
         }
         if (parsed.length === 0) {
             this._addSystemMessage(
-                'None of the selected files could be parsed for the knowledge base.',
+                _('None of the selected files could be parsed for the knowledge base.'),
                 { variant: 'warning' },
             );
             return;
         }
         await this._indexParsedDocuments(parsed, ragConfig);
         this._addSystemMessage(
-            `Imported ${parsed.length} file${parsed.length !== 1 ? 's' : ''} into the knowledge base.`,
+            format(
+                ngettext(
+                    'Imported {count} file into the knowledge base.',
+                    'Imported {count} files into the knowledge base.',
+                    parsed.length,
+                ),
+                { count: parsed.length },
+            ),
             { variant: 'info' },
         );
         log(`[Katab:rag] Manual import: ${parsed.length} file(s) from ${rawPaths.length} path(s)`);
@@ -4978,7 +5029,9 @@ class KatabDialog {
 
     async _pickDocumentForAttachment() {
         if (!this._isDocumentToolEnabled()) {
-            this._addSystemMessage('Enable the Document Tool in Settings before attaching a file.');
+            this._addSystemMessage(
+                _('Enable the Document Tool in Settings before attaching a file.'),
+            );
             return;
         }
 
@@ -5006,7 +5059,7 @@ class KatabDialog {
             const message =
                 error instanceof DocumentToolError
                     ? error.message
-                    : `Could not attach a file: ${error.message}`;
+                    : format(_('Could not attach a file: {error}'), { error: error.message });
             this._addSystemMessage(message);
         }
     }
@@ -5151,7 +5204,7 @@ class KatabDialog {
         } else if (modelName) {
             this._presetBtnLabel.set_text(modelName);
         } else {
-            this._presetBtnLabel.set_text('Presets');
+            this._presetBtnLabel.set_text(_('Presets'));
         }
     }
 
@@ -5600,7 +5653,7 @@ class KatabDialog {
         this._attachmentBox.add_child(this._attachmentChipsContainer);
 
         let clearAllBtn = new St.Button({
-            label: 'Clear all attachments',
+            label: _('Clear all attachments'),
             style_class: 'katab-attachment-remove-btn',
             can_focus: true,
             x_align: Clutter.ActorAlign.END,
@@ -5789,7 +5842,7 @@ class KatabDialog {
             style_class: 'katab-tools-gear-btn',
             can_focus: true,
             y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: 'Tools and toggles',
+            accessible_name: _('Tools and toggles'),
         });
 
         // Wrap the button + badge overlay in a container with BinLayout
@@ -5935,7 +5988,14 @@ class KatabDialog {
                             }
                             if (attached > 0) {
                                 this._addSystemMessage(
-                                    `Attached ${attached} file${attached === 1 ? '' : 's'} from clipboard.`,
+                                    format(
+                                        ngettext(
+                                            'Attached {count} file from clipboard.',
+                                            'Attached {count} files from clipboard.',
+                                            attached,
+                                        ),
+                                        { count: attached },
+                                    ),
                                 );
                                 if (this.isOpen) this.focusPrompt();
                             }
@@ -5951,7 +6011,12 @@ class KatabDialog {
                             let available = PROMPT_INPUT_MAX_CHARS - currentLength;
                             if (available <= 0) {
                                 this._addSystemMessage(
-                                    `The prompt is already at its ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document.`,
+                                    format(
+                                        _(
+                                            'The prompt is already at its {limit}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document.',
+                                        ),
+                                        { limit: PROMPT_INPUT_MAX_CHARS.toLocaleString() },
+                                    ),
                                     { variant: 'warning' },
                                 );
                                 return;
@@ -5962,7 +6027,17 @@ class KatabDialog {
                                 toInsert = text.slice(0, available);
                                 let dropped = text.length - available;
                                 this._addSystemMessage(
-                                    `Pasted text was ${dropped.toLocaleString()} character${dropped === 1 ? '' : 's'} too long and was trimmed to fit the ${PROMPT_INPUT_MAX_CHARS.toLocaleString()}-character prompt limit. For long content, attach it as a document instead.`,
+                                    format(
+                                        ngettext(
+                                            'Pasted text was {dropped} character too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead.',
+                                            'Pasted text was {dropped} characters too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead.',
+                                            dropped,
+                                        ),
+                                        {
+                                            dropped: dropped.toLocaleString(),
+                                            limit: PROMPT_INPUT_MAX_CHARS.toLocaleString(),
+                                        },
+                                    ),
                                     { variant: 'warning' },
                                 );
                             }
@@ -5978,7 +6053,7 @@ class KatabDialog {
                                 const meta = this._buildDocumentMeta(tempPath);
                                 if (meta) {
                                     this._setPendingDocument(meta);
-                                    this._addSystemMessage('Image attached from clipboard.');
+                                    this._addSystemMessage(_('Image attached from clipboard.'));
                                     if (this.isOpen) this.focusPrompt();
                                 }
                             })
@@ -6068,7 +6143,7 @@ class KatabDialog {
             style_class: 'katab-send-btn',
             can_focus: true,
             y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: 'Send Message',
+            accessible_name: _('Send Message'),
         });
         sendBtn.connect('clicked', () => {
             if (this._lifecycle.isResponding()) {
@@ -7331,8 +7406,10 @@ class KatabDialog {
 
         this._addSystemMessage(
             trimmed > 0
-                ? `Conversation compacted — kept last ${keepExchanges} exchanges.`
-                : 'Conversation is already compact.',
+                ? format(_('Conversation compacted — kept last {count} exchanges.'), {
+                      count: keepExchanges,
+                  })
+                : _('Conversation is already compact.'),
             trimmed > 0 ? { variant: 'info' } : { variant: 'muted' },
         );
 
@@ -7489,7 +7566,7 @@ class KatabDialog {
             const dropCount = Math.max(0, tail.length - keepCount);
             if (dropCount < SESSION_MEMORY_MIN_FOLD_COUNT) {
                 this._addSystemMessage(
-                    'Not enough history to summarize yet — keep chatting and try again later.',
+                    _('Not enough history to summarize yet — keep chatting and try again later.'),
                     { variant: 'muted' },
                 );
                 return;
@@ -7568,7 +7645,12 @@ class KatabDialog {
 
             if (!this._lifecycle.isResponding()) {
                 this._addSystemMessage(
-                    `Session memory updated — ${toFold.length} earlier turns summarized so the model keeps full context.`,
+                    format(
+                        _(
+                            'Session memory updated — {count} earlier turns summarized so the model keeps full context.',
+                        ),
+                        { count: toFold.length },
+                    ),
                     { variant: 'muted' },
                 );
             }
@@ -7881,7 +7963,9 @@ class KatabDialog {
         }
 
         if (uiElements.cacheSavingsPillLabel) {
-            uiElements.cacheSavingsPillLabel.set_text(`Cache saved ~${savings.inputSavingsPct}%`);
+            uiElements.cacheSavingsPillLabel.set_text(
+                format(_('Cache saved ~{pct}%'), { pct: savings.inputSavingsPct }),
+            );
         }
         pill.visible = true;
 
@@ -8018,7 +8102,7 @@ class KatabDialog {
                     });
 
                     const dismissBtn = new St.Button({
-                        label: 'Dismiss',
+                        label: _('Dismiss'),
                         style_class: 'katab-kb-drawer-btn katab-kb-drawer-dismiss',
                         can_focus: true,
                     });
@@ -8028,7 +8112,7 @@ class KatabDialog {
                     btnRow.add_child(dismissBtn);
 
                     const updateBtn = new St.Button({
-                        label: '✓ Update',
+                        label: _('✓ Update'),
                         style_class: 'katab-kb-drawer-btn katab-kb-drawer-accept',
                         can_focus: true,
                     });
@@ -8101,7 +8185,7 @@ class KatabDialog {
                     btnRow.add_child(cancelBtn);
 
                     const forgetBtn = new St.Button({
-                        label: 'Forget',
+                        label: _('Forget'),
                         style_class: 'katab-kb-drawer-btn katab-kb-drawer-dismiss',
                         can_focus: true,
                     });
@@ -8213,7 +8297,9 @@ class KatabDialog {
         let show = this._currentProvider === 'deepseek' && total > 0;
         this._cacheSavingsChip.visible = show;
         if (show && this._cacheSavingsChipLabel) {
-            this._cacheSavingsChipLabel.set_text(`Saved ~${this._formatUsd(total)} this chat`);
+            this._cacheSavingsChipLabel.set_text(
+                format(_('Saved ~{usd} this chat'), { usd: this._formatUsd(total) }),
+            );
         }
     }
 
@@ -8470,7 +8556,9 @@ class KatabDialog {
         this._recomputeSessionCacheSavings();
         if (hasDetachedAttachments) {
             this._addSystemMessage(
-                'This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request.',
+                _(
+                    'This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request.',
+                ),
                 { variant: 'warning' },
             );
         }
@@ -8994,11 +9082,11 @@ class KatabDialog {
                 }
             }
             let retryBtn = new St.Button({
-                label: 'Retry',
+                label: _('Retry'),
                 style_class: 'katab-copy-btn katab-copy-btn-text',
                 y_align: Clutter.ActorAlign.CENTER,
                 x_align: Clutter.ActorAlign.START,
-                accessible_name: 'Retry request',
+                accessible_name: _('Retry request'),
             });
             retryBtn._katabIsRetryBtn = true;
             retryBtn.connect('clicked', () => {
@@ -9288,7 +9376,7 @@ class KatabDialog {
                     text: task.sub_task,
                     style_class:
                         'katab-research-plan-task-entry katab-research-plan-task-label-entry',
-                    hint_text: 'Research angle',
+                    hint_text: _('Research angle'),
                     x_expand: true,
                 });
                 subTaskEntry.clutter_text.single_line_mode = false;
@@ -9333,7 +9421,9 @@ class KatabDialog {
 
         // ── What-happens-next hint ──────────────────────────────────────
         const hintLabel = new St.Label({
-            text: 'After research: analyze findings for gaps, then write a comprehensive report with citations — ready in 1–3 minutes.',
+            text: _(
+                'After research: analyze findings for gaps, then write a comprehensive report with citations — ready in 1–3 minutes.',
+            ),
             style_class: 'katab-research-plan-hint',
             x_expand: true,
         });
@@ -9349,7 +9439,7 @@ class KatabDialog {
         const costText = this._estimateResearchCost(plan);
         if (costText) {
             const costLabel = new St.Label({
-                text: `Estimated effort: ${costText}`,
+                text: format(_('Estimated effort: {cost}'), { cost: costText }),
                 style_class: 'katab-research-plan-hint',
                 x_expand: true,
             });
@@ -9368,7 +9458,7 @@ class KatabDialog {
 
         if (editable) {
             const cancelEditBtn = new St.Button({
-                label: 'Cancel',
+                label: _('Cancel'),
                 style_class: 'katab-research-plan-link-btn',
                 reactive: true,
                 track_hover: true,
@@ -9382,7 +9472,7 @@ class KatabDialog {
             footer.add_child(spacer);
 
             const saveBtn = new St.Button({
-                label: 'Save Edits',
+                label: _('Save Edits'),
                 style_class: 'katab-research-plan-btn katab-research-plan-btn-primary',
                 reactive: true,
                 track_hover: true,
@@ -9393,7 +9483,7 @@ class KatabDialog {
             footer.add_child(saveBtn);
         } else {
             const editLink = new St.Button({
-                label: 'Edit plan',
+                label: _('Edit plan'),
                 style_class: 'katab-research-plan-link-btn',
                 reactive: true,
                 track_hover: true,
@@ -9404,7 +9494,7 @@ class KatabDialog {
             footer.add_child(editLink);
 
             const cancelLink = new St.Button({
-                label: 'Cancel plan',
+                label: _('Cancel plan'),
                 style_class: 'katab-research-plan-link-btn',
                 reactive: true,
                 track_hover: true,
@@ -9418,7 +9508,7 @@ class KatabDialog {
             footer.add_child(spacer);
 
             const startBtn = new St.Button({
-                label: 'Start research',
+                label: _('Start research'),
                 style_class: 'katab-research-plan-btn katab-research-plan-btn-primary',
                 reactive: true,
                 track_hover: true,
@@ -9483,11 +9573,21 @@ class KatabDialog {
         try {
             if (completed >= total) {
                 hintLabel.set_text(
-                    `\u2713 All ${total}/${total} angles researched — moving to analysis phase.`,
+                    format(
+                        _(
+                            '\u2713 All {total}/{total} angles researched — moving to analysis phase.',
+                        ),
+                        { total },
+                    ),
                 );
             } else {
                 hintLabel.set_text(
-                    `Researching ${completed}/${total} angles — analyze findings, identify gaps, then write report.`,
+                    format(
+                        _(
+                            'Researching {completed}/{total} angles — analyze findings, identify gaps, then write report.',
+                        ),
+                        { completed, total },
+                    ),
                 );
             }
         } catch (_e) {
@@ -9504,7 +9604,7 @@ class KatabDialog {
         const entry = new St.Entry({
             text: initialText || '',
             style_class: 'katab-research-plan-task-entry katab-research-plan-task-query-entry',
-            hint_text: 'Search query',
+            hint_text: _('Search query'),
             x_expand: true,
         });
         entry.clutter_text.single_line_mode = false;
@@ -9961,7 +10061,7 @@ class KatabDialog {
             if (usefulBranches.length >= 1) {
                 // Show gap analysis phase marker
                 this._addTimelinePhaseMarker('Gap Analysis');
-                this._updateProgressPhase('Analyzing coverage gaps...');
+                this._updateProgressPhase(_('Analyzing coverage gaps...'));
 
                 try {
                     const gapResult = await runGapAnalysis(
@@ -10122,16 +10222,16 @@ class KatabDialog {
         if (!allFindings || allFindings.length === 0) return false;
 
         // Add synthesis phase marker and timeline entry
-        this._addTimelinePhaseMarker('Synthesis');
+        this._addTimelinePhaseMarker(_('Synthesis'));
         const synthEntry = this._addTimelineEntry(
             RESEARCH_PROGRESS_WRITING,
             'document-edit-symbolic',
-            'Writing Report',
-            'Generating outline and compiling final report from all research findings...',
+            _('Writing Report'),
+            _('Generating outline and compiling final report from all research findings...'),
         );
 
         // Pass 1: Generate + iteratively refine the outline
-        this._updateProgressPhase('Generating report outline...');
+        this._updateProgressPhase(_('Generating report outline...'));
         try {
             this._synthesisOutline = await this._generateAndRefineOutline(
                 allFindings,
@@ -10147,15 +10247,15 @@ class KatabDialog {
         this._saveResearchCheckpoint('Phase 4 — outline');
 
         // Pass 2: Build synthesis prompt and stream the full report
-        this._updateProgressPhase('Writing final report...');
+        this._updateProgressPhase(_('Writing final report...'));
 
         // Update the synthesis timeline entry
         if (synthEntry) {
             this._updateTimelineEntry(synthEntry, {
                 phase: RESEARCH_PROGRESS_WRITING,
                 iconName: 'document-edit-symbolic',
-                title: 'Writing Report',
-                desc: 'Streaming final research report...',
+                title: _('Writing Report'),
+                desc: _('Streaming final research report...'),
             });
         }
 
@@ -10356,14 +10456,16 @@ class KatabDialog {
         });
 
         const header = new St.Label({
-            text: `Research may be incomplete (coverage: ${result.coverage ?? result.score ?? '?'}/5)`,
+            text: format(_('Research may be incomplete (coverage: {score}/5)'), {
+                score: result.coverage ?? result.score ?? '?',
+            }),
             style_class: 'katab-quality-notice-header',
         });
         card.add_child(header);
 
         for (const aspect of result.missingAspects.slice(0, 3)) {
             const item = new St.Label({
-                text: `• ${aspect}`,
+                text: format(_('• {aspect}'), { aspect }),
                 style_class: 'katab-quality-notice-item',
             });
             item.clutter_text.line_wrap = true;
@@ -10371,7 +10473,7 @@ class KatabDialog {
         }
 
         const continueBtn = new St.Button({
-            label: 'Continue Research',
+            label: _('Continue Research'),
             style_class: 'katab-quality-notice-btn',
         });
         continueBtn.connect('clicked', () => {
@@ -10448,7 +10550,9 @@ class KatabDialog {
         this._addTimelinePhaseMarker(
             `Quality Check — Score ${prevScore}/5 — Retrying (${retryNum}/${retryBudget})`,
         );
-        this._updateProgressPhase(`Researching missing aspects (pass ${retryNum})...`);
+        this._updateProgressPhase(
+            format(_('Researching missing aspects (pass {attempt})...'), { attempt: retryNum }),
+        );
 
         try {
             // 1. Turn the missing aspects into targeted gap queries. Prefer the LLM
@@ -10554,13 +10658,18 @@ class KatabDialog {
         });
 
         const header = new St.Label({
-            text: 'Some claims may not be fully supported by the sources',
+            text: _('Some claims may not be fully supported by the sources'),
             style_class: 'katab-quality-notice-header',
         });
         card.add_child(header);
 
         const item = new St.Label({
-            text: `The report scored ${result.groundedness ?? '?'}/5 on factual grounding. Some statements may exceed what the gathered sources support — verify those claims before relying on them.`,
+            text: format(
+                _(
+                    'The report scored {score}/5 on factual grounding. Some statements may exceed what the gathered sources support — verify those claims before relying on them.',
+                ),
+                { score: result.groundedness ?? '?' },
+            ),
             style_class: 'katab-quality-notice-item',
         });
         item.clutter_text.line_wrap = true;
@@ -10569,14 +10678,14 @@ class KatabDialog {
         // Specific claims the evaluator could not trace to any gathered fact.
         if (result.unsupportedClaims && result.unsupportedClaims.length > 0) {
             const claimsHeader = new St.Label({
-                text: 'Claims that could not be verified against sources:',
+                text: _('Claims that could not be verified against sources:'),
                 style_class: 'katab-quality-notice-item',
             });
             claimsHeader.clutter_text.line_wrap = true;
             card.add_child(claimsHeader);
             for (const claim of result.unsupportedClaims.slice(0, 3)) {
                 const claimLabel = new St.Label({
-                    text: `• ${claim}`,
+                    text: format(_('• {claim}'), { claim }),
                     style_class: 'katab-quality-notice-item',
                 });
                 claimLabel.clutter_text.line_wrap = true;
@@ -10587,14 +10696,14 @@ class KatabDialog {
         // Citations that appear not to support the sentence they are attached to.
         if (result.unverifiedCitations && result.unverifiedCitations.length > 0) {
             const citeHeader = new St.Label({
-                text: 'Citations that may not support their claims:',
+                text: _('Citations that may not support their claims:'),
                 style_class: 'katab-quality-notice-item',
             });
             citeHeader.clutter_text.line_wrap = true;
             card.add_child(citeHeader);
             for (const cite of result.unverifiedCitations.slice(0, 3)) {
                 const citeLabel = new St.Label({
-                    text: `• ${cite}`,
+                    text: format(_('• {cite}'), { cite }),
                     style_class: 'katab-quality-notice-item',
                 });
                 citeLabel.clutter_text.line_wrap = true;
@@ -10930,7 +11039,7 @@ class KatabDialog {
 
         const total = this._activeResearchPlan.length;
         const headerLabel = new St.Label({
-            text: `Researching 0/${total} angles`,
+            text: format(_('Researching {completed}/{total} angles'), { completed: 0, total }),
             style_class: 'katab-research-timeline-header-label',
         });
 
@@ -10957,10 +11066,14 @@ class KatabDialog {
         const total = this._progressCard._totalAngles || 0;
         this._progressCard._completedAngles = completed;
         if (completed >= total) {
-            this._progressCard._headerLabel.set_text(`\u2713 ${total}/${total} angles researched`);
+            this._progressCard._headerLabel.set_text(
+                format(_('\\u2713 {total}/{total} angles researched'), { total }),
+            );
             this._progressCard._headerIcon.icon_name = 'emblem-ok-symbolic';
         } else {
-            this._progressCard._headerLabel.set_text(`Researching ${completed}/${total} angles`);
+            this._progressCard._headerLabel.set_text(
+                format(_('Researching {completed}/{total} angles'), { completed, total }),
+            );
         }
     }
 
@@ -11325,7 +11438,9 @@ class KatabDialog {
 
         if (results.length > maxResults) {
             const moreLabel = new St.Label({
-                text: `+${results.length - maxResults} more results available`,
+                text: format(_('+{count} more results available'), {
+                    count: results.length - maxResults,
+                }),
                 style_class: 'katab-research-timeline-desc',
             });
             entryRef.subItems.add_child(moreLabel);
@@ -11835,7 +11950,7 @@ class KatabDialog {
             }
             count++; // include the one we're about to add
             uiElements.toolLogCountLabel.set_text(
-                count === 1 ? 'Ran 1 tool' : `Ran ${count} tools`,
+                format(ngettext('Ran {count} tool', 'Ran {count} tools', count), { count }),
             );
         }
 
@@ -12070,7 +12185,7 @@ class KatabDialog {
         });
 
         const groupLabel = new St.Label({
-            text: `Ran ${count} tools`,
+            text: format(_('Ran {count} tools'), { count }),
             style_class: 'katab-tool-call-group-label',
         });
         groupHeader.add_child(groupLabel);
@@ -12199,9 +12314,15 @@ class KatabDialog {
             this._currentProvider,
         );
         if (this._isBlockingProviderState(providerState)) {
-            this._addSystemMessage(`${providerState.label}: ${providerState.detail}`, {
-                variant: 'warning',
-            });
+            this._addSystemMessage(
+                format(_('{label}: {detail}'), {
+                    label: providerState.label,
+                    detail: providerState.detail,
+                }),
+                {
+                    variant: 'warning',
+                },
+            );
             return;
         }
 
@@ -12923,11 +13044,21 @@ class KatabDialog {
                         userMessage.visionAnalysis = '';
                         this._applyAssistantRender(
                             uiElements,
-                            `Image analysis failed (${visionOutcome.error}). Sending without image analysis\u2026`,
+                            format(
+                                _(
+                                    'Image analysis failed ({error}). Sending without image analysis\u2026',
+                                ),
+                                { error: visionOutcome.error },
+                            ),
                             { plain: true },
                         );
                         this._addSystemMessage(
-                            `Image analysis failed (${visionOutcome.error}). The message was sent without image analysis.`,
+                            format(
+                                _(
+                                    'Image analysis failed ({error}). The message was sent without image analysis.',
+                                ),
+                                { error: visionOutcome.error },
+                            ),
                             { variant: 'warning' },
                         );
                     }
@@ -12954,7 +13085,7 @@ class KatabDialog {
         }
 
         if (documentCommand && !this._isDocumentToolEnabled()) {
-            this._addSystemMessage('Enable the Document Tool in Settings before using /doc.');
+            this._addSystemMessage(_('Enable the Document Tool in Settings before using /doc.'));
             return null;
         }
 
@@ -12974,7 +13105,9 @@ class KatabDialog {
                     const pickedMeta = this._buildDocumentMeta(pickedPath);
                     if (!pickedMeta) {
                         throw new DocumentToolError(
-                            'Katab could not resolve that file path. Use a local file and try again.',
+                            _(
+                                'Katab could not resolve that file path. Use a local file and try again.',
+                            ),
                             {
                                 code: 'invalid-picked-path',
                             },
@@ -12983,7 +13116,8 @@ class KatabDialog {
                     documentMetas = [pickedMeta];
                 } catch (error) {
                     this._addSystemMessage(
-                        error.message || `Could not open the document picker: ${error}`,
+                        error.message ||
+                            format(_('Could not open the document picker: {error}'), { error }),
                     );
                     return null;
                 }
@@ -12994,7 +13128,7 @@ class KatabDialog {
                 const cmdMeta = this._buildDocumentMeta(normalizedPath);
                 if (!cmdMeta) {
                     throw new DocumentToolError(
-                        'Use an absolute path, a ~/path, or the picker when attaching a file.',
+                        _('Use an absolute path, a ~/path, or the picker when attaching a file.'),
                         {
                             code: 'invalid-path',
                         },
@@ -13021,7 +13155,9 @@ class KatabDialog {
             }
         } else if (hasImageAttachment && this._currentProvider !== 'ollama') {
             this._addSystemMessage(
-                'Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava.',
+                _(
+                    'Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava.',
+                ),
             );
             return null;
         }
@@ -13100,7 +13236,9 @@ class KatabDialog {
         }
         if (this._forcedTool === WEB_SEARCH_TOOL_NAME && webSearchModeForPrompt === TOOL_MODE_OFF) {
             this._addSystemMessage(
-                'Web search is off for this prompt. Set Search to Auto or On before using /search.',
+                _(
+                    'Web search is off for this prompt. Set Search to Auto or On before using /search.',
+                ),
                 { variant: 'warning' },
             );
             return null;
@@ -13122,7 +13260,9 @@ class KatabDialog {
                 : promptText;
             if (!this._isWebSearchEnabled(webSearchModeForPrompt)) {
                 this._addSystemMessage(
-                    'Web search is off. Enable it in Settings > Tools > Web Search to use the /search command.',
+                    _(
+                        'Web search is off. Enable it in Settings > Tools > Web Search to use the /search command.',
+                    ),
                     { variant: 'warning' },
                 );
                 return null;
@@ -13130,7 +13270,7 @@ class KatabDialog {
 
             if (!forcedSearchQuery) {
                 this._addSystemMessage(
-                    'Add a query after /search, for example: /search latest GNOME release.',
+                    _('Add a query after /search, for example: /search latest GNOME release.'),
                     { variant: 'warning' },
                 );
                 return null;
@@ -13151,7 +13291,9 @@ class KatabDialog {
         if (crawlCommand?.isCommand) {
             if (!this._isCrawl4AIEnabled(crawl4aiModeForPrompt)) {
                 this._addSystemMessage(
-                    'Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command.',
+                    _(
+                        'Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command.',
+                    ),
                     { variant: 'warning' },
                 );
                 return null;
@@ -13167,7 +13309,9 @@ class KatabDialog {
                     (this._isWebSearchEnabled(webSearchModeForPrompt) || forceCrawl4AIForPrompt);
                 if (!canSearchForCrawl) {
                     this._addSystemMessage(
-                        'Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search.',
+                        _(
+                            'Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search.',
+                        ),
                         { variant: 'warning' },
                     );
                     return null;
@@ -13175,7 +13319,9 @@ class KatabDialog {
                 crawl4aiSearchQuery = crawlCommand.query;
             } else {
                 this._addSystemMessage(
-                    'Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release.',
+                    _(
+                        'Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release.',
+                    ),
                     { variant: 'warning' },
                 );
                 return null;
@@ -13215,16 +13361,21 @@ class KatabDialog {
                 // into the next turn.
                 this._setPendingDocument(null);
                 this._addSystemMessage(
-                    'Deep Research mode activated for the next prompt. Type your research query.',
+                    _(
+                        'Deep Research mode activated for the next prompt. Type your research query.',
+                    ),
                     { variant: 'info' },
                 );
                 this._updateToolsUI();
                 return null;
             }
             if (!promptText) {
-                this._addSystemMessage('Deep Research mode activated. Type your research query.', {
-                    variant: 'info',
-                });
+                this._addSystemMessage(
+                    _('Deep Research mode activated. Type your research query.'),
+                    {
+                        variant: 'info',
+                    },
+                );
                 this._updateToolsUI();
                 this._setPendingDocument(null);
                 return null;
@@ -13268,14 +13419,16 @@ class KatabDialog {
             const ragConfig = readRagConfig(this._settings);
             if (!ragConfig.enabled) {
                 this._addSystemMessage(
-                    'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command.',
+                    _(
+                        'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command.',
+                    ),
                     { variant: 'warning' },
                 );
                 return null;
             }
             if (!kbCommand.query) {
                 this._addSystemMessage(
-                    'Add a query after /kb, for example: /kb what is the meaning of life?',
+                    _('Add a query after /kb, for example: /kb what is the meaning of life?'),
                     { variant: 'warning' },
                 );
                 return null;
@@ -13286,7 +13439,9 @@ class KatabDialog {
             if (kbImportMatch) {
                 if (!kbImportMatch[1]) {
                     this._addSystemMessage(
-                        'Usage: /kb import "~/path/to/file-or-folder" — imports txt, md, pdf, docx, and eml files into the knowledge base.',
+                        _(
+                            'Usage: /kb import "~/path/to/file-or-folder" — imports txt, md, pdf, docx, and eml files into the knowledge base.',
+                        ),
                         { variant: 'info' },
                     );
                     return null;
@@ -13319,7 +13474,9 @@ class KatabDialog {
                         `[Katab:rag] /kb search timed out after ${RAG_MANUAL_SEARCH_TIMEOUT_MS}ms — continuing without KB context`,
                     );
                     this._addSystemMessage(
-                        'Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context.',
+                        _(
+                            'Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context.',
+                        ),
                         { variant: 'warning' },
                     );
                     sendKnowledgeUsage = {
@@ -13346,9 +13503,12 @@ class KatabDialog {
                 }
             } catch (e) {
                 log(`[Katab:rag] /kb search failed: ${e.message}`);
-                this._addSystemMessage(`Knowledge Base search failed: ${e.message}`, {
-                    variant: 'warning',
-                });
+                this._addSystemMessage(
+                    format(_('Knowledge Base search failed: {error}'), { error: e.message }),
+                    {
+                        variant: 'warning',
+                    },
+                );
                 sendKnowledgeUsage = {
                     kind: 'search',
                     query: kbCommand.query,
@@ -14038,9 +14198,9 @@ class KatabDialog {
                                 summary =
                                     'DeepSeek Insufficient Balance — your prepaid account balance is depleted. Top up at platform.deepseek.com.';
                             } else if (message.status_code === 422) {
-                                summary = `DeepSeek Invalid Parameters — the request was rejected (HTTP 422). This may be caused by unsupported JSON schema fields in tool definitions.${summaryText ? ` Details: ${summaryText}` : ''}`;
+                                summary = `DeepSeek Invalid Parameters — the request was rejected (HTTP 422). This may be caused by unsupported JSON schema fields in tool definitions.${summaryText ? ' Details: ' + summaryText : ''}`;
                             } else if (this._isDeepSeekRetryableStatus(message.status_code)) {
-                                summary = `DeepSeek temporary failure — HTTP ${message.status_code}.${summaryText ? ` Details: ${summaryText}` : ''} Automatic retries were exhausted.`;
+                                summary = `DeepSeek temporary failure — HTTP ${message.status_code}.${summaryText ? ' Details: ' + summaryText : ''} Automatic retries were exhausted.`;
                             } else {
                                 summary = summaryText
                                     ? `DeepSeek request failed: HTTP ${message.status_code} - ${summaryText}`
@@ -15950,7 +16110,7 @@ class KatabDialog {
                             status: 'success',
                             detail:
                                 tocCount > 0
-                                    ? `Found ${tocCount} TOC link${tocCount !== 1 ? 's' : ''}${suggestedCount > 0 ? `, ${suggestedCount} suggested` : ''}`
+                                    ? `Found ${tocCount} TOC link${tocCount !== 1 ? 's' : ''}${suggestedCount > 0 ? ', ' + suggestedCount + ' suggested' : ''}`
                                     : 'No TOC links found',
                         });
                     } else {
@@ -16548,7 +16708,9 @@ class KatabDialog {
         let { contentBox } = uiElements;
         this._applyAssistantRender(
             uiElements,
-            `Model '${model}' not found locally.\n\nDo you want to download it now?`,
+            format(_("Model '{model}' not found locally.\n\nDo you want to download it now?"), {
+                model,
+            }),
             { plain: true },
         );
 
@@ -16556,13 +16718,13 @@ class KatabDialog {
         let box = new St.BoxLayout({ vertical: false, style_class: 'katab-prompt-box' });
 
         let confirmBtn = new St.Button({
-            label: 'Yes, Download',
+            label: _('Yes, Download'),
             style_class: 'katab-prompt-btn-yes',
             x_expand: true,
         });
 
         let cancelBtn = new St.Button({
-            label: 'No, Cancel',
+            label: _('No, Cancel'),
             style_class: 'katab-prompt-btn-no',
             x_expand: true,
         });
@@ -16574,8 +16736,8 @@ class KatabDialog {
 
         cancelBtn.connect('clicked', () => {
             box.destroy();
-            this._applyAssistantRender(uiElements, 'Download cancelled.', { plain: true });
-            this._messageHistory.push(this._buildAssistantHistoryMessage('Download cancelled.'));
+            this._applyAssistantRender(uiElements, _('Download cancelled.'), { plain: true });
+            this._messageHistory.push(this._buildAssistantHistoryMessage(_('Download cancelled.')));
             this._saveCurrentConversation();
             this._clearActiveResponseState();
         });
@@ -16588,9 +16750,13 @@ class KatabDialog {
 
     _pullOllamaModel(model, uiElements) {
         let { contentBox } = uiElements;
-        this._applyAssistantRender(uiElements, `Downloading model '${model}'... (0%)`, {
-            plain: true,
-        });
+        this._applyAssistantRender(
+            uiElements,
+            format(_("Downloading model '{model}'... (0%)"), { model }),
+            {
+                plain: true,
+            },
+        );
 
         let provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
@@ -16618,7 +16784,7 @@ class KatabDialog {
         let currentCancellable = this._cancellable;
 
         let cancelBtn = new St.Button({
-            label: 'Cancel Download',
+            label: _('Cancel Download'),
             style_class: 'katab-prompt-btn-no',
             x_expand: false,
         });
@@ -16700,7 +16866,10 @@ class KatabDialog {
                 let parsed = JSON.parse(lineStr);
 
                 if (parsed.status) {
-                    let text = `Downloading model '${model}'...\n${parsed.status}`;
+                    let text = format(_("Downloading model '{model}'...\n{status}"), {
+                        model,
+                        status: parsed.status,
+                    });
                     if (parsed.completed && parsed.total) {
                         let pct = Math.round((parsed.completed / parsed.total) * 100);
                         text += ` (${pct}%)`;
@@ -16766,7 +16935,7 @@ const Indicator = GObject.registerClass(
                 icon_name: 'dialog-warning-symbolic',
                 style_class: 'system-status-icon katab-panel-error-icon',
                 y_align: Clutter.ActorAlign.CENTER,
-                accessible_name: 'Last response failed',
+                accessible_name: _('Last response failed'),
             });
             this._panelErrorIcon.visible = false;
             iconStack.add_child(this._panelErrorIcon);
@@ -16835,7 +17004,7 @@ const Indicator = GObject.registerClass(
                 style_class: 'katab-current-chat-text-col',
             });
             this._currentChatLabel = new St.Label({
-                text: 'Current Chat',
+                text: _('Current Chat'),
                 style_class: 'katab-current-chat-label',
                 x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -16843,7 +17012,7 @@ const Indicator = GObject.registerClass(
             currentChatTextCol.add_child(this._currentChatLabel);
 
             this._currentChatPreviewLabel = new St.Label({
-                text: 'Resume your active conversation',
+                text: _('Resume your active conversation'),
                 style_class: 'katab-current-chat-preview',
                 x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -16854,7 +17023,7 @@ const Indicator = GObject.registerClass(
             this._currentChatMenuItem.add_child(currentChatTextCol);
 
             this._currentChatStatusLabel = new St.Label({
-                text: 'Ready',
+                text: _('Ready'),
                 style_class: 'katab-current-chat-status katab-current-chat-status-ready',
                 y_align: Clutter.ActorAlign.CENTER,
             });
@@ -16885,13 +17054,13 @@ const Indicator = GObject.registerClass(
                 style_class: 'katab-usage-menu-text-col',
             });
             this._usageMenuTitle = new St.Label({
-                text: 'Token Breakdown',
+                text: _('Token Breakdown'),
                 style_class: 'katab-usage-menu-title',
                 x_expand: true,
             });
             usageTextCol.add_child(this._usageMenuTitle);
             this._usageMenuSubtitle = new St.Label({
-                text: 'Hatches with your next reply',
+                text: _('Hatches with your next reply'),
                 style_class: 'katab-usage-menu-subtitle',
                 x_expand: true,
             });
@@ -16981,7 +17150,9 @@ const Indicator = GObject.registerClass(
                 this._usageMenuBar.destroy_all_children();
 
                 if (allSummary.totalTokens === 0) {
-                    this._usageMenuTitle.set_text(`${companion.name} · Token Breakdown`);
+                    this._usageMenuTitle.set_text(
+                        format(_('{name} · Token Breakdown'), { name: companion.name }),
+                    );
                     this._usageMenuSubtitle.set_text(
                         this._settings.get_boolean('token-usage-enabled')
                             ? 'Hatches with your next reply'
@@ -16993,7 +17164,12 @@ const Indicator = GObject.registerClass(
 
                 const localPct = Math.round(summary.localShare * 100);
                 const topLabel = topProvider ? getProviderLabel(topProvider.provider) : '—';
-                this._usageMenuTitle.set_text(`${companion.name} · ${companion.stageLabel}`);
+                this._usageMenuTitle.set_text(
+                    format(_('{name} · {stage}'), {
+                        name: companion.name,
+                        stage: companion.stageLabel,
+                    }),
+                );
                 this._usageMenuSubtitle.set_text(
                     this._settings.get_boolean('token-usage-enabled')
                         ? `${summary.label}: ${localPct}% local · ${topLabel} leads`
@@ -17074,7 +17250,7 @@ const Indicator = GObject.registerClass(
             }
 
             this._currentChatPreviewLabel.set_text(
-                state.title || 'Resume your active conversation',
+                state.title || _('Resume your active conversation'),
             );
 
             let status = state.isStreaming
@@ -17085,12 +17261,12 @@ const Indicator = GObject.registerClass(
                     ? 'open'
                     : 'ready';
             let statusLabel = state.isStreaming
-                ? 'Replying'
+                ? _('Replying')
                 : state.hasError
-                  ? 'Error'
+                  ? _('Error')
                   : state.isOpen
-                    ? 'Open'
-                    : 'Ready';
+                    ? _('Open')
+                    : _('Ready');
             this._currentChatStatusLabel.set_text(statusLabel);
 
             const statusClasses = [
@@ -17196,7 +17372,7 @@ const Indicator = GObject.registerClass(
             });
             historyTitle.add_style_class_name('katab-menu-section-header');
             let headerLabel = new St.Label({
-                text: 'Recent Chats',
+                text: _('Recent Chats'),
                 y_align: Clutter.ActorAlign.CENTER,
                 x_expand: true,
             });
@@ -17227,7 +17403,7 @@ const Indicator = GObject.registerClass(
                     can_focus: true,
                     y_align: Clutter.ActorAlign.CENTER,
                     x_align: Clutter.ActorAlign.CENTER,
-                    accessible_name: 'Open chat',
+                    accessible_name: _('Open chat'),
                 });
                 loadBtn.connect('clicked', () => {
                     this.menu.close();
@@ -17245,7 +17421,7 @@ const Indicator = GObject.registerClass(
                     can_focus: true,
                     y_align: Clutter.ActorAlign.CENTER,
                     x_align: Clutter.ActorAlign.CENTER,
-                    accessible_name: 'Delete chat',
+                    accessible_name: _('Delete chat'),
                 });
                 // Avoid bubbling the clicked event to the main item
                 deleteBtn.connect('clicked', () => {

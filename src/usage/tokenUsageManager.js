@@ -11,6 +11,7 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
 import { isBlockedHost } from '../shared/networkGuard.js';
+import { gettext as _ } from '../shared/i18n.js';
 import {
     createEmptyCollectionState,
     getPetDefinition,
@@ -33,12 +34,60 @@ import {
 
 // ── Ranges ───────────────────────────────────────────────────────────────────
 
+// Labels are lazy getters: the i18n bridge is initialized in the entry points
+// (enable() / fillPreferencesWindow()), i.e. AFTER module imports — a plain
+// `_('Today')` at module level would freeze the identity fallback at load.
 export const TOKEN_USAGE_RANGES = [
-    { key: 'day', label: 'Today', days: 1, summaryLabel: 'Today' },
-    { key: 'week', label: 'Week', days: 7, summaryLabel: 'Past 7 days' },
-    { key: 'month', label: 'Month', days: 30, summaryLabel: 'Past 30 days' },
-    { key: 'year', label: 'Year', days: 365, summaryLabel: 'Past year' },
-    { key: 'all', label: 'All Time', days: null, summaryLabel: 'All time' },
+    {
+        key: 'day',
+        days: 1,
+        get label() {
+            return _('Today');
+        },
+        get summaryLabel() {
+            return _('Today');
+        },
+    },
+    {
+        key: 'week',
+        days: 7,
+        get label() {
+            return _('Week');
+        },
+        get summaryLabel() {
+            return _('Past 7 days');
+        },
+    },
+    {
+        key: 'month',
+        days: 30,
+        get label() {
+            return _('Month');
+        },
+        get summaryLabel() {
+            return _('Past 30 days');
+        },
+    },
+    {
+        key: 'year',
+        days: 365,
+        get label() {
+            return _('Year');
+        },
+        get summaryLabel() {
+            return _('Past year');
+        },
+    },
+    {
+        key: 'all',
+        days: null,
+        get label() {
+            return _('All Time');
+        },
+        get summaryLabel() {
+            return _('All time');
+        },
+    },
 ];
 
 const TIMELINE_DAYS = 14;

@@ -8,14 +8,593 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Katab - AI Assistant\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-06 21:14-0400\n"
+"POT-Creation-Date: 2026-10-06 23:26-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "Language: \n"
 "MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: extension.js:254 extension.js:295 src/ui/prefs/tools/index.js:50 src/ui/prefs/tools/webSearch.js:24
+msgid "Web Search"
+msgstr ""
+
+#: extension.js:262
+msgid "Python"
+msgstr ""
+
+#: extension.js:270
+msgid "Terminal"
+msgstr ""
+
+#: extension.js:285
+msgid "Document"
+msgstr ""
+
+#: extension.js:304 src/ui/prefs/tools/crawler.js:30 src/ui/prefs/tools/index.js:58
+msgid "Web Scraper"
+msgstr ""
+
+#: extension.js:313 src/tools/toolDefinitions.js:242
+msgid "Knowledge"
+msgstr ""
+
+#: extension.js:330 src/ui/prefs/tools/deepResearch.js:14 src/ui/prefs/tools/deepResearch.js:18 src/ui/prefs/tools/index.js:79
+msgid "Deep Research"
+msgstr ""
+
+#: extension.js:1603
+msgid "Switched engine to {provider}."
+msgstr ""
+
+#: extension.js:1986
+msgid "Request failed — open the chat for details."
+msgstr ""
+
+#: extension.js:1989
+msgid "Response ready — open the chat to read it."
+msgstr ""
+
+#: extension.js:2212
+msgid "{pet} hatched and joined your collection!"
+msgstr ""
+
+#: extension.js:2218
+msgid "{pet} reached {stage} at {xp} XP."
+msgstr ""
+
+#: extension.js:2238
+msgid "{count} pet collection milestone unlocked."
+msgid_plural "{count} pet collection milestones unlocked."
+msgstr[0] ""
+msgstr[1] ""
+
+#: extension.js:2345
+msgid "Stopped while downloading model '{model}'."
+msgstr ""
+
+#: extension.js:2347
+msgid "Stopped while preparing '{model}'."
+msgstr ""
+
+#: extension.js:2349
+msgid "Response stopped while running local tools."
+msgstr ""
+
+#: extension.js:2350
+msgid "Response stopped."
+msgstr ""
+
+#: extension.js:2356
+msgid "Response stopped while the model was thinking."
+msgstr ""
+
+#: extension.js:2358
+msgid "Response stopped before tool execution completed."
+msgstr ""
+
+#: extension.js:2956 src/tools/toolDefinitions.js:182
+msgid "Docs"
+msgstr ""
+
+#: extension.js:2958 src/tools/toolDefinitions.js:69
+msgid "Search"
+msgstr ""
+
+#: extension.js:2960 src/tools/toolDefinitions.js:162
+msgid "Scrape"
+msgstr ""
+
+#: extension.js:2962 src/tools/toolDefinitions.js:203
+msgid "Research"
+msgstr ""
+
+#: extension.js:2964
+msgid "Term"
+msgstr ""
+
+#: extension.js:2966
+msgid "Tool"
+msgstr ""
+
+#: extension.js:3726
+msgid "Knowledge Base service is not running. Start it with:\n`systemctl --user start katabai-rag`"
+msgstr ""
+
+#: extension.js:3741
+msgid "Knowledge Base service is back online."
+msgstr ""
+
+#: extension.js:3766
+msgid "Knowledge Base embeddings are available again."
+msgstr ""
+
+#: extension.js:3797
+msgid "Knowledge base is {pct}% full ({used} of {cap} chunks). When full, the oldest entries are pruned automatically — raise the cap or clear old data in Settings ▸ Tools ▸ Knowledge Base."
+msgstr ""
+
+#: extension.js:3894
+msgid " Storage limits live in Settings ▸ Tools ▸ Knowledge Base."
+msgstr ""
+
+#: extension.js:3897
+msgid "Knowledge base indexing was skipped: {reason}{hint}"
+msgstr ""
+
+#: extension.js:3951
+msgid "Knowledge Base storage limits updated — applying immediately."
+msgstr ""
+
+#: extension.js:4123
+msgid "No importable files found (supported: txt, md, pdf, docx, eml)."
+msgstr ""
+
+#: extension.js:4146
+msgid "None of the selected files could be parsed for the knowledge base."
+msgstr ""
+
+#: extension.js:4154
+msgid "Imported {count} file into the knowledge base."
+msgid_plural "Imported {count} files into the knowledge base."
+msgstr[0] ""
+msgstr[1] ""
+
+#: extension.js:5033
+msgid "Enable the Document Tool in Settings before attaching a file."
+msgstr ""
+
+#: extension.js:5062
+msgid "Could not attach a file: {error}"
+msgstr ""
+
+#: extension.js:5207
+msgid "Presets"
+msgstr ""
+
+#: extension.js:5656
+msgid "Clear all attachments"
+msgstr ""
+
+#: extension.js:5804
+msgid "Ask anything..."
+msgstr ""
+
+#: extension.js:5845
+msgid "Tools and toggles"
+msgstr ""
+
+#: extension.js:5992
+msgid "Attached {count} file from clipboard."
+msgid_plural "Attached {count} files from clipboard."
+msgstr[0] ""
+msgstr[1] ""
+
+#: extension.js:6015
+msgid "The prompt is already at its {limit}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document."
+msgstr ""
+
+#: extension.js:6031
+msgid "Pasted text was {dropped} character too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
+msgid_plural "Pasted text was {dropped} characters too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
+msgstr[0] ""
+msgstr[1] ""
+
+#: extension.js:6056
+msgid "Image attached from clipboard."
+msgstr ""
+
+#: extension.js:6146
+msgid "Send Message"
+msgstr ""
+
+#: extension.js:7409
+msgid "Conversation compacted — kept last {count} exchanges."
+msgstr ""
+
+#: extension.js:7412
+msgid "Conversation is already compact."
+msgstr ""
+
+#: extension.js:7569
+msgid "Not enough history to summarize yet — keep chatting and try again later."
+msgstr ""
+
+#: extension.js:7649
+msgid "Session memory updated — {count} earlier turns summarized so the model keeps full context."
+msgstr ""
+
+#: extension.js:7967
+msgid "Cache saved ~{pct}%"
+msgstr ""
+
+#: extension.js:8105
+msgid "Dismiss"
+msgstr ""
+
+#: extension.js:8115
+msgid "✓ Update"
+msgstr ""
+
+#: extension.js:8188
+msgid "Forget"
+msgstr ""
+
+#: extension.js:8301
+msgid "Saved ~{usd} this chat"
+msgstr ""
+
+#: extension.js:8559
+msgid "This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request."
+msgstr ""
+
+#: extension.js:9085
+msgid "Retry"
+msgstr ""
+
+#: extension.js:9089
+msgid "Retry request"
+msgstr ""
+
+#: extension.js:9379
+msgid "Research angle"
+msgstr ""
+
+#: extension.js:9424
+msgid "After research: analyze findings for gaps, then write a comprehensive report with citations — ready in 1–3 minutes."
+msgstr ""
+
+#: extension.js:9442
+msgid "Estimated effort: {cost}"
+msgstr ""
+
+#: extension.js:9461
+msgid "Cancel"
+msgstr ""
+
+#: extension.js:9475
+msgid "Save Edits"
+msgstr ""
+
+#: extension.js:9486
+msgid "Edit plan"
+msgstr ""
+
+#: extension.js:9497
+msgid "Cancel plan"
+msgstr ""
+
+#: extension.js:9511
+msgid "Start research"
+msgstr ""
+
+#: extension.js:9577
+msgid "✓ All {total}/{total} angles researched — moving to analysis phase."
+msgstr ""
+
+#: extension.js:9586
+msgid "Researching {completed}/{total} angles — analyze findings, identify gaps, then write report."
+msgstr ""
+
+#: extension.js:9607
+msgid "Search query"
+msgstr ""
+
+#: extension.js:10064
+msgid "Analyzing coverage gaps..."
+msgstr ""
+
+#: extension.js:10225
+msgid "Synthesis"
+msgstr ""
+
+#: extension.js:10229 extension.js:10257
+msgid "Writing Report"
+msgstr ""
+
+#: extension.js:10230
+msgid "Generating outline and compiling final report from all research findings..."
+msgstr ""
+
+#: extension.js:10234
+msgid "Generating report outline..."
+msgstr ""
+
+#: extension.js:10250
+msgid "Writing final report..."
+msgstr ""
+
+#: extension.js:10258
+msgid "Streaming final research report..."
+msgstr ""
+
+#: extension.js:10459
+msgid "Research may be incomplete (coverage: {score}/5)"
+msgstr ""
+
+#: extension.js:10468
+msgid "• {aspect}"
+msgstr ""
+
+#: extension.js:10476
+msgid "Continue Research"
+msgstr ""
+
+#: extension.js:10554
+msgid "Researching missing aspects (pass {attempt})..."
+msgstr ""
+
+#: extension.js:10661
+msgid "Some claims may not be fully supported by the sources"
+msgstr ""
+
+#: extension.js:10668
+msgid "The report scored {score}/5 on factual grounding. Some statements may exceed what the gathered sources support — verify those claims before relying on them."
+msgstr ""
+
+#: extension.js:10681
+msgid "Claims that could not be verified against sources:"
+msgstr ""
+
+#: extension.js:10688
+msgid "• {claim}"
+msgstr ""
+
+#: extension.js:10699
+msgid "Citations that may not support their claims:"
+msgstr ""
+
+#: extension.js:10706
+msgid "• {cite}"
+msgstr ""
+
+#: extension.js:11042 extension.js:11075
+msgid "Researching {completed}/{total} angles"
+msgstr ""
+
+#: extension.js:11070
+msgid "\\u2713 {total}/{total} angles researched"
+msgstr ""
+
+#: extension.js:11441
+msgid "+{count} more results available"
+msgstr ""
+
+#: extension.js:11953
+msgid "Ran {count} tool"
+msgid_plural "Ran {count} tools"
+msgstr[0] ""
+msgstr[1] ""
+
+#: extension.js:12188
+msgid "Ran {count} tools"
+msgstr ""
+
+#: extension.js:12318
+msgid "{label}: {detail}"
+msgstr ""
+
+#: extension.js:13048
+msgid "Image analysis failed ({error}). Sending without image analysis…"
+msgstr ""
+
+#: extension.js:13057
+msgid "Image analysis failed ({error}). The message was sent without image analysis."
+msgstr ""
+
+#: extension.js:13088
+msgid "Enable the Document Tool in Settings before using /doc."
+msgstr ""
+
+#: extension.js:13108
+msgid "Katab could not resolve that file path. Use a local file and try again."
+msgstr ""
+
+#: extension.js:13120
+msgid "Could not open the document picker: {error}"
+msgstr ""
+
+#: extension.js:13131
+msgid "Use an absolute path, a ~/path, or the picker when attaching a file."
+msgstr ""
+
+#: extension.js:13158
+msgid "Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava."
+msgstr ""
+
+#: extension.js:13239
+msgid "Web search is off for this prompt. Set Search to Auto or On before using /search."
+msgstr ""
+
+#: extension.js:13263
+msgid "Web search is off. Enable it in Settings > Tools > Web Search to use the /search command."
+msgstr ""
+
+#: extension.js:13273
+msgid "Add a query after /search, for example: /search latest GNOME release."
+msgstr ""
+
+#: extension.js:13294
+msgid "Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command."
+msgstr ""
+
+#: extension.js:13312
+msgid "Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search."
+msgstr ""
+
+#: extension.js:13322
+msgid "Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release."
+msgstr ""
+
+#: extension.js:13364
+msgid "Deep Research mode activated for the next prompt. Type your research query."
+msgstr ""
+
+#: extension.js:13374
+msgid "Deep Research mode activated. Type your research query."
+msgstr ""
+
+#: extension.js:13422
+msgid "Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command."
+msgstr ""
+
+#: extension.js:13431
+msgid "Add a query after /kb, for example: /kb what is the meaning of life?"
+msgstr ""
+
+#: extension.js:13442
+msgid "Usage: /kb import \"~/path/to/file-or-folder\" — imports txt, md, pdf, docx, and eml files into the knowledge base."
+msgstr ""
+
+#: extension.js:13477
+msgid "Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context."
+msgstr ""
+
+#: extension.js:13507
+msgid "Knowledge Base search failed: {error}"
+msgstr ""
+
+#: extension.js:16711
+msgid "Model '{model}' not found locally.\n\nDo you want to download it now?"
+msgstr ""
+
+#: extension.js:16721
+msgid "Yes, Download"
+msgstr ""
+
+#: extension.js:16727
+msgid "No, Cancel"
+msgstr ""
+
+#: extension.js:16739 extension.js:16740
+msgid "Download cancelled."
+msgstr ""
+
+#: extension.js:16755
+msgid "Downloading model '{model}'... (0%)"
+msgstr ""
+
+#: extension.js:16787
+msgid "Cancel Download"
+msgstr ""
+
+#: extension.js:16869
+msgid "Downloading model '{model}'...\n{status}"
+msgstr ""
+
+#: extension.js:16938
+msgid "Last response failed"
+msgstr ""
+
+#: extension.js:17007
+msgid "Current Chat"
+msgstr ""
+
+#: extension.js:17015 extension.js:17253
+msgid "Resume your active conversation"
+msgstr ""
+
+#: extension.js:17026 extension.js:17269
+msgid "Ready"
+msgstr ""
+
+#: extension.js:17057
+msgid "Token Breakdown"
+msgstr ""
+
+#: extension.js:17063
+msgid "Hatches with your next reply"
+msgstr ""
+
+#: extension.js:17154
+msgid "{name} · Token Breakdown"
+msgstr ""
+
+#: extension.js:17168
+msgid "{name} · {stage}"
+msgstr ""
+
+#: extension.js:17264
+msgid "Replying"
+msgstr ""
+
+#: extension.js:17266
+msgid "Error"
+msgstr ""
+
+#: extension.js:17268
+msgid "Open"
+msgstr ""
+
+#: extension.js:17375
+msgid "Recent Chats"
+msgstr ""
+
+#: extension.js:17406
+msgid "Open chat"
+msgstr ""
+
+#: extension.js:17424
+msgid "Delete chat"
+msgstr ""
+
+#: src/providers/catalog.js:25
+msgid "Fast, efficient model for everyday tasks and quick replies. Supports image input."
+msgstr ""
+
+#: src/providers/catalog.js:34
+msgid "Stronger reasoning for complex, multi-step problems."
+msgstr ""
+
+#: src/providers/catalog.js:41
+msgid "Retired alias — served by the V4.1 Flash model and billed at Flash rates."
+msgstr ""
+
+#: src/providers/catalog.js:70
+msgid "Run local models with a fast desktop-native workflow and deep tuning controls."
+msgstr ""
+
+#: src/providers/catalog.js:79
+msgid "Access DeepSeek V4 models with a 1M token context window and advanced reasoning. Requires a funded prepaid account."
+msgstr ""
+
+#: src/providers/catalog.js:88
+msgid "Connect to optimized local Unsloth Studio endpoints for heavier or longer-context jobs."
+msgstr ""
+
+#: src/providers/catalog.js:97
+msgid "Use hosted OpenAI models when you want broad capability and reliable cloud access."
+msgstr ""
+
+#: src/providers/catalog.js:107
+msgid "Use Claude models through Anthropic for careful reasoning, writing, and long-context work."
+msgstr ""
+
+#: src/tools/toolDefinitions.js:104
+msgid "Read"
+msgstr ""
 
 #: src/ui/historyView.js:226
 msgid "Edit Conversation"
@@ -33,22 +612,2462 @@ msgstr ""
 msgid "DeepSeek Model"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:31
+#: src/ui/prefs/deepseekPage.js:31 src/ui/prefs/providerPages.js:16 src/ui/prefs/providerPages.js:62 src/ui/prefs/providerPages.js:88
+msgid "Connection &amp; Model"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:33 src/ui/prefs/ollamaPage.js:537 src/ui/prefs/providerPages.js:18 src/ui/prefs/providerPages.js:64 src/ui/prefs/providerPages.js:90
+msgid "Base URL"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:34
+msgid "The DeepSeek API endpoint. Change only when routing through a compatible proxy."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:39 src/ui/prefs/providerPages.js:24 src/ui/prefs/providerPages.js:72 src/ui/prefs/providerPages.js:96 src/ui/prefs/tools/webSearch.js:216
+msgid "API Key"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:40
+msgid "Enter your DeepSeek API key. Ensure your account holds a positive prepaid balance — the API operates exclusively on a pre-funded model."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:48 src/ui/prefs/ollamaPage.js:543 src/ui/prefs/providerPages.js:31 src/ui/prefs/providerPages.js:79 src/ui/prefs/providerPages.js:103
+msgid "Model"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:49
+msgid "Use deepseek-flash (V4.1) for general tasks, rapid coding, and image input, or deepseek-v4-pro for complex reasoning and multi-step workflows."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:58 src/ui/prefs/ollamaPage.js:665
+msgid "System Prompt"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:59
+msgid "Katab prepends this system prompt to DeepSeek requests. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:67
+msgid "Reasoning"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:68
+msgid "DeepSeek can perform extended chain-of-thought reasoning before responding. Thinking content is shown in a collapsible panel in chat."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:74 src/ui/prefs/ollamaPage.js:577
+msgid "Thinking Mode"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:75
+msgid "Enable extended reasoning. Increases response time but significantly improves quality on complex tasks."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:83
+msgid "High (balanced speed and depth)"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:83
+msgid "Max (maximum reasoning depth)"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:85
+msgid "Reasoning Effort"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:86
+msgid "Computational budget for the thinking phase. ‘High’ is the recommended default; ‘Max’ allocates the deepest analysis."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:124
+msgid "Image Support (Vision Model)"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:125
+msgid "deepseek-flash (V4.1) handles images natively — no setup needed. This section only applies to deepseek-v4-pro, which cannot see images: Katab analyzes attached images with the vision model below, then passes the analysis to Pro, which writes the reply. Text-only DeepSeek models (pro) cannot be used here as the vision model."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:133
+msgid "Describe images, then DeepSeek writes the answer"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:134
+msgid "Route the whole request to the vision model"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:137
+msgid "Routing Mode"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:138
+msgid "In the default mode the vision model describes the image(s) and DeepSeek writes the final answer. In direct mode the whole request is sent to the vision model, which replies directly (no tools or thinking)."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:161 src/ui/prefs/ollamaPage.js:786 src/ui/prefs/widgets.js:146
+msgid "Disabled"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:161
+msgid "Ollama (local)"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:161
+msgid "OpenAI-compatible"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:163
+msgid "Vision Backend"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:164
+msgid "Ollama reuses your existing Ollama URL, sampling settings (including loaded presets), and installed models. OpenAI-compatible uses any vision-capable endpoint with a URL and optional API key."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:187
+msgid "Installed Ollama Models"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:188
+msgid "Query your Ollama instance for locally installed models and pick a vision-capable one."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:189 src/ui/prefs/deepseekPage.js:217
+msgid "Pick Model…"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:198
+msgid "No Ollama URL configured"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:199
+msgid "Set the Ollama Base URL on the Ollama settings tab first."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:212
+msgid "Loading…"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:238
+msgid "No models found"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:239
+msgid "Could not list models from the Ollama instance. Is it running and reachable at the configured URL?"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:260
+msgid "Pick a vision model"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:262
+msgid "Select one of {count} installed Ollama models. Vision-capable models include llava, llama3.2-vision, qwen2.5vl, janus-pro, deepseek-vl2."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:293
+msgid "Vision Model"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:294
+msgid "A vision-capable model. For Ollama: llama3.2-vision, qwen2.5vl, llava, janus-pro, deepseek-vl2, minicpm-v. For OpenAI-compatible: any vision model. DeepSeek text models are rejected."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:303
+msgid "Vision Fallback Model"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:304
+msgid "Optional. Tried if the primary vision model is unavailable or times out. Uses the same backend."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:313
+msgid "DeepSeek text models cannot see images"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:314
+msgid "The Vision Model is set to a text-only DeepSeek model, which cannot analyze images. Choose a vision-capable model instead (e.g. deepseek-flash)."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:322
+msgid "Vision Base URL"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:323
+msgid "OpenAI-compatible endpoint root. Leave empty to fall back to the DeepSeek base URL (useful behind a compatible proxy)."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:330
+msgid "Vision API Key"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:331
+msgid "Optional bearer token for the vision endpoint."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:361
+msgid "Output"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:362
+msgid "Control structured output mode. When JSON mode is on, Katab automatically injects a JSON reminder into the system prompt if needed to satisfy the DeepSeek API requirement."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:367
+msgid "JSON Output Mode"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:368
+msgid "Force the model to return a valid JSON object. Useful for structured data extraction tasks."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:378
+msgid "Account Balance"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:379
+msgid "Current DeepSeek account balance. Refreshed automatically by the provider health check every 30 seconds while the extension is running."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:420
+msgid "Available"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:421
+msgid "Whether the current balance is sufficient for API calls."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:424
+msgid "Not checked yet"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:426
+msgid "Yes"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:427
+msgid "No — top up needed"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:433
+msgid "Currency"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:434
+msgid "The currency of your DeepSeek account balance."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:440
+msgid "Total Balance"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:441
+msgid "Total available funds (granted + topped-up)."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:452
+msgid "Granted (Free Credits)"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:453
+msgid "Promotional or free credits that may expire."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:463
+msgid "Topped Up"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:463
+msgid "Funds added via top-up that do not expire."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:472
+msgid "Last Checked"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:473
+msgid "When the balance was last fetched from the DeepSeek API."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:476
+msgid "Never"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:481 src/ui/prefs/tools/knowledge.js:906
+msgid "Unknown"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:507 src/ui/prefs/deepseekPage.js:532
+msgid "Refresh Balance"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:516
+msgid "Check Balance Now"
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:517
+msgid "Makes a direct request to the DeepSeek /user/balance endpoint and updates the display above."
+msgstr ""
+
+#: src/ui/prefs/deepseekPage.js:529
+msgid "Checking..."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:31 src/ui/prefs/tools/webSearch.js:170
 msgid "General"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:38
+msgid "Active Provider"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:39
+msgid "Choose which AI backend powers your conversations. Click a provider to switch; your settings for each are kept separately."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:46
+msgid "Keyboard Shortcut"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:47
+msgid "Set a global shortcut to open or hide the chat from anywhere on the desktop."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:54 src/ui/usagePanel.js:60 src/ui/usagePanel.js:145
+msgid "AI Token Breakdown"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:55
+msgid "Control the local-only usage ledger, companion celebrations, default range, retention, reset, and export."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:62
+msgid "Pet Companion"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:63
+msgid "Choose whether the visible companion follows the active provider or stays pinned to a form selected in the Pet Collection."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:70
+msgid "Notifications"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:71
+msgid "Control desktop alerts and sounds for chat activity that happens while the window is closed."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:78
+msgid "Appearance"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:79
+msgid "Control how chat text is sized and how the glass dialog renders over your desktop."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:91
+msgid "Toggle Chat"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:92
+msgid "Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:100
+msgid "Chat Text Size"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:101
+msgid "Comfortable is the recommended default for general readability. Compact fits more text on screen; Large is easier to read from a distance."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:110
+msgid "Compact"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:111
+msgid "Comfortable (Recommended)"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:112
+msgid "Large"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:116 src/ui/prefs/generalPage.js:157 src/ui/prefs/generalPage.js:248 src/ui/prefs/ollamaPage.js:565 src/ui/prefs/ollamaPage.js:792 src/ui/prefs/tools/deepResearch.js:41 src/ui/prefs/tools/webSearch.js:203 src/ui/prefs/widgets.js:494
+msgid "Custom ({value})"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:120
+msgid "Glassy Translucent Dialog"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:121
+msgid "Makes the chat dialog slightly see-through for the glass look. Turn this off for maximum text readability — the dialog then uses a more opaque surface."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:129
+msgid "Completion Sound"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:130
+msgid "Play a short sound when a response finishes while the chat is closed. Uses a different tone when the request fails."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:138
+msgid "Track Token Usage"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:139
+msgid "Record local-only token totals for the Tokens panel. Existing data stays on disk when this is off."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:147
+msgid "Default Range"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:148
+msgid "Initial range shown when opening the AI Token Breakdown panel or top-bar snapshot."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:161
+msgid "Retention"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:162
+msgid "How long to keep daily token buckets before pruning. Forever keeps the local ledger until you reset it."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:171
+msgid "Forever"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:172
+msgid "90 days"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:173
+msgid "1 year"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:177
+msgid "{value} days"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:181
+msgid "Companion Celebrations"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:182
+msgid "Show in-chat messages for pet hatches and growth stages."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:188
+msgid "Monthly Budget"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:189
+msgid "Show a monthly spend budget card in the Token Breakdown panel and warn as spending approaches the limit."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:197
+msgid "Monthly Budget Amount"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:198
+msgid "USD budget for a calendar month. Cost estimates use published model pricing."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:207
+msgid "Budget Warning Threshold"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:208
+msgid "Percentage of the monthly budget at which warnings start."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:226
+msgid "Desktop Notifications"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:227
+msgid "Show a desktop notification when a response finishes while the chat is closed."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:233
+msgid "Active Companion"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:234
+msgid "Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:243
+msgid "Follow Current Provider"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:244
+msgid "Pinned"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:252
+msgid "Current Form"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:253
+msgid "Pinned forms are selected from the Pet Collection inside the Token Breakdown panel."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:277
+msgid "{pet} · Following"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:282 src/ui/prefs/generalPage.js:304 src/ui/prefs/tools/knowledge.js:972 src/ui/prefs/tools/knowledge.js:977
+msgid "Unavailable"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:291
+msgid "Usage Ledger"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:292
+msgid "Private JSON ledger stored under ~/.local/share/katabai/token-usage.json."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:300
+msgid "{count} tokens"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:310
+msgid "Export Usage JSON"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:311
+msgid "Write a timestamped copy of the local ledger into your Documents folder (or home folder if Documents is unavailable)."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:314 src/ui/prefs/tools/knowledge.js:1007
+msgid "Export"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:318
+msgid "Exported"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:321
+msgid "Export failed"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:329
+msgid "Reset Usage Ledger"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:330
+msgid "Delete local token analytics and all pet XP. Chat history is not affected."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:331
+msgid "Reset"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:115
+msgid "Balanced Assistant"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:116
+msgid "Deterministic Programming"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:117
+msgid "Factual Query / RAG"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:118
+msgid "Creative Ideation"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:119
+msgid "JSON Extraction"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:120
+msgid "Custom"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:126
+msgid "Local inference with fine-grained hardware, memory, and sampling controls."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:131
+msgid "Model Presets"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:132
+msgid "Save named snapshots of all current Ollama settings (model, context, sampling, etc.). Load a preset to instantly switch configurations."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:141
+msgid "New Preset Name"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:147
+msgid "Save Current Settings"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:261
+msgid "No presets saved yet"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:262
+msgid "Fill in a name above and click \"Save Current Settings\" to create your first preset."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:277
+msgid "{name} has unsaved changes"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:278 src/ui/prefs/ollamaPage.js:358
+msgid "Unnamed Preset"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:280
+msgid "Save changes to update this preset, or discard changes to restore its saved values."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:300
+msgid "Save Changes"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:319
+msgid "Discard Changes"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:346
+msgid "{value} ctx"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:350
+msgid "temp {value}"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:377 src/ui/prefs/widgets.js:323
+msgid "Active"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:377
+msgid "Load"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:396
+msgid "Delete this preset"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:446 src/ui/prefs/ollamaPage.js:454
+msgid "Workload Preset"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:447
+msgid "Start from recommended Ollama settings for the kind of output you want Katab to produce."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:455
+msgid "Applies recommended settings for desktop assistant chat, coding, factual answers, creativity, or JSON extraction."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:535
+msgid "Connection &amp; Request Shape"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:538
+msgid "The HTTP address where Ollama is hosted."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:544
+msgid "The exact Ollama model tag to load for this provider."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:550
+msgid "Response Format"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:551
+msgid "Keep standard text for chat. Switch to JSON mode when another app needs machine-readable output."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:560 src/ui/prefs/ollamaPage.js:565
+msgid "Standard Text"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:561
+msgid "JSON Mode"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:569
+msgid "Raw Prompt Mode"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:570
+msgid "Bypass Ollama chat templating. Leave this off unless your prompt is already fully structured."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:578
+msgid "Enable reasoning traces for models that support hybrid-thinking (Qwen3, DeepSeek-R1, etc.). When off, the model answers directly without a thinking step."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:585
+msgid "Keep Alive"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:586
+msgid "How long to keep the model loaded between requests. Must include a time unit (s, m, h), e.g. 5m, 0, or 999999h for indefinite."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:593
+msgid "Context Limits"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:595 src/ui/prefs/providerPages.js:37
+msgid "Context Window Size"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:596
+msgid "Choose a standard context size. If a custom value is already saved, it stays visible instead of snapping back to 4096."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:620
+msgid "{value} (custom)"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:643
+msgid "Predict Tokens"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:644
+msgid "Maximum number of tokens Ollama may generate for a reply. Use -1 for no hard cap."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:652
+msgid "Keep Tokens"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:653
+msgid "Preserve this many leading tokens when the context window rolls over so core instructions stay anchored."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:666
+msgid "Katab prepends this system prompt to Ollama requests and always appends the current date so the model knows what \"today\" is. By default it keeps replies in your language and treats web/tool output as untrusted data to analyze, not instructions to obey. This value is captured by presets."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:677
+msgid "Advanced Hardware Settings"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:678
+msgid "Control how aggressively Ollama uses RAM, CPU, and GPU resources."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:681
+msgid "Use MMAP"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:682
+msgid "Map model weights through virtual memory so the kernel can page them in on demand."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:687
+msgid "Use MLOCK"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:688
+msgid "Lock model pages in RAM to avoid swap latency. Leave this off unless you are certain your system has headroom."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:695
+msgid "GPU Layers"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:696
+msgid "Number of transformer layers to offload to the GPU. Use -1 for all layers or 0 for CPU-only runs."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:706
+msgid "CPU Threads"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:707
+msgid "Worker threads for inference. Staying near your physical core count usually gives the best latency."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:721
+msgid "Model Behavior &amp; Sampling"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:724
+msgid "Temperature"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:725
+msgid "Controls randomness. Lower values stay focused and predictable; higher values explore more unusual tokens."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:736
+msgid "Top-K"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:737
+msgid "Keep only the K most likely next tokens before sampling. Lower values are stricter."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:745
+msgid "Top-P"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:746
+msgid "Nucleus sampling. Keeps the smallest token set whose combined probability reaches this value."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:757
+msgid "Min-P"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:758
+msgid "Alternative to Top-P. Filters out tokens that fall too far below the most likely option."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:770
+msgid "Dynamic Entropy (Mirostat)"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:771
+msgid "Let Ollama adjust sampling on the fly to keep responses near a target creativity level."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:776
+msgid "Mirostat Mode"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:777
+msgid "When enabled, Ollama dynamically manages entropy and the static temperature and top-p controls become advisory only."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:787
+msgid "Mirostat 1.0"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:788
+msgid "Mirostat 2.0"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:795
+msgid "Target Entropy (tau)"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:796
+msgid "Higher values allow more surprise. Lower values keep text tighter and more predictable."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:807
+msgid "Learning Rate (eta)"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:808
+msgid "How aggressively Mirostat corrects drift from the target entropy."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:833
+msgid "Advanced Statistical Sampling"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:834
+msgid "Extra distribution-shaping controls for power users."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:837
+msgid "Tail Free Sampling (tfs_z)"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:838
+msgid "Cuts off the low-value tail of the distribution where choices stop being meaningfully distinct. Set 1.0 to disable it."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:851
+msgid "Degeneration and Loop Mitigation"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:852
+msgid "Penalize repetition when the model starts circling the same words or phrases."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:857
+msgid "Repeat Last N"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:858
+msgid "How far back Ollama should look for repetition. Use -1 to scan the full active context."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:868
+msgid "Repeat Penalty"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:869
+msgid "Multiplicative repetition penalty. Keep this near 1.0 for code and raise it gently for chat if loops appear."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:880
+msgid "Presence Penalty"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:881
+msgid "Encourages fresh vocabulary by penalizing any token that has appeared at least once."
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:890
+msgid "Frequency Penalty"
+msgstr ""
+
+#: src/ui/prefs/ollamaPage.js:891
+msgid "Penalizes tokens in proportion to how often they have already appeared."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:19
+msgid "e.g. http://localhost:8888/v1 — the Unsloth Studio API root."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:25
+msgid "Leave blank for local instances running without authentication."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:32
+msgid "The model identifier served by your Unsloth Studio instance."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:38
+msgid "Maximum tokens per request. Match this to your loaded model capacity."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:48 src/ui/prefs/tools/index.js:21 src/ui/toolsPopup.js:429
+msgid "Tools"
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:49
+msgid "Unsloth Studio runs web search, Python, and terminal as server-side tools on its own backend."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:55
+msgid "Server-side tools"
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:56
+msgid "When Unsloth is the active provider, tool calls are executed by Unsloth Studio, not by Katab. The local SearxNG Web Search tool on the Tools page applies to the Ollama, OpenAI, Anthropic, and DeepSeek providers instead."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:65
+msgid "e.g. https://api.openai.com/v1 — change only when using a proxy or compatible endpoint."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:73
+msgid "Your OpenAI secret key starting with sk-. Never share or commit this value."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:80
+msgid "The model ID from your OpenAI account, such as gpt-4o or gpt-4o-mini."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:91
+msgid "e.g. https://api.anthropic.com — change only when using a proxy."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:97
+msgid "Your Anthropic key starting with sk-ant-. Never share or commit this value."
+msgstr ""
+
+#: src/ui/prefs/providerPages.js:104
+msgid "The Claude model ID from your account, such as claude-opus-4-5."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:36
+msgid "How web scraping works"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:37
+msgid "Crawl4AI is a high-performance, LLM-friendly web crawler that renders pages in a real browser (Chromium), executes JavaScript, and extracts clean Markdown. Katab uses it to deep-scrape page content after SearxNG discovers URLs. Deploy your own Crawl4AI v0.9.x Docker container on any machine with sufficient RAM for Chromium."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:57
+msgid "Setup — Deploy Crawl4AI with Docker"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:64
+msgid "Crawl4AI must be running in Docker for Katab to deep-scrape web pages."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:70
+msgid "Docker Compose (Recommended)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:163
+msgid "Minimal Setup (Single Container)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:191
+msgid "API Token Authentication"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:218
+msgid "Security Notes"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:237 src/ui/prefs/tools/knowledge.js:182 src/ui/prefs/tools/webSearch.js:47
+msgid "Connection"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:238
+msgid "Point Katab at your self-hosted Crawl4AI Docker instance."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:243
+msgid "Enable Web Scraper"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:244
+msgid "Allow the /crawl command and let supported models deep-scrape web pages through Crawl4AI."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:252
+msgid "Crawl4AI Instance URL"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:253
+msgid "Base URL of your Crawl4AI v0.9.x instance, e.g. http://localhost:11235."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:259
+msgid "API Token"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:260
+msgid "JWT Bearer token set via CRAWL4AI_API_TOKEN when deploying the container. Required only when the instance has security enabled."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:269 src/ui/prefs/tools/knowledge.js:231 src/ui/prefs/tools/webSearch.js:69
+msgid "Connection Status"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:270
+msgid "Run a health check to confirm the instance is reachable."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:273 src/ui/prefs/tools/knowledge.js:235 src/ui/prefs/tools/webSearch.js:73
+msgid "Untested"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:277 src/ui/prefs/tools/knowledge.js:238 src/ui/prefs/tools/webSearch.js:77
+msgid "Test Connection"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:278
+msgid "Send a health check to verify the Crawl4AI endpoint responds."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:279 src/ui/prefs/tools/knowledge.js:240 src/ui/prefs/tools/webSearch.js:79
+msgid "Test"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:281 src/ui/prefs/tools/knowledge.js:242 src/ui/prefs/tools/webSearch.js:81
+msgid "Testing"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:282
+msgid "Contacting the Crawl4AI instance…"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:290 src/ui/prefs/tools/knowledge.js:279 src/ui/prefs/tools/webSearch.js:88
+msgid "Connected"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:294
+msgid "Reachable. Server: {version}"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:295
+msgid "Reachable."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:297 src/ui/prefs/tools/crawler.js:303 src/ui/prefs/tools/knowledge.js:290 src/ui/prefs/tools/knowledge.js:294 src/ui/prefs/tools/knowledge.js:299 src/ui/prefs/tools/knowledge.js:374 src/ui/prefs/tools/knowledge.js:1063 src/ui/prefs/tools/knowledge.js:1069
+msgid "Failed"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:299 src/ui/prefs/tools/crawler.js:304 src/ui/prefs/tools/knowledge.js:295 src/ui/prefs/tools/knowledge.js:300 src/ui/prefs/tools/webSearch.js:100
+msgid "Connection test failed."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:312
+msgid "Extraction"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:313
+msgid "How Crawl4AI filters and formats page content before sending it to the model."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:320
+msgid "Content Filter"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:321
+msgid "Algorithm used to strip boilerplate and extract the core page content."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:328
+msgid "Pruning (Heuristic)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:329
+msgid "BM25 (Query-Focused)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:336
+msgid "Cache Mode"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:337
+msgid "Controls Crawl4AI’s internal cache behavior."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:344
+msgid "Bypass (Always Fresh)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:345
+msgid "Enabled (Faster Repeats)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:346
+msgid "Read-Only (No Network)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:353
+msgid "Minimum Word Count"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:354
+msgid "Pages with fewer words are discarded before Markdown generation (1–200)."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:363
+msgid "Page Timeout"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:364
+msgid "Maximum seconds to wait for a page to render before giving up (10–300)."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:373
+msgid "Maximum Output Characters"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:374
+msgid "Truncation cap on extracted Markdown fed to the model context (500–100000)."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:384
+msgid "LLM Extraction (Optional)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:385
+msgid "Configure server-side LLM extraction. The crawl tool returns raw Markdown by default and only uses these settings when the model explicitly asks for extraction (mode=\"extract\"); the manual /crawl command follows the Extraction Mode setting below. Fully optional — raw Markdown never needs an LLM."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:392
+msgid "How to enable AI extraction"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:393
+msgid "Models request extraction per crawl (mode=\"extract\"); the Extraction Mode below decides its shape (Schema for structured JSON, Block for a freeform answer). The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default output setup. Extraction runs through Crawl4AI’s /llm endpoint (server-side), so the provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the provider’s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container (docker compose down && docker compose up -d). Tweak the schema or instruction below for different fields. Katab never sees or stores your API key."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:407
+msgid "Extraction Mode"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:408
+msgid "How Crawl4AI should format page content when LLM extraction is requested. Markdown remains the default fallback."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:417
+msgid "Markdown Only (Default)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:418
+msgid "LLM Structured JSON (Schema)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:419
+msgid "LLM Freeform Answer (Block)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:426
+msgid "LLM Provider"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:427
+msgid "LiteLLM model identifier. Defaults to DeepSeek V4.1 Flash (deepseek/deepseek-flash). Must match the provider allowed on your Crawl4AI server — set LLM_PROVIDER=&lt;same value&gt; and the provider API key (e.g. DEEPSEEK_API_KEY) in .llm.env, then restart the container. The API key never touches Katab."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:435
+msgid "LLM Instruction"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:436
+msgid "Freeform instruction for Block mode. A default summary instruction is prefilled — edit it to suit the page type."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:445
+msgid "LLM Schema (JSON)"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:446
+msgid "JSON Schema object for Schema mode. A general-purpose schema is prefilled — edit it to match the fields you want."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:455
+msgid "Validate Schema"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:456
+msgid "Check that the JSON Schema text parses as valid JSON."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:457
+msgid "Validate"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:462
+msgid "Schema is valid JSON."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:464
+msgid "Invalid JSON: {error}"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:465
+msgid "parse error"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:473
+msgid "Chunk Token Threshold"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:474
+msgid "Maximum tokens per chunk when Crawl4AI splits large pages for LLM extraction (500–16000)."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:485
+msgid "Chunk Overlap Rate"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:486
+msgid "Overlap between consecutive chunks (0.0–0.5) to preserve context across boundaries."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:511 src/ui/prefs/tools/webSearch.js:224
+msgid "Advanced"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:512
+msgid "Anti-bot stealth, autonomous model use, and network address restrictions."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:517
+msgid "Stealth Mode"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:518
+msgid "Mimic human mouse movements, scrolls, and timing to reduce CAPTCHA and bot-detection challenges. Slower but more reliable for protected sites."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:526 src/ui/prefs/tools/knowledge.js:771 src/ui/prefs/tools/webSearch.js:248
+msgid "Autonomous Tool Use"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:527
+msgid "Advertise the crawl_url tool to supported models so they can decide when to deep-scrape a page. With this off, only the manual /crawl command runs."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:535
+msgid "Follow Subpage Links in Research"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:536
+msgid "During deep research, follow the most relevant links found on scraped pages (e.g. a docs index linking to the actual page). Lets research reach details that are one click away."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:544
+msgid "Max Followed Links per Branch"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:545
+msgid "How many relevance-scored subpage links a research branch may follow after its initial crawl (0–10)."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:556 src/ui/prefs/tools/webSearch.js:257
+msgid "Allow Local Addresses"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:557
+msgid "Permit scraping of private, loopback, and link-local addresses. Leave off unless you fully trust your network."
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:565
+msgid "Async Polling Interval"
+msgstr ""
+
+#: src/ui/prefs/tools/crawler.js:566
+msgid "Milliseconds between status checks when using async crawl jobs (500–10000)."
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:19
+msgid "Deep Research runs a multi-phase pipeline (plan → branches → gap analysis → refinement → two-pass synthesis). Enable Web Search or Web Scraper to use it, then start a run from the chat footer Research button or the /research command."
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:25
+msgid "Research Depth"
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:26
+msgid "Standard keeps the current pipeline. Deep adds automatic quality retries and more gap queries. Max raises the quality bar and synthesis context budget further — more tokens and longer runs."
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:35
+msgid "Standard (Recommended)"
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:36
+msgid "Deep"
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:37
+msgid "Max"
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:45
+msgid "Model Overrides"
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:46
+msgid "Optional per-role model overrides — leave empty to use the active provider model. Compression runs on every scraped page (high volume); synthesis covers planning, critique, gap analysis, outline, and the final report."
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:52
+msgid "Compression Model"
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:53
+msgid "Cheap/fast model for high-volume page compression. Leave empty for the active model."
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:59
+msgid "Synthesis Model"
+msgstr ""
+
+#: src/ui/prefs/tools/deepResearch.js:60
+msgid "Stronger model for planning and the final report. Leave empty for the active model."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:17 src/ui/prefs/tools/document.js:21 src/ui/prefs/tools/index.js:42
+msgid "Document Tool"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:22
+msgid "Optional local file support for chat. Documents are parsed locally, and images can be sent to Ollama vision models."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:29
+msgid "Enable Document Tool"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:30
+msgid "Show the chat attachment button and enable the /doc command for local files."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:35
+msgid "How it works"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:38
+msgid "Use the attachment button in chat or type /doc with a quoted path. Katab extracts text from supported documents locally, and sends PNG/JPG images only to Ollama vision models."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:41
+msgid "Turn this on only if you want local file parsing. Normal chat does not depend on this tool."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:49
+msgid "Detected Capabilities"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:50
+msgid "Katab scans the local system at runtime. Text, Markdown, PNG/JPG, and EML support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:57
+msgid "Text and Markdown"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:58
+msgid "Plain text and Markdown are handled directly through native Gio file reads."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:62
+msgid "Images (PNG/JPG)"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:63
+msgid "PNG and JPG attachments are base64-encoded locally and sent only to Ollama vision-capable models."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:69
+msgid "PDF Documents"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:70 src/ui/prefs/tools/document.js:99
+msgid "Install poppler-utils to expose pdftotext for fast PDF text extraction."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:74
+msgid "Word Documents (.docx)"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:75 src/ui/prefs/tools/document.js:113
+msgid "Install pandoc to convert DOCX files into plain text before sending them to the model."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:79
+msgid "Email Messages (.eml)"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:80
+msgid "EML email files are parsed locally with Katab's built-in MIME reader — headers, body text, and attachment names are extracted without any external tool."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:87 src/ui/prefs/tools/document.js:88 src/ui/prefs/tools/document.js:89
+msgid "Built in"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:94
+msgid "Detected pdftotext at {path}. PDF parsing is ready."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:97 src/ui/prefs/tools/document.js:111
+msgid "Detected"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:102 src/ui/prefs/tools/document.js:116
+msgid "Install"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:108
+msgid "Detected pandoc at {path}. DOCX parsing is ready."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:121
+msgid "Refresh Detection"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:122
+msgid "Re-scan the local system after installing or removing parser packages."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:123 src/ui/prefs/tools/knowledge.js:985
+msgid "Refresh"
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:27
+msgid "Available Tools"
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:28
+msgid "Optional capabilities Katab can offer the model. Select a tool to open its dedicated settings. Normal chat does not depend on any of these."
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:43
+msgid "Attach and parse local files, and send images to Ollama vision models."
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:51
+msgid "Look things up on the web through your self-hosted SearxNG instance."
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:59
+msgid "Deep-scrape web pages into clean Markdown through your self-hosted Crawl4AI instance."
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:68 src/ui/prefs/tools/knowledge.js:31
+msgid "Knowledge Base"
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:69
+msgid "Semantically search across documents, conversations, and research using local RAG."
+msgstr ""
+
+#: src/ui/prefs/tools/index.js:80
+msgid "Multi-phase research reports: plan, search, gap analysis, refinement, and two-pass synthesis."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:37
+msgid "How the Knowledge Base works"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:38
+msgid "Your documents, conversations, and research results are chunked, embedded with Ollama’s nomic-embed-text model, and stored in a local ChromaDB vector database. When you ask a question, Katab finds the most semantically similar chunks and feeds them as context. Everything runs locally — no data leaves your machine.\n\nPhase 3 adds hybrid BM25 keyword matching, cross-encoder reranking (bge-reranker-v2-m3), and automatic web search fallback when knowledge base results are low-quality. Use the Service section above for one-click setup, or see the Setup section below for manual instructions."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:60
+msgid "Setup — Install & Run the RAG Service"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:67
+msgid "Prefer one-click? Use Set Up &amp; Start in the Service section above. The steps below are the manual alternative."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:73
+msgid "One-Click Setup (Recommended)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:74
+msgid "Use the Service section above to install and start the RAG service automatically.\n\nThe steps below are only needed for a manual or custom installation."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:81
+msgid "Installation"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:114
+msgid "Running the Service"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:135
+msgid "Auto-Start with systemd (Recommended)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:183
+msgid "Point Katab at your local RAG Python service."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:188
+msgid "Enable Knowledge Base"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:189
+msgid "Allow the /kb command, Knowledge footer button, and autonomous knowledge searching by supported models."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:197
+msgid "Enable Memory"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:198
+msgid "Master switch for automatic indexing. When enabled, Katab indexes documents, conversations, and research results (respecting the per-type toggles below). When disabled, no new content is indexed but existing knowledge remains searchable."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:206
+msgid "RAG Service URL"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:207
+msgid "Base URL of your local Katabai RAG service, e.g. http://localhost:11435."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:213
+msgid "Ollama URL for Embeddings"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:214
+msgid "The Ollama instance used for generating text embeddings. Can be remote (e.g. http://192.168.1.100:11434) if Ollama runs on a separate AI PC."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:222
+msgid "Embedding Model"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:223
+msgid "Ollama model used for generating text embeddings. Must be pulled first with: ollama pull nomic-embed-text."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:232
+msgid "Run a health check to confirm the RAG service is reachable."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:239
+msgid "Send a health check to verify the RAG service responds."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:243
+msgid "Contacting the RAG service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:271
+msgid "Features: {features}"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:274
+msgid "{count} collection"
+msgid_plural "{count} collections"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/prefs/tools/knowledge.js:283
+msgid "Reachable. v{version}, {collections}.{features}"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:288
+msgid "Reachable.{features}"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:291
+msgid "Service returned an error."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:353
+msgid "Service"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:354
+msgid "Control the local RAG service (the systemd user unit katabai-rag.service). \"Set Up &amp; Start\" performs the default install — create the Python venv, install dependencies, write the unit file, and start the service — skipping any step already done and leaving an existing (custom) unit file untouched. Start, Restart, and Stop manage an already-installed unit."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:367
+msgid "Service Status"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:368 src/ui/prefs/tools/knowledge.js:431
+msgid "Checking the systemd unit…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:371 src/ui/prefs/tools/knowledge.js:430 src/ui/prefs/tools/knowledge.js:909 src/ui/prefs/widgets.js:341
+msgid "Checking"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:385
+msgid "Set Up & Start"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:393
+msgid "Start"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:400
+msgid "Restart"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:407
+msgid "Stop"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:441
+msgid "Not installed"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:445
+msgid "The Python environment is ready, but no katabai-rag.service unit file was found. Use \"Set Up &amp; Start\" to create it and launch the service."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:448
+msgid "No service is set up yet. Use \"Set Up &amp; Start\" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install)."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:453 src/ui/prefs/tools/knowledge.js:1009 src/ui/prefs/tools/knowledge.js:1232
+msgid "Running"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:454
+msgid "The katabai-rag.service unit is running."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:457
+msgid "Stopped"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:458
+msgid "The service is installed but stopped. Use Start to launch it."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:468
+msgid "Working"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:479
+msgid "systemctl {verb} failed."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:525
+msgid "Setting up"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:526
+msgid "Preparing the RAG service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:535
+msgid "Creating the Python virtual environment…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:539
+msgid "Could not create the Python venv. Install python3-venv and retry, or follow the Setup section below."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:550
+msgid "Checking Python dependencies…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:562
+msgid "Installing Python dependencies (this can take a minute)…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:581
+msgid "Dependency installation failed — install them manually from the Setup section below."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:601
+msgid "Writing the systemd unit file…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:606
+msgid "Failed to write the unit file."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:612
+msgid "Enabling and starting the service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:615
+msgid "systemctl daemon-reload failed."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:620
+msgid "systemctl enable failed."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:625
+msgid "systemctl start failed."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:649
+msgid "Starting the service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:651
+msgid "Restarting the service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:653
+msgid "Stopping the service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:656
+msgid "Service Controls"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:657
+msgid "Set Up &amp; Start performs the default install (Python venv, dependencies, and unit file) and starts the service, adapting to what is already present. Start, Restart, and Stop manage the installed unit."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:671
+msgid "Indexing"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:672
+msgid "Control how text is chunked and what gets indexed."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:677
+msgid "Chunk Size"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:678
+msgid "Characters per text chunk. Larger chunks preserve context but reduce precision. (200–4000)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:689
+msgid "Chunk Overlap"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:690
+msgid "Character overlap between chunks. Prevents information loss at boundaries. (0–500)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:699
+msgid "Result Count"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:700
+msgid "Number of top results to retrieve per query. (1–20)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:710
+msgid "Storage Limits"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:711
+msgid "Prevent the knowledge base from growing beyond your disk budget. Set to 0 to disable a cap. Changes apply immediately."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:718
+msgid "Max Chunks Per Collection"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:719
+msgid "Hard cap on chunks in any single collection. 0 = unlimited. (0–100000)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:728
+msgid "Max Total Storage (MB)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:729
+msgid "Estimated maximum disk usage for the ChromaDB directory. 0 = unlimited. (0–10000)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:738
+msgid "Auto-Prune Oldest Chunks"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:739
+msgid "When a collection hits its size cap, automatically remove the oldest chunks to make room. When disabled, new indexing is rejected at the cap."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:747
+msgid "Index Document Attachments"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:748
+msgid "Automatically add attached documents (txt, md, pdf, docx) to the knowledge base."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:754
+msgid "Index Conversations"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:755
+msgid "Automatically add past conversation turns to the knowledge base for cross-session retrieval."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:763
+msgid "Index Research Cache"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:764
+msgid "Automatically add web search and scraping results to the knowledge base."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:772
+msgid "Let supported models call knowledge_search on their own when they think it would help."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:779
+msgid "Allow Model-Triggered Knowledge Search"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:780
+msgid "Advertise the knowledge_search tool to capable models. When disabled, only the manual /kb command works."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:788
+msgid "Auto-Update Knowledge Base"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:789
+msgid "When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you'll be asked to confirm each update."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:798
+msgid "Advanced Retrieval"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:799
+msgid "Fine-tune how the knowledge base finds and ranks results. These features require additional models and add latency, but significantly improve result quality."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:807
+msgid "Auto-Fallback to Web Search"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:808
+msgid "When knowledge base results are low-quality, automatically trigger a web search as a supplement. This is the reverse direction of the existing suppression for high-confidence KB results."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:816
+msgid "Strict (only fallback when KB is very poor)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:817
+msgid "Moderate (recommended)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:818
+msgid "Aggressive (fallback frequently)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:821
+msgid "Fallback Threshold"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:822
+msgid "Minimum best-result score (0.0–1.0) before auto-triggering web search."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:843
+msgid "Current: {value} — {desc}"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:856
+msgid "Reranking"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:857
+msgid "Re-rank top candidate chunks with a local scoring model (bge-reranker-v2-m3 or similar) on your Ollama host. Chunks are scored in one batched call per 10 candidates. Requires the model to be pulled first."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:865
+msgid "Reranker Model"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:866
+msgid "Ollama model used for cross-encoder reranking. Must be pulled first."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:872
+msgid "Candidate Pool Multiplier"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:873
+msgid "How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:885
+msgid "Hybrid BM25 + Dense Retrieval"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:886
+msgid "Combine keyword matching (BM25) with semantic search (dense embeddings) for better recall. Enabled by default — the service falls back to dense-only if rank-bm25 is not installed."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:895
+msgid "Maintenance"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:896
+msgid "Export, rebuild, or clear the knowledge base."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:902
+msgid "Current Usage"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:903
+msgid "Click \"Refresh\" to check usage against your storage limits."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:910
+msgid "Querying the RAG service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:932
+msgid " ({pct}% of cap)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:935
+msgid "(none)"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:945
+msgid "{chunks} chunks, ~{size} MB{cap} — {collections}{features}"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:956 src/ui/prefs/tools/knowledge.js:1034 src/ui/prefs/tools/knowledge.js:1297
+msgid "Empty"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:957
+msgid "Knowledge base is empty.{features}"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:963
+msgid "Near Limit"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:968
+msgid "Healthy"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:973 src/ui/prefs/tools/knowledge.js:978
+msgid "Cannot reach RAG service."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:983
+msgid "Refresh Usage"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:984
+msgid "Query the RAG service for current chunk counts and estimated disk usage."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:998
+msgid "Operation Status"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:999
+msgid "Idle."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1002
+msgid "Idle"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1005
+msgid "Export Knowledge Base"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1006
+msgid "Download all indexed data as a JSON file for backup or inspection."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1010
+msgid "Fetching data from the RAG service…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1035
+msgid "Knowledge base is empty — nothing to export."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1057 src/ui/prefs/tools/knowledge.js:1123 src/ui/prefs/tools/knowledge.js:1285
+msgid "Done"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1059
+msgid "Exported {count} entries ({collections}) to {path}"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1065
+msgid "Export failed — is the RAG service running?"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1070
+msgid "Export failed."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1077
+msgid "Re-index Knowledge Base"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1078
+msgid "Reset index tracking and rebuild from your saved conversations and the research cache. Documents are re-indexed as you use them."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1081
+msgid "Re-index"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1088
+msgid "Re-index the entire knowledge base?"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1089
+msgid "This will clear all existing index state and re-process your documents, conversations, and research cache on the next chat message."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1124
+msgid "Index state cleared — re-indexing will start now."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1154
+msgid "Queued"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1156
+msgid "Queued {count} path(s) — the running extension will import them now."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1161
+msgid "Could not queue the import."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1166
+msgid "Import Files"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1167
+msgid "Add files (txt, md, pdf, docx, eml) from disk to the knowledge base. Up to 50 files per import."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1170
+msgid "Select Files…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1173
+msgid "Import files into the knowledge base"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1195
+msgid "Import Folder"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1196
+msgid "Import every supported file in a folder (and up to 3 levels of subfolders)."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1197
+msgid "Select Folder…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1200
+msgid "Import a folder into the knowledge base"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1216
+msgid "Clear Knowledge Base"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1217
+msgid "Permanently delete ALL indexed data from the vector database. This cannot be undone."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1218
+msgid "Clear"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1225
+msgid "Delete the entire knowledge base?"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1226
+msgid "All indexed documents, conversations, and research cache will be permanently removed from the ChromaDB database. This cannot be undone."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1233
+msgid "Clearing all collections…"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1289
+msgid "Cleared {count} collection: {names}."
+msgid_plural "Cleared {count} collections: {names}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/prefs/tools/knowledge.js:1298
+msgid "Knowledge base was already empty."
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1310
+msgid "Clear failed — is the RAG service running?"
+msgstr ""
+
+#: src/ui/prefs/tools/knowledge.js:1316
+msgid "Clear failed."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:30
+msgid "How web search works per provider"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:31
+msgid "When Unsloth Studio is the active provider, web search, Python, and terminal run on Unsloth’s own servers. This local SearxNG-powered tool applies to the Ollama, OpenAI, Anthropic, and DeepSeek providers."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:48
+msgid "Katab queries your own self-hosted SearxNG instance over its JSON API. No third-party search keys are required."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:55
+msgid "Enable Web Search"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:56
+msgid "Allow the /search command and let supported models look things up on the web."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:62
+msgid "SearxNG Instance URL"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:63
+msgid "Base URL of your SearxNG instance, e.g. http://localhost:8080."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:70
+msgid "Run a test query to confirm the instance is reachable and JSON output is enabled."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:78
+msgid "Send a sample query to verify the SearxNG endpoint responds with JSON results."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:82
+msgid "Contacting the SearxNG instance…"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:90
+msgid "Reachable. Sample query returned {count} result(s)."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:107
+msgid "Search Behavior"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:108
+msgid "Tune how Katab queries SearxNG and how much content it returns to the model."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:115
+msgid "Result Limit"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:116
+msgid "Maximum number of search results passed to the model per query (1–30)."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:125
+msgid "Time Range"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:126
+msgid "Restrict results to a recent time window."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:133
+msgid "Any time"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:134
+msgid "Past day"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:135
+msgid "Past week"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:136
+msgid "Past month"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:137 src/usage/tokenUsageManager.js:78
+msgid "Past year"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:144
+msgid "Safe Search"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:145
+msgid "Content filtering level forwarded to SearxNG."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:152
+msgid "Off"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:153
+msgid "Moderate"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:154
+msgid "Strict"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:158
+msgid "Level {value}"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:162
+msgid "Category"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:163
+msgid "Primary SearxNG category to search within."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:171
+msgid "News"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:172
+msgid "Science"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:173
+msgid "IT"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:174
+msgid "Files"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:175
+msgid "Social Media"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:182
+msgid "Language"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:183
+msgid "Preferred result language."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:190
+msgid "Any language"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:191
+msgid "English"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:192
+msgid "Spanish"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:193
+msgid "French"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:194
+msgid "German"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:195
+msgid "Italian"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:196
+msgid "Portuguese"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:197
+msgid "Russian"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:198
+msgid "Chinese"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:199
+msgid "Japanese"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:207
+msgid "Preferred Engines"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:208
+msgid "Optional comma-separated SearxNG engine names, e.g. google,bing,duckduckgo. Leave blank for the instance default."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:217
+msgid "Optional value sent as the Authorization header if your instance is protected."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:225
+msgid "Page reading, multi-query expansion, and autonomous tool use."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:230
+msgid "Read Page Content"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:231
+msgid "Let the model open a result link and extract the readable text of that page (HTML and PDF)."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:239
+msgid "Multi-Query Expansion"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:240
+msgid "Generate a few related queries from your prompt and merge the results. Off by default for faster, cheaper searches."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:249
+msgid "Advertise web search to supported models so they can decide when to look things up. With this off, only the manual /search command runs."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:258
+msgid "Permit fetching localhost and private LAN addresses when reading page content. Leave off unless you fully trust your network."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:266
+msgid "Max Tool Iterations"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:267
+msgid "Rounds of sequential tool calls the model may trigger per message before being forced to answer. Higher values let the model keep browsing when it is on a close trail (1–100)."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:278
+msgid "SearxNG Setup"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:279
+msgid "Katab does not bundle a search engine. Run your own SearxNG instance and enable its JSON API."
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:286
+msgid "Run SearxNG with Docker"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:291
+msgid "Enable the JSON API"
+msgstr ""
+
+#: src/ui/prefs/tools/webSearch.js:292
+msgid "In settings.yml add \"json\" to the search.formats list, then restart the container. Without it SearxNG returns HTTP 403 to API calls."
+msgstr ""
+
+#: src/ui/prefs/widgets.js:786
+msgid "Press shortcut..."
+msgstr ""
+
+#: src/ui/prefs/widgets.js:794
+msgid "Clear shortcut"
+msgstr ""
+
+#: src/ui/prefs/widgets.js:829 src/ui/prefs/widgets.js:836
+msgid "Back to Tools"
 msgstr ""
 
 #: src/ui/sessionInfoPopup.js:280
 msgid "Session Info"
 msgstr ""
 
-#: src/ui/toolsPopup.js:429
-msgid "Tools"
-msgstr ""
-
-#: src/ui/usagePanel.js:60 src/ui/usagePanel.js:144
-msgid "AI Token Breakdown"
-msgstr ""
-
 #: src/ui/welcomePanel.js:245
 msgid "Open a page. Ask anything."
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:45 src/usage/tokenUsageManager.js:48
+msgid "Today"
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:55
+msgid "Week"
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:58
+msgid "Past 7 days"
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:65
+msgid "Month"
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:68
+msgid "Past 30 days"
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:75
+msgid "Year"
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:85
+msgid "All Time"
+msgstr ""
+
+#: src/usage/tokenUsageManager.js:88
+msgid "All time"
 msgstr ""
