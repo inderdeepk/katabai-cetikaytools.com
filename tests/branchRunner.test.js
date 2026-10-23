@@ -727,6 +727,81 @@ const tests = [
             assertEqual(calls.crawl.length, 1, 'no follow crawls when disabled');
         },
     ],
+
+    [
+        'executeResearchBranch: rate-limited crawl keeps other pages instead of aborting',
+        async () => {
+            const { host } = makeHost({
+                webSearch: async () => ({
+                    results: [
+                        searchResult('https://ok.example/page', 'Ok', 'S'.repeat(80)),
+                        searchResult('https://limited.example/page', 'Limited', 'S'.repeat(80)),
+                    ],
+                }),
+                crawl: async (url) => {
+                    if (url === 'https://limited.example/page') {
+                        throw Object.assign(new Error('HTTP 429 Too Many Requests'), {
+                            code: 'rate-limited',
+                        });
+                    }
+                    return [{ success: true, fitMarkdown: 'Page body about engines.' }];
+                },
+            });
+            const result = await executeResearchBranch(
+                host,
+                { sub_task: 'Engine errors', search_query: 'engine', index: 0 },
+                { webSearchConfig: {}, crawl4aiConfig: { followLinksEnabled: false } },
+                null,
+            );
+            assertEqual(result.pageCount, 1, 'successful page kept');
+            assert(result.findings.length > 0, 'findings survive the rate-limited page');
+        },
+    ],
+
+    [
+        'executeResearchBranch: rate-limited subpage follow is skipped, branch survives',
+        async () => {
+            const { calls, host } = makeHost({
+                webSearch: async () => ({
+                    results: [searchResult('https://start.example/page', 'Start', 'S'.repeat(80))],
+                }),
+                crawl: async (url, cfg, c) => {
+                    calls.crawl.push({ url, cfg, c });
+                    if (url === 'https://start.example/page') {
+                        return [
+                            {
+                                success: true,
+                                fitMarkdown: 'Overview page about engine error handling.',
+                                links: [
+                                    {
+                                        href: 'https://start.example/engine-errors',
+                                        text: 'Engine error handling',
+                                    },
+                                ],
+                            },
+                        ];
+                    }
+                    throw Object.assign(new Error('Crawl4AI returned HTTP 429'), {
+                        code: 'rate-limited',
+                    });
+                },
+            });
+            const result = await executeResearchBranch(
+                host,
+                { sub_task: 'Engine errors', search_query: 'engine error handling', index: 0 },
+                {
+                    webSearchConfig: {},
+                    crawl4aiConfig: { followLinksEnabled: true, maxFollowLinks: 2 },
+                },
+                null,
+            );
+            assert(
+                calls.crawl.some((entry) => entry.url === 'https://start.example/engine-errors'),
+                'follow was attempted',
+            );
+            assertEqual(result.pageCount, 1, 'landing page retained');
+        },
+    ],
 ];
 
 await runTests(tests);

@@ -1,6 +1,12 @@
 // crawl4aiTools.js — Crawl4AI deep page scraping tool for Katab
 // Talks to a self-hosted Crawl4AI v0.9.x Docker REST API.
 // Mirrors the pattern established by webSearchTools.js.
+//
+// The Docker server rate-limits its API (slowapi) and its job queue returns
+// 429/503 under load.  Requests run one at a time per runtime and 429/502/503/
+// 504 responses are retried with Retry-After-aware backoff, so multi-page
+// crawls (deep research subpages, parallel crawl_url tool calls) survive the
+// scraper's own limits instead of failing the turn.
 
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
@@ -44,6 +50,27 @@ const CRAWL4AI_MAX_FOLLOW_LINKS = 10;
 const CRAWL4AI_MAX_JOB_WAIT_MS = 5 * 60 * 1000; // 5 min total for async jobs
 const CRAWL4AI_JSON_MAX_BYTES = 16 * 1024 * 1024; // 16 MB — crawl results can be large
 const CRAWL4AI_READ_CHUNK_BYTES = 64 * 1024;
+
+// Rate-limit resilience.  Crawl4AI's Docker API applies slowapi rate limits to
+// /crawl and /llm/job, a bounded work queue (503 "Server busy" + Retry-After)
+// and a per-caller concurrent-job quota (429).  Deep research and parallel
+// crawl_url tool calls issue many requests in quick succession, so transient
+// 429/503 responses must be waited out instead of failing the whole tool call.
+const CRAWL4AI_RETRY_MAX_ATTEMPTS = 4;
+// Connection failures are usually "the container is down", not a blip —
+// retry once, then let the research runner surface the service-down error
+// instead of stalling on every page.
+const CRAWL4AI_NETWORK_RETRY_MAX_ATTEMPTS = 2;
+const CRAWL4AI_RETRY_BACKOFF_MS = [2000, 5000, 10000];
+const CRAWL4AI_RETRY_MAX_WAIT_MS = 60 * 1000;
+const CRAWL4AI_RETRY_JITTER_RATIO = 0.25;
+// Per-URL crawl results can fail inside an HTTP 200 (rate limiter, memory
+// pressure).  Retry those a couple of times before reporting the page failed.
+const CRAWL4AI_RESULT_MAX_ATTEMPTS = 3;
+// Only one HTTP request is in flight per runtime at a time.  The extension
+// shares a single Crawl4AIRuntime, so this serializes parallel crawl_url tool
+// calls and subpage crawls instead of bursting the scraper's rate limit.
+const CRAWL4AI_MAX_CONCURRENT_REQUESTS = 1;
 // Cap for PDF downloads — generous for papers (even image-heavy ones) but stops a
 // pathologically large PDF from being fully buffered into RAM.  The extracted
 // text (not the raw bytes) is what gets used and cached, and no temp file is
@@ -68,12 +95,188 @@ const CRAWL4AI_DEFAULT_LLM_SCHEMA_JSON =
 // ── Error class ───────────────────────────────────────────────────────────────
 
 export class Crawl4AIError extends Error {
-    constructor(message, { code = 'crawl4ai-error', detail = null } = {}) {
+    constructor(
+        message,
+        { code = 'crawl4ai-error', detail = null, statusCode = null, retryAfterMs = null } = {},
+    ) {
         super(message);
         this.name = 'Crawl4AIError';
         this.code = code;
         this.detail = detail;
+        this.statusCode = statusCode;
+        this.retryAfterMs = retryAfterMs;
     }
+}
+
+// ── HTTP status helpers ───────────────────────────────────────────────────────
+//
+// `Soup.Message.get_status()` converts the raw status to a `Soup.Status` enum
+// value and THROWS for codes this libsoup build does not know (e.g. 429 on
+// GNOME 46 / libsoup 3.4).  That TypeError used to be caught as a generic
+// "network error", so a plain rate-limit response looked like a dead scraper
+// (research aborted as "service unreachable").  Always read the integer
+// `.status_code` property instead, and resolve phrases ourselves.
+
+const HTTP_STATUS_PHRASES = new Map([
+    [200, 'OK'],
+    [201, 'Created'],
+    [202, 'Accepted'],
+    [204, 'No Content'],
+    [400, 'Bad Request'],
+    [401, 'Unauthorized'],
+    [403, 'Forbidden'],
+    [404, 'Not Found'],
+    [405, 'Method Not Allowed'],
+    [408, 'Request Timeout'],
+    [409, 'Conflict'],
+    [410, 'Gone'],
+    [418, "I'm a Teapot"],
+    [422, 'Unprocessable Entity'],
+    [429, 'Too Many Requests'],
+    [451, 'Unavailable For Legal Reasons'],
+    [500, 'Internal Server Error'],
+    [501, 'Not Implemented'],
+    [502, 'Bad Gateway'],
+    [503, 'Service Unavailable'],
+    [504, 'Gateway Timeout'],
+]);
+
+export function httpStatusPhrase(status) {
+    const code = Number(status) || 0;
+    if (HTTP_STATUS_PHRASES.has(code)) {
+        return HTTP_STATUS_PHRASES.get(code);
+    }
+    try {
+        return Soup.Status.get_phrase(code) || 'Unknown Error';
+    } catch (_error) {
+        return 'Unknown Error';
+    }
+}
+
+/** Parse an HTTP `Retry-After` header (delta-seconds or HTTP-date). */
+export function parseRetryAfterMs(value, nowMs = Date.now()) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.round(seconds * 1000);
+    }
+
+    const dateMs = Date.parse(raw);
+    if (Number.isFinite(dateMs)) {
+        return Math.max(0, dateMs - nowMs);
+    }
+    return null;
+}
+
+/**
+ * Parse slowapi/limits' `X-RateLimit-Reset` header.  slowapi sends an absolute
+ * epoch timestamp (seconds, sometimes milliseconds); some proxies send
+ * seconds-until-reset instead.  Used as a fallback when `Retry-After` is absent.
+ */
+export function parseRateLimitResetMs(value, nowMs = Date.now()) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric) || numeric < 0) return null;
+    if (numeric > 1e12) {
+        return Math.max(0, Math.round(numeric - nowMs)); // epoch milliseconds
+    }
+    if (numeric > 1e9) {
+        return Math.max(0, Math.round(numeric * 1000 - nowMs)); // epoch seconds
+    }
+    return Math.round(numeric * 1000); // delta seconds
+}
+
+/**
+ * Error codes that mean the request may succeed if repeated.  Rate limits,
+ * work-queue pressure and connection blips are all retryable; auth failures,
+ * SSRF blocks and oversized responses are not.
+ */
+export function isRetryableCrawlError(error) {
+    if (!error) return false;
+    const code = error.code || '';
+    if (
+        code === 'rate-limited' ||
+        code === 'server-busy' ||
+        code === 'connection-failed' ||
+        code === 'network-error'
+    ) {
+        return true;
+    }
+    if (code === 'http-error') {
+        const status = Number(error.statusCode);
+        return (
+            status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599)
+        );
+    }
+    return false;
+}
+
+/**
+ * Delay before retrying a failed Crawl4AI request.  An explicit Retry-After
+ * wins; otherwise use the configured backoff ladder plus jitter so parallel
+ * retries from several tool calls do not align.
+ */
+export function computeCrawlRetryDelayMs(error, attempt, random = Math.random) {
+    if (error?.retryAfterMs !== null && error?.retryAfterMs !== undefined) {
+        const hinted = Number(error.retryAfterMs);
+        if (Number.isFinite(hinted) && hinted >= 0) {
+            return Math.min(CRAWL4AI_RETRY_MAX_WAIT_MS, hinted);
+        }
+    }
+    const ladderIndex = Math.max(0, Math.min(CRAWL4AI_RETRY_BACKOFF_MS.length - 1, attempt - 1));
+    const base = CRAWL4AI_RETRY_BACKOFF_MS[ladderIndex];
+    const jitter = Math.round(base * CRAWL4AI_RETRY_JITTER_RATIO * random());
+    return Math.min(CRAWL4AI_RETRY_MAX_WAIT_MS, base + jitter);
+}
+
+/**
+ * Whether a per-URL crawl result (HTTP 200, success:false) is worth retrying.
+ * Crawl4AI reports domain rate limits and memory-pressure requeues this way.
+ */
+export function isTransientCrawlResultFailure(result) {
+    if (!result || result.success) return false;
+
+    const status = Number(result.statusCode);
+    if (
+        status === 408 ||
+        status === 425 ||
+        status === 429 ||
+        status === 502 ||
+        status === 503 ||
+        status === 504
+    ) {
+        return true;
+    }
+
+    const text = String(result.errorMessage || '').toLowerCase();
+    return (
+        text.includes('rate limit') ||
+        text.includes('rate-limit') ||
+        text.includes('too many requests') ||
+        text.includes('requeued') ||
+        text.includes('memory pressure') ||
+        text.includes('service unavailable') ||
+        text.includes('temporarily unavailable')
+    );
+}
+
+/** Whether an LLM-extraction failure should fall back to a plain markdown crawl. */
+export function isLlmFallbackWorthyError(error) {
+    if (!error) return false;
+    if (error.code === 'bad-response' || error.code === 'no-task-id') return true;
+    // A job that never finished can still be read as plain markdown.
+    if (error.code === 'timeout') return true;
+    if (error.code === 'http-error') {
+        const status = Number(error.statusCode);
+        return (
+            status === 400 || status === 404 || status === 405 || status === 500 || status === 501
+        );
+    }
+    return false;
 }
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
@@ -639,6 +842,7 @@ export function parseCrawlResults(results, config) {
                 fitMarkdown: '',
                 truncated: false,
                 errorMessage: 'Empty result.',
+                statusCode: null,
                 llmExtractionUsed: llmExtractionActive,
             });
             continue;
@@ -651,6 +855,7 @@ export function parseCrawlResults(results, config) {
                 fitMarkdown: '',
                 truncated: false,
                 errorMessage: result.error_message || 'Unknown error.',
+                statusCode: Number.isFinite(result.status_code) ? result.status_code : null,
                 llmExtractionUsed: llmExtractionActive,
             });
             continue;
@@ -903,6 +1108,10 @@ export class Crawl4AIRuntime {
             5,
             Math.trunc(timeoutSeconds) || CRAWL4AI_DEFAULT_TIMEOUT_SECONDS,
         );
+        // Request slots: a promise-chain mutex that keeps at most
+        // CRAWL4AI_MAX_CONCURRENT_REQUESTS Crawl4AI HTTP calls in flight.
+        this._requestSlotsInUse = 0;
+        this._requestWaiters = [];
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -1052,6 +1261,15 @@ export class Crawl4AIRuntime {
                 return await this._crawlWithLlmEndpoint(urls, config, cancellable);
             } catch (error) {
                 if (cancellable && cancellable.is_cancelled()) {
+                    throw error;
+                }
+                // Falling back issues another batch of requests.  Never do that
+                // while the server is rate-limiting, unreachable, or rejecting
+                // the token — the retries in _requestRawWithRetry already
+                // exhausted those paths, and a second request would only add
+                // load and mask the real error.  Only an API-shape problem
+                // (/llm not implemented, unexpected payload) warrants markdown.
+                if (!isLlmFallbackWorthyError(error)) {
                     throw error;
                 }
                 log(
@@ -1206,8 +1424,12 @@ export class Crawl4AIRuntime {
             }
             if (response.status !== 200) {
                 throw new Crawl4AIError(
-                    `Failed to download ${url}: HTTP ${response.status} ${response.reasonPhrase || ''}`,
-                    { code: 'http-error', detail: `${response.status}` },
+                    `Failed to download ${url}: HTTP ${response.status} ${httpStatusPhrase(response.status)}`,
+                    {
+                        code: 'http-error',
+                        detail: `${response.status}`,
+                        statusCode: response.status,
+                    },
                 );
             }
             return { bytes: response.bytes };
@@ -1275,11 +1497,25 @@ export class Crawl4AIRuntime {
                             } catch (_e) {
                                 /* ignore */
                             }
-                            const reasonPhrase = Soup.Status.get_phrase(status);
+                            const reasonPhrase = httpStatusPhrase(status);
+                            const retryAfterMs =
+                                parseRetryAfterMs(headers?.get_one('retry-after') || '') ??
+                                parseRateLimitResetMs(headers?.get_one('x-ratelimit-reset') || '');
+                            let code = 'http-error';
+                            if (status === 429) {
+                                code = 'rate-limited';
+                            } else if (status === 502 || status === 503 || status === 504) {
+                                code = 'server-busy';
+                            }
                             reject(
                                 new Crawl4AIError(
                                     `Failed to download ${url}: HTTP ${status} ${reasonPhrase}`,
-                                    { code: 'http-error', detail: reasonPhrase || `${status}` },
+                                    {
+                                        code,
+                                        detail: reasonPhrase || `${status}`,
+                                        statusCode: status,
+                                        retryAfterMs,
+                                    },
                                 ),
                             );
                             return;
@@ -1449,23 +1685,43 @@ export class Crawl4AIRuntime {
 
         let jobBytes;
         try {
-            jobBytes = await this._requestRaw(
+            jobBytes = await this._requestRawWithRetry(
                 'POST',
                 jobEndpoint,
                 JSON.stringify(payload),
                 config.apiToken,
                 CRAWL4AI_JSON_MAX_BYTES,
                 cancellable,
+                {
+                    label: 'POST /llm/job',
+                    // Only retry when the SERVER rejected the job (429 quota /
+                    // 503 queue).  A dropped connection may mean the job was
+                    // accepted but the response was lost — resubmitting would
+                    // duplicate a paid LLM extraction.
+                    shouldRetry: (error) =>
+                        error?.code === 'rate-limited' || error?.code === 'server-busy',
+                },
             );
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw error;
             }
+            // Rate limits / server-busy / auth / oversized responses already
+            // carry an actionable message — don't disguise them as an
+            // unreachable host.
+            const connectionFailure =
+                error instanceof Crawl4AIError &&
+                (error.code === 'connection-failed' || error.code === 'network-error');
+            if (error instanceof Crawl4AIError && !connectionFailure) {
+                throw error;
+            }
             throw new Crawl4AIError(
                 `Could not reach the Crawl4AI LLM endpoint at ${jobEndpoint}: ${error.message}`,
                 {
-                    code: error instanceof Crawl4AIError ? error.code : 'connection-failed',
+                    code: 'connection-failed',
                     detail: error?.message,
+                    statusCode: error instanceof Crawl4AIError ? error.statusCode : null,
+                    retryAfterMs: error instanceof Crawl4AIError ? error.retryAfterMs : null,
                 },
             );
         }
@@ -1489,22 +1745,29 @@ export class Crawl4AIRuntime {
             `[Katab:crawl4ai] LLM extraction job submitted for ${url} (task ${taskId}) — provider=${payload.provider}`,
         );
 
-        // Poll for completion.
-        const pollMs = config.jobPollMs || CRAWL4AI_DEFAULT_POLL_MS;
+        // Poll for completion.  The delay grows up to CRAWL4AI_MAX_POLL_MS so
+        // several concurrent LLM jobs don't spend their time hammering the
+        // rate-limited status endpoint (a fixed 2s poll is ~30 req/min/job).
+        let pollMs = config.jobPollMs || CRAWL4AI_DEFAULT_POLL_MS;
         const startTime = Date.now();
         const pollEndpoint = `${baseUrl}/llm/job/${encodeURIComponent(taskId)}`;
         while (Date.now() - startTime < CRAWL4AI_MAX_JOB_WAIT_MS) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw new Crawl4AIError('LLM extraction cancelled.', { code: 'cancelled' });
             }
-            await this._sleep(pollMs);
-            const statusBytes = await this._requestRaw(
+            await this._sleep(pollMs, cancellable);
+            pollMs = Math.min(
+                CRAWL4AI_MAX_POLL_MS,
+                Math.max(pollMs + 1000, Math.round(pollMs * 1.5)),
+            );
+            const statusBytes = await this._requestRawWithRetry(
                 'GET',
                 pollEndpoint,
                 null,
                 config.apiToken,
                 CRAWL4AI_JSON_MAX_BYTES,
                 cancellable,
+                { label: 'GET /llm/job' },
             );
             let statusResponse;
             try {
@@ -1552,55 +1815,26 @@ export class Crawl4AIRuntime {
         // extraction strategy, we rebuild it as markdown-only and retry.
         let activeConfig = config;
         let payload = buildCrawlPayload(urls, activeConfig);
-        let jsonBody = JSON.stringify(payload);
         let llmBlockedByServer = false;
+        let results = null;
 
-        // Retry once with backoff on transient failures (connection drops,
-        // 502/503 server errors).  Do NOT retry on 4xx client errors.
-        const MAX_ATTEMPTS = 2;
-        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (;;) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' });
             }
 
             try {
-                const results = await this._requestCrawl(
+                // Transient network errors and 429/5xx responses are retried
+                // with backoff inside _requestRawWithRetry.
+                results = await this._requestCrawl(
                     endpoint,
-                    jsonBody,
+                    JSON.stringify(payload),
                     config.apiToken,
                     urls,
                     activeConfig,
                     cancellable,
                 );
-                // Flag results when the server's security policy forced a
-                // markdown-only fallback, so the caller can show a notice.
-                if (llmBlockedByServer) {
-                    for (const result of results) {
-                        if (result) result.llmBlockedByServer = true;
-                    }
-                }
-                // Cache successful crawl results.  When the server blocked LLM
-                // extraction we skip caching (a stale fallback should not be
-                // served later).
-                if (!llmBlockedByServer) {
-                    for (let i = 0; i < urls.length && i < results.length; i++) {
-                        const result = results[i];
-                        if (result && result.success) {
-                            cacheCrawlResult(urls[i], [result]);
-                        }
-                    }
-                }
-                for (const result of results) {
-                    if (result && result.url) {
-                        log(
-                            `[Katab:crawl4ai] Markdown scrape ${result.success ? 'completed' : 'FAILED'} for ${result.url}` +
-                                (result.success
-                                    ? ` — ${(result.fitMarkdown || '').length} chars`
-                                    : ` — ${result.errorMessage || 'unknown error'}`),
-                        );
-                    }
-                }
-                return results;
+                break;
             } catch (error) {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
@@ -1615,23 +1849,104 @@ export class Crawl4AIRuntime {
                     llmBlockedByServer = true;
                     activeConfig = { ...config, extractionMode: 'markdown' };
                     payload = buildCrawlPayload(urls, activeConfig);
-                    jsonBody = JSON.stringify(payload);
-                    continue;
-                }
-                const isRetryable =
-                    error instanceof Crawl4AIError &&
-                    (error.code === 'connection-failed' || error.code === 'network-error');
-                if (isRetryable && attempt < MAX_ATTEMPTS) {
-                    const backoffMs = 1500 * attempt;
-                    log(
-                        `[Katab:crawl4ai] Attempt ${attempt} failed, retrying after ${backoffMs}ms: ${error.message}`,
-                    );
-                    await this._sleep(backoffMs);
                     continue;
                 }
                 throw error;
             }
         }
+
+        // A 200 response can still carry per-URL failures (the scraper's own
+        // domain rate limiter or a memory-pressure requeue).  Retry those
+        // before telling the agent/research pipeline the page is unavailable.
+        results = await this._retryTransientCrawlResults(
+            endpoint,
+            urls,
+            results,
+            activeConfig,
+            config.apiToken,
+            cancellable,
+        );
+
+        // Flag results when the server's security policy forced a
+        // markdown-only fallback, so the caller can show a notice.
+        if (llmBlockedByServer) {
+            for (const result of results) {
+                if (result) result.llmBlockedByServer = true;
+            }
+        }
+        // Cache successful crawl results.  When the server blocked LLM
+        // extraction we skip caching (a stale fallback should not be served
+        // later).
+        if (!llmBlockedByServer) {
+            for (let i = 0; i < urls.length && i < results.length; i++) {
+                const result = results[i];
+                if (result && result.success) {
+                    cacheCrawlResult(urls[i], [result]);
+                }
+            }
+        }
+        for (const result of results) {
+            if (result && result.url) {
+                log(
+                    `[Katab:crawl4ai] Markdown scrape ${result.success ? 'completed' : 'FAILED'} for ${result.url}` +
+                        (result.success
+                            ? ` — ${(result.fitMarkdown || '').length} chars`
+                            : ` — ${result.errorMessage || 'unknown error'}`),
+                );
+            }
+        }
+        return results;
+    }
+
+    /**
+     * Retry per-URL crawl results that failed transiently inside a 200
+     * response.  Each retry re-sends only the failed URL (results keep their
+     * original order), so successful pages are never crawled twice.
+     */
+    async _retryTransientCrawlResults(endpoint, urls, results, config, apiToken, cancellable) {
+        let current = results;
+        for (let attempt = 1; attempt < CRAWL4AI_RESULT_MAX_ATTEMPTS; attempt++) {
+            const retryIndices = [];
+            for (let i = 0; i < current.length; i++) {
+                if (isTransientCrawlResultFailure(current[i])) {
+                    retryIndices.push(i);
+                }
+            }
+            if (retryIndices.length === 0) return current;
+
+            const delayMs = computeCrawlRetryDelayMs(current[retryIndices[0]], attempt);
+            log(
+                `[Katab:crawl4ai] ${retryIndices.length} page(s) hit a transient crawl failure (attempt ${attempt}/${CRAWL4AI_RESULT_MAX_ATTEMPTS - 1}) — retrying in ${delayMs}ms.`,
+            );
+            await this._sleep(delayMs, cancellable);
+
+            const next = current.slice();
+            for (const index of retryIndices) {
+                const url = urls[index];
+                if (!url) continue;
+                try {
+                    const retryResults = await this._requestCrawl(
+                        endpoint,
+                        JSON.stringify(buildCrawlPayload([url], config)),
+                        apiToken,
+                        [url],
+                        config,
+                        cancellable,
+                    );
+                    if (retryResults[0]) {
+                        next[index] = retryResults[0];
+                    }
+                } catch (error) {
+                    if (cancellable && cancellable.is_cancelled()) throw error;
+                    if (!isRetryableCrawlError(error)) throw error;
+                    // Keep the previous failure; the next attempt (if any)
+                    // will try this URL again.
+                    log(`[Katab:crawl4ai] Retry for ${url} failed transiently: ${error.message}`);
+                }
+            }
+            current = next;
+        }
+        return current;
     }
 
     /**
@@ -1644,13 +1959,14 @@ export class Crawl4AIRuntime {
         try {
             const baseUrl = this._normalizeBaseUrl(config.url);
             const healthUrl = `${baseUrl}/health`;
-            const bytes = await this._requestRaw(
+            const bytes = await this._requestRawWithRetry(
                 'GET',
                 healthUrl,
                 null,
                 config.apiToken,
                 CRAWL4AI_JSON_MAX_BYTES,
                 cancellable,
+                { label: 'GET /health', maxAttempts: 2 },
             );
             const text = this._decodeBytes(bytes);
             let version = '';
@@ -1689,25 +2005,36 @@ export class Crawl4AIRuntime {
     async _requestCrawl(endpoint, jsonBody, apiToken, validatedUrls, config, cancellable) {
         let bytes;
         try {
-            bytes = await this._requestRaw(
+            bytes = await this._requestRawWithRetry(
                 'POST',
                 endpoint,
                 jsonBody,
                 apiToken,
                 CRAWL4AI_JSON_MAX_BYTES,
                 cancellable,
+                { label: 'POST /crawl' },
             );
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw error;
             }
-            // Preserve the original Crawl4AIError code (e.g. 'http-error',
-            // 'unauthorized') so callers can decide whether to retry.
-            const origCode = error instanceof Crawl4AIError ? error.code : null;
-            const code = origCode || 'connection-failed';
+            // Preserve errors the server actually answered with (rate-limited,
+            // server-busy, unauthorized, http-error) — only wrap genuine
+            // connection failures in an "unreachable instance" message.
+            const connectionFailure =
+                error instanceof Crawl4AIError &&
+                (error.code === 'connection-failed' || error.code === 'network-error');
+            if (error instanceof Crawl4AIError && !connectionFailure) {
+                throw error;
+            }
             throw new Crawl4AIError(
                 `Could not reach the Crawl4AI instance at ${endpoint}: ${error.message}`,
-                { code, detail: error?.message },
+                {
+                    code: 'connection-failed',
+                    detail: error?.message,
+                    statusCode: error instanceof Crawl4AIError ? error.statusCode : null,
+                    retryAfterMs: error instanceof Crawl4AIError ? error.retryAfterMs : null,
+                },
             );
         }
 
@@ -1834,7 +2161,12 @@ export class Crawl4AIRuntime {
                     }
 
                     try {
-                        const status = message.get_status();
+                        // Use the raw integer status.  `message.get_status()`
+                        // converts to a Soup.Status enum and throws for codes
+                        // this libsoup build doesn't enumerate (429 on GNOME
+                        // 46), which used to surface as a bogus network error.
+                        const status = message.status_code;
+                        const responseHeaders = message.get_response_headers();
                         // Always read the body (bounded) so non-OK error details
                         // remain available — but never buffer more than the
                         // caller-supplied cap into RAM (the maxBytes parameter
@@ -1861,8 +2193,13 @@ export class Crawl4AIRuntime {
                             return;
                         }
 
-                        if (status !== Soup.Status.OK) {
-                            const reason = Soup.Status.get_phrase(status);
+                        if (status !== 200) {
+                            const reason = httpStatusPhrase(status);
+                            const retryAfterMs =
+                                parseRetryAfterMs(responseHeaders?.get_one('retry-after') || '') ??
+                                parseRateLimitResetMs(
+                                    responseHeaders?.get_one('x-ratelimit-reset') || '',
+                                );
                             let bodyPreview = '';
                             try {
                                 bodyPreview = this._decodeBytes(responseBytes).slice(0, 500);
@@ -1870,20 +2207,39 @@ export class Crawl4AIRuntime {
                                 /* ignore */
                             }
 
-                            if (status === Soup.Status.UNAUTHORIZED) {
+                            if (status === 401) {
                                 settle(
                                     reject,
                                     new Crawl4AIError(
                                         'Crawl4AI rejected the API token (HTTP 401). Check the token in Settings > Tools > Web Scraper.',
-                                        { code: 'unauthorized', detail: bodyPreview },
+                                        {
+                                            code: 'unauthorized',
+                                            detail: bodyPreview,
+                                            statusCode: 401,
+                                        },
                                     ),
                                 );
                             } else {
+                                // 429 is the API rate limit / job quota; 502,
+                                // 503, 504 are proxy or work-queue pressure
+                                // ("Server busy, retry later").  Both are
+                                // transient and carry Retry-After sometimes.
+                                let code = 'http-error';
+                                if (status === 429) {
+                                    code = 'rate-limited';
+                                } else if (status === 502 || status === 503 || status === 504) {
+                                    code = 'server-busy';
+                                }
                                 settle(
                                     reject,
                                     new Crawl4AIError(
                                         `Crawl4AI returned HTTP ${status} ${reason}.${bodyPreview ? ` Details: ${bodyPreview}` : ''}`,
-                                        { code: 'http-error', detail: bodyPreview },
+                                        {
+                                            code,
+                                            detail: bodyPreview,
+                                            statusCode: status,
+                                            retryAfterMs,
+                                        },
                                     ),
                                 );
                             }
@@ -1915,9 +2271,174 @@ export class Crawl4AIRuntime {
         return decoder.decode(bytes);
     }
 
-    _sleep(ms) {
-        return new Promise((resolve) => {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.max(0, Math.trunc(ms)), () => {
+    /**
+     * Send a request with rate-limit-aware retries.
+     *
+     * Concurrency: every attempt runs inside a request slot, so parallel
+     * crawl_url tool calls (and research subpage crawls) reach the scraper one
+     * at a time instead of bursting into its rate limit.  Backoff sleeps happen
+     * OUTSIDE the slot, letting queued requests make progress in between.
+     *
+     * @param {string} method
+     * @param {string} url
+     * @param {string|null} bodyJson
+     * @param {string} apiToken
+     * @param {number} maxBytes
+     * @param {Gio.Cancellable|null} cancellable
+     * @param {{maxAttempts?: number, label?: string, shouldRetry?: (error: Error) => boolean}} [options]
+     * @returns {Promise<Uint8Array>}
+     */
+    async _requestRawWithRetry(
+        method,
+        url,
+        bodyJson,
+        apiToken,
+        maxBytes,
+        cancellable,
+        {
+            maxAttempts = CRAWL4AI_RETRY_MAX_ATTEMPTS,
+            label = 'request',
+            shouldRetry = isRetryableCrawlError,
+        } = {},
+    ) {
+        const attempts = Math.max(1, Math.trunc(maxAttempts) || 1);
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                return await this._withRequestSlot(
+                    () => this._requestRaw(method, url, bodyJson, apiToken, maxBytes, cancellable),
+                    cancellable,
+                );
+            } catch (error) {
+                if (cancellable && cancellable.is_cancelled()) {
+                    throw error;
+                }
+                lastError = error;
+                const connectionOnly =
+                    error?.code === 'network-error' || error?.code === 'connection-failed';
+                const effectiveAttempts = connectionOnly
+                    ? Math.min(attempts, CRAWL4AI_NETWORK_RETRY_MAX_ATTEMPTS)
+                    : attempts;
+                if (attempt >= effectiveAttempts || !shouldRetry(error)) {
+                    if (attempt > 1) this._noteRetryExhausted(error, attempt);
+                    throw error;
+                }
+                const delayMs = computeCrawlRetryDelayMs(error, attempt);
+                log(
+                    `[Katab:crawl4ai] ${label} hit ${error.code} (attempt ${attempt}/${effectiveAttempts}) — retrying in ${delayMs}ms: ${error.message}`,
+                );
+                await this._sleep(delayMs, cancellable);
+            }
+        }
+
+        throw lastError;
+    }
+
+    // Append a one-time, actionable hint when retries could not clear a limit.
+    _noteRetryExhausted(error, attempts) {
+        if (!error || error.retryHintAdded) return;
+        if (error.code !== 'rate-limited' && error.code !== 'server-busy') return;
+        error.retryHintAdded = true;
+        error.message +=
+            ` Katab retried ${attempts} time(s) but the Crawl4AI server is still refusing requests.` +
+            ' Wait a moment and try again, or raise the server rate limit' +
+            ' (rate_limiting.default_limit in config.yml / limits.queue for job quotas).';
+    }
+
+    // Promise-based mutex with a concurrency cap (CRAWL4AI_MAX_CONCURRENT_REQUESTS).
+    async _withRequestSlot(task, cancellable = null) {
+        if (cancellable && cancellable.is_cancelled()) {
+            throw new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' });
+        }
+
+        while (this._requestSlotsInUse >= CRAWL4AI_MAX_CONCURRENT_REQUESTS) {
+            await this._waitForRequestSlot(cancellable);
+        }
+
+        this._requestSlotsInUse++;
+        try {
+            return await task();
+        } finally {
+            this._requestSlotsInUse--;
+            const next = this._requestWaiters.shift();
+            if (next) next();
+        }
+    }
+
+    // FIFO wait for a free request slot; aborts immediately on cancellation.
+    _waitForRequestSlot(cancellable = null) {
+        return new Promise((resolve, reject) => {
+            let cancelHandlerId = 0;
+
+            const waiter = () => {
+                if (cancelHandlerId && cancellable) {
+                    try {
+                        cancellable.disconnect(cancelHandlerId);
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                    cancelHandlerId = 0;
+                }
+                resolve();
+            };
+
+            if (cancellable) {
+                cancelHandlerId = cancellable.connect(() => {
+                    const index = this._requestWaiters.indexOf(waiter);
+                    if (index >= 0) this._requestWaiters.splice(index, 1);
+                    try {
+                        cancellable.disconnect(cancelHandlerId);
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                    cancelHandlerId = 0;
+                    reject(new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' }));
+                });
+            }
+
+            this._requestWaiters.push(waiter);
+        });
+    }
+
+    _sleep(ms, cancellable = null) {
+        return new Promise((resolve, reject) => {
+            let timeoutId = 0;
+            let cancelHandlerId = 0;
+
+            const cleanup = () => {
+                if (timeoutId) {
+                    try {
+                        GLib.source_remove(timeoutId);
+                    } catch (_e) {
+                        /* already fired */
+                    }
+                    timeoutId = 0;
+                }
+                if (cancelHandlerId && cancellable) {
+                    try {
+                        cancellable.disconnect(cancelHandlerId);
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                    cancelHandlerId = 0;
+                }
+            };
+
+            if (cancellable) {
+                if (cancellable.is_cancelled()) {
+                    reject(new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' }));
+                    return;
+                }
+                cancelHandlerId = cancellable.connect(() => {
+                    cleanup();
+                    reject(new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' }));
+                });
+            }
+
+            timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.max(0, Math.trunc(ms)), () => {
+                timeoutId = 0;
+                cleanup();
                 resolve();
                 return GLib.SOURCE_REMOVE;
             });

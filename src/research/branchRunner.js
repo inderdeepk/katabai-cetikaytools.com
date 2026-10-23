@@ -269,10 +269,14 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
             }
         } catch (e) {
             if (isCancelled(e)) throw e;
-            // Re-throw transient crawl errors so the retry loop can act
-            if (isTransient(e)) {
+            // The crawl runtime already retried rate limits, server pressure
+            // and connection blips with backoff.  If one page still fails,
+            // keep the pages that DID succeed and skip this one — only a
+            // genuine connection failure (the scraper being unreachable)
+            // aborts the branch and triggers the service-down path.
+            if (e.code === 'connection-failed' || e.code === 'network-error') {
                 log(
-                    `[Katab:research] Branch "${sub_task}" crawl transient error for ${url} — re-throwing: ${e.message}`,
+                    `[Katab:research] Branch "${sub_task}" crawl connection error for ${url} — re-throwing: ${e.message}`,
                 );
                 throw e;
             }
@@ -339,7 +343,12 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
                     }
                 } catch (e) {
                     if (isCancelled(e)) throw e;
-                    if (isTransient(e)) throw e;
+                    // Subpage following is optional enrichment — a rate-limited
+                    // or timed-out follow link must not discard the branch's
+                    // already-crawled pages.  Only a connection failure aborts.
+                    if (e.code === 'connection-failed' || e.code === 'network-error') {
+                        throw e;
+                    }
                     log(
                         `[Katab:research] Branch "${sub_task}" — follow crawl failed for ${link.href}: ${e.message}`,
                     );

@@ -225,6 +225,10 @@ Disabled by default; enable under **Settings → Tools → Web Scraper**.
   (structured JSON or a freeform answer) when the Crawl4AI server has an LLM provider configured.
 - **Follow Subpage Links in Research** (default on, 3 links per branch) lets Deep Research follow
   the most relevant links found on scraped pages.
+- Scrape requests are issued one at a time and `429`/`503` responses (API rate limit, work-queue
+  pressure) are retried with backoff, honoring `Retry-After`, so multi-page crawls and parallel
+  `crawl_url` calls do not fail on the scraper's own rate limiting. If limits still trip, raise
+  `rate_limiting.default_limit` (and `limits.queue` for job quotas) in the container's `config.yml`.
 
 ### Knowledge base (RAG)
 

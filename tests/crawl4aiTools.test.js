@@ -1,4 +1,7 @@
 // crawl4aiTools.test.js — Tests for Crawl4AI command parsing & formatting helpers
+import GLib from 'gi://GLib';
+import Soup from 'gi://Soup';
+
 import {
     parseCrawl4AICommand,
     stripCrawl4AICommand,
@@ -18,8 +21,70 @@ import {
     looksLikePdfFailure,
     readCrawl4AIConfig,
     parseNetworkRequests,
+    Crawl4AIRuntime,
+    httpStatusPhrase,
+    parseRetryAfterMs,
+    parseRateLimitResetMs,
+    isRetryableCrawlError,
+    computeCrawlRetryDelayMs,
+    isTransientCrawlResultFailure,
+    isLlmFallbackWorthyError,
 } from '../src/tools/crawl4aiTools.js';
-import { assert, assertEqual, assertDeepEqual, runTests, createMockSettings } from './testUtils.js';
+import { _setCachePathForTesting } from '../src/research/researchCache.js';
+import {
+    assert,
+    assertEqual,
+    assertDeepEqual,
+    runTests,
+    createMockSettings,
+    makeTempDir,
+    removeTempDir,
+} from './testUtils.js';
+
+// Redirect the persistent research cache into a throwaway directory so the
+// integration tests below never read or write the real cache file.
+const TEMP_DIR = makeTempDir('katabai-crawl4ai-XXXXXX');
+_setCachePathForTesting(GLib.build_filenamev([TEMP_DIR, 'research-cache.json']));
+
+// ── Mock Crawl4AI server helpers (integration tests) ─────────────────────────
+
+function startMockServer(handler) {
+    const server = new Soup.Server();
+    server.add_handler(null, (_srv, msg) => handler(msg));
+    server.listen_local(0, Soup.ServerListenOptions.IPV4_ONLY);
+    const port = server.get_uris()[0].get_port();
+    return { server, port, close: () => server.disconnect() };
+}
+
+function respondJson(msg, status, payload, headers = {}) {
+    msg.set_status(status, null);
+    for (const [name, value] of Object.entries(headers)) {
+        msg.get_response_headers().append(name, value);
+    }
+    msg.set_response(
+        'application/json',
+        Soup.MemoryUse.COPY,
+        new TextEncoder().encode(JSON.stringify(payload)),
+    );
+}
+
+function crawlSuccess(url) {
+    return {
+        results: [
+            {
+                url,
+                success: true,
+                status_code: 200,
+                markdown: { raw_markdown: `# ${url}`, fit_markdown: `# ${url}` },
+                links: { internal: [], external: [] },
+            },
+        ],
+    };
+}
+
+function mockConfig(port) {
+    return { ...baseConfig, url: `http://127.0.0.1:${port}`, apiToken: '', allowLocal: true };
+}
 
 // Shared minimal Crawl4AI config used by payload/parsing tests.
 const baseConfig = {
@@ -1270,6 +1335,375 @@ const tests = [
             const capped = parseNetworkRequests(many);
             assert(capped.length <= 24_000, `total output capped (${capped.length})`);
             assert(!capped.includes('entry-19'), 'entries past the cap are dropped');
+        },
+    ],
+
+    // ── HTTP status / rate-limit helpers ───────────────────────────────────
+
+    [
+        'httpStatusPhrase: resolves 429/503 and tolerates unknown codes',
+        () => {
+            assertEqual(httpStatusPhrase(429), 'Too Many Requests', '429 phrase');
+            assertEqual(httpStatusPhrase(503), 'Service Unavailable', '503 phrase');
+            assertEqual(httpStatusPhrase(401), 'Unauthorized', '401 phrase');
+            assertEqual(httpStatusPhrase(599), 'Unknown Error', 'unknown code fallback');
+        },
+    ],
+
+    [
+        'parseRetryAfterMs: seconds, HTTP-date, empty and garbage',
+        () => {
+            assertEqual(parseRetryAfterMs('2'), 2000, 'delta seconds');
+            assertEqual(parseRetryAfterMs('0'), 0, 'zero stays zero');
+            assertEqual(parseRetryAfterMs(''), null, 'empty header');
+            assertEqual(parseRetryAfterMs(null), null, 'null header');
+            assertEqual(parseRetryAfterMs('not-a-date'), null, 'garbage header');
+
+            const now = Date.parse('2026-01-01T00:00:00Z');
+            assertEqual(
+                parseRetryAfterMs('Thu, 01 Jan 2026 00:00:03 GMT', now),
+                3000,
+                'HTTP-date header',
+            );
+            assertEqual(
+                parseRetryAfterMs('Thu, 01 Jan 2025 00:00:00 GMT', now),
+                0,
+                'past HTTP-date clamps to zero',
+            );
+        },
+    ],
+
+    [
+        'parseRateLimitResetMs: epoch seconds/ms and delta seconds',
+        () => {
+            const now = 1_760_000_000_000;
+            assertEqual(
+                parseRateLimitResetMs(String(1_760_000_005), now),
+                5000,
+                'epoch seconds -> remaining ms',
+            );
+            assertEqual(
+                parseRateLimitResetMs(String(1_760_000_002_500), now),
+                2500,
+                'epoch milliseconds',
+            );
+            assertEqual(parseRateLimitResetMs('7', now), 7000, 'delta seconds');
+            assertEqual(parseRateLimitResetMs(String(1_759_999_000), now), 0, 'past epoch clamps');
+            assertEqual(parseRateLimitResetMs(''), null, 'empty');
+            assertEqual(parseRateLimitResetMs('nope'), null, 'garbage');
+        },
+    ],
+
+    [
+        'isRetryableCrawlError: classifies transient vs permanent failures',
+        () => {
+            assert(isRetryableCrawlError({ code: 'rate-limited' }), 'rate limit');
+            assert(isRetryableCrawlError({ code: 'server-busy' }), 'server busy');
+            assert(isRetryableCrawlError({ code: 'network-error' }), 'network');
+            assert(isRetryableCrawlError({ code: 'connection-failed' }), 'connection');
+            assert(isRetryableCrawlError({ code: 'http-error', statusCode: 503 }), 'http 503');
+            assert(isRetryableCrawlError({ code: 'http-error', statusCode: 502 }), 'http 502');
+            assert(!isRetryableCrawlError({ code: 'http-error', statusCode: 404 }), 'http 404');
+            assert(!isRetryableCrawlError({ code: 'unauthorized' }), 'unauthorized');
+            assert(!isRetryableCrawlError({ code: 'blocked-host' }), 'blocked host');
+            assert(!isRetryableCrawlError(null), 'null error');
+        },
+    ],
+
+    [
+        'computeCrawlRetryDelayMs: honors Retry-After, backoff ladder and cap',
+        () => {
+            assertEqual(
+                computeCrawlRetryDelayMs({ retryAfterMs: 2500 }, 1, () => 0),
+                2500,
+                'Retry-After wins',
+            );
+            assertEqual(
+                computeCrawlRetryDelayMs({ retryAfterMs: 0 }, 1, () => 0),
+                0,
+                'zero Retry-After means retry now',
+            );
+            assertEqual(
+                computeCrawlRetryDelayMs({ retryAfterMs: 120_000 }, 1, () => 0),
+                60_000,
+                'Retry-After capped',
+            );
+            assertEqual(
+                computeCrawlRetryDelayMs({}, 1, () => 0),
+                2000,
+                'attempt 1 backoff',
+            );
+            assertEqual(
+                computeCrawlRetryDelayMs({}, 3, () => 0),
+                10_000,
+                'attempt 3 backoff',
+            );
+            assertEqual(
+                computeCrawlRetryDelayMs({}, 99, () => 0),
+                10_000,
+                'attempt beyond ladder uses last step',
+            );
+            assertEqual(
+                computeCrawlRetryDelayMs({}, 1, () => 1),
+                2500,
+                'jitter applied to backoff',
+            );
+        },
+    ],
+
+    [
+        'isTransientCrawlResultFailure: retries server-side rate pressure only',
+        () => {
+            assert(
+                isTransientCrawlResultFailure({
+                    success: false,
+                    errorMessage: 'Rate limit retry count exceeded for domain example.com',
+                }),
+                'rate limit message',
+            );
+            assert(
+                isTransientCrawlResultFailure({
+                    success: false,
+                    statusCode: 429,
+                    errorMessage: 'Too many requests',
+                }),
+                '429 status',
+            );
+            assert(
+                isTransientCrawlResultFailure({
+                    success: false,
+                    errorMessage: 'Requeued due to critical memory pressure',
+                }),
+                'memory pressure requeue',
+            );
+            assert(
+                !isTransientCrawlResultFailure({
+                    success: false,
+                    statusCode: 404,
+                    errorMessage: 'Not found',
+                }),
+                '404 is permanent',
+            );
+            assert(!isTransientCrawlResultFailure({ success: true }), 'success is not retried');
+            assert(!isTransientCrawlResultFailure(null), 'null result');
+        },
+    ],
+
+    [
+        'isLlmFallbackWorthyError: only API-shape failures fall back to markdown',
+        () => {
+            assert(isLlmFallbackWorthyError({ code: 'bad-response' }), 'bad response');
+            assert(isLlmFallbackWorthyError({ code: 'no-task-id' }), 'no task id');
+            assert(
+                isLlmFallbackWorthyError({ code: 'http-error', statusCode: 404 }),
+                'endpoint missing',
+            );
+            assert(isLlmFallbackWorthyError({ code: 'timeout' }), 'job timeout');
+            assert(!isLlmFallbackWorthyError({ code: 'rate-limited' }), 'rate limit');
+            assert(!isLlmFallbackWorthyError({ code: 'server-busy' }), 'server busy');
+            assert(!isLlmFallbackWorthyError({ code: 'unauthorized' }), 'auth');
+            assert(!isLlmFallbackWorthyError({ code: 'network-error' }), 'network');
+        },
+    ],
+
+    [
+        'parseCrawlResults: preserves statusCode on failed results',
+        () => {
+            const parsed = parseCrawlResults(
+                [
+                    {
+                        url: 'https://example.com/limited',
+                        success: false,
+                        status_code: 429,
+                        error_message: 'Rate limit exceeded',
+                    },
+                ],
+                baseConfig,
+            );
+            assertEqual(parsed[0].success, false, 'failure preserved');
+            assertEqual(parsed[0].statusCode, 429, 'status code preserved');
+        },
+    ],
+
+    // ── Integration: mock Crawl4AI server with rate limiting ───────────────
+
+    [
+        'integration: retries HTTP 429 and succeeds',
+        async () => {
+            const url = 'https://example.com/retry-429';
+            let hits = 0;
+            const mock = startMockServer((msg) => {
+                hits += 1;
+                if (hits <= 2) {
+                    respondJson(
+                        msg,
+                        429,
+                        { error: 'Rate limit exceeded: 10 per 1 minute' },
+                        {
+                            'Retry-After': '0',
+                        },
+                    );
+                } else {
+                    respondJson(msg, 200, crawlSuccess(url));
+                }
+            });
+            const runtime = new Crawl4AIRuntime();
+            try {
+                const results = await runtime.crawl(url, mockConfig(mock.port));
+                assertEqual(hits, 3, 'two 429s then a success');
+                assertEqual(results[0].success, true, 'crawl succeeded');
+                assert(results[0].fitMarkdown.includes(url), 'content returned');
+            } finally {
+                mock.close();
+            }
+        },
+    ],
+
+    [
+        'integration: persistent 429 surfaces a rate-limited error, not network-error',
+        async () => {
+            const url = 'https://example.com/always-429';
+            let hits = 0;
+            const mock = startMockServer((msg) => {
+                hits += 1;
+                respondJson(
+                    msg,
+                    429,
+                    { error: 'Too many concurrent jobs for this caller' },
+                    {
+                        'Retry-After': '0',
+                    },
+                );
+            });
+            const runtime = new Crawl4AIRuntime();
+            try {
+                let caught = null;
+                try {
+                    await runtime.crawl(url, mockConfig(mock.port));
+                } catch (error) {
+                    caught = error;
+                }
+                assert(caught, 'crawl threw');
+                assertEqual(caught.code, 'rate-limited', 'classified as rate-limited');
+                assertEqual(caught.statusCode, 429, 'status code attached');
+                assertEqual(hits, 4, 'all retry attempts used');
+                assert(caught.message.includes('still refusing requests'), 'retry hint added');
+            } finally {
+                mock.close();
+            }
+        },
+    ],
+
+    [
+        'integration: retries HTTP 503 (server busy) and honors Retry-After',
+        async () => {
+            const url = 'https://example.com/retry-503';
+            let hits = 0;
+            const started = Date.now();
+            const mock = startMockServer((msg) => {
+                hits += 1;
+                if (hits === 1) {
+                    respondJson(
+                        msg,
+                        503,
+                        { detail: 'Server busy, retry later' },
+                        {
+                            'Retry-After': '1',
+                        },
+                    );
+                } else {
+                    respondJson(msg, 200, crawlSuccess(url));
+                }
+            });
+            const runtime = new Crawl4AIRuntime();
+            try {
+                const results = await runtime.crawl(url, mockConfig(mock.port));
+                const elapsed = Date.now() - started;
+                assertEqual(hits, 2, 'one 503 then a success');
+                assertEqual(results[0].success, true, 'crawl succeeded');
+                assert(elapsed >= 900, `Retry-After honored (waited ${elapsed}ms)`);
+            } finally {
+                mock.close();
+            }
+        },
+    ],
+
+    [
+        'integration: serializes concurrent crawl requests',
+        async () => {
+            let inFlight = 0;
+            let maxInFlight = 0;
+            const mock = startMockServer((msg) => {
+                inFlight += 1;
+                maxInFlight = Math.max(maxInFlight, inFlight);
+                msg.pause();
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => {
+                    inFlight -= 1;
+                    respondJson(msg, 200, crawlSuccess('https://example.com/concurrent'));
+                    msg.unpause();
+                    return GLib.SOURCE_REMOVE;
+                });
+            });
+            const runtime = new Crawl4AIRuntime();
+            try {
+                const urls = [
+                    'https://example.com/concurrent-a',
+                    'https://example.com/concurrent-b',
+                    'https://example.com/concurrent-c',
+                ];
+                const results = await Promise.all(
+                    urls.map((url) => runtime.crawl(url, mockConfig(mock.port))),
+                );
+                assertEqual(maxInFlight, 1, 'only one request reached the server at a time');
+                assert(
+                    results.every((r) => r[0].success),
+                    'all concurrent crawls succeeded',
+                );
+            } finally {
+                mock.close();
+            }
+        },
+    ],
+
+    [
+        'integration: retries a per-URL rate-limit failure returned inside HTTP 200',
+        async () => {
+            const url = 'https://example.com/result-level-429';
+            let hits = 0;
+            const mock = startMockServer((msg) => {
+                hits += 1;
+                if (hits === 1) {
+                    respondJson(msg, 200, {
+                        results: [
+                            {
+                                url,
+                                success: false,
+                                status_code: 429,
+                                error_message:
+                                    'Rate limit retry count exceeded for domain example.com',
+                            },
+                        ],
+                    });
+                } else {
+                    respondJson(msg, 200, crawlSuccess(url));
+                }
+            });
+            const runtime = new Crawl4AIRuntime();
+            try {
+                const results = await runtime.crawl(url, mockConfig(mock.port));
+                assertEqual(hits, 2, 'failed result was retried');
+                assertEqual(results[0].success, true, 'retry returned content');
+            } finally {
+                mock.close();
+            }
+        },
+    ],
+
+    [
+        'cleanup: restore the research cache path and remove temp dir',
+        () => {
+            _setCachePathForTesting(null);
+            removeTempDir(TEMP_DIR);
         },
     ],
 ];

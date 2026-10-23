@@ -594,6 +594,7 @@ const TRANSIENT_ERROR_CODES = new Set([
     'connection-failed',
     'timeout',
     'rate-limited',
+    'server-busy',
     'network-error',
 ]);
 
