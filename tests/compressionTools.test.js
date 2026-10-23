@@ -7,7 +7,7 @@ import {
     buildSectionDraft,
     compressResearchBranch,
 } from '../src/research/compressionTools.js';
-import { assert, assertEqual, createMockLlmCall } from './testUtils.js';
+import { assert, assertEqual, createMockLlmCall, runTests } from './testUtils.js';
 
 const tests = [
     // ── _slidingWindowChunk ─────────────────────────────────────────────────
@@ -533,20 +533,6 @@ const tests = [
     ],
 ];
 
-// Run async tests
-(async () => {
-    let passed = 0;
-    let failed = 0;
-    for (const [name, run] of tests) {
-        try {
-            await run();
-            console.log(`PASS ${name}`);
-            passed++;
-        } catch (e) {
-            console.log(`FAIL ${name}: ${e.message}`);
-            failed++;
-        }
-    }
-    console.log(`${passed} passed, ${failed} failed, ${tests.length} total`);
-    if (failed > 0) throw new Error(`${failed} test(s) failed`);
-})();
+// Run async tests through the shared harness so a failure actually fails the
+// process (the previous hand-rolled async IIFE exited 0 on failure).
+await runTests(tests);

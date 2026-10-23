@@ -16,7 +16,7 @@ Welcome to **Katab (ਕਿਤਾਬ)**, your desktop AI assistant integrated dir
 8. [Optional Crawl4AI Web Scraper](#8-optional-crawl4ai-web-scraper)
 9. [Optional Knowledge Base (RAG)](#9-optional-knowledge-base-rag)
 10. [Deep Research Mode](#10-deep-research-mode)
-11. [Ollama Presets](#11-ollama-prefsets)
+11. [Ollama Presets](#11-ollama-presets)
 12. [AI Token Breakdown & Pets](#12-ai-token-breakdown--pets)
 13. [Chat History](#13-chat-history)
 14. [Keyboard Shortcut & Theme](#14-keyboard-shortcut--theme)
@@ -38,6 +38,7 @@ Once you have installed Katab (as described in the `README.md`), it will appear 
 ### Panel Indicator
 The top panel icon shows:
 - **Katab logo** (default) — the extension is running normally.
+- **Blue dot** — a provider health check is in progress.
 - **Green dot** — the selected provider is online and healthy.
 - **Red dot** — the provider is unreachable (check your connection or service).
 - **Yellow dot** — the provider needs setup (API key, URL, or model not configured).
@@ -48,9 +49,9 @@ The top panel icon shows:
 Clicking the panel icon opens a dropdown with:
 - **New Chat** — start a fresh conversation.
 - **Current Chat** — status of the active conversation with provider health indication.
-- **Token Breakdown** — condensed snapshot of today's token usage.
+- **Token Breakdown** — condensed snapshot for your default range: pet and stage, local share, leading provider, and a mini share bar.
 - **Settings** — opens the preferences window.
-- **Recent Conversations** — quick-load from history.
+- **Recent Chats** — quick-load from history (archived conversations are hidden).
 
 ---
 
@@ -114,12 +115,17 @@ Each provider requires its own URL, authentication, and model configuration. Kat
 3. **Model**: Choose in preferences or switch from the chat header:
    - `deepseek-flash` (V4.1) — Fast, cost-effective responses with native image input.
    - `deepseek-v4-pro` — Deeper reasoning with thinking mode.
+   - `deepseek-v4-flash` — Retired alias served by V4.1 Flash (selectable for older configs).
 4. **Thinking Mode**: Enable for the model to show its reasoning process. Use **Reasoning Effort** to control depth.
 5. **JSON Mode**: Force structured JSON output.
 6. **System Prompt**: Customize the model's default behavior.
 7. **Image Support**: `deepseek-flash` (V4.1) accepts images natively — just attach an image and send; no extra setup is needed. `deepseek-v4-pro` is text-only, so to send images with Pro:
    - Go to DeepSeek preferences → Image Support.
-   - Choose a **Routing Mode**: *Preprocess* (vision model analyzes image → DeepSeek writes answer) or *Direct* (images sent inline).
+   - Choose a **Routing Mode**:
+     - *Preprocess* — the vision model analyzes the image, the analysis is injected into the
+       conversation, and DeepSeek Pro writes the answer.
+     - *Direct* — the whole request (with the image) is sent to the vision model, which answers
+       directly. Tools, thinking mode, and JSON mode are unavailable in this mode.
    - Choose a **Vision Backend**: Ollama or OpenAI-compatible endpoint.
    - Set the **Vision Model** (e.g., `llama3.2-vision` for Ollama).
    - Optionally set a **Fallback Model** for retry on failure.
@@ -146,10 +152,16 @@ Each provider requires its own URL, authentication, and model configuration. Kat
 
 ### Chat Header
 The top of the chat window shows:
+- **Logo** — the Katab book mark.
 - **Provider chip** — current AI provider with icon, name, and status dot. Click to switch providers.
-- **Model selector** — choose a model (or Flash/Pro for DeepSeek).
-- **Pet sprite** — your active companion with idle animation.
-- **Token counter** — live token estimate during streaming and context usage bar.
+- **Presets** — opens the Ollama preset picker (shown when Ollama is active).
+- **Model selector** — choose a model (Flash/Pro for DeepSeek; the preset list for Ollama).
+- **Usage** — your active pet plus a button that opens the AI Token Breakdown panel.
+- **History**, **New Chat**, **Settings**, and **Close** action buttons; hovering **History** previews
+  the most recent conversations.
+
+The **token counter / context gauge** lives in the footer next to the prompt: it shows live draft
+tokens and how full the context window is, and opens **Session Info** on click.
 
 ### Slash Commands
 
@@ -158,7 +170,7 @@ Type `/help` at any time to see available commands for your current provider and
 | Command | Description |
 |---|---|
 | `/help` | Show available commands |
-| `/doc "path"` | Attach a local file (`.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`, `.eml`) |
+| `/doc "path"` | Attach a local file (`.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.png`, `.jpg`, `.jpeg`, `.eml`) |
 | `/search query` | Search the web via SearxNG |
 | `/crawl URL` | Deep-scrape a web page with Crawl4AI |
 | `/crawl query` | Search then scrape the top result |
@@ -168,21 +180,36 @@ Type `/help` at any time to see available commands for your current provider and
 | `/python` | Execute Python code (Unsloth only) |
 | `/terminal` | Run a shell command (Unsloth only) |
 
-### Footer Tool Buttons
+### Tools Popup
 
-The buttons in the chat footer are **mode controls**, not just command inserters:
+The gear button in the chat footer opens the floating **Tools** panel. Its badge shows how many
+tools are in a non-default mode. Each row is an action plus, for tools that support modes, an
+**Auto / On / Off** control (click the row to cycle):
 
-- **Docs** — one-shot: attach a file.
-- **Search** — cycles **Auto → On → Off**. *On* forces a web search for the next message. *Off* blocks all web search for the next message. *Auto* follows your GSettings preferences.
-- **Scrape** — same Auto/On/Off cycling for Crawl4AI.
-- **Research** — same Auto/On/Off cycling for Deep Research mode.
-- **KB** — one-shot: search the knowledge base.
+| Tool row | Behavior |
+|---|---|
+| **Docs** | Opens the file picker and attaches the chosen file (one-shot). |
+| **Search** | Auto → On → Off. *On* forces a web search for the next message; *Off* blocks web search for the next message; *Auto* follows Settings → Tools → Web Search. |
+| **Scrape** | Same Auto → On → Off cycling for Crawl4AI. |
+| **Knowledge** | Auto → On → Off for the knowledge base; the mode persists between messages. |
+| **Research** | Binary **Off / On** toggle (there is no Auto mode for the research pipeline); it stays on for the whole turn. |
 
-One-shot modes (Search On, Scrape On, Research On) reset to Auto after the message is sent.
+- Clicking **Docs** performs the action; clicking a row without a mode (or with Auto) inserts its
+  slash command (for example `/search `) into the prompt.
+- With **Unsloth** active, the popup also lists **Web Search**, **Python**, and **Terminal** — those
+  run server-side on Unsloth and insert `/search`, `/python`, or `/terminal`.
+- One-shot modes (Search On and Scrape On) reset to Auto after the message is sent.
+- Deep Research requires Web Search or Web Scraper to be available; otherwise the row is disabled
+  with an explanation.
 
 ---
 
 ## 5. Chat Features
+
+### Warm-Up Indicator
+After you send a prompt, the assistant bubble shows an animated three-dot row with the current phase
+— *Naming this chat…* while an AI title is generated, then *Thinking…* until the first content
+arrives. The first rendered token replaces it automatically.
 
 ### Markdown Rendering
 Responses support a chat-friendly markdown subset: headings, bold, italic, bullet and numbered lists, blockquotes, inline code, and fenced code blocks. Code blocks include syntax highlighting and a **Copy** button.
@@ -215,7 +242,7 @@ Long conversations stay coherent automatically. Between turns Katab folds the ol
 
 - Folding happens in the background — it never blocks sending.
 - Click the **token gauge** in the footer to open Session Info: it shows the current memory's size, and a **Summarize Now** button folds everything older than your last few exchanges immediately.
-- **Compact** (also in Session Info) trims the visible conversation itself, keeping the most recent exchanges.
+- **Compact Conversation** (also in Session Info) trims the visible conversation, keeping the most recent exchanges.
 - Your full transcript is still saved to disk and shown in the chat — memory only changes what is sent to the model.
 - Starting a **New Chat** clears the memory for that conversation.
 
@@ -236,7 +263,7 @@ Katab includes an optional document tool for attaching local files to chat. It i
 ### Supported Formats
 | Format | Requirement | Notes |
 |---|---|---|
-| `.txt` / `.md` | Built in | No extra packages |
+| `.txt` / `.md` / `.markdown` | Built in | No extra packages |
 | `.png` / `.jpg` / `.jpeg` | Built in | Only sent for Ollama with vision-capable model |
 | `.eml` | Built in | Email messages; headers, body text, and attachment names parsed locally |
 | `.pdf` | `pdftotext` (poppler-utils) | |
@@ -262,7 +289,7 @@ which pandoc
 
 ### Attaching Files
 Two methods:
-1. Click the **Docs** button in the chat footer and choose a file.
+1. Open the footer **Tools** popup (gear button) and choose **Docs**, then pick a file.
 2. Use the `/doc` command:
    ```
    /doc
@@ -278,7 +305,10 @@ Typing `/doc` without a quoted path opens the file picker.
 - Documents are parsed locally before the extracted text is sent to your provider.
 - Image attachments are base64-encoded locally and only sent when the provider/model supports vision.
 - Saved conversations store attachment metadata only — not the full content. Reattach files when reopening old conversations.
-- Image support for non-Ollama providers: DeepSeek uses a separately configured vision model, while OpenAI and Anthropic receive images through their native multimodal APIs.
+- Image attachments are supported by **Ollama** (vision-capable model) and **DeepSeek** only:
+  `deepseek-flash` accepts images natively, while `deepseek-v4-pro` is text-only and must route
+  images through a configured vision backend. OpenAI and Anthropic requests are text-only in this
+  build, so attaching an image with those providers shows a notice instead of sending it.
 
 ---
 
@@ -319,18 +349,19 @@ curl 'http://localhost:8080/search?q=test&format=json' -H 'Accept: application/j
 ### Step 3 — Search
 - **Manual**: Use `/search` at the start or end of a message: `/search gnome 47 release date` or `gnome 47 release date /search`. Katab gathers results and the model answers with source links.
 - **Autonomous**: With **Autonomous web search** on (default), capable models can call `web_search` and `read_url` tools by themselves when they need current information.
-- **Footer button**: Cycle the Search button to **On** to force a search for the next message.
+- **Tools popup**: set **Search** to **On** to force a search for the next message.
 
 ### Settings Reference
 | Setting | Description |
 |---|---|
 | **SearxNG URL** | Base URL of your instance |
-| **Result limit** | Max results passed to model (1–20) |
+| **Result limit** | Max results passed to model (1–30) |
 | **Time range / Safe search / Language / Categories / Engines** | Forwarded to SearxNG |
 | **API key** | Optional `Authorization: Bearer` token |
 | **Read full pages (`read_url`)** | Lets the model open and read result pages |
 | **Multi-query expansion** | Expands one `/search` into several related queries (off by default) |
 | **Autonomous web search** | Model can search without `/search` (on by default) |
+| **Max tool iterations** | Tool-call rounds allowed per turn before force synthesis (default 25, 1–100) |
 | **Allow local/loopback addresses** | Off by default — only enable for trusted local-only setups |
 
 ### Security
@@ -367,7 +398,7 @@ curl http://localhost:11235/health
 - **Autonomous**: The model can call `crawl_url` after `web_search` to read promising results in depth.
 - **Link-aware results**: both `read_url` and `crawl_url` results include a compact list of the links found on the page. When the answer is not on the current page, the model can follow a promising link directly instead of running another broad search. During Deep Research, Katab can also follow the most relevant links it finds automatically (see below).
 - **Raw by default**: `crawl_url` returns the raw page Markdown. The model can explicitly request server-side LLM extraction (`mode="extract"`), and every extraction result offers a way back to the raw page (`mode="content"`) when the exact code or wording matters.
-- **Footer button**: Cycle the Scrape button to **On** for one-shot scraping.
+- **Tools popup**: set **Scrape** to **On** for one-shot scraping.
 
 ### Settings Reference
 | Setting | Description |
@@ -462,16 +493,40 @@ Katab now uses the sanctioned `/llm` endpoint automatically, so **no image patch
 
 Katab can search a local semantic knowledge base using a Python FastAPI + ChromaDB service. Your documents, conversations, and research findings are indexed into vector embeddings for similarity-based retrieval. The tool is disabled by default.
 
-### Step 1 — Run the RAG Service
-Ensure the Python RAG service is running at `http://localhost:11435`:
-```bash
-curl http://localhost:11435/health
-```
+### Step 1 — Install and Run the RAG Service
+The service is shipped in the extension package at `rag-service/`, but it runs from a separate
+checkout so you can restart it independently of GNOME Shell.
 
-The service uses Ollama for embeddings. Ensure Ollama is running and an embedding model is pulled:
-```bash
-ollama pull nomic-embed-text
-```
+1. Copy the service to its deployed location:
+   ```bash
+   mkdir -p ~/.local/share/katabai/rag-service
+   cp rag-service/server.py rag-service/requirements.txt ~/.local/share/katabai/rag-service/
+   ```
+   (After repository updates, run `make sync-rag-server` and restart the service.)
+2. Recommended: open **Preferences → Tools → Knowledge Base → Service** and click **Set Up &
+   Start**. Katab creates the virtualenv, installs dependencies, writes the `katabai-rag.service`
+   systemd user unit, enables it, and starts it. The same page offers **Start**, **Restart**, and
+   **Stop**.
+3. Manual alternative:
+   ```bash
+   cd ~/.local/share/katabai/rag-service
+   python3 -m venv .venv
+   .venv/bin/pip install -r requirements.txt
+   .venv/bin/python3 server.py        # foreground; Ctrl+C to stop
+   ```
+   The service listens on `http://127.0.0.1:11435` and stores vectors in
+   `~/.local/share/katabai/chroma/`.
+4. Ensure Ollama is running and pull the embedding model (Katab auto-pulls it on first use if you
+   skip this):
+   ```bash
+   ollama pull nomic-embed-text
+   ```
+5. Verify:
+   ```bash
+   curl http://127.0.0.1:11435/health
+   ```
+   The response includes an `embedding` block reporting whether Ollama and the embedding model are
+   reachable.
 
 ### Step 2 — Enable in Katab
 1. Open Katab preferences → **Tools** → **Knowledge Base**.
@@ -504,6 +559,7 @@ ollama pull nomic-embed-text
 | **Service URL** | RAG service endpoint |
 | **Ollama URL** | Ollama endpoint for embeddings |
 | **Embedding model** | Model used for vector embeddings |
+| **Enable Memory** | Master switch for automatic indexing (existing content stays searchable) |
 | **Chunk size / Overlap** | Document splitting parameters |
 | **Top-K** | Number of results to retrieve per query |
 | **Max chunks / collection** | Capacity limits (the oldest chunks are evicted at the cap when Auto-prune is on) |
@@ -523,15 +579,15 @@ Deep Research is a meta-mode that raises tool-call limits and context thresholds
 
 1. **Planning** — The AI breaks your query into 3–5 research angles with SEO-optimized search queries. You can review and approve before execution begins. While a plan is pending, you can keep chatting to request changes — follow-up messages are treated as plan revisions (e.g. *"it's 2026, not 2025 — update the plan"*) and edit the existing plan in place rather than replacing it. Use **Edit plan** to adjust angles manually, **Cancel plan** to abandon the research, or **Start research** to begin.
 2. **Branch Execution** — Each angle runs sequentially: search → read → crawl → compress. Cross-branch context is shared so later angles benefit from earlier findings.
-3. **Mid-Research Critique** — After every few branches, the AI evaluates coverage and adjusts remaining angles.
+3. **Mid-Research Critique** — After the initial branches, the AI scores coverage, records contradictions, and can drop or add angles before analysis continues.
 4. **Gap Analysis** — A lightweight review identifies uncovered aspects and generates 0–2 targeted follow-up queries.
 5. **Refinement** — Gap-filling mini-branches with focused search and crawl.
 6. **Two-Pass Synthesis** — First pass generates a structured outline. Second pass streams the full report with the outline as a scaffold.
 7. **Quality Check** — The report is scored (1–5). If below 3, additional research is triggered.
 
 ### How to Use
-- Type `/research` in your message, or cycle the **Research** footer button to **On**.
-- The research button only appears when web search or Crawl4AI is available.
+- Type `/research` in your message, or set **Research** to **On** in the footer Tools popup.
+- The Research row is enabled only when Web Search or Web Scraper is available.
 - A progress card shows each phase as it completes, with timing and source counts.
 
 ### Depth & Model Overrides
@@ -547,7 +603,7 @@ Leave both model fields empty to use the active provider's model.
 | Parameter | Normal | Deep Research (Standard) |
 |---|---|---|
 | Force-synthesis after | Follows Max Tool Iterations (default 25) | Same preference (minimum 12) |
-| Max tool iterations | 25 (configurable, 1–100) | max(25, 12) |
+| Max tool iterations | 25 (configurable, 1–100) | max(preference, 12) |
 | Context synthesis threshold | 85% of the provider budget (min 40K chars) | 85% of the provider budget (min 80K chars) |
 | Search results per query | 10 → 8 → 6 → 4 | 15 → 12 → 10 → 6 |
 | Crawl char limit | 32K → 16K → 8K → 4K | 32K → 20K → 12K → 8K |
@@ -557,17 +613,22 @@ Selecting **Deep** or **Max** depth scales the synthesis context budget (120K / 
 ### What to Expect
 - Deep Research takes longer — each branch involves multiple network calls and compression steps.
 - Reports include inline citations and a bibliography section.
-- The compression pipeline preserves granular facts alongside summarized findings.
+- The compression pipeline preserves granular facts alongside summarized findings; code-heavy pages
+  keep a verbatim code excerpt instead of being summarized.
+- When **Follow Subpage Links in Research** is on, branches follow the most relevant links found on
+  scraped pages (one level deep), and documentation sites can be navigated via `explore_docs`.
 - Results are cached so repeated research on similar topics is faster.
+- A timeline card shows each phase (planning, searching, scraping, compressing, analyzing,
+  refining, outlining, writing) as it completes.
 
 ---
 
 ## 11. Ollama Presets
 
-Presets let you save, load, and share complete Ollama configurations. Each preset captures all 27 Ollama settings: model, context size, sampling parameters, hardware settings, system prompt, and more.
+Presets let you save, load, and share complete Ollama configurations. Each preset captures all 26 Ollama settings: model, base URL, context size, sampling parameters, hardware settings, system prompt, and more.
 
 ### Managing Presets from Chat
-1. Click the **Preset** button in the chat header (only visible when Ollama is active).
+1. Click the **Presets** button in the chat header (only visible when Ollama is active).
 2. View your saved presets in the picker panel.
 3. Click a preset to load it — all Ollama settings are applied immediately.
 4. To save current settings as a preset: type a name in the save bar and click **Save**.
@@ -581,7 +642,7 @@ Open Katab preferences → **Ollama** → **Model Presets**:
 - **Pending Changes**: If you modify settings after loading a preset, a row appears offering to **Save Changes** (overwrite the preset) or **Discard Changes** (reload the preset).
 
 ### What Presets Capture
-Model, base URL, context size, prediction length, keep-alive, format (JSON/none), raw mode, think mode, temperature, top-k, top-p, min-p, tfs-z, typical-p, mirostat, mirostat-tau, mirostat-eta, repeat-last-n, repeat-penalty, presence-penalty, frequency-penalty, use-mmap, use-mlock, num-gpu, num-thread, and system prompt.
+Model, base URL, system prompt, context size, prediction length, retained system tokens, keep-alive, format (JSON/none), raw mode, think mode, temperature, top-k, top-p, min-p, tfs-z, mirostat, mirostat-tau, mirostat-eta, repeat-last-n, repeat-penalty, presence-penalty, frequency-penalty, use-mmap, use-mlock, num-gpu, and num-thread.
 
 ---
 
@@ -590,14 +651,15 @@ Model, base URL, context size, prediction length, keep-alive, format (JSON/none)
 Katab keeps a private, local-only ledger of your AI token usage and pairs it with a pet collection system. Everything stays on your computer — no data is sent anywhere.
 
 ### Opening the Breakdown
-- **Chat window** — click the **Tokens** button in the header.
+- **Chat window** — click the **Usage** button in the header (the one showing your pet).
 - **Top bar** — the panel dropdown shows a snapshot (pet sprite, range total, local share, provider share bar). Click it to open the full breakdown.
 
 ### Usage Dashboard
 - **Time ranges**: Today, Week, Month, Year, All Time.
 - **Context gauge**: The footer token box shows how full the context window is (system prompt + tools + messages + reserved space), including a draft preview while you type. Hover or click it for the Session Info breakdown.
-- **Overview tab**: Totals, prompt/reply split, DeepSeek cached-token savings, local-vs-cloud ratio with a quick action to switch the next draft to Ollama, trend summaries, milestones, and a 14-day activity chart.
-- **Collection tab**: Your pet collection — inspect pets and forms, preview crossbreeds, and pin a companion.
+- **Overview tab**: Totals, prompt/reply split, DeepSeek cached-token savings, local-vs-cloud ratio with a quick action to switch the next draft to Ollama, trend summaries, and a 14-day activity chart.
+- **Collection tab**: Your companion card, a **Follow &lt;Provider&gt;** button, one tile per provider pet
+  (stage and XP), and your usage milestones.
 - **Spending tab**: Estimated cost with per-provider and per-model breakdowns, plus monthly budget progress.
 
 ### Pet Collection
@@ -627,18 +689,13 @@ Five provider pets live in your collection:
 
 #### Active Companion
 - By default, the active pet follows your current provider.
-- Open **View Collection** → select a pet or form → **Make Companion** to pin it.
+- Open the **Collection** tab → select a pet → **Make Companion** to pin it.
 - Provider usage still feeds the pet belonging to the provider that generated the response.
-- Choose **Follow Current Provider** to return to automatic switching.
-
-#### Crossbreeds & Mixie
-- When two provider pets reach **Sprout** (10K XP), their crossbreed pair unlocks permanently in both directions.
-- The base pet supplies the body and stage; the other pet supplies an accessory overlay.
-- When all five pets reach Sprout, **Mixie** unlocks — its stage equals the lowest stage shared by all five provider pets.
+- Choose the **Follow &lt;Provider&gt;** button to return to automatic switching.
 
 #### Persistence
-- Pet XP and unlocks are permanent collection data — they survive analytics pruning and retention policies.
-- Optional in-chat and desktop celebrations announce hatches, stage-ups, crossbreeds, and Mixie milestones.
+- Pet XP is permanent collection data — it survives analytics pruning and retention policies.
+- Optional in-chat and desktop celebrations announce hatches and stage-ups.
 
 ### Token Budget & Cost Tracking
 - Set a **monthly USD budget** and warning threshold in **Settings → General** (Monthly Budget, Monthly Budget Amount, Budget Warning Threshold).
@@ -648,7 +705,7 @@ Five provider pets live in your collection:
 ### Export & Reset
 Open **Settings → General → AI Token Breakdown**:
 - **Export Usage JSON**: Writes a timestamped copy of the ledger into your Documents folder.
-- **Reset Usage Ledger**: Deletes token analytics, all pet XP, crossbreeds, and Mixie progress. Chat history is not affected.
+- **Reset Usage Ledger**: Deletes token analytics and all pet XP. Chat history is not affected.
 - **Track Token Usage**: Pause/resume recording without deleting data.
 - **Retention**: Keep forever, prune after 90 days, or prune after 1 year.
 - **Desktop Notifications**: Toggle completion notifications and budget alerts while the chat is closed.
@@ -663,7 +720,7 @@ Katab automatically saves your conversations.
 - File: `~/.local/share/katabai/history.json`
 - Format: JSON array of conversations, each with `id`, `title`, `timestamp`, and `messages`, plus optional `description` and `archived` fields.
 - Limit: 50 most recent conversations.
-- Title: First 60 characters of your first message, or your custom/generated title.
+- Title: AI-generated from your first prompt, your custom/generated title, or the first 60 characters of the first message as a fallback.
 
 ### Managing History
 - **History button** in the chat header opens the history panel.
@@ -679,6 +736,7 @@ Katab automatically saves your conversations.
 - Loading, searching, and deleting work the same in both tabs.
 
 ### Titles & Descriptions
+- New chats are named automatically from the first prompt by the active provider/model. The warm-up row (`Naming this chat…` → `Thinking…`) covers this request and then hands off to the main response. Disable it under **Preferences → General → Chat → AI-Generated Chat Titles**; the history then keeps the first-message title.
 - The pencil button on a history row opens the conversation editor with a **Title** field and an optional one-line **Description**.
 - **Generate with AI** asks the active provider to draft both from the conversation transcript; the result lands in the editable fields — nothing is saved until you press **Save**.
 - Descriptions appear under the title in the history list, and both fields are searchable.
@@ -712,16 +770,17 @@ The GTK4/Adwaita preferences window has these navigation pages:
 
 | Page | Contents |
 |---|---|
-| **General** | Provider selection, keyboard shortcut, document tool toggle, token breakdown settings, budget, export |
+| **General** | Provider cards, chat (AI-generated titles), keyboard shortcut, appearance (text size, glass effect), token breakdown settings, pet companion, notifications, budget, export/reset |
 | **Ollama** | Base URL, model, context size, sampling parameters, hardware settings, system prompt, presets |
 | **DeepSeek** | API key, model, thinking mode, JSON mode, system prompt, vision model configuration |
-| **Unsloth** | Base URL, API key, model, context size |
+| **Unsloth** | Base URL, API key, model, context size, server-side tools note |
 | **OpenAI** | Base URL, API key, model |
 | **Anthropic** | Base URL, API key, model |
-| **Tools → Document** | Document tool settings |
+| **Tools → Document Tool** | Document parsing settings and parser status |
 | **Tools → Web Search** | SearxNG connection and search settings |
-| **Tools → Web Scraper** | Crawl4AI connection and extraction settings |
-| **Tools → Knowledge Base** | RAG service connection and indexing settings |
+| **Tools → Web Scraper** | Crawl4AI connection, extraction, subpage-following, and LLM extraction settings |
+| **Tools → Knowledge Base** | RAG service setup/control, connection, indexing, retrieval, maintenance |
+| **Tools → Deep Research** | Research depth and optional per-role model overrides |
 
 ### Common Preferences Features
 - **Connection Testing**: Most provider and tool pages have a **Test Connection** button with a status badge.
@@ -805,9 +864,15 @@ gsettings list-recursively org.gnome.shell.extensions.katabai
 | Data | Path |
 |---|---|
 | Chat history | `~/.local/share/katabai/history.json` |
-| Token usage | `~/.local/share/katabai/token-usage.json` |
+| Token usage ledger | `~/.local/share/katabai/token-usage.json` |
 | Ollama presets | `~/.local/share/katabai/presets.json` |
 | Research cache | `~/.local/share/katabai/research-cache.json` |
+| Research crash-recovery checkpoints | `~/.local/share/katabai/research-checkpoint.json` |
+| Knowledge base index state | `~/.local/share/katabai/rag-index-state.json` |
+| Knowledge base vectors | `~/.local/share/katabai/chroma/` |
+| Deployed RAG service | `~/.local/share/katabai/rag-service/` |
+| Token usage export | `~/Documents/katabai-token-usage-<timestamp>.json` |
+| API keys and settings | GSettings schema `org.gnome.shell.extensions.katabai` (dconf) |
 
 ---
 
@@ -817,17 +882,16 @@ gsettings list-recursively org.gnome.shell.extensions.katabai
 |---|---|
 | **Katab** | Punjabi for "book" (ਕਿਤਾਬ) — the extension name. |
 | **Provider** | An AI backend: Ollama, Unsloth, DeepSeek, OpenAI, or Anthropic. |
-| **Tool** | A capability exposed to the model: `web_search`, `read_url`, `crawl_url`, `document`, `deep_research`, `knowledge_search`. |
-| **Tool Mode** | Auto (model decides when to use tools), On (forced for one message), Off (disabled). |
-| **Deep Research** | Multi-phase research pipeline with planning, parallel branches, gap analysis, and synthesis. |
+| **Tool** | A capability exposed to the model: `web_search`, `read_url`, `crawl_url`, `explore_docs`, `document`, `deep_research`, `knowledge_search`, `update_knowledge`, `forget_knowledge`. |
+| **Tool Mode** | Auto/On/Off for Search, Scrape, and Knowledge; Off/On for Deep Research (a binary toggle). |
+| **Deep Research** | Multi-phase research pipeline with planning, sequential branches, gap analysis, and synthesis. |
 | **RAG** | Retrieval-Augmented Generation — semantic search over a local vector database (ChromaDB). |
 | **SSRF** | Server-Side Request Forgery — the network guard blocks requests to private/internal addresses. |
 | **SSE** | Server-Sent Events — protocol used for streaming LLM responses line by line. |
 | **Pet Companion** | Gamified avatar tied to a provider: Ollie, Slothy, Sparky, Clyde, or Pearl. |
 | **Pet Stage** | Evolution level: Egg → Hatchling → Sprout → Scholar → Sage → Archmage. |
 | **XP** | Experience points — earned from token usage with a provider. |
-| **Crossbreed** | Combined pet form unlocked when two provider pets reach Sprout. |
-| **Mixie** | Collection reward pet — unlocked when all five pets reach Sprout. |
+| **Milestone** | Usage achievement shown on the Collection tab (first reply, 10k local tokens, 7 active days, …). |
 | **Preset** | Saved Ollama configuration profile capturing all model settings. |
 | **Compression** | LLM-based summarization pipeline that reduces web page content into concise findings. |
 | **Synthesis** | The final phase where the model writes its answer after gathering tool results. |

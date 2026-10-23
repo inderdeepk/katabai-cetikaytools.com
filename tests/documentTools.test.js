@@ -7,6 +7,8 @@ import {
     buildMissingImagePromptBlock,
     buildVisionAnalysisPromptBlock,
     getDocumentToolCapabilities,
+    getAttachmentInfoForPath,
+    looksLikeImageAttachment,
     parseEmlText,
     formatEmlDocument,
     DOCUMENT_TOOL_COMMAND,
@@ -475,6 +477,72 @@ const tests = [
         () => {
             const formatted = formatEmlDocument(parseEmlText('Subject: No body\n'));
             assert(formatted.includes('No readable text body'), 'fallback message');
+        },
+    ],
+
+    // ── Attachment metadata ────────────────────────────────────────────────
+
+    [
+        'getAttachmentInfoForPath: recognises each supported extension',
+        () => {
+            const cases = [
+                ['/tmp/notes.md', 'text', 'document', null],
+                ['/tmp/report.TXT', 'text', 'document', null],
+                ['/tmp/pic.PNG', 'image', 'image', 'image/png'],
+                ['/tmp/pic.jpg', 'image', 'image', 'image/jpeg'],
+                ['/tmp/photo.JPEG', 'image', 'image', 'image/jpeg'],
+                ['/tmp/mail.eml', 'eml', 'document', null],
+                ['/tmp/doc.pdf', 'pdf', 'document', null],
+                ['/tmp/doc.docx', 'docx', 'document', null],
+            ];
+            for (const [filePath, capabilityKey, kind, mimeType] of cases) {
+                const info = getAttachmentInfoForPath(filePath);
+                assertEqual(info.capability?.key, capabilityKey, `${filePath} capability`);
+                assertEqual(info.kind, kind, `${filePath} kind`);
+                assertEqual(info.mimeType, mimeType, `${filePath} mime type`);
+            }
+        },
+    ],
+
+    [
+        'getAttachmentInfoForPath: lower-cases extensions, rejects unknown ones',
+        () => {
+            assertEqual(
+                getAttachmentInfoForPath('/tmp/A.MD').extension,
+                'md',
+                'extension lower-cased',
+            );
+            for (const filePath of ['/tmp/archive.zip', '/tmp/binary', '/tmp/trailing.', '']) {
+                const info = getAttachmentInfoForPath(filePath);
+                assertEqual(info.capability, null, `${JSON.stringify(filePath)} has no capability`);
+                assertEqual(info.kind, null, `${JSON.stringify(filePath)} has no kind`);
+                assertEqual(info.mimeType, null, `${JSON.stringify(filePath)} has no mime type`);
+            }
+        },
+    ],
+
+    [
+        'looksLikeImageAttachment: honours kind, mime type, and extension',
+        () => {
+            assertEqual(looksLikeImageAttachment(null), false, 'null metadata');
+            assertEqual(looksLikeImageAttachment({}), false, 'empty metadata');
+            assertEqual(looksLikeImageAttachment({ kind: 'image' }), true, 'kind wins');
+            assertEqual(
+                looksLikeImageAttachment({ kind: 'document', mimeType: 'image/webp' }),
+                true,
+                'image/* mime type',
+            );
+            assertEqual(looksLikeImageAttachment({ path: '/tmp/pic.png' }), true, 'png path');
+            assertEqual(
+                looksLikeImageAttachment({ displayName: 'photo.JPG' }),
+                true,
+                'uppercase extension in displayName',
+            );
+            assertEqual(
+                looksLikeImageAttachment({ path: '/tmp/report.pdf', displayName: 'report.pdf' }),
+                false,
+                'non-image attachment',
+            );
         },
     ],
 ];

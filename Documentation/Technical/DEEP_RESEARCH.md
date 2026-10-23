@@ -1,264 +1,282 @@
 # Deep Research Pipeline
 
-This document describes the Deep Research mode — Katab's most sophisticated feature. It is a meta-mode that transforms the standard tool-calling loop into an exhaustive multi-phase research pipeline.
+Deep Research is Katab's most involved feature. It is a **meta-mode**: instead of a single
+tool-calling turn, it runs a structured pipeline — planning → branch research → critique → gap
+analysis → refinement → two-pass synthesis → quality check.
 
----
+**Activation**
 
-## Table of Contents
+- `/research` in the prompt, or
+- the **Research** row in the footer **Tools** popup set to **On** (binary Off/On toggle), or
+- autonomously, when the model selects the `deep_research` meta-tool.
 
-- [Overview](#overview)
-- [Pipeline Phases](#pipeline-phases)
-- [Architecture](#architecture)
+Deep Research requires at least one research tool to be usable: Web Search or Web Scraper.
+
+## Contents
+
+- [Module Map](#module-map)
+- [Pipeline](#pipeline)
+- [State and Progress UI](#state-and-progress-ui)
+- [Depth and Model Overrides](#depth-and-model-overrides)
 - [Compression Pipeline](#compression-pipeline)
-- [Thresholds & Constants](#thresholds--constants)
+- [Thresholds and Constants](#thresholds-and-constants)
+- [Tool-result truncation tiers](#tool-result-truncation-tiers)
 - [How It Differs from Regular Tool-Calling](#how-it-differs-from-regular-tool-calling)
-- [Performance Considerations](#performance-considerations)
+- [Performance and Failure Handling](#performance-and-failure-handling)
 
 ---
 
-## Overview
+## Module Map
 
-Deep Research raises tool-call iteration limits and context thresholds, then runs a structured pipeline: planning → branch execution → gap analysis → refinement → synthesis → quality check. It is activated via the `/research` command, the Research footer button (set to On), or the `deep_research` tool when autonomous mode detects exhaustive research needs.
+| Concern | Location |
+|---|---|
+| Phase orchestration, progress timeline, plan approval UI | `extension.js` (`_sendMessage`, `_runSynthesisPhase`, `_runResearchBranches`, `_runRefinementResearch`, `_runQualityCheck`) |
+| Planner + plan revision | `src/research/planner.js` |
+| Gap analysis, critique, causal-chain check, outline, quality check | `src/research/pipeline.js` |
+| Branch execution, subpage following, refinement, retries | `src/research/branchRunner.js` |
+| Compression (per page, merge) | `src/research/compressionTools.js` |
+| Final prompt + contradiction/grounding checks | `src/research/synthesisPrompt.js` |
+| Citation → bibliography binding | `src/research/citationTracker.js` |
+| Cache + crash-recovery checkpoints | `src/research/researchCache.js` |
+| Prompts and response parsers | `src/research/prompts.js` |
+| Tool definition | `src/tools/toolDefinitions.js` (`deep_research`) |
 
-**File locations:**
-- Core orchestration: `extension.js` (methods prefixed `_run*`, `_build*` for research phases)
-- Compression: `src/research/compressionTools.js`
-- Citation tracking: `src/research/citationTracker.js`
-- Result caching: `src/research/researchCache.js`
-- Tool definition: `src/tools/toolDefinitions.js` (`deep_research` tool)
+All research modules are pure functions that receive a **host bag** (LLM call, cancellable,
+settings, UI callbacks) from the dialog, so they run under `gjs -m` unit tests without a shell.
 
 ---
 
-## Pipeline Phases
+## Pipeline
 
 ```mermaid
 flowchart TD
-    A[User Query] --> B[Planning Phase]
-    B --> C[Branch Execution]
-    C --> D{Mid-Research Critique}
-    D -->|More branches| C
-    D -->|All done| E[Gap Analysis]
-    E --> F{Follow-up needed?}
-    F -->|Yes| G[Refinement Research]
+    A[User query + /research] --> B[Planning]
+    B -->|plan card: edit / revise / cancel / start| C[Branch research]
+    C --> D{Mid-research critique}
+    D -->|drop / add angles| C
+    D -->|sufficient| E[Gap analysis]
+    E --> F{Follow-up queries?}
+    F -->|yes| G[Refinement]
     G --> E
-    F -->|No| H[Synthesis Outline]
-    H --> I[Full Synthesis]
-    I --> J[Quality Check]
-    J -->|Score < 3| E
-    J -->|Score ≥ 3| K[Final Report]
+    F -->|no| H[Outline + optional refinement turns]
+    H --> I[Streamed synthesis]
+    I --> J{Quality + grounding check}
+    J -->|below threshold, retries left| E
+    J -->|pass / retries exhausted| K[Final report + bibliography]
 ```
 
-### Phase 1: Planning
+### Phase 1 — Planning
 
-The user's query is sent to the LLM with a planning prompt that asks it to break the question into 3–5 research angles. Each angle includes:
-- A short description of the angle
-- SEO-optimized search queries
+`runPlannerAgent()` asks the model for **3–5 research angles**, each with a `sub_task` and a
+`search_query` (optionally `hypothesis` and `evidence_needed`). The planner retries once with a
+format nudge (`PLANNER_MAX_ATTEMPTS = 2`) before falling back to a single-angle plan using the
+original query.
 
-The plan is shown to the user for approval before execution begins. If the planner fails (e.g., timeout), a fallback plan with the original query as a single angle is used.
+While a plan is pending:
 
-While a plan is pending approval, a follow-up prompt is treated as a **plan revision**, not a new research query: the revision planner (`_reviseResearchPlan`) is called with the original query, the current plan, and the user's feedback, and returns an updated plan that applies only the requested changes (dates, versions, scope, angles) while preserving the rest. The pending plan is only replaced if the revision succeeds; on failure the existing plan is left untouched. An explicit `/research` command still starts a fresh plan. Plan revisions do not consume the Deep Research turn (so a one-shot `/research` keeps deep thresholds through the eventual execution), and the phase routes correctly even if the mode was toggled off. The plan card offers **Edit plan**, **Cancel plan** (which exits the phase and turns Deep Research back off), and **Start research**.
+- A follow-up prompt is treated as a **plan revision** (`reviseResearchPlan()`), not a new research
+  run. Only a successful revision replaces the plan; an explicit `/research` starts fresh.
+- **Edit plan**, **Cancel plan** (exits the phase and turns Deep Research off), and **Start
+  research** are available on the plan card.
+- The plan card also shows an effort estimate (`~N angles, ~M searches, ~K crawls, ≈T tokens`).
 
-**Key methods**: `_runPlannerAgent(query)` — makes a non-streaming completion call with `_requestNonStreamingCompletion` for initial plan generation; `_reviseResearchPlan(originalQuery, currentPlan, feedback)` — same call shape with the revision system prompt. Provider timeout is set appropriately (unbounded for Ollama local models).
+### Phase 2 — Branch research
 
-### Phase 2: Branch Execution
+`runResearchBranches()` executes angles **sequentially** (`parallelBranches` is pinned to 1 because
+parallel branches triggered SearXNG/Crawl4AI rate limits). Per branch:
 
-Each angle runs as a sequential branch:
-1. **Search**: Queries SearxNG with the angle's search terms.
-2. **Read**: Fetches the top search results via `read_url`.
-3. **Crawl**: Deep-scrapes the most promising pages via Crawl4AI.
-4. **Compress**: Compresses findings using Level 1 and Level 2 compression.
+1. **Search** with the angle's query (SearxNG).
+2. **Read** the top results (`read_url`).
+3. **Crawl** promising pages (`crawl_url`); code-heavy pages skip LLM compression and contribute a
+   bounded verbatim code excerpt instead (`src/shared/contentKind.js`).
+4. **Follow subpages** — when `crawl4ai-follow-links-enabled` is on, the branch scores links found
+   on the crawled pages against the branch query and follows up to `crawl4ai-max-follow-links`
+   (default 3, cap 10) one level deep.
+5. **Compress** — Level 1 per page, then Level 2 merge into the branch findings.
 
-Results from each branch are added to `_globalResearchContext` — a shared context that subsequent branches can reference. A condensed summary of each completed branch is pushed so later branches have cross-topic awareness.
+Transient failures (timeouts, rate limits, connection errors) are retried twice with 2 s/5 s
+backoff (`RESEARCH_BRANCH_MAX_RETRIES = 2`); permanent failures (bad host, SSRF block, 404) are
+skipped. Each completed branch contributes a condensed summary to `_globalResearchContext` so later
+branches build on earlier findings.
 
-**Key method**: `_executeResearchBranches(angles)` — orchestrates branch execution and progress tracking.
+`explore_docs` is advertised alongside `crawl_url` during research so the model can navigate a
+documentation site by its table of contents instead of guessing URLs.
 
-### Phase 3: Mid-Research Critique
+### Phase 3 — Mid-research critique
 
-After every N branches, a lightweight LLM call evaluates:
-- What's been covered so far
-- What angles remain
-- Whether any angles should be adjusted or replaced
+`runRePlanningCritique()` runs after the initial branches. It returns a sufficiency score,
+contradictions, and adjustments (drop angles that are now redundant, add angles for discovered
+sub-topics). Adjustments feed back into the branch loop.
 
-This prevents the pipeline from wasting iterations on redundant angles.
+`runCausalChainCheck()` performs an extra pass for questions with dependent sub-claims.
 
-**Key method**: `_runMidResearchCritique()`.
+### Phase 4 — Gap analysis
 
-### Phase 4: Gap Analysis
+`runGapAnalysis()` reviews findings against the original question and emits 0–2 follow-up search
+queries (Standard), 3 (Deep), or 4 (Max), each with a rationale. The rationale is shown in the
+timeline; the queries become refinement branches.
 
-A focused LLM review identifies gaps in coverage relative to the user's original question. It generates 0–2 targeted follow-up search queries with rationales.
+### Phase 5 — Refinement
 
-**Key method**: `_runGapAnalysis()` — uses a dedicated system prompt (`GAP_ANALYSIS_SYSTEM_PROMPT`) and limited token budget (`GAP_ANALYSIS_MAX_TOKENS`).
+`runRefinementResearch()` runs lightweight mini-branches: search → crawl the top
+`REFINEMENT_CRAWL_COUNT` (2) → compress. Results append to the timeline and to the findings pool.
 
-### Phase 5: Refinement Research
+### Phase 6 — Two-pass synthesis
 
-Gap queries are executed as lightweight mini-branches: search → crawl top 2 → compress. Results are appended to the progress card as refinement rows.
+1. **Outline** — `buildSynthesisOutline()` produces a structured outline from all findings. With
+   Deep/Max depth (or when the outline is weak) `critiqueAndRefineOutline()` runs up to
+   `outlineRefinementTurns` refinement passes (2 Standard/Deep, 3 Max).
+2. **Report** — `buildSynthesisPrompt()` centers the *user's original question* (branch topics are
+   context, not the subject), applies adaptive proportional truncation to the branch findings, and
+   streams the final report with inline citations.
 
-**Key method**: `_runRefinementResearch(gapQueries)`.
+### Phase 7 — Quality and grounding check
 
-### Phase 6: Two-Pass Synthesis
-
-**Pass 1 — Outline**: All accumulated findings (branch results + refinement results) are sent to the LLM to generate a structured outline. This outline serves as a scaffolding for the final report.
-
-**Pass 2 — Full Report**: The outline and all findings are sent to the LLM with instructions to write a comprehensive report answering the user's original question. The report is streamed (like a normal response).
-
-The synthesis prompt is **topic-driven**, not branch-driven: it centers the user's original question and treats branch findings as context/information sources only.
-
-**Key methods**:
-- `_buildSynthesisOutline(findings)` — non-streaming outline generation
-- `_buildSynthesisPrompt(findings, outline)` — constructs the final synthesis prompt with adaptive proportional truncation
-
-### Phase 7: Quality Check
-
-The final report is scored by the LLM (1–5) based on completeness, accuracy, and relevance. If the score is below 3, additional research is triggered (return to gap analysis). This loop has a guard to prevent infinite recursion.
-
-**Key method**: `_runQualityCheck(report)`.
+`runQualityCheck()` scores the report on two axes (coverage and groundedness, 1–5), lists missing
+aspects and unsupported claims, and returns a verdict. Below the threshold
+(`QUALITY_CHECK_SCORE_THRESHOLD = 3`, or 4 at Max depth) Katab runs additional gap research and
+rewrites, bounded by `MAX_QUALITY_RETRY_ITERATIONS` (2 Standard/Deep, 3 Max). Failed checks
+degrade gracefully to the best available report; a grounding warning card is shown when claims do
+not trace to research facts.
 
 ---
 
-## Architecture
+## State and Progress UI
 
-### State Management
-
-Deep Research uses several instance variables on `KatabDialog`:
-
-| Variable | Purpose |
+| Dialog state | Purpose |
 |---|---|
 | `_globalResearchContext` | Accumulated findings shared across branches |
-| `_branchResults` | Array of per-branch compressed results |
-| `_refinementResults` | Array of gap-filling refinement results |
-| `_gapRationale` | Text explaining what gaps were found |
-| `_synthesisOutline` | The structured outline from Pass 1 |
-| `_originalResearchQuery` | The user's original question (for topic-driven synthesis) |
-| `_researchProgressCard` | UI element showing phase progress |
+| `_branchResults` | Per-branch compressed results |
+| `_refinementResults` | Gap-filling refinement results |
+| `_gapRationale` | Explanation of detected gaps |
+| `_synthesisOutline` | Outline from the first synthesis pass |
+| `_originalResearchQuery` | Original question (topic-driven synthesis) |
+| `_progressCard` | Research timeline card |
 
-### Progress States
+The timeline card has a header, phase markers, and per-branch entries whose icon class reflects the
+phase: `planning`, `searching`, `scraping`, `compressing`, `analyzing`, `refining`, `outlining`,
+`writing`, `done`, `error` (`RESEARCH_PROGRESS_*` constants in `src/research/branchRunner.js`).
 
-The progress card shows the current phase through CSS classes on the status label:
-- `.analyzing` — Planning phase
-- `.searching` / `.reading` / `.crawling` — Branch execution
-- `.compressing` — Compression step
-- `.refining` — Gap-filling refinement
-- `.outlining` — Synthesis outline generation
-- `.writing` — Full report streaming
+Deep Research raises the tool budget rather than replacing the normal loop: the model can still call
+`web_search`, `read_url`, `crawl_url`, and `explore_docs` inside each phase.
 
-### Tool Advertisement
+---
 
-During deep research, the standard tool-calling loop is active but with raised thresholds. The model is given tool schemas and can call `web_search`, `read_url`, and `crawl_url` autonomously. Force synthesis (tool removal) happens at higher thresholds than normal mode.
+## Depth and Model Overrides
+
+`Settings → Tools → Deep Research` exposes:
+
+| Setting | Values | Effect |
+|---|---|---|
+| `deep-research-depth` | `standard` (default), `deep`, `max` | Scales synthesis context, retries, gap queries, and quality bar |
+| `deep-research-compression-model` | model name or empty | Model for high-volume page compression |
+| `deep-research-synthesis-model` | model name or empty | Model for planning, critique, gap analysis, outline, final report |
+
+Effective configuration (`_getEffectiveDeepResearchConfig()`):
+
+| Knob | Standard | Deep | Max |
+|---|---|---|---|
+| `contextBudgetChars` | 80 000 | 120 000 | 160 000 |
+| `outlineRefinementTurns` | 2 | 2 | 3 |
+| `maxQualityRetries` | 2 | 2 | 3 |
+| `gapAnalysisMaxQueries` | 2 | 3 | 4 |
+| `qualityThreshold` | 3 | 3 | 4 |
+| `parallelBranches` | 1 | 1 | 1 |
 
 ---
 
 ## Compression Pipeline
 
-The compression pipeline transforms raw web content into progressively more concise and structured findings. It is implemented in `src/research/compressionTools.js`.
+Implemented in `src/research/compressionTools.js`. Levels 1–2 are wired into branch execution;
+levels 3–4 are exported but not currently called by the pipeline.
 
-### Level 1: Per-Page Compression
-- **Input**: Raw page content (Markdown from Crawl4AI or text from `read_url`)
-- **System prompt**: `COMPRESS_PAGE_SYSTEM`
-- **Output**: 3–5 factual claims as `[{claim, url}]` JSON
-- **Rules**: Skip marketing fluff, navigation, boilerplate. Focus on statistics, dates, names, events, technical details.
+| Level | Function | Input → output | Token cap |
+|---|---|---|---|
+| 1 | `compressPage()` | Raw page → 3–5 `{claim, url}` facts | `DEFAULT_MAX_TOKENS_COMPRESS` 1024 |
+| 2 | `mergePageSummaries()` | Page bullets → ≤10 deduplicated bullets | `DEFAULT_MAX_TOKENS_MERGE` 3072 |
+| 3 | `clusterThemes()` | Topic summaries → 2–4 themed paragraphs | available, unused |
+| 4 | `draftSection()` | Themed paragraphs → section prose | available, unused |
 
-### Level 2: Page Merge
-- **Input**: Multiple Level 1 summaries for the same branch
-- **System prompt**: `MERGE_PAGE_SYSTEM`
-- **Output**: ≤10 deduplicated bullet points
-- **Notes**: Multi-source confirmation is noted. Redundant claims are merged.
-
-### Level 3: Thematic Clustering
-- **Input**: Multiple Level 2 summaries across branches
-- **System prompt**: `CLUSTER_THEMES_SYSTEM`
-- **Output**: Paragraphs per theme with multi-source citations
-
-### Level 4: Section Drafting
-- **Input**: Thematic clusters
-- **System prompt**: `DRAFT_SECTION_SYSTEM`
-- **Output**: Coherent prose sections with intro and conclusion
-
-### Raw Fact Preservation
-
-In addition to compressed summaries, the synthesis prompt includes granular `{claim, url}` facts. This prevents information loss from aggressive compression. The synthesis budget is split 60/40: 60% for the merged narrative summary, 40% for granular facts.
+Level 1 rules: keep statistics, dates, names, events, and technical details; drop marketing,
+navigation, and boilerplate; return fewer claims when a page is mostly chrome. The synthesis prompt
+keeps granular `{claim, url}` facts alongside the merged narrative (~60/40 split) so compression
+does not erase citations.
 
 ---
 
-## Thresholds & Constants
-
-### Force Synthesis Thresholds
-
-| Constant | Normal Mode | Deep Research |
-|---|---|---|
-| Iteration trigger (force synthesis) | `web-search-max-tool-iterations` pref (default 10) | 12 rounds (`DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS` × 2) |
-| Context trigger (force synthesis) | max(`CONTEXT_SYNTHESIS_THRESHOLD_CHARS` 40,000; 75% of provider input budget) | max(`DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS` 80,000; 75% of provider input budget) |
-
-### Truncation Tiers
-
-Tool results are progressively truncated by iteration count to prevent context overflow:
-
-| Iteration | Search Results | Read URL Chars | Crawl Chars |
-|---|---|---|---|
-| 1–2 | 10 × 500 chars | 12,000 | 24,000 |
-| 3–4 | 8 × 350 chars | 6,000 | 12,000 |
-| 5–6 | 5 × 250 chars | 3,000 | 6,000 |
-| 7+ | 3 × 150 chars | 1,500 | 3,000 |
-
-Deep Research doubles these limits.
-
-### Synthesis Budget
-
-- **Context budget**: 80,000 characters for synthesis prompt
-- **Adaptive truncation**: When total findings exceed budget, truncation is proportional across branches
-- **Fact/bullet split**: ~60% for merged narrative, ~40% for raw facts
-
-### Other Constants
+## Thresholds and Constants
 
 | Constant | Value | Purpose |
 |---|---|---|
-| `GAP_ANALYSIS_MAX_FOLLOWUP_QUERIES` | 2 | Max follow-up queries from gap analysis |
-| `GAP_ANALYSIS_MAX_TOKENS` | Model limit | Token budget for gap analysis call |
-| `REFINEMENT_CRAWL_COUNT` | 2 | Pages to crawl per refinement query |
-| `SYNTHESIS_OUTLINE_MAX_TOKENS` | Model limit | Token budget for outline generation |
-| `DEFAULT_MAX_TOKENS_MERGE` | 3,072 | Token budget for Level 2 merge |
+| `WEB_SEARCH_MAX_TOOL_ITERATIONS_DEFAULT` | 25 | Default iteration cap (setting `web-search-max-tool-iterations`, 1–100) |
+| `DEEP_RESEARCH_FORCE_SYNTHESIS_ITERATIONS` | 6 | Deep-research floor of `6 × 2 = 12` iterations |
+| `DEEP_RESEARCH_CONTEXT_THRESHOLD_CHARS` | 80 000 | Minimum context-based synthesis trigger in research |
+| `CONTEXT_SYNTHESIS_THRESHOLD_CHARS` | 40 000 | Minimum context-based synthesis trigger in normal chat |
+| `CONTEXT_SYNTHESIS_BUDGET_FRACTION` | 0.85 | Fraction of provider input budget that also triggers synthesis |
+| `MAX_HEALING_RETRIES` | 3 | Raw tool-call markup retries |
+| `GAP_ANALYSIS_MAX_FOLLOWUP_QUERIES` | 2 | Standard-mode gap queries |
+| `GAP_ANALYSIS_MAX_TOKENS` | 512 | Gap-analysis output budget |
+| `SYNTHESIS_OUTLINE_MAX_TOKENS` | 1024 | Outline output budget |
+| `SYNTHESIS_OUTLINE_REFINEMENT_TURNS` | 2 | Outline refinement passes |
+| `QUALITY_CHECK_SCORE_THRESHOLD` | 3 | Coverage score that triggers a retry |
+| `QUALITY_CHECK_GROUNDEDNESS_THRESHOLD` | 3 | Groundedness score below which a grounding warning is shown |
+| `MAX_QUALITY_RETRY_ITERATIONS` | 2 | Extra research/write passes |
+| `REFINEMENT_CRAWL_COUNT` | 2 | Pages crawled per refinement query |
+| `RESEARCH_BRANCH_MAX_RETRIES` | 2 | Transient branch retries |
+| `RESEARCH_BRANCH_BACKOFF_MS` | `[2000, 5000]` | Retry delays |
+| `RESEARCH_FOLLOW_LINKS_DEFAULT_MAX` / `_MAX_CAP` | 3 / 10 | Subpage links followed per branch |
+
+### Tool-result truncation tiers
+
+Normal chat:
+
+| Iteration | Search results | Snippet | `read_url` | `crawl_url` | KB |
+|---|---|---|---|---|---|
+| 1–2 | 10 | 500 | 16 000 | 32 000 | 8 000 |
+| 3–4 | 8 | 400 | 8 000 | 16 000 | 5 000 |
+| 5–6 | 6 | 300 | 4 000 | 8 000 | 3 000 |
+| 7+ | 4 | 200 | 2 000 | 4 000 | 2 000 |
+
+Deep Research (doubled/raised Oct 2026):
+
+| Iteration | Search results | Snippet | `read_url` | `crawl_url` | KB |
+|---|---|---|---|---|---|
+| 1–3 | 15 | 500 | 16 000 | 32 000 | 10 000 |
+| 4–5 | 12 | 450 | 10 000 | 20 000 | 8 000 |
+| 6–8 | 10 | 350 | 6 000 | 12 000 | 5 000 |
+| 9+ | 6 | 250 | 4 000 | 8 000 | 3 000 |
 
 ---
 
 ## How It Differs from Regular Tool-Calling
 
-| Aspect | Regular Tool-Calling | Deep Research |
+| Aspect | Regular chat | Deep Research |
 |---|---|---|
-| **Max tool iterations** | 5 | 12 |
-| **Synthesis trigger** | 50K chars context | 150K chars context |
-| **Planning** | None | 3–5 angles with user approval |
-| **Gap analysis** | None | Explicit gap detection + follow-up |
-| **Refinement** | None | Targeted mini-branches for gaps |
-| **Synthesis** | Single-pass answer | Two-pass (outline + full report) |
-| **Quality check** | None | Score 1–5 with retry below 3 |
-| **Compression** | None | 4-level hierarchical pipeline |
-| **Citations** | Source links only | Inline `[N]` buttons + bibliography |
-| **Caching** | None | SHA-256 keyed persistent cache |
-| **Progress UI** | Tool-call log rows | Phase progress card |
-| **Context sharing** | Per-turn only | Cross-branch `_globalResearchContext` |
+| Iteration cap | `web-search-max-tool-iterations` (default 25) | `max(preference, 12)` |
+| Context synthesis trigger | max(40 K, 85 % budget) | max(80 K, 85 % budget) |
+| Planning | None | 3–5 editable angles + revision loop |
+| Critique | None | Mid-research re-planning + causal-chain check |
+| Gap analysis | None | Explicit gaps → follow-up queries |
+| Refinement | None | Mini-branches for gaps |
+| Synthesis | Single pass | Outline (+ refinement) then streamed report |
+| Quality check | None | Coverage + groundedness, bounded retries |
+| Compression | None | Per-page facts + merge to branch findings |
+| Citations | Source links | Inline `[N]` + bibliography |
+| Caching | None | SHA-256 cache + crash checkpoints |
+| Progress UI | Tool log | Timeline with phase markers |
 
 ---
 
-## Performance Considerations
+## Performance and Failure Handling
 
-### Parallel vs. Sequential Execution
-- **Branch execution**: Sequential (not parallel) to allow cross-branch context sharing. Each branch benefits from previous branches' findings.
-- **Tool execution within a branch**: `read_only` tools execute in parallel via `Promise.all()`. `potentially_unsafe` tools run sequentially with delay.
-- **Cache**: Searches and crawls are cached by SHA-256 key, so repeated deep research on similar topics is significantly faster.
-
-### Memory
-- `_globalResearchContext` accumulates all branch findings as strings. For very large research tasks, this can grow to 100K+ characters.
-- `_branchResults` stores per-branch compressed outputs.
-- The research cache at `~/.local/share/katabai/research-cache.json` persists between sessions.
-
-### Time
-- Each branch involves 3–5 network calls (search → read → crawl → compression LLM call).
-- Planning and gap analysis are each one non-streaming LLM call.
-- Synthesis is two LLM calls (outline + full report), with the full report streamed.
-- A typical 5-angle deep research takes 2–5 minutes depending on provider speed and page load times.
-
-### Failure Handling
-- **Planner failure**: Falls back to original query as single angle.
-- **Individual branch failure**: Skipped, other branches continue.
-- **Gap analysis failure**: Skipped, proceeds to synthesis without refinement.
-- **Quality check failure**: Proceeds with best available report.
-- The pipeline is designed to degrade gracefully — partial results are better than no results.
+- **Sequential by design** — branches run one at a time to share cross-branch context and avoid
+  provider rate limits.
+- **Caching** — searches/crawls are keyed by SHA-256 in `~/.local/share/katabai/research-cache.json`;
+  checkpoints in `research-checkpoint.json` allow recovery after a crash or reload.
+- **Time** — a branch is typically 3–5 network calls plus compression; a 5-angle run usually takes
+  2–5 minutes depending on provider speed and page load times.
+- **Memory** — `_globalResearchContext` can grow past 100 K characters on large runs; synthesis
+  applies proportional truncation to stay within the depth budget.
+- **Degradation** — planner failure falls back to one angle; a failed branch is skipped; failed gap
+  analysis skips refinement; failed quality check ships the best report. Partial results are always
+  preferred over no result.

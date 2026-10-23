@@ -9,13 +9,15 @@ import {
     getStageKeysThrough,
     isPetProvider,
     normalizeCollectionState,
+    normalizePetState,
+    createEmptyPetState,
     parsePetForm,
     PET_PROVIDERS,
     PET_SELECTION_MODES,
     providerFormId,
     resolveActivePetForm,
 } from '../src/pets/petCollection.js';
-import { assert, assertEqual, runTests } from './testUtils.js';
+import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
 
 const tests = [
     [
@@ -137,6 +139,62 @@ const tests = [
             );
             assertEqual(getPetDisplayScale('hatchling'), 0.85, 'Hatchling scale');
             assertEqual(getPetDisplayScale('sage'), 1, 'Sage scale');
+        },
+    ],
+
+    // ── State normalization ────────────────────────────────────────────────
+
+    [
+        'createEmptyPetState: zeroed, uncelebrated pet',
+        () => {
+            assertDeepEqual(
+                createEmptyPetState(),
+                { xp: 0, replyCount: 0, hatchedAt: 0, lastFedAt: 0, celebratedStages: [] },
+                'empty pet shape',
+            );
+            assert(createEmptyPetState() !== createEmptyPetState(), 'fresh object each call');
+        },
+    ],
+
+    [
+        'normalizePetState: coerces counts and timestamps from persisted junk',
+        () => {
+            const normalized = normalizePetState({
+                xp: '1250.6',
+                replyCount: -4,
+                hatchedAt: '1700000000.9',
+                lastFedAt: Number.NaN,
+            });
+            assertEqual(normalized.xp, 1251, 'string XP rounded');
+            assertEqual(normalized.replyCount, 0, 'negative count clamped');
+            assertEqual(normalized.hatchedAt, 1_700_000_000, 'timestamp floored');
+            assertEqual(normalized.lastFedAt, 0, 'NaN timestamp → 0');
+        },
+    ],
+
+    [
+        'normalizePetState: drops unknown, duplicate, and future-stage celebrations',
+        () => {
+            const normalized = normalizePetState({
+                xp: 12_000, // sprout (rank 2)
+                celebratedStages: ['hatchling', 'sprout', 'sage', 'hatchling', 'bogus'],
+            });
+            assertDeepEqual(
+                normalized.celebratedStages,
+                ['hatchling', 'sprout'],
+                'known, unique, reached stages only',
+            );
+        },
+    ],
+
+    [
+        'normalizePetState: non-object input yields a clean default state',
+        () => {
+            for (const value of [null, undefined, 'pet', 42, []]) {
+                const normalized = normalizePetState(value);
+                assertEqual(normalized.xp, 0, `${JSON.stringify(value)} xp`);
+                assertDeepEqual(normalized.celebratedStages, [], `${JSON.stringify(value)} stages`);
+            }
         },
     ],
 ];

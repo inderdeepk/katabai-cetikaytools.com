@@ -19,6 +19,8 @@
  * @param {string} [options.apiKey]  bearer/x-api-key credential ('' for none)
  * @param {Array} options.messages   chat messages
  * @param {number} [options.maxTokens]
+ * @param {number} [options.ollamaNumPredict]  explicit Ollama num_predict cap
+ *   (OpenAI-compatible dialects use maxTokens; Ollama has no max_tokens field)
  * @returns {{ url: string, headers: Record<string,string>, payload: object }}
  */
 export function buildNonStreamingChatRequest({
@@ -28,6 +30,7 @@ export function buildNonStreamingChatRequest({
     apiKey = '',
     messages,
     maxTokens = 256,
+    ollamaNumPredict = null,
 }) {
     let endpoint = String(baseUrl ?? '').replace(/\/+$/, '');
 
@@ -54,6 +57,9 @@ export function buildNonStreamingChatRequest({
         // produces output directly instead of getting stuck in a thinking
         // phase that can time out or consume all output tokens.
         payload = { model, messages, stream: false, think: false };
+        if (Number.isFinite(ollamaNumPredict) && ollamaNumPredict > 0) {
+            payload.options = { num_predict: ollamaNumPredict };
+        }
     } else {
         // openai / unsloth / deepseek (OpenAI-compatible chat completions)
         if (

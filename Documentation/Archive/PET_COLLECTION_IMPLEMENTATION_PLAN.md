@@ -1,5 +1,8 @@
 # Katab Pet Collection Implementation Plan
 
+> **Archived design document** — kept for provenance. See [README.md](README.md) for context;
+> the code and current [technical documentation](../Technical/) are authoritative.
+
 ## 1. Product Decision
 
 Katab will have a collection of five independently raised provider pets, with one active companion shown at a time.

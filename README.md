@@ -1,171 +1,202 @@
 # Katab (ਕਿਤਾਬ) — Desktop AI Assistant for GNOME
 
-**Katab** (Punjabi for "book", ਕਿਤਾਬ) is a full-featured AI assistant embedded directly into the GNOME desktop. Access multiple LLM providers, search the web, scrape pages, run deep multi-source research, query a local knowledge base, attach documents, and collect evolving pet companions — all from a chat overlay in your top panel.
+**Katab** (Punjabi for "book", ਕਿਤਾਬ) is a full-featured AI assistant embedded directly into the
+GNOME desktop. Chat with local or cloud models, search and scrape the web, run deep multi-source
+research, query a local knowledge base, attach documents, track token spend, and raise a collection
+of pet companions — all from an overlay in your top panel.
 
 **Supports GNOME Shell 46, 47, and 48.**
 
-## Features at a Glance
+---
 
-- **5 AI Providers** — Ollama (local), Unsloth Studio (local), DeepSeek, OpenAI, and Anthropic (Claude)
-- **Streaming Chat** with markdown rendering, code highlighting, thinking/reasoning blocks, and inline citations
-- **Document Attachments** — `.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`, `.eml`
-- **Web Search** via self-hosted SearxNG — manual `/search` or autonomous model-driven lookups
-- **Web Scraping** via Crawl4AI — deep browser rendering with `/crawl`
-- **Deep Research** — multi-phase pipeline: planning → parallel research → gap analysis → refinement → two-pass synthesis with citations; depth (Standard/Deep/Max) and per-role model overrides in Settings → Tools → Deep Research
-- **Knowledge Base** — local RAG semantic search on your indexed documents (`/kb`)
-- **Session Memory** — older turns fold into a persistent rolling summary so long chats keep context without resending the whole transcript
-- **Pet Collection** — 5 provider pets with 6 evolution stages, crossbreed forms, and the Mixie companion
-- **Token Tracking** — local-only ledger with cost estimates, configurable monthly budgets, and JSON export
-- **Ollama Presets** — save, load, and share model configuration profiles
-- **Dark/Light Theme** — automatic detection with live switching
-- **Keyboard Shortcut** — `Ctrl+Super+C` to toggle chat
+## Highlights
+
+- **Five providers** — Ollama and Unsloth Studio (local), DeepSeek, OpenAI, and Anthropic (cloud).
+  Switch from the header or from preferences.
+- **Streaming chat** with a chat-friendly markdown renderer, code blocks with copy buttons,
+  thinking/reasoning blocks, inline `[N]` citations, and source buttons.
+- **Instant AI chat titles** — a new conversation is named from its first prompt, with a warm-up
+  indicator while the title and first reply are prepared.
+- **Session memory** — older turns fold into a persistent rolling summary so long chats keep
+  context without resending the whole transcript.
+- **Document attachments** — `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.eml`, `.png`, `.jpg`,
+  `.jpeg`; parsed locally before anything is sent to a provider.
+- **Web search** through your own [SearxNG](https://docs.searxng.org/) instance (`/search`).
+- **Web scraping** through your own [Crawl4AI](https://github.com/unclecode/crawl4ai) container
+  (`/crawl`), with optional server-side LLM extraction.
+- **Deep Research** — plan → branches → mid-research critique → gap analysis → refinement →
+  two-pass synthesis → quality check, with Standard/Deep/Max depth and optional per-role models.
+- **Knowledge base (RAG)** — local semantic + BM25 search over documents, conversations, and
+  research results (`/kb`), backed by a bundled FastAPI + ChromaDB service.
+- **Token tracking & pets** — a local-only ledger with cost estimates, budgets, milestones, export,
+  and five provider pets that evolve across six stages.
+- **Ollama presets** — save, load, and restore complete Ollama configurations.
+- **Dark/light themes**, live system-theme switching, and a `Ctrl+Super+C` toggle shortcut.
 
 ---
 
 ## Table of Contents
 
+- [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Features](#features)
+  - [Providers](#providers)
+  - [Chat and rendering](#chat-and-rendering)
+  - [Session memory](#session-memory)
+  - [Document tool](#document-tool)
+  - [Web search (SearxNG)](#web-search-searxng)
+  - [Web scraper (Crawl4AI)](#web-scraper-crawl4ai)
+  - [Knowledge base (RAG)](#knowledge-base-rag)
+  - [Deep Research](#deep-research)
+  - [Token breakdown and pets](#token-breakdown-and-pets)
+  - [Ollama presets](#ollama-presets)
+  - [History](#history)
+  - [Appearance and keyboard](#appearance-and-keyboard)
+- [Commands and tools](#commands-and-tools)
+- [Data and privacy](#data-and-privacy)
 - [Documentation](#documentation)
-- [Configuration & Security](#configuration--security)
-- [Optional Tools](#optional-tools)
-  - [Document Tool](#optional-document-tool)
-  - [Web Search Tool](#optional-web-search-tool)
-- [Chat Formatting](#chat-formatting)
-- [AI Token Breakdown & Pets](#ai-token-breakdown)
-- [Session Memory](#session-memory)
+- [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [License](#license)
 
 ---
 
+## Requirements
+
+### System
+
+- GNOME Shell **46, 47, or 48** (see `metadata.json`).
+- `glib-compile-schemas` from `glib2` — required once after checkout and after any schema edit.
+- Optional for development: Node.js 20+ and npm (lint/format/test runner), GJS for the import
+  smoke test.
+
+### Optional local services
+
+Katab works with only a provider configured. The tools below are opt-in and disabled by default.
+
+| Service | Default URL | Used by |
+|---|---|---|
+| [Ollama](https://ollama.com) | `http://localhost:11434` | Ollama provider; KB embeddings; optional vision backend |
+| [Unsloth Studio](https://github.com/unslothai/unsloth) | `http://localhost:8888/v1` | Unsloth provider (server-side tools) |
+| [SearxNG](https://docs.searxng.org/) | `http://localhost:8080` | `web_search`, `read_url`, deep research |
+| [Crawl4AI](https://github.com/unclecode/crawl4ai) | `http://localhost:11235` | `crawl_url`, `explore_docs`, deep research |
+| Katab RAG service (bundled) | `http://127.0.0.1:11435` | `knowledge_search`, KB indexing |
+
+### Optional system tools
+
+| Tool | Package | Needed for |
+|---|---|---|
+| `pdftotext` | `poppler-utils` (Debian/Ubuntu), `poppler` (Arch) | PDF attachments and PDF page reads |
+| `pandoc` | `pandoc` | DOCX attachments |
+| `msgfmt` | `gettext` | Compiling translations (`make langs`) |
+
+Everything else (plain text, Markdown, images, `.eml` email) is parsed with built-in code.
+
+---
+
 ## Installation
 
-### Prerequisites
-- GNOME Shell version 46.
-- Optional local file support:
-   - Plain text, Markdown, PNG, JPG, and JPEG work without extra packages.
-   - Image understanding: DeepSeek Flash (V4.1) accepts images natively. Other providers need a vision-capable model — Ollama vision models take images directly, and text-only DeepSeek models can route images through the optional vision-model orchestration in Settings → DeepSeek.
-   - PDFs require `pdftotext` from `poppler-utils` or the distro-equivalent `poppler` package.
-   - DOCX files require `pandoc`.
-   - `.eml` email files are parsed with a built-in MIME reader — no extra tools needed.
+### From source
 
-### Manual Installation
-1. Clone or download the repository into your GNOME shell extensions directory:
+1. Clone into your GNOME Shell extensions directory:
    ```bash
-   git clone https://github.com/inderdeepk/katabai-cetikaytools.com.git ~/.local/share/gnome-shell/extensions/katabai@cetikaytools.com
-   ```
-2. Navigate to the extension directory:
-   ```bash
+   git clone https://github.com/inderdeepk/katabai-cetikaytools.com.git \
+     ~/.local/share/gnome-shell/extensions/katabai@cetikaytools.com
    cd ~/.local/share/gnome-shell/extensions/katabai@cetikaytools.com
    ```
-3. Compile the settings schema:
+2. Compile the settings schema:
    ```bash
    glib-compile-schemas schemas/
+   # or: make compile-schemas
    ```
-4. Restart GNOME Shell (or log out and log back in on Wayland).
-5. Enable the extension using the Extensions application (`gnome-extensions-app`) or via the command line:
+3. Restart GNOME Shell — log out and back in on Wayland, or `Alt+F2` → `r` on X11.
+4. Enable the extension:
    ```bash
    gnome-extensions enable katabai@cetikaytools.com
    ```
 
+### Development install
+
+`make install` rsyncs the checkout into the extensions directory, `make reload` disables and
+re-enables it, and `make logs` follows the relevant journal lines:
+
+```bash
+make install && make reload
+make logs
+```
+
+See the [Development Guide](Documentation/Technical/DEVELOPMENT.md) for the full loop and
+[Testing](Documentation/Technical/TESTING.md) for validation commands.
+
+---
+
 ## Quick Start
 
-1. **Click the Katab icon** (📖) in your GNOME top panel, or press `Ctrl+Super+C`.
-2. **Choose a provider** in the preferences: open the Extensions app → Katab → Settings → General → Model Provider.
-3. **For local AI**: install [Ollama](https://ollama.com) (`ollama serve`), pull a model (`ollama pull llama3.2`), and select Ollama as your provider.
-4. **For cloud AI**: enter your API key for DeepSeek, OpenAI, or Anthropic in their respective settings pages.
-5. **Type a message** and press Enter to send. Press `Shift+Enter` for a new line.
+1. Click the Katab icon in the top panel, or press `Ctrl+Super+C`.
+2. Open **Settings** (panel menu, or the Extensions app) → **General** → **Active Provider**.
+3. For local models: run Ollama (`ollama serve`), pull a model (`ollama pull llama3.2`), then pick
+   it on the **Ollama** page.
+4. For cloud models: enter an API key on the **DeepSeek**, **OpenAI**, or **Anthropic** page.
+5. Type a message and press **Enter**. **Shift+Enter** inserts a newline; **Stop** cancels a
+   streaming response.
 
-For detailed setup and all features, see the [User Guide](Documentation/Help/UserGuide.md).
+The [User Guide](Documentation/Help/UserGuide.md) covers every feature and setting.
 
-## Documentation
+---
 
-| Document | Description |
-|---|---|
-| [User Guide](Documentation/Help/UserGuide.md) | Getting started, provider setup, slash commands, tools, token breakdown, pets, troubleshooting |
-| [Architecture](Documentation/Technical/ARCHITECTURE.md) | Codebase structure, design patterns, dependencies, data flow |
-| [Security](Documentation/Technical/SECURITY.md) | Vulnerability reporting, API key practices, tool safety notes |
-| [Development Guide](Documentation/Technical/DEVELOPMENT.md) | Environment setup, coding conventions, adding providers/tools, debugging |
-| [API Reference](Documentation/Technical/API_REFERENCE.md) | Full GSettings schema reference, tool schemas, external service APIs |
-| [Deep Research](Documentation/Technical/DEEP_RESEARCH.md) | Pipeline architecture: planning, compression, gap analysis, synthesis |
-| [Testing](Documentation/Technical/TESTING.md) | Test commands, syntax validation, in-shell testing, known baseline noise |
-| [Changelog](CHANGELOG.md) | Release history and notable changes |
-| [Contributing](CONTRIBUTING.md) | Branching strategy, coding conventions, PR process |
+## Features
 
-## Configuration & Security
+### Providers
 
-Katab is designed with security in mind. API keys are safely managed using GNOME's GSettings and are never hardcoded into the source code or loaded from plain text `.env` files.
+| Provider | Default endpoint | Default model | Notes |
+|---|---|---|---|
+| Ollama | `http://localhost:11434` | `llama3` | Full sampling/hardware tuning, thinking mode, vision models, presets |
+| Unsloth Studio | `http://localhost:8888/v1` | `default` | Server-side `web_search`, `python`, and `terminal` tools |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-flash` | Thinking mode, reasoning effort, JSON mode, balance display |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o` | Function-calling tools |
+| Anthropic | `https://api.anthropic.com` | `claude-3-5-sonnet-20241022` | Tool use, top-level system prompt |
 
-To configure your API keys:
-1. Open the GNOME Extensions application.
-2. Click on the settings (gear) icon next to the "Katab - AI Assistant" extension.
-3. Enter your API keys for Unsloth, OpenAI, or Anthropic in the Preferences window.
-4. The extension will securely save these keys using GSettings.
+Image attachments work with **Ollama vision models** and with **DeepSeek** (`deepseek-flash`
+natively, or any DeepSeek model routed through a configured vision backend).
 
-## Optional Document Tool
+### Chat and rendering
 
-Katab now includes an optional document tool that stays disabled by default. Basic chat does not depend on it.
+- Markdown subset rendering: headings, emphasis, lists, blockquotes, inline code, fenced code
+  blocks, and tables.
+- Code blocks carry a **Copy** button; each message has a copy action.
+- Thinking/reasoning output collapses into a **Show Thinking** block.
+- After tool use, responses include source buttons and clickable `[N]` citations; Deep Research
+  reports also include a bibliography.
+- A warm-up row (*Naming this chat…* → *Thinking…*) covers the first-prompt title request and the
+  handoff to the main response.
+- The prompt counter turns amber near the limit and red at the 16,000-character cap.
 
-To enable it:
-1. Open the Katab preferences window.
-2. Go to the `Tools` page.
-3. Turn on `Enable Document Tool`.
-4. Check the capability badges:
-   - `Built in` means Katab can already read that format.
-   - `Detected` means the required local parser was found on your system.
-   - `Install` means the parser is missing and the settings page will tell you which package to install.
+### Session memory
 
-Common install commands:
+Katab folds older turns into a compact, persistent session memory (project and goal, current state,
+progress, decisions, Q&A, next steps) in the background between turns. The full transcript still
+lives in `history.json` and in the visible chat; only the model-facing payload is condensed.
 
-```bash
-# Debian / Ubuntu
-sudo apt install poppler-utils pandoc
+- Open **Session Info** from the footer token gauge to inspect the memory, run **Summarize Now**,
+  or **Compact Conversation**.
+- Memory is stored inside the conversation, so it survives reloads and history switches.
 
-# Fedora
-sudo dnf install poppler-utils pandoc
+### Document tool
 
-# Arch
-sudo pacman -S poppler pandoc
-```
+Disabled by default, enabled under **Settings → Tools → Document Tool**.
 
-Verify detection with:
+- Built-in parsing for `.txt`, `.md`, `.markdown`, `.eml`, `.png`, `.jpg`, `.jpeg`.
+- `.pdf` needs `pdftotext`; `.docx` needs `pandoc`; the preferences page shows
+  **Built in / Detected / Install** capability badges.
+- Attach from **Tools → Docs** (footer gear) or with `/doc "path" [instruction]`.
+- Documents are parsed locally. Images are base64-encoded locally and only sent to providers that
+  can accept them.
 
-```bash
-which pdftotext
-which pandoc
-```
+### Web search (SearxNG)
 
-Once enabled, you can either click the attachment button in chat or use `/doc` directly:
-
-```text
-/doc
-/doc "/absolute/path/to/file.pdf"
-/doc "/absolute/path/to/file.docx" summarize the key points
-/doc "/absolute/path/to/screenshot.png" describe what is in this image
-```
-
-Typing `/doc` with no quoted path opens the file picker. Supported formats are `.txt`, `.md`, `.pdf`, `.docx`, `.png`, `.jpg`, and `.jpeg`.
-
-Documents are still parsed into text locally before they are sent to any provider. Image attachments are different: Katab base64-encodes them locally and only sends them when the active provider is Ollama and the selected Ollama model looks vision-capable. Pull a model such as `llama3.2-vision` or `llava` before sending images.
-
-## Optional Web Search Tool
-
-Katab can give models live web access through a **self-hosted [SearxNG](https://docs.searxng.org/)** instance. It talks directly to SearxNG's JSON API over HTTP — there is no Docker spawning, no MCP subprocess, and no third-party search key required. The tool stays disabled by default.
-
-### 1. Run a SearxNG instance
-
-The quickest way is the official container. SearxNG must have the JSON output format enabled (it is off by default):
-
-```bash
-docker run --rm -d \
-  -p 8080:8080 \
-  -v "${PWD}/searxng:/etc/searxng" \
-  --name searxng \
-  searxng/searxng
-```
-
-Then edit `searxng/settings.yml` and make sure the JSON format is allowed:
+Disabled by default; enable under **Settings → Tools → Web Search** and set the SearxNG URL.
+SearxNG must expose the JSON format:
 
 ```yaml
 search:
@@ -174,82 +205,190 @@ search:
     - json
 ```
 
-Restart the container and confirm the JSON API answers:
+- `/search query` anywhere in a message forces a lookup; the **Tools** popup (footer gear) sets
+  Search to **Auto → On → Off**.
+- With **Autonomous web search** on (default), models may call `web_search` and `read_url`
+  themselves.
+- `read_url` results include the links found on the page so the model can follow subpages.
+- All page fetches are SSRF-guarded (`src/shared/networkGuard.js`); private/loopback access
+  requires an explicit opt-in setting.
+
+### Web scraper (Crawl4AI)
+
+Disabled by default; enable under **Settings → Tools → Web Scraper**.
+
+- `/crawl <url>` deep-scrapes one page; `/crawl <query>` searches first and scrapes the top result.
+- With autonomous scraping on (default), the model can call `crawl_url`, and `explore_docs` to
+  navigate a documentation site via its table of contents.
+- Raw Markdown is the default output; `mode="extract"` requests server-side LLM extraction
+  (structured JSON or a freeform answer) when the Crawl4AI server has an LLM provider configured.
+- **Follow Subpage Links in Research** (default on, 3 links per branch) lets Deep Research follow
+  the most relevant links found on scraped pages.
+
+### Knowledge base (RAG)
+
+Disabled by default. Katab ships the service source in [`rag-service/`](rag-service/) and can
+install it from preferences:
+
+1. Copy the bundled service to its deployed location (the one-click setup manages the virtualenv
+   and systemd unit, not the source file):
+   ```bash
+   mkdir -p ~/.local/share/katabai/rag-service
+   cp rag-service/server.py rag-service/requirements.txt ~/.local/share/katabai/rag-service/
+   # later updates: make sync-rag-server
+   ```
+2. Open **Settings → Tools → Knowledge Base**.
+3. In the **Service** group, click **Set Up & Start** — Katab creates the virtualenv, installs
+   dependencies, writes the `katabai-rag.service` systemd user unit, and starts it.
+   (Manual steps and the unit file are shown in the page's **Setup** expander.)
+4. Pull the embedding model once: `ollama pull nomic-embed-text`.
+5. Turn on **Enable Knowledge Base** and click **Test Connection**.
+
+Use `/kb query`, `/kb import "path"`, or **Tools → Knowledge** (footer gear). Conversations, attached
+documents, tool results, memory facts, and (on Re-index) the research cache are indexed locally.
+
+### Deep Research
+
+Enable Web Search or Web Scraper first. Start a run with `/research` or the **Research** row in the
+footer Tools popup (an Off/On toggle). The pipeline is: planning (3–5 angles, editable and approvable) →
+sequential branches → mid-research critique → gap analysis → refinement → two-pass synthesis →
+quality check.
+
+- **Settings → Tools → Deep Research** exposes **Research Depth** (Standard / Deep / Max) and
+  optional **Compression** and **Synthesis** model overrides.
+- Reports include inline citations and a bibliography; results are cached in
+  `~/.local/share/katabai/research-cache.json`.
+- See [DEEP_RESEARCH.md](Documentation/Technical/DEEP_RESEARCH.md) for the internals.
+
+### Token breakdown and pets
+
+Open the **Usage** button in the chat header (with its pet avatar) or the **Token Breakdown** panel menu entry. Three tabs:
+
+- **Overview** — today/week/month/year/all-time totals, local-vs-cloud share, trends, milestones,
+  and a 14-day chart.
+- **Collection** — five provider pets (Ollie, Slothy, Sparky, Clyde, Pearl), six stages, XP
+  progress, companion pinning, and usage milestones.
+- **Spending** — estimated cost by provider and model, plus monthly-budget progress.
+
+The footer token gauge shows context-window usage (system prompt, tools, messages, reserved reply)
+and opens Session Info. Set a monthly budget and warning threshold under **Settings → General**.
+Everything is local; **Export Usage JSON** writes a timestamped copy to your Documents folder.
+
+### Ollama presets
+
+Presets capture 26 Ollama settings (connection, generation, sampling, hardware, and system prompt).
+Manage them from the **Presets** button in the chat header (shown when Ollama is active) or from
+**Settings → Ollama → Model Presets**. Stored in `~/.local/share/katabai/presets.json`.
+
+### History
+
+Conversations auto-save to `~/.local/share/katabai/history.json` (up to 50 conversations, debounced
+writes, synchronous flush on disable). The history panel has **Active** and **Archived** tabs,
+search, and a title/description editor with optional **Generate with AI**. New chats are also named
+automatically from their first prompt by the active provider/model; disable this under
+**Settings → General → Chat → AI-Generated Chat Titles**.
+
+### Appearance and keyboard
+
+- `Ctrl+Super+C` toggles the chat; rebind it under **Settings → General → Keyboard Shortcut**.
+- **Chat Text Size** (Compact / Comfortable / Large) and **Glassy Translucent Dialog** live under
+  **Settings → General → Appearance**.
+- Dark/light follows the system color scheme and updates live in both the overlay and preferences.
+
+---
+
+## Commands and tools
+
+| Command | Tool | Description |
+|---|---|---|
+| `/help` | — | Show the commands available with the current provider and settings |
+| `/doc "path"` | `document` | Attach and parse a local file (pre-send tool) |
+| `/search query` | `web_search` | Search the web through SearxNG |
+| `/crawl URL` | `crawl_url` | Deep-scrape a page (or search then scrape the top result) |
+| `/kb query` | `knowledge_search` | Search the local knowledge base |
+| `/kb import "path"` | — | Import files or a folder into the knowledge base |
+| `/research` | `deep_research` | Toggle the Deep Research meta-mode |
+| `/python` | — | Execute Python server-side (Unsloth only) |
+| `/terminal` | — | Run a shell command server-side (Unsloth only) |
+
+Agent-only tools with no command: `read_url`, `explore_docs`, `update_knowledge`,
+`forget_knowledge`. See the [API Reference](Documentation/Technical/API_REFERENCE.md) for their
+schemas and danger levels.
+
+---
+
+## Data and privacy
+
+Katab has no telemetry and no Katab-operated backend. Chat traffic goes only to the provider you
+select (or to the local services you configure).
+
+| Data | Path |
+|---|---|
+| Chat history | `~/.local/share/katabai/history.json` |
+| Token ledger | `~/.local/share/katabai/token-usage.json` |
+| Ollama presets | `~/.local/share/katabai/presets.json` |
+| Research cache | `~/.local/share/katabai/research-cache.json` |
+| Research checkpoints | `~/.local/share/katabai/research-checkpoint.json` |
+| Knowledge base index state | `~/.local/share/katabai/rag-index-state.json` |
+| Knowledge base vectors | `~/.local/share/katabai/chroma/` |
+| RAG service checkout | `~/.local/share/katabai/rag-service/` |
+| API keys and settings | GSettings (dconf) — see [Security](Documentation/Technical/SECURITY.md) |
+
+API keys are stored through GSettings, never hardcoded and never read from `.env` files. dconf is
+not encrypted at rest; rely on full-disk encryption and file permissions for defense in depth.
+
+---
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [Documentation index](Documentation/README.md) | Map of every document and its audience |
+| [User Guide](Documentation/Help/UserGuide.md) | Complete user manual |
+| [Architecture](Documentation/Technical/ARCHITECTURE.md) | Source layout, lifecycle, data flow, subsystems |
+| [API Reference](Documentation/Technical/API_REFERENCE.md) | GSettings keys, tool schemas, external APIs |
+| [Deep Research](Documentation/Technical/DEEP_RESEARCH.md) | Research pipeline internals |
+| [Development Guide](Documentation/Technical/DEVELOPMENT.md) | Setup, conventions, extension recipes, debugging |
+| [Testing](Documentation/Technical/TESTING.md) | Test suites, audits, CI, checklists |
+| [Security](Documentation/Technical/SECURITY.md) | Reporting, secret handling, tool safety |
+| [RAG service](rag-service/README.md) | Local service source, deployment, tests |
+| [Fidelity audits](scripts/audits/README.md) | How past refactors are proven to be pure code moves |
+| [Changelog](CHANGELOG.md) | Notable changes |
+| [Contributing](CONTRIBUTING.md) | Branching, conventions, PR and release process |
+
+---
+
+## Troubleshooting
+
+A few quick checks; the [User Guide](Documentation/Help/UserGuide.md#16-troubleshooting) has the
+full list.
 
 ```bash
-curl 'http://localhost:8080/search?q=test&format=json' -H 'Accept: application/json'
+# Extension logs
+journalctl -f -o cat /usr/bin/gnome-shell | grep -i katab
+
+# Local services
+curl http://localhost:11434/api/tags                  # Ollama
+curl 'http://localhost:8080/search?q=test&format=json' # SearxNG (JSON enabled)
+curl http://localhost:11235/health                    # Crawl4AI
+curl http://127.0.0.1:11435/health                    # RAG service
 ```
 
-### 2. Enable it in Katab
+- **"Provider is down"** — start the local service or check the API key.
+- **Blank or truncated replies** — a tool-iteration or context limit forced synthesis; start a new
+  chat or raise **Max Tool Iterations** (Settings → Tools → Web Search).
+- **SearxNG returns HTML** — add `json` to `search.formats` and restart the container.
+- **No images sent** — switch to a vision-capable Ollama model, or configure DeepSeek image support.
 
-1. Open the Katab preferences window and go to the `Tools` page.
-2. Click `Web Search` to open its settings.
-3. Turn on `Enable Web Search` and set the `SearxNG URL` (for example `http://localhost:8080`).
-4. Click `Test Connection` to verify Katab can reach the JSON API.
+---
 
-### 3. Use it
+## Contributing
 
-- **Manual search:** use `/search` at the start or end of a message to force a web lookup, e.g. `/search gnome 47 release date` or `gnome 47 release date /search`. Katab fetches results, then the model answers using them with source links.
-- **Autonomous search:** when `Autonomous web search` is on (default), capable providers (Ollama, OpenAI, Anthropic, DeepSeek) can decide to call the `web_search` and `read_url` tools on their own during a normal conversation.
-- **Link-aware browsing:** `read_url` and `crawl_url` results list the links found on the page, so when the answer is not on the current page the model can follow a promising subpage directly instead of running another broad search. Deep Research does this automatically (Web Scraper → “Follow Subpage Links in Research”, default 3 links per branch).
-
-### Settings reference
-
-| Setting | Purpose |
-| --- | --- |
-| SearxNG URL | Base URL of your SearxNG instance. |
-| Result limit | Maximum results passed to the model (1–30). |
-| Time range / Safe search / Language / Categories / Engines | Forwarded to SearxNG to scope results. |
-| API key | Optional `Authorization: Bearer` token if your instance requires one. |
-| Read full pages (`read_url`) | Lets the model open a result, read its text, and follow the links listed in it. Guarded against private/loopback addresses. |
-| Multi-query expansion | Expands a `/search` query into several related queries before searching. Off by default for predictable latency. |
-| Autonomous web search | Allows the model to call the search tools without `/search`. On by default. |
-| Allow local/loopback addresses | Off by default. Only enable for a trusted local-only setup; it relaxes the SSRF guard. |
-
-### Notes & security
-
-- **Unsloth keeps its own server-side tools.** When Unsloth is the active provider, web search, Python, and terminal run on Unsloth's servers — this local SearxNG tool only applies to Ollama, OpenAI, Anthropic, and DeepSeek.
-- Search results and fetched pages are **untrusted**. Katab labels them clearly, truncates them, and never executes them; treat any instructions found inside results with suspicion.
-- `read_url` only fetches `http`/`https` URLs and blocks private, loopback, and link-local addresses unless you explicitly opt in. Reading PDF pages reuses `pdftotext` from `poppler-utils`.
-
-## Chat Formatting
-
-Assistant responses now render a chat-friendly markdown subset instead of showing raw formatting markers. Supported formatting includes headings, bold text, italics, bullet and numbered lists, blockquotes, inline code, and fenced code blocks.
-
-Links are extracted from assistant responses and shown as clickable actions below the message bubble so they can be opened with your default browser. Markdown tables now render as structured chat tables; images and full CommonMark edge cases are still treated as plain text.
-
-## AI Token Breakdown
-
-Katab keeps a private, local-only ledger of your AI token usage and turns it into a companion experience:
-
-- **Tokens button (top middle of the chat window)** — opens the breakdown panel with three tabs:
-  - **Overview** — totals for today / week / month / year / all time, the local-vs-cloud ratio with a one-click "Try Next Draft Locally" action, trend summaries, milestones, and a 14-day activity chart.
-  - **Collection** — the provider pet collection: inspect every pet, open detail views, pin a companion, and preview crossbreed forms.
-  - **Spending** — estimated spend with per-provider/per-model breakdowns and monthly-budget progress.
-- **Header context gauge** — the footer token box shows how full the context window is (system prompt + tool definitions + messages + space reserved for the response), with a draft-token preview while you type. Hover or click it for the Session Info breakdown, including the session-memory share and cumulative deep-research pipeline tokens.
-- **Model pricing & cost** — built-in pricing for major models, including DeepSeek's time-aware peak/off-peak and cache hit/miss rates. Estimates are best-effort; actual bills may differ.
-- **Budget warnings** — optionally set a monthly USD budget and a warning threshold (Settings → General). As spending approaches the limit, the Tokens panel shows budget progress and the Overview surfaces a warning tip.
-- **Pet collection** — Ollie, Slothy, Sparky, Clyde, and Pearl each hatch and gain permanent XP from their own provider's token usage, growing Hatchling → Sprout → Scholar → Sage → Archmage. Raising two pets to Sprout unlocks their crossbreed forms; raising all five unlocks Mixie.
-- **Active companion** — follow the current provider automatically, or pin any pet, crossbreed, or Mixie from the Collection tab.
-- **Panel dropdown snapshot** — the GNOME top-bar menu shows the current chat plus a pet/usage snapshot: selected-range total, local share, leading provider, and a mini share bar.
-- **Export** — "Export Usage JSON" writes a timestamped copy of the local ledger into your Documents folder. Everything stays on your machine.
-
-Settings (Settings → General) let you pause tracking, choose the default range, set retention, control celebrations and desktop notifications, configure the monthly budget, export, or reset analytics and pet progress.
-
-## Session Memory
-
-Long conversations stay coherent without resending the whole transcript every turn: Katab asynchronously folds older turns into a compact, persistent session memory (project & goal, current state, progress, decisions, Q&A, next steps). The full transcript is still saved to disk and shown in the chat — only the model-facing payload is condensed.
-
-- Folding runs in the background between turns and never blocks sending.
-- Inspect the current memory and trigger **Summarize Now** from the Session Info popup (click the token gauge in the footer).
-- The memory is stored inside the conversation itself, so it survives reloads and history switches.
-
-## Contribution Guidelines
-
-* **NEVER commit any API keys, credentials, or secrets to the repository.**
-* Ensure that the `schemas/gschemas.compiled` file and any IDE configurations are kept out of version control (they are ignored via `.gitignore`).
-* When updating documentation, always use mock placeholders for any API key examples (e.g., `sk-xxxxxxxxxxxx`).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branching, coding conventions, localization, and the
+release checklist. Run at least `make check && make test` before opening a pull request; CI also
+runs ESLint, Prettier, and the RAG service tests.
 
 ## License
 
-Katab is free software licensed under the [GNU General Public License v2.0 or later](LICENSE).
+Katab is free software licensed under the
+[GNU General Public License v2.0 or later](LICENSE).

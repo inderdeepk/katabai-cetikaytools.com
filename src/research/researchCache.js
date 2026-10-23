@@ -495,7 +495,17 @@ const MAX_CHECKPOINT_FACTS_PER_BRANCH = 20;
 const MAX_CHECKPOINT_FILE_BYTES = 2 * 1024 * 1024;
 const CHECKPOINT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+let _testCheckpointPath = null;
+
+// Test-only override for the checkpoint file path, so unit tests never write
+// to the real ~/.local/share/katabai/research-checkpoint.json. Pass null to
+// restore.
+export function _setCheckpointPathForTesting(path) {
+    _testCheckpointPath = path || null;
+}
+
 function _checkpointFilePath() {
+    if (_testCheckpointPath) return _testCheckpointPath;
     const dataDir = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'share', 'katabai']);
     const dir = Gio.File.new_for_path(dataDir);
     if (!dir.query_exists(null)) {

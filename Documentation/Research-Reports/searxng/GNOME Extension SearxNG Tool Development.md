@@ -1,5 +1,9 @@
 # **Architectural Blueprint for Model Context Protocol Integration in GNOME Desktop Environments: The SearXNG Harness**
 
+> **Historical research report** — kept for provenance. It describes candidate designs and
+> external APIs as researched at the time; it is **not** current documentation. See
+> [README.md](../README.md) and [Technical documentation](../../Technical/) for what shipped.
+
 ## **The Paradigm Shift Toward Local Agentic Desktop Environments**
 
 The integration of artificial intelligence directly into desktop environments represents a fundamental evolution in human-computer interaction. Historically, users have relied on cloud-based large language models to process complex queries, summarize information, and execute multi-step reasoning tasks. While these cloud systems offer extensive capabilities and massive parameter counts, they frequently compromise user privacy, mandate persistent high-bandwidth internet connections, and introduce uncontrollable latency into the desktop workflow. Conversely, the deployment of local large language models through highly optimized inference engines like the Ollama framework provides robust data sovereignty, offline capabilities, and zero-cost scaling. However, local models deployed in isolation suffer from a severe architectural limitation: they are hermetically sealed from real-time data. A localized model is strictly bounded by its pre-training corpus, rendering it entirely incapable of addressing queries concerning current events, dynamic API documentation, or real-time contextual variables.1  

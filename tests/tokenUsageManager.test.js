@@ -9,8 +9,21 @@ import {
     isDeepSeekPeakHour,
     deepseekPricingForTimestamp,
     estimateDeepSeekCost,
+    buildCompanionState,
+    buildUsageMilestones,
 } from '../src/usage/tokenUsageManager.js';
-import { assert, assertEqual, runTests } from './testUtils.js';
+import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
+
+function companionSummary(overrides = {}) {
+    return {
+        totalTokens: 0,
+        localTokens: 0,
+        localShare: 0,
+        activeDays: 0,
+        providers: [],
+        ...overrides,
+    };
+}
 
 TokenUsageManager._scheduleFlush = () => {
     TokenUsageManager._dirty = true;
@@ -216,6 +229,179 @@ const tests = [
             const pet = TokenUsageManager._cache.collection.pets.ollama;
             assertEqual(pet.xp, 500, 'tool turn XP');
             assertEqual(pet.replyCount, 0, 'tool turn excluded from reply count');
+        },
+    ],
+
+    // ── buildCompanionState ────────────────────────────────────────────────
+
+    [
+        'buildCompanionState: empty ledger is an unhatched egg named Byte',
+        () => {
+            const state = buildCompanionState(companionSummary());
+            assertEqual(state.name, 'Byte', 'default name');
+            assertEqual(state.stageKey, 'egg', 'egg stage');
+            assertEqual(state.mood, 'Dreaming of first tokens', 'pre-first-token mood');
+            assertEqual(state.primaryProvider, null, 'no provider');
+            assertEqual(state.secondaryProvider, null, 'no second provider');
+            assertEqual(state.isBlend, false, 'never blended');
+            assertEqual(state.localShare, 0, 'zero local share');
+            assertEqual(state.stageRank, 0, 'egg rank');
+        },
+    ],
+
+    [
+        'buildCompanionState: companion name follows the top provider',
+        () => {
+            const state = buildCompanionState(
+                companionSummary({
+                    totalTokens: 1200,
+                    localTokens: 1200,
+                    localShare: 1,
+                    providers: [
+                        { provider: 'ollama', total: 900 },
+                        { provider: 'openai', total: 300 },
+                    ],
+                }),
+            );
+            assertEqual(state.name, 'Ollie', 'ollama companion');
+            assertEqual(state.primaryProvider, 'ollama', 'top provider');
+            assertEqual(state.secondaryProvider, 'openai', 'second provider');
+            assertEqual(state.stageKey, 'hatchling', 'hatchling at 1.2k tokens');
+
+            const unknown = buildCompanionState(
+                companionSummary({
+                    totalTokens: 10,
+                    providers: [{ provider: 'mystery', total: 10 }],
+                }),
+            );
+            assertEqual(unknown.name, 'Byte', 'unknown provider falls back to Byte');
+        },
+    ],
+
+    [
+        'buildCompanionState: stage thresholds',
+        () => {
+            const stageAt = (totalTokens) =>
+                buildCompanionState(companionSummary({ totalTokens })).stageKey;
+            assertEqual(stageAt(0), 'egg', '0');
+            assertEqual(stageAt(1), 'hatchling', '1');
+            assertEqual(stageAt(49_999), 'hatchling', 'just below sprout');
+            assertEqual(stageAt(50_000), 'sprout', 'sprout');
+            assertEqual(stageAt(500_000), 'scholar', 'scholar');
+            assertEqual(stageAt(5_000_000), 'sage', 'sage');
+            assertEqual(stageAt(50_000_000), 'archmage', 'archmage');
+        },
+    ],
+
+    [
+        'buildCompanionState: mood follows recent local share',
+        () => {
+            const moodFor = (recentLocalShare, recentTotal = 1000, localShareTrend = null) =>
+                buildCompanionState(companionSummary({ totalTokens: 5000, localShare: 0.2 }), {
+                    totalTokens: recentTotal,
+                    localShare: recentLocalShare,
+                    localShareTrend,
+                }).mood;
+
+            assertEqual(moodFor(0.75), 'Homestead Hero', '>= 75% local');
+            assertEqual(moodFor(0.74), 'Balanced Buddy', 'just below 75%');
+            assertEqual(moodFor(0.4), 'Balanced Buddy', '40% local');
+            assertEqual(moodFor(0.39, 1000, 0.06), 'Rooting In', 'climbing trend');
+            assertEqual(moodFor(0.39, 1000, 0.02), 'Cloud Curious', 'flat trend');
+            assertEqual(moodFor(0.39, 1000, null), 'Cloud Curious', 'unknown trend');
+            assertEqual(moodFor(0), 'Cloud Surfer', 'no local tokens');
+        },
+    ],
+
+    [
+        'buildCompanionState: empty recent range falls back to the all-time share',
+        () => {
+            const state = buildCompanionState(
+                companionSummary({ totalTokens: 5000, localShare: 0.8 }),
+                { totalTokens: 0, localShare: 0 },
+            );
+            assertEqual(state.recentLocalShare, 0.8, 'falls back to all-time share');
+            assertEqual(state.mood, 'Homestead Hero', 'mood uses the fallback share');
+        },
+    ],
+
+    // ── buildUsageMilestones ───────────────────────────────────────────────
+
+    [
+        'buildUsageMilestones: empty ledger has no achieved milestones',
+        () => {
+            const milestones = buildUsageMilestones(companionSummary());
+            assertEqual(milestones.length, 5, 'five milestones');
+            assert(
+                milestones.every((milestone) => milestone.achieved === false),
+                'none achieved',
+            );
+        },
+    ],
+
+    [
+        'buildUsageMilestones: thresholds flip exactly at their boundaries',
+        () => {
+            const achieved = (summary) =>
+                Object.fromEntries(buildUsageMilestones(summary).map((m) => [m.key, m.achieved]));
+
+            assertDeepEqual(
+                achieved({ totalTokens: 1, localTokens: 0, localShare: 0, activeDays: 0 }),
+                {
+                    'first-reply': true,
+                    'local-seed': false,
+                    'local-10k': false,
+                    'mostly-local': false,
+                    'seven-days': false,
+                },
+                'first reply only',
+            );
+
+            assertDeepEqual(
+                achieved({
+                    totalTokens: 20_000,
+                    localTokens: 9_999,
+                    localShare: 0.49,
+                    activeDays: 6,
+                }),
+                {
+                    'first-reply': true,
+                    'local-seed': true,
+                    'local-10k': false,
+                    'mostly-local': false,
+                    'seven-days': false,
+                },
+                'just below every higher threshold',
+            );
+
+            assertDeepEqual(
+                achieved({
+                    totalTokens: 20_000,
+                    localTokens: 10_000,
+                    localShare: 0.5,
+                    activeDays: 7,
+                }),
+                {
+                    'first-reply': true,
+                    'local-seed': true,
+                    'local-10k': true,
+                    'mostly-local': true,
+                    'seven-days': true,
+                },
+                'all thresholds met',
+            );
+        },
+    ],
+
+    [
+        'buildUsageMilestones: tolerates a missing summary',
+        () => {
+            const milestones = buildUsageMilestones(undefined);
+            assertEqual(milestones.length, 5, 'still returns the milestone list');
+            assert(
+                milestones.every((milestone) => milestone.achieved === false),
+                'none achieved',
+            );
         },
     ],
 ];

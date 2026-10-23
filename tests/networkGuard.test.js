@@ -1,6 +1,30 @@
 // networkGuard.test.js — Tests for SSRF protection helpers
-import { isPrivateIPv4, isBlockedIPv6, isBlockedHost } from '../src/shared/networkGuard.js';
-import { assert, runTests } from './testUtils.js';
+import {
+    isPrivateIPv4,
+    isBlockedIPv6,
+    isBlockedHost,
+    assertFetchableUrl,
+    getUrlHost,
+    resolveRedirectUrl,
+    lookupHostAddresses,
+} from '../src/shared/networkGuard.js';
+import { assert, assertEqual, assertThrows, runTests } from './testUtils.js';
+
+class TestToolError extends Error {
+    constructor(message, { code = '' } = {}) {
+        super(message);
+        this.code = code;
+    }
+}
+
+function captureError(fn) {
+    try {
+        fn();
+    } catch (error) {
+        return error;
+    }
+    return null;
+}
 
 const tests = [
     // ── isPrivateIPv4 ──────────────────────────────────────────────────────
@@ -234,6 +258,203 @@ const tests = [
             assert(isBlockedHost('', false), 'empty string');
             assert(isBlockedHost(null, false), 'null');
             assert(isBlockedHost(undefined, false), 'undefined');
+        },
+    ],
+
+    // ── assertFetchableUrl ─────────────────────────────────────────────────
+
+    [
+        'assertFetchableUrl: accepts http/https and returns the trimmed URL',
+        () => {
+            assertEqual(
+                assertFetchableUrl('  https://example.com/a?b=1  '),
+                'https://example.com/a?b=1',
+                'https trimmed, URL preserved',
+            );
+            assertEqual(
+                assertFetchableUrl('http://example.com'),
+                'http://example.com',
+                'http allowed',
+            );
+        },
+    ],
+
+    [
+        'assertFetchableUrl: rejects empty input with no-url',
+        () => {
+            for (const value of ['', '   ', null, undefined]) {
+                const error = captureError(() => assertFetchableUrl(value, {}, TestToolError));
+                assert(error, `rejects ${JSON.stringify(value)}`);
+                assertEqual(error.code, 'no-url', 'no-url code');
+            }
+        },
+    ],
+
+    [
+        'assertFetchableUrl: rejects unparsable URLs with invalid-url',
+        () => {
+            assertThrows(() => assertFetchableUrl('not a url'), 'is not a valid URL');
+            const error = captureError(() =>
+                assertFetchableUrl('//example.com', {}, TestToolError),
+            );
+            assertEqual(error?.code, 'invalid-url', 'invalid-url code');
+        },
+    ],
+
+    [
+        'assertFetchableUrl: rejects non-http(s) schemes with bad-scheme',
+        () => {
+            for (const url of [
+                'ftp://example.com/x',
+                'file:///etc/passwd',
+                'javascript:alert(1)',
+                'mailto:someone@example.com',
+            ]) {
+                assertThrows(() => assertFetchableUrl(url), 'Only http and https', url);
+            }
+            const error = captureError(() =>
+                assertFetchableUrl('ftp://example.com', {}, TestToolError),
+            );
+            assertEqual(error?.code, 'bad-scheme', 'bad-scheme code');
+        },
+    ],
+
+    [
+        'assertFetchableUrl: blocks private, loopback, and link-local hosts',
+        () => {
+            for (const url of [
+                'http://localhost/',
+                'http://app.localhost/',
+                'http://printer.local/',
+                'http://10.1.2.3/',
+                'http://192.168.1.1/',
+                'http://127.0.0.1:8080/',
+                'http://169.254.169.254/latest/meta-data/',
+                'http://[::1]/',
+                'http://[fd00::1]/',
+                'http://',
+            ]) {
+                assertThrows(
+                    () => assertFetchableUrl(url),
+                    'blocked because it points to a private or local network',
+                    url,
+                );
+            }
+            const error = captureError(() =>
+                assertFetchableUrl('http://10.0.0.1', {}, TestToolError),
+            );
+            assertEqual(error?.code, 'blocked-host', 'blocked-host code');
+        },
+    ],
+
+    [
+        'assertFetchableUrl: allowLocal bypasses host blocking only',
+        () => {
+            assertEqual(
+                assertFetchableUrl('http://127.0.0.1:11434/api', { allowLocal: true }),
+                'http://127.0.0.1:11434/api',
+                'loopback allowed',
+            );
+            assertThrows(
+                () => assertFetchableUrl('ftp://127.0.0.1', { allowLocal: true }),
+                'Only http and https',
+                'scheme still enforced',
+            );
+        },
+    ],
+
+    [
+        'assertFetchableUrl: does not mistake public hosts for private ones',
+        () => {
+            for (const url of [
+                'https://example.com/',
+                'https://192.0.66.5/',
+                'https://172.32.0.1/',
+                'https://198.20.0.1/',
+            ]) {
+                assertEqual(assertFetchableUrl(url), url, url);
+            }
+        },
+    ],
+
+    // ── getUrlHost ─────────────────────────────────────────────────────────
+
+    [
+        'getUrlHost: extracts the host and tolerates junk input',
+        () => {
+            assertEqual(getUrlHost('https://example.com/a/b'), 'example.com', 'plain host');
+            assertEqual(
+                getUrlHost('https://user:pw@example.com:8443/a'),
+                'example.com',
+                'credentials and port stripped',
+            );
+            assertEqual(getUrlHost('http://[::1]/'), '::1', 'IPv6 host');
+            assertEqual(getUrlHost('http://'), '', 'empty host');
+            assertEqual(getUrlHost('not a url'), '', 'unparsable → empty');
+            assertEqual(getUrlHost(''), '', 'empty string → empty');
+            assertEqual(getUrlHost(null), '', 'null → empty');
+        },
+    ],
+
+    // ── resolveRedirectUrl ─────────────────────────────────────────────────
+
+    [
+        'resolveRedirectUrl: resolves relative, root-relative, and absolute targets',
+        () => {
+            const base = 'https://example.com/dir/page';
+            assertEqual(resolveRedirectUrl(base, 'next?q=1'), 'https://example.com/dir/next?q=1');
+            assertEqual(resolveRedirectUrl(base, '/root'), 'https://example.com/root');
+            assertEqual(
+                resolveRedirectUrl(base, 'https://other.example/x'),
+                'https://other.example/x',
+            );
+        },
+    ],
+
+    [
+        'resolveRedirectUrl: rejects a missing or blank Location',
+        () => {
+            const base = 'https://example.com/dir/page';
+            assertThrows(() => resolveRedirectUrl(base, ''), 'without a Location');
+            assertThrows(() => resolveRedirectUrl(base, '   '), 'without a Location');
+            assertThrows(() => resolveRedirectUrl(base, null), 'without a Location');
+        },
+    ],
+
+    [
+        'resolveRedirectUrl: rejects malformed targets',
+        () => {
+            const base = 'https://example.com/dir/page';
+            assertThrows(() => resolveRedirectUrl(base, 'http://['), 'invalid URL');
+            assertThrows(() => resolveRedirectUrl(base, 'http://%zz'), 'invalid URL');
+        },
+    ],
+
+    // ── lookupHostAddresses ────────────────────────────────────────────────
+
+    [
+        'lookupHostAddresses: resolves localhost to loopback',
+        async () => {
+            const addresses = await lookupHostAddresses('localhost');
+            const texts = addresses.map((address) => address.to_string());
+            assert(texts.length > 0, 'at least one address');
+            assert(
+                texts.some((text) => text === '127.0.0.1' || text === '::1'),
+                `loopback present: ${texts.join(', ')}`,
+            );
+        },
+    ],
+
+    [
+        'lookupHostAddresses: rejects an unresolvable host',
+        async () => {
+            let error = null;
+            try {
+                await lookupHostAddresses('does-not-exist.invalid');
+            } catch (caught) {
+                error = caught;
+            }
+            assert(error, 'resolution failure rejects');
         },
     ],
 ];

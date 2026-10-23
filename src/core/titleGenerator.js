@@ -1,17 +1,42 @@
-// titleGenerator.js — Pure helpers for the manual conversation
-// title/description generator.
+// titleGenerator.js — Pure helpers for conversation titles.
 //
-// The dialog asks the active provider to summarize a saved conversation; this
-// module owns everything that can be tested without the shell: transcript
-// excerpt building, the single-user-message prompt shape (safe for providers
-// that drop system messages, e.g. Anthropic's non-streaming dialect), and the
-// tolerant response parser (strict JSON first, labeled lines as a fallback).
+// Two flows share this module:
+//   • Manual editor — the dialog asks the active provider to summarize a saved
+//     conversation (title + description).
+//   • First prompt — a tiny title-only request names a new chat before the main
+//     request starts.
+//
+// Everything here is testable without the shell: transcript excerpt building,
+// single-user-message prompt shapes (safe for providers that drop system
+// messages, e.g. Anthropic's non-streaming dialect), and tolerant response
+// parsers (strict JSON / labeled lines; quotes, fences, and bullets).
 
 export const TITLE_GEN_TITLE_MAX_CHARS = 80;
 export const TITLE_GEN_DESCRIPTION_MAX_CHARS = 240;
 export const TITLE_GEN_TRANSCRIPT_MAX_CHARS = 8000;
 export const TITLE_GEN_MESSAGE_MAX_CHARS = 600;
 export const TITLE_GEN_MAX_TOKENS = 160;
+
+// ── Instant auto titles (first prompt of a new chat) ─────────────────────
+// Kept deliberately tiny: the title request runs before the main chat
+// request, so prompt size and output budget are the latency guardrails.
+export const AUTO_TITLE_MAX_CHARS = 48;
+export const AUTO_TITLE_PROMPT_MAX_CHARS = 600;
+export const AUTO_TITLE_MAX_TOKENS = 24;
+// Hard socket timeout.  The send flow hands off to the main request after a
+// shorter soft deadline (see AUTO_TITLE_HANDOFF_MS in extension.js), so a cold
+// local model can keep naming the chat in the background.
+export const AUTO_TITLE_TIMEOUT_SECONDS = 30;
+
+export const AUTO_TITLE_INSTRUCTION = `You name chat conversations.
+Read the user's first message and reply with ONLY a short title.
+
+Rules:
+- 2–6 words, at most 48 characters.
+- Name the concrete topic, not the wording of the request.
+- No quotes, no markdown, no "Title:" prefix, no trailing punctuation.
+- Use the same language as the message.
+- Never answer the message; only name it.`;
 
 // Conversation markers for messages that were injected internally and should
 // never influence a title (self-healing retries, research summaries, synthesis
@@ -56,7 +81,7 @@ export function messageText(msg) {
     return '';
 }
 
-function isInternalMessage(msg) {
+export function isInternalMessage(msg) {
     return INTERNAL_MESSAGE_FLAGS.some((flag) => msg?.[flag]);
 }
 
@@ -184,4 +209,131 @@ export function parseTitleDescriptionResponse(text) {
 
     if (!title) return null;
     return { title, description };
+}
+
+/** Slice by Unicode code points so an emoji is never split in half. */
+function truncateCodePoints(text, maxChars) {
+    if (typeof text !== 'string' || maxChars <= 0) return '';
+    let count = 0;
+    for (let index = 0; index < text.length; index++) {
+        const code = text.codePointAt(index);
+        if (code > 0xffff) index += 1; // surrogate pair
+        count += 1;
+        if (count === maxChars) {
+            return text.slice(0, index + 1);
+        }
+    }
+    return text;
+}
+
+/**
+ * Build the single-user-message request used to name a brand-new chat from
+ * its first prompt.  The prompt is capped so the request stays quick even
+ * when the user pastes a wall of text.
+ */
+export function buildAutoTitleMessages(
+    promptText,
+    { maxChars = AUTO_TITLE_PROMPT_MAX_CHARS } = {},
+) {
+    const seed = String(promptText ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!seed) return null;
+
+    const excerptBase = truncateCodePoints(seed, maxChars);
+    const excerpt =
+        excerptBase.length < seed.length ? `${excerptBase.trimEnd()}\u2026` : excerptBase;
+    return [
+        {
+            role: 'user',
+            content: `${AUTO_TITLE_INSTRUCTION}\n\nUser message:\n"""\n${excerpt}\n"""`,
+        },
+    ];
+}
+
+function sanitizeAutoTitleLine(line, maxChars) {
+    let cleaned = String(line ?? '')
+        .trim()
+        // "Title: …", "**Title**: …", "Sure — here is your title: …"
+        .replace(/^.{0,40}?\btitle\b[*_`]*\s*(?::|\s[-\u2013]\s)\s*/i, '')
+        .replace(/^\s*(?:[-\u2022]|\d+[.)])\s+/, '')
+        .replace(/^\s*#+\s+/, '')
+        .replace(/^[*_`\s"'“”‘’]+|[*_`\s"'“”‘’]+$/g, '')
+        .replace(/\s+#+\s*$/, '')
+        .replace(/[.!?;:,\u2026]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const capped = truncateCodePoints(cleaned, maxChars);
+    if (capped.length < cleaned.length) {
+        cleaned = capped.trimEnd();
+        const lastSpace = cleaned.lastIndexOf(' ');
+        if (lastSpace >= Math.floor(maxChars * 0.6)) {
+            cleaned = cleaned.slice(0, lastSpace);
+        }
+        cleaned = cleaned.replace(/[.!?;:,\u2026]+$/g, '').trim();
+    }
+
+    if (
+        !cleaned ||
+        /^\d+$/.test(cleaned) ||
+        (cleaned.startsWith('{') && !cleaned.includes('}')) ||
+        (cleaned.startsWith('[') && !cleaned.includes(']')) ||
+        /^[{}[\]()<>]+$/.test(cleaned) ||
+        /^(?:untitled|n\/?a|none|no title|unknown|title|chat|conversation|new chat)$/i.test(
+            cleaned,
+        ) ||
+        /^(?:i (?:cannot|can't|can not|won't|will not)\b|sorry[,.]?\s*(?:i|we)\b|as an ai\b)/i.test(
+            cleaned,
+        )
+    ) {
+        return '';
+    }
+    return cleaned;
+}
+
+/**
+ * Parse a title-only response.  Tolerates the usual model habits: fenced
+ * blocks, JSON objects, labeled lines, bullets, surrounding quotes/markdown,
+ * trailing punctuation, and multi-line chatter.  Returns '' when no usable
+ * title can be recovered.
+ */
+export function parseAutoTitleResponse(text, { maxChars = AUTO_TITLE_MAX_CHARS } = {}) {
+    if (typeof text !== 'string') return '';
+    let cleaned = text.trim();
+    if (!cleaned) return '';
+
+    const fence = cleaned.match(/```(?:[a-z0-9_-]+)?\s*([\s\S]*?)```/i);
+    if (fence) cleaned = fence[1].trim();
+
+    // A bare JSON array is a formatting failure, not a title.
+    if (cleaned.startsWith('[') && cleaned.endsWith(']')) {
+        try {
+            if (Array.isArray(JSON.parse(cleaned))) return '';
+        } catch (_e) {
+            // Not JSON — may be a bracketed title such as "[GNOME] Wayland crash".
+        }
+    }
+
+    // Some models answer structured even when asked for plain text.
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start !== -1 && end > start) {
+        try {
+            const parsed = JSON.parse(cleaned.slice(start, end + 1));
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                if (typeof parsed.title === 'string') cleaned = parsed.title;
+            }
+        } catch (_e) {
+            // plain-text response
+        }
+    }
+
+    // Titles never span lines.  Skip lead-in chatter ("Here is your title:")
+    // and return the first line that survives sanitizing.
+    for (const line of cleaned.split(/\r?\n/)) {
+        const title = sanitizeAutoTitleLine(line, maxChars);
+        if (title) return title;
+    }
+    return '';
 }

@@ -9,7 +9,7 @@
 // Order matters: the identity assertions run BEFORE initI18n() is called;
 // injection assertions run after. The module intentionally has no "reset"
 // export, so the file exercises the real lifecycle once.
-import { assert, assertEqual, runTests } from './testUtils.js';
+import { assertEqual, runTests } from './testUtils.js';
 import { gettext, ngettext, format, initI18n } from '../src/shared/i18n.js';
 
 await runTests([
@@ -89,12 +89,6 @@ await runTests([
                 format(gettext('Delete preset "{name}"'), { name: 'Fast' }),
                 'Supprimer le préréglage "Fast"',
             );
-        },
-    ],
-    [
-        'assert utility is wired (sanity)',
-        () => {
-            assert(true, 'this must not throw');
         },
     ],
 ]);

@@ -8,6 +8,8 @@ import {
     buildWebSearchResultBlock,
     buildReadUrlResultBlock,
     readWebSearchConfig,
+    htmlToText,
+    WebSearchRuntime,
 } from '../src/tools/webSearchTools.js';
 import { assert, assertEqual, runTests, createMockSettings } from './testUtils.js';
 
@@ -304,6 +306,128 @@ const tests = [
             assertEqual(cfg.enabled, false, 'enabled defaults to false');
             assertEqual(cfg.url, '', 'url defaults to empty');
             assertEqual(cfg.resultLimit, 0, 'resultLimit defaults to 0');
+        },
+    ],
+
+    // ── htmlToText ─────────────────────────────────────────────────────────
+
+    [
+        'htmlToText: drops scripts, styles, comments, and head content',
+        () => {
+            const html = [
+                '<html><head><title>T</title><style>.a{color:red}</style></head><body>',
+                '<!-- hidden note -->',
+                '<p>Visible text</p>',
+                "<script>alert('x')</script>",
+                '<noscript>fallback</noscript>',
+                '</body></html>',
+            ].join('');
+            assertEqual(htmlToText(html), 'Visible text', 'only body text survives');
+        },
+    ],
+
+    [
+        'htmlToText: preserves block structure and list items',
+        () => {
+            assertEqual(htmlToText('<p>a</p><p>b</p>'), 'a\nb', 'paragraphs break lines');
+            assertEqual(
+                htmlToText('<ul><li>One</li><li>Two</li></ul>'),
+                '- One\n\n- Two',
+                'list items become bullets',
+            );
+            assertEqual(htmlToText('Line<br>Break'), 'Line\nBreak', 'br becomes newline');
+        },
+    ],
+
+    [
+        'htmlToText: decodes entities and collapses whitespace',
+        () => {
+            assertEqual(htmlToText('<p>A &amp; B</p>'), 'A & B', 'named entity');
+            assertEqual(
+                htmlToText('<p>&lt;tag&gt; &#65; &#x42;</p>'),
+                '<tag> A B',
+                'numeric entities',
+            );
+            assertEqual(
+                htmlToText('<p>spaced    out</p>'),
+                'spaced out',
+                'runs of spaces collapse',
+            );
+            assertEqual(
+                htmlToText('<p>a</p><p></p><p></p><p>b</p>'),
+                'a\n\nb',
+                'blank lines capped',
+            );
+        },
+    ],
+
+    [
+        'htmlToText: empty and non-string input',
+        () => {
+            assertEqual(htmlToText(''), '', 'empty string');
+            assertEqual(htmlToText(null), '', 'null');
+            assertEqual(htmlToText(undefined), '', 'undefined');
+            assertEqual(htmlToText(42), '42', 'numbers stringify');
+        },
+    ],
+
+    // ── WebSearchRuntime SSRF guard ────────────────────────────────────────
+
+    [
+        'WebSearchRuntime._assertFetchableUrl: rejects local and private URLs',
+        async () => {
+            const runtime = new WebSearchRuntime();
+            const cases = ['http://localhost:8080/', 'http://127.0.0.1/', 'http://10.0.0.5/'];
+            for (const url of cases) {
+                let error = null;
+                try {
+                    await runtime._assertFetchableUrl(url);
+                } catch (caught) {
+                    error = caught;
+                }
+                assertEqual(error?.code, 'blocked-host', `${url} blocked`);
+            }
+        },
+    ],
+
+    [
+        'WebSearchRuntime._assertFetchableUrl: allowLocal skips host and DNS checks',
+        async () => {
+            const runtime = new WebSearchRuntime();
+            const url = 'http://127.0.0.1:11434/api/tags';
+            assertEqual(
+                await runtime._assertFetchableUrl(url, { allowLocal: true }),
+                url,
+                'loopback allowed when opted in',
+            );
+        },
+    ],
+
+    [
+        'WebSearchRuntime._assertFetchableUrl: unresolvable hosts fail with dns-failed',
+        async () => {
+            const runtime = new WebSearchRuntime();
+            let error = null;
+            try {
+                await runtime._assertFetchableUrl('https://does-not-exist.invalid/x');
+            } catch (caught) {
+                error = caught;
+            }
+            assertEqual(error?.code, 'dns-failed', 'resolution failure surfaces as dns-failed');
+        },
+    ],
+
+    [
+        'WebSearchRuntime._assertFetchableUrl: enforces the http(s) scheme',
+        async () => {
+            const runtime = new WebSearchRuntime();
+            let error = null;
+            try {
+                await runtime._assertFetchableUrl('ftp://example.com/file');
+            } catch (caught) {
+                error = caught;
+            }
+            assertEqual(error?.code, 'bad-scheme', 'scheme rejected');
         },
     ],
 ];

@@ -1,5 +1,9 @@
 # **Autonomous AI Harness Data Ingestion: Integrating Crawl4AI and Searxng via REST Architecture**
 
+> **Historical research report** — kept for provenance. It describes candidate designs and
+> external APIs as researched at the time; it is **not** current documentation. See
+> [README.md](../README.md) and [Technical documentation](../../Technical/) for what shipped.
+
 ## **Introduction to the Dual-Engine Scraping Paradigm**
 
 The development of a custom GNOME AI harness extension introduces complex operational requirements regarding data ingestion, context window optimization, and dynamic environment interaction. The system is designed to operate as an autonomous research agent, capable of navigating the open web to retrieve precise answers for the user. The existing integration of the Searxng tool provides a robust, privacy-respecting metasearch capability, allowing the extension to dispatch search queries and retrieve localized lists of uniform resource locators (URLs) alongside high-level snippet metadata. However, Searxng is fundamentally an intent-resolution and URL-discovery mechanism; it inherently lacks the capacity to navigate complex Document Object Models (DOMs), bypass modern anti-bot cryptographic protections, render JavaScript-heavy single-page applications (SPAs), or intelligently extract dense semantic data from the underlying web pages.  

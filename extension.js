@@ -98,6 +98,13 @@ import {
     stripTruncatedToolCallMarkup,
 } from './src/core/toolCallMarkup.js';
 import { HistoryManager } from './src/core/historyManager.js';
+import {
+    AUTO_TITLE_MAX_TOKENS,
+    AUTO_TITLE_TIMEOUT_SECONDS,
+    buildAutoTitleMessages,
+    isInternalMessage,
+    parseAutoTitleResponse,
+} from './src/core/titleGenerator.js';
 import { splitLinksSection } from './src/shared/pageLinks.js';
 import { gettext as _, ngettext, format, initI18n } from './src/shared/i18n.js';
 import { createRequestLifecycle, REQUEST_STATES } from './src/core/requestLifecycle.js';
@@ -169,6 +176,7 @@ import { buildHeaderBar } from './src/ui/headerBar.js';
 import { Pickers } from './src/ui/pickers.js';
 import { MessageBubble } from './src/ui/messageBubble.js';
 import { AssistantRender } from './src/ui/assistantRender.js';
+import { PendingIndicator } from './src/ui/pendingIndicator.js';
 import {
     DEEP_RESEARCH_MODE_SEQUENCE,
     TOOL_MODE_AUTO,
@@ -393,6 +401,10 @@ const PROVIDER_STATUS_STYLE_CLASSES = Object.values(PROVIDER_STATUS).map(
 
 const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
+// How long the first send waits for the chat-title request before handing off
+// to the main chat request.  The title request keeps running in the background
+// (up to AUTO_TITLE_TIMEOUT_SECONDS) so cold local models still get a title.
+const AUTO_TITLE_HANDOFF_MS = 8000;
 const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 30;
 const DEEPSEEK_STREAM_TIMEOUT_SECONDS = 1800;
 // Ollama runs locally; large models can take minutes to load and process
@@ -1510,6 +1522,12 @@ class KatabDialog {
         // use the character estimate.  Ollama has no public /api/tokenize
         // route, so its first probe normally fails and is cached here.
         this._tokenizeSupported = { unsloth: null, ollama: null };
+        // Dedicated session for the first-prompt chat-title request so its
+        // short timeout (and cancellation) can never touch an in-flight chat
+        // request on the shared session.
+        this._titleSession = new Soup.Session();
+        this._titleSession.timeout = AUTO_TITLE_TIMEOUT_SECONDS;
+        this._titleCancellable = null;
         this._cancellable = null;
         this._retrySourceId = 0;
         // Request lifecycle: the single source of truth for send/stop state
@@ -1902,6 +1920,13 @@ class KatabDialog {
             status = 'ready';
         }
 
+        // Prefer the saved conversation title (which may be AI-generated)
+        // over re-deriving it from the first user message.
+        const currentEntry = this._currentConversationId
+            ? HistoryManager.getCached().find((entry) => entry.id === this._currentConversationId)
+            : null;
+        const savedTitle = currentEntry?.title || '';
+
         return {
             available,
             conversationId: this._currentConversationId,
@@ -1909,9 +1934,11 @@ class KatabDialog {
             isStreaming: this._lifecycle.isResponding(),
             hasError: this._lastResponseErrored,
             status,
-            title: userMessage
-                ? this._truncateText(userMessage.content.replace(/\s+/g, ' ').trim(), 44)
-                : 'Current Chat',
+            title: savedTitle
+                ? this._truncateText(savedTitle, 44)
+                : userMessage
+                  ? this._truncateText(userMessage.content.replace(/\s+/g, ' ').trim(), 44)
+                  : 'Current Chat',
         };
     }
 
@@ -1976,6 +2003,7 @@ class KatabDialog {
                 `[Katab:lifecycle] state mismatch — cleared a response the lifecycle never began (state=${lcFinish.previous}).`,
             );
         }
+        this._hidePendingIndicator(this._activeResponseState?.uiElements);
         this._activeResponseState = null;
         this._cancellable = null;
         this._setStreamingState(false);
@@ -6534,6 +6562,24 @@ class KatabDialog {
             this._tokenizeSession = null;
         }
 
+        // Stop a first-prompt title request that outlived the dialog.
+        if (this._titleCancellable) {
+            try {
+                this._titleCancellable.cancel();
+            } catch (_e) {
+                /* already cancelled */
+            }
+            this._titleCancellable = null;
+        }
+        if (this._titleSession) {
+            try {
+                this._titleSession.abort();
+            } catch (_e) {
+                /* session already gone */
+            }
+            this._titleSession = null;
+        }
+
         // Disconnect all settings handlers collected via _connectSetting.
         if (this._settingsHandlerIds && this._settingsHandlerIds.length > 0) {
             for (const id of this._settingsHandlerIds) {
@@ -8338,6 +8384,93 @@ class KatabDialog {
         return '';
     }
 
+    /** True only while the conversation has exactly one user message (the first prompt). */
+    _isFirstUserTurn() {
+        let userTurns = 0;
+        for (const message of this._messageHistory) {
+            if (message.role !== 'user' || isInternalMessage(message)) continue;
+            userTurns += 1;
+            if (userTurns > 1) return false;
+        }
+        return userTurns === 1;
+    }
+
+    /**
+     * Name a brand-new chat from its first prompt using the active provider.
+     * Starts before the main request and is awaited for at most
+     * AUTO_TITLE_HANDOFF_MS; a slow local model may finish in the background
+     * (the request itself is bounded by AUTO_TITLE_TIMEOUT_SECONDS).
+     * Falls back silently to the first-message title on any failure.  The
+     * generated title is stored as `customTitle` so later auto-saves keep it.
+     */
+    async _maybeGenerateAutoChatTitle({ seed, conversationId, cancellable }) {
+        if (!conversationId || !this._titleSession) return '';
+
+        const entry = HistoryManager.getCached().find((item) => item.id === conversationId);
+        if (!entry || entry.customTitle) return '';
+
+        const messages = buildAutoTitleMessages(seed);
+        if (!messages) return '';
+
+        const titleCancellable = new Gio.Cancellable();
+        const startedAt = GLib.get_monotonic_time();
+        this._titleCancellable = titleCancellable;
+        let linkId = 0;
+        if (cancellable) {
+            linkId = cancellable.connect(() => titleCancellable.cancel());
+            if (cancellable.is_cancelled()) titleCancellable.cancel();
+        }
+
+        try {
+            const raw = await this._requestNonStreamingCompletion(messages, {
+                cancellable: titleCancellable,
+                maxTokens: AUTO_TITLE_MAX_TOKENS,
+                countAsPipeline: false,
+                session: this._titleSession,
+                timeoutSeconds: AUTO_TITLE_TIMEOUT_SECONDS,
+                ollamaNumPredict: AUTO_TITLE_MAX_TOKENS,
+            });
+            if (titleCancellable.is_cancelled()) return '';
+
+            const title = parseAutoTitleResponse(raw);
+            if (!title) {
+                if (raw && raw.trim()) {
+                    log(
+                        '[Katab:title] Title generation returned no usable title — keeping the default.',
+                    );
+                }
+                return '';
+            }
+
+            // A manual edit may have landed while the request was in flight.
+            const current = HistoryManager.getCached().find((item) => item.id === conversationId);
+            if (!current || current.customTitle) return '';
+            if (!HistoryManager.updateConversationMeta(conversationId, { title })) return '';
+
+            this._history?.invalidateList();
+            this._notifyCurrentChatChanged();
+            const elapsedMs = Math.round((GLib.get_monotonic_time() - startedAt) / 1000);
+            log(`[Katab:title] Generated a ${title.length}-char title in ${elapsedMs} ms.`);
+            return title;
+        } catch (e) {
+            if (!titleCancellable.is_cancelled() && this._titleSession) {
+                log(`[Katab:title] Title generation failed: ${e.message || e}`);
+            }
+            return '';
+        } finally {
+            if (linkId && cancellable && !cancellable.is_cancelled()) {
+                try {
+                    cancellable.disconnect(linkId);
+                } catch (_e) {
+                    /* already gone */
+                }
+            }
+            if (this._titleCancellable === titleCancellable) {
+                this._titleCancellable = null;
+            }
+        }
+    }
+
     _deleteConversation(id) {
         HistoryManager.deleteConversation(id);
         if (this._currentConversationId === id) {
@@ -8976,6 +9109,9 @@ class KatabDialog {
     }
 
     _applyAssistantRender(uiElements, rawText, options = {}) {
+        // Any real render (status line, streamed text, final answer) takes
+        // over the bubble — stop the warm-up row and its timers first.
+        this._hidePendingIndicator(uiElements);
         this._ensureRender().applyAssistantRender(uiElements, rawText, options);
     }
 
@@ -9257,6 +9393,47 @@ class KatabDialog {
 
     _scrollToBottom() {
         this._ensureBubbles().scrollToBottom();
+    }
+
+    // ── Warm-up indicator ────────────────────────────────────────────────
+    // A small pulsing row inside the assistant bubble. It is replaced
+    // automatically by the first real render (contentBox children are rebuilt)
+    // and explicitly destroyed on stop/error paths.
+
+    _showPendingIndicator(uiElements, text) {
+        if (!uiElements?.contentBox || this._isActorDisposed(uiElements.contentBox)) {
+            return;
+        }
+        this._hidePendingIndicator(uiElements);
+        try {
+            const indicator = new PendingIndicator({ text });
+            uiElements.pendingIndicator = indicator;
+            uiElements.contentBox.add_child(indicator.actor);
+            indicator.start();
+            this._scrollToBottom();
+        } catch (e) {
+            log(`[Katab:title] Failed to show the warm-up indicator: ${e.message || e}`);
+        }
+    }
+
+    _setPendingIndicatorText(uiElements, text) {
+        if (!uiElements?.pendingIndicator) return;
+        try {
+            uiElements.pendingIndicator.setText(text);
+        } catch (_e) {
+            /* bubble already disposed */
+        }
+    }
+
+    _hidePendingIndicator(uiElements) {
+        const indicator = uiElements?.pendingIndicator;
+        if (!indicator) return;
+        uiElements.pendingIndicator = null;
+        try {
+            indicator.destroy();
+        } catch (_e) {
+            /* bubble already disposed */
+        }
     }
 
     // ── Rate-limit helpers ───────────────────────────────────────────────
@@ -12395,7 +12572,7 @@ class KatabDialog {
         this._messageHistory.push(userMessage);
         this._saveCurrentConversation();
 
-        let uiElements = this._addChatMessage('Katab AI', '...', 'assistant');
+        let uiElements = this._addChatMessage('Katab AI', '', 'assistant');
         const requestCancellable = new Gio.Cancellable();
         this._cancellable = requestCancellable;
         this._beginActiveResponse(
@@ -12406,6 +12583,45 @@ class KatabDialog {
                 ? documentMetas[0].displayName
                 : `${documentMetas.length} attachments`,
         );
+
+        // ── First-prompt chat title + warm-up handoff ───────────────────────
+        // The title request is the first model call for a new chat. The
+        // animated warm-up row covers it, then becomes the "Thinking…" handoff
+        // to the main request (which can take a minute on a cold local model).
+        const titleSeed =
+            String(userMessage.content ?? '').trim() ||
+            documentMetas.map((doc) => doc.displayName).join(', ');
+        let autoTitlesEnabled = false;
+        try {
+            autoTitlesEnabled = this._settings.get_boolean('auto-generate-chat-titles');
+        } catch (_e) {
+            /* older schema — treat as disabled rather than breaking the send */
+        }
+        const shouldGenerateTitle =
+            Boolean(titleSeed) && autoTitlesEnabled && this._isFirstUserTurn();
+        this._showPendingIndicator(
+            uiElements,
+            shouldGenerateTitle ? _('Naming this chat…') : _('Thinking…'),
+        );
+        if (shouldGenerateTitle) {
+            // Soft deadline: hand off to the main request even if a cold local
+            // model is still working on the title.  The title request keeps
+            // running in the background and updates history when it lands.
+            await Promise.race([
+                this._maybeGenerateAutoChatTitle({
+                    seed: titleSeed,
+                    conversationId: this._currentConversationId,
+                    cancellable: requestCancellable,
+                }).catch((e) => {
+                    // A cosmetic title must never take the send down.
+                    log(`[Katab:title] Unexpected title-generation error: ${e.message || e}`);
+                    return '';
+                }),
+                this._sleepMs(AUTO_TITLE_HANDOFF_MS),
+            ]);
+            if (requestCancellable.is_cancelled() || !this._activeResponseState) return;
+            this._setPendingIndicatorText(uiElements, _('Thinking…'));
+        }
 
         // Surface the pre-send KB-fallback web search in the tool-call log so
         // the UI reflects searches that ran before the model response started.
@@ -15309,11 +15525,22 @@ class KatabDialog {
         return result.slice(0, 5);
     }
 
-    // Minimal non-streaming chat completion used for auxiliary tasks (query expansion).
-    // Mirrors the endpoint/header conventions of _streamResponse without tools or streaming.
+    // Minimal non-streaming chat completion used for auxiliary tasks (query
+    // expansion, planner, compression, chat titles). Mirrors the endpoint/header
+    // conventions of _streamResponse without tools or streaming. `session` /
+    // `timeoutSeconds` let isolated callers (chat titles) keep their own short
+    // deadline; `ollamaNumPredict` forwards Ollama's output cap.
     async _requestNonStreamingCompletion(
         messages,
-        { cancellable = null, maxTokens = 256, modelOverride = null, countAsPipeline = true } = {},
+        {
+            cancellable = null,
+            maxTokens = 256,
+            modelOverride = null,
+            countAsPipeline = true,
+            session = null,
+            timeoutSeconds = null,
+            ollamaNumPredict = null,
+        } = {},
     ) {
         const provider = this._currentProvider;
         let url = this._settings.get_string(`${provider}-url`);
@@ -15335,12 +15562,16 @@ class KatabDialog {
         // and can take minutes to process large prompts — the default 30 s is
         // too short, causing planner/gap-analysis calls to time out with
         // "Socket I/O timed out" while the streaming path works fine.
-        this._soupSession.timeout =
+        // A caller-provided session/timeout (the first-prompt title request)
+        // keeps its own short deadline without touching the shared session.
+        const soupSession = session || this._soupSession;
+        const defaultTimeout =
             provider === 'deepseek'
                 ? DEEPSEEK_STREAM_TIMEOUT_SECONDS
                 : provider === 'ollama'
                   ? OLLAMA_STREAM_TIMEOUT_SECONDS
                   : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+        soupSession.timeout = timeoutSeconds ?? defaultTimeout;
 
         let apiKey = '';
         if (provider !== 'ollama') {
@@ -15358,6 +15589,7 @@ class KatabDialog {
             apiKey,
             messages,
             maxTokens,
+            ollamaNumPredict,
         });
         const endpoint = request.url;
         const headers = request.headers;
@@ -15376,13 +15608,13 @@ class KatabDialog {
         );
 
         const bytes = await new Promise((resolve, reject) => {
-            this._soupSession.send_and_read_async(
+            soupSession.send_and_read_async(
                 message,
                 GLib.PRIORITY_DEFAULT,
                 cancellable,
-                (session, res) => {
+                (activeSession, res) => {
                     try {
-                        resolve(session.send_and_read_finish(res));
+                        resolve(activeSession.send_and_read_finish(res));
                     } catch (e) {
                         reject(e);
                     }

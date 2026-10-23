@@ -1327,6 +1327,29 @@
     spacing: 8px;
 }
 
+/* Warm-up row shown while a new chat is named and the main request starts. */
+.katab-pending-row {
+    spacing: 10px;
+    padding: 2px 0 4px 0;
+}
+
+.katab-pending-dots {
+    spacing: 5px;
+}
+
+.katab-pending-dot {
+    width: 7px;
+    height: 7px;
+    background-color: #89b4fa;
+    border-radius: 99px;
+    box-shadow: 0 0 6px rgba(137, 180, 250, 0.45);
+}
+
+.katab-pending-label {
+    font-size: 1em;
+    color: rgba(255, 255, 255, 0.66);
+}
+
 /* ════════════════════════════════════════════
    THINKING / REASONING PANEL
    ════════════════════════════════════════════ */
@@ -3252,6 +3275,15 @@
 
 .katab-theme-light .katab-chat-sender-label {
     color: rgba(0, 0, 0, 0.40);
+}
+
+.katab-theme-light .katab-pending-dot {
+    background-color: #1e66d0;
+    box-shadow: 0 0 6px rgba(30, 102, 208, 0.30);
+}
+
+.katab-theme-light .katab-pending-label {
+    color: rgba(0, 0, 0, 0.58);
 }
 
 .katab-theme-light .katab-markdown-rule {

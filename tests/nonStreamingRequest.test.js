@@ -65,6 +65,29 @@ const tests = [
         },
     ],
 
+    [
+        'ollama: explicit num_predict cap is forwarded via options',
+        () => {
+            const req = buildNonStreamingChatRequest({
+                provider: 'ollama',
+                baseUrl: 'http://localhost:11434',
+                model: 'llama3',
+                messages: MESSAGES,
+                ollamaNumPredict: 24,
+            });
+            assertEqual(req.payload.options.num_predict, 24, 'num_predict');
+            assert(!('max_tokens' in req.payload), 'no OpenAI max_tokens field');
+
+            const uncapped = buildNonStreamingChatRequest({
+                provider: 'ollama',
+                baseUrl: 'http://localhost:11434',
+                model: 'llama3',
+                messages: MESSAGES,
+            });
+            assert(!('options' in uncapped.payload), 'no options when uncapped');
+        },
+    ],
+
     // ── OpenAI-compatible providers ────────────────────────────────────────
 
     [

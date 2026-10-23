@@ -75,7 +75,9 @@ export default [
         // Node-only check scripts (not part of the GJS runtime).
         files: [
             'scripts/check-css.mjs',
+            'scripts/check-syntax.mjs',
             'scripts/i18n-extract.mjs',
+            'scripts/run-tests.mjs',
             'scripts/audits/**/*.js',
             'scripts/audits/**/*.mjs',
         ],

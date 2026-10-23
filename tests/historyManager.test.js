@@ -10,9 +10,17 @@ import {
     HistoryManager,
     _setHistoryPathForTesting,
 } from '../src/core/historyManager.js';
-import { assert, assertEqual, runTests } from './testUtils.js';
+import {
+    assert,
+    assertEqual,
+    assertDeepEqual,
+    runTests,
+    makeTempDir,
+    removeTempDir,
+} from './testUtils.js';
 
-const TEST_PATH = GLib.build_filenamev([GLib.get_tmp_dir(), 'katabai-history-test.json']);
+const TEMP_DIR = makeTempDir('katabai-history-XXXXXX');
+const TEST_PATH = GLib.build_filenamev([TEMP_DIR, 'katabai-history-test.json']);
 
 function removeTestFile() {
     try {
@@ -235,20 +243,27 @@ const tests = [
     ],
 
     [
-        'flushSync after load of an empty store is a no-op',
+        'flushSync with an unloaded cache is a no-op',
         () => {
+            HistoryManager.flushSync(); // drain any pending debounced write first
+            removeTestFile();
+            HistoryManager.invalidateCache();
+
             HistoryManager.flushSync();
-            assert(true, 'no throw');
+            assert(!GLib.file_test(TEST_PATH, GLib.FileTest.EXISTS), 'no file created');
+
+            assertDeepEqual(HistoryManager.load(), [], 'missing file → empty store');
         },
     ],
 
     [
-        'cleanup: restore path and remove temp file',
+        'cleanup: remove temp dir and restore the real path',
         () => {
-            removeTestFile();
             _setHistoryPathForTesting(null);
             HistoryManager.invalidateCache();
-            assert(true, 'cleaned up');
+            removeTestFile();
+            removeTempDir(TEMP_DIR);
+            assert(!GLib.file_test(TEST_PATH, GLib.FileTest.EXISTS), 'temp file removed');
         },
     ],
 ];

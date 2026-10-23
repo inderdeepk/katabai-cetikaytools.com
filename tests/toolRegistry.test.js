@@ -428,6 +428,17 @@ const tests = [
             assert(result.includes('not yet wired'), 'contains error message');
         },
     ],
+
+    [
+        'registerTool: re-registering a name replaces it without duplicating',
+        () => {
+            freshRegistry();
+            registerTool({ name: 'dup_tool', description: 'first', handler: async () => 'a' });
+            registerTool({ name: 'dup_tool', description: 'second', handler: async () => 'b' });
+            assertEqual(getAllToolNames().length, 1, 'name registered once');
+            assertEqual(lookupTool('dup_tool').description, 'second', 'latest definition wins');
+        },
+    ],
 ];
 
 await runTests(tests);

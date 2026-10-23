@@ -1,7 +1,10 @@
 // testUtils.js — Shared test helpers for Katabai extension unit tests
 //
-// Provides assertion functions and mock factories so every test file can
-// import a single module rather than copying assert/assertEqual boilerplate.
+// Provides assertion functions, mock factories, and temp-directory helpers so
+// every test file can import a single module rather than copying
+// assert/assertEqual boilerplate.
+import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
 
 // ── Assertions ──────────────────────────────────────────────────────────────
 
@@ -18,10 +21,60 @@ export function assertEqual(actual, expected, message = 'assertEqual') {
 }
 
 export function assertDeepEqual(actual, expected, message = 'assertDeepEqual') {
-    const a = JSON.stringify(actual);
-    const b = JSON.stringify(expected);
-    if (a !== b) {
-        throw new Error(`${message}: expected ${b}, got ${a}`);
+    const difference = firstDifference(actual, expected, 'value');
+    if (difference) {
+        throw new Error(
+            `${message}: ${difference}\n  expected: ${stringify(expected)}\n  actual:   ${stringify(actual)}`,
+        );
+    }
+}
+
+// Recursive structural comparison. Chosen over JSON.stringify because stringify
+// is key-order sensitive, drops `undefined` properties (so {a: undefined} looked
+// equal to {}), and maps NaN/Infinity to null.
+function firstDifference(actual, expected, path) {
+    if (Object.is(actual, expected)) return '';
+
+    if (typeof actual !== typeof expected) {
+        return `${path}: type mismatch (${typeof actual} vs ${typeof expected})`;
+    }
+
+    if (actual === null || expected === null || typeof actual !== 'object') {
+        return `${path}: expected ${stringify(expected)}, got ${stringify(actual)}`;
+    }
+
+    if (Array.isArray(actual) !== Array.isArray(expected)) {
+        return `${path}: array/object mismatch`;
+    }
+
+    if (Array.isArray(actual)) {
+        if (actual.length !== expected.length) {
+            return `${path}: array length ${actual.length} vs ${expected.length}`;
+        }
+        for (let i = 0; i < actual.length; i++) {
+            const difference = firstDifference(actual[i], expected[i], `${path}[${i}]`);
+            if (difference) return difference;
+        }
+        return '';
+    }
+
+    const actualKeys = Object.keys(actual).sort();
+    const expectedKeys = Object.keys(expected).sort();
+    if (actualKeys.join('\u0000') !== expectedKeys.join('\u0000')) {
+        return `${path}: keys [${actualKeys.join(', ')}] vs [${expectedKeys.join(', ')}]`;
+    }
+    for (const key of actualKeys) {
+        const difference = firstDifference(actual[key], expected[key], `${path}.${key}`);
+        if (difference) return difference;
+    }
+    return '';
+}
+
+function stringify(value) {
+    try {
+        return JSON.stringify(value);
+    } catch (_error) {
+        return String(value);
     }
 }
 
@@ -38,6 +91,70 @@ export function assertThrows(fn, expectedSubstring = '', message = 'assertThrows
         }
     }
     if (!threw) throw new Error(`${message}: expected exception but none was thrown`);
+}
+
+// ── Temp directories ─────────────────────────────────────────────────────────
+
+/**
+ * Create a unique throwaway directory for filesystem-backed tests. Suites must
+ * point their module path seam at this directory and remove it at the end so
+ * concurrent runs never share state.
+ *
+ * @param {string} [prefix]
+ * @returns {string} absolute path to the new directory
+ */
+export function makeTempDir(prefix = 'katabai-test-XXXXXX') {
+    const dir = GLib.dir_make_tmp(prefix);
+    if (!dir) throw new Error('GLib.dir_make_tmp() returned null');
+    return dir;
+}
+
+/** Recursively delete a directory created by makeTempDir(). Never throws. */
+export function removeTempDir(dirPath) {
+    if (!dirPath) return;
+    const dir = Gio.File.new_for_path(dirPath);
+    const children = [];
+    try {
+        const enumerator = dir.enumerate_children(
+            'standard::name,standard::type',
+            Gio.FileQueryInfoFlags.NONE,
+            null,
+        );
+        let info;
+        while ((info = enumerator.next_file(null)) !== null) {
+            children.push([info.get_name(), info.get_file_type()]);
+        }
+        enumerator.close(null);
+    } catch (_e) {
+        return;
+    }
+    for (const [name, fileType] of children) {
+        const child = dir.get_child(name);
+        if (fileType === Gio.FileType.DIRECTORY) {
+            removeTempDir(child.get_path());
+        } else {
+            try {
+                child.delete(null);
+            } catch (_e) {
+                /* best effort */
+            }
+        }
+    }
+    try {
+        dir.delete(null);
+    } catch (_e) {
+        /* best effort */
+    }
+}
+
+/** Read a UTF-8 text file, returning '' when it does not exist or is unreadable. */
+export function readTextFile(filePath) {
+    try {
+        const [, bytes] = Gio.File.new_for_path(filePath).load_contents(null);
+        return new TextDecoder('utf-8').decode(bytes);
+    } catch (_e) {
+        return '';
+    }
 }
 
 // ── Mock Factories ───────────────────────────────────────────────────────────

@@ -1,5 +1,9 @@
 # **DeepSeek API Integration Specification for the Gnome AI Harness**
 
+> **Historical research report** — kept for provenance. It describes candidate designs and
+> external APIs as researched at the time; it is **not** current documentation. See
+> [README.md](../README.md) and [Technical documentation](../../Technical/) for what shipped.
+
 ## **Architectural Overview and Provider Mapping**
 
 The integration of the DeepSeek application programming interface into the Gnome AI harness requires a precise architectural mapping that accommodates both standardized protocols and highly specific, proprietary backend behaviors. DeepSeek exposes its generative capabilities through an infrastructure that maintains strict functional compatibility with the OpenAI specification1. However, beneath this compatibility layer exists a complex ecosystem of dynamic concurrency limits, specialized chain-of-thought state persistence rules, and stringent schema validation protocols that demand sophisticated handling within the integration harness3.  

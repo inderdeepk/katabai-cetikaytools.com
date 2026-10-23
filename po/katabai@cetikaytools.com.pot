@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Katab - AI Assistant\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-06 23:26-0400\n"
+"POT-Creation-Date: 2026-10-23 00:52-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,545 +18,553 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: extension.js:254 extension.js:295 src/ui/prefs/tools/index.js:50 src/ui/prefs/tools/webSearch.js:24
+#: extension.js:262 extension.js:303 src/ui/prefs/tools/index.js:50 src/ui/prefs/tools/webSearch.js:24
 msgid "Web Search"
 msgstr ""
 
-#: extension.js:262
+#: extension.js:270
 msgid "Python"
 msgstr ""
 
-#: extension.js:270
+#: extension.js:278
 msgid "Terminal"
 msgstr ""
 
-#: extension.js:285
+#: extension.js:293
 msgid "Document"
 msgstr ""
 
-#: extension.js:304 src/ui/prefs/tools/crawler.js:30 src/ui/prefs/tools/index.js:58
+#: extension.js:312 src/ui/prefs/tools/crawler.js:30 src/ui/prefs/tools/index.js:58
 msgid "Web Scraper"
 msgstr ""
 
-#: extension.js:313 src/tools/toolDefinitions.js:242
+#: extension.js:321 src/tools/toolDefinitions.js:242
 msgid "Knowledge"
 msgstr ""
 
-#: extension.js:330 src/ui/prefs/tools/deepResearch.js:14 src/ui/prefs/tools/deepResearch.js:18 src/ui/prefs/tools/index.js:79
+#: extension.js:338 src/ui/prefs/tools/deepResearch.js:14 src/ui/prefs/tools/deepResearch.js:18 src/ui/prefs/tools/index.js:79
 msgid "Deep Research"
 msgstr ""
 
-#: extension.js:1603
+#: extension.js:1621
 msgid "Switched engine to {provider}."
 msgstr ""
 
-#: extension.js:1986
+#: extension.js:2014
 msgid "Request failed — open the chat for details."
 msgstr ""
 
-#: extension.js:1989
+#: extension.js:2017
 msgid "Response ready — open the chat to read it."
 msgstr ""
 
-#: extension.js:2212
+#: extension.js:2240
 msgid "{pet} hatched and joined your collection!"
 msgstr ""
 
-#: extension.js:2218
+#: extension.js:2246
 msgid "{pet} reached {stage} at {xp} XP."
 msgstr ""
 
-#: extension.js:2238
+#: extension.js:2266
 msgid "{count} pet collection milestone unlocked."
 msgid_plural "{count} pet collection milestones unlocked."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:2345
+#: extension.js:2373
 msgid "Stopped while downloading model '{model}'."
 msgstr ""
 
-#: extension.js:2347
+#: extension.js:2375
 msgid "Stopped while preparing '{model}'."
 msgstr ""
 
-#: extension.js:2349
+#: extension.js:2377
 msgid "Response stopped while running local tools."
 msgstr ""
 
-#: extension.js:2350
+#: extension.js:2378
 msgid "Response stopped."
 msgstr ""
 
-#: extension.js:2356
+#: extension.js:2384
 msgid "Response stopped while the model was thinking."
 msgstr ""
 
-#: extension.js:2358
+#: extension.js:2386
 msgid "Response stopped before tool execution completed."
 msgstr ""
 
-#: extension.js:2956 src/tools/toolDefinitions.js:182
+#: extension.js:2984 src/tools/toolDefinitions.js:182
 msgid "Docs"
 msgstr ""
 
-#: extension.js:2958 src/tools/toolDefinitions.js:69
+#: extension.js:2986 src/tools/toolDefinitions.js:69
 msgid "Search"
 msgstr ""
 
-#: extension.js:2960 src/tools/toolDefinitions.js:162
+#: extension.js:2988 src/tools/toolDefinitions.js:162
 msgid "Scrape"
 msgstr ""
 
-#: extension.js:2962 src/tools/toolDefinitions.js:203
+#: extension.js:2990 src/tools/toolDefinitions.js:203
 msgid "Research"
 msgstr ""
 
-#: extension.js:2964
+#: extension.js:2992
 msgid "Term"
 msgstr ""
 
-#: extension.js:2966
+#: extension.js:2994
 msgid "Tool"
 msgstr ""
 
-#: extension.js:3726
+#: extension.js:3754
 msgid "Knowledge Base service is not running. Start it with:\n`systemctl --user start katabai-rag`"
 msgstr ""
 
-#: extension.js:3741
+#: extension.js:3769
 msgid "Knowledge Base service is back online."
 msgstr ""
 
-#: extension.js:3766
+#: extension.js:3794
 msgid "Knowledge Base embeddings are available again."
 msgstr ""
 
-#: extension.js:3797
+#: extension.js:3825
 msgid "Knowledge base is {pct}% full ({used} of {cap} chunks). When full, the oldest entries are pruned automatically — raise the cap or clear old data in Settings ▸ Tools ▸ Knowledge Base."
 msgstr ""
 
-#: extension.js:3894
+#: extension.js:3922
 msgid " Storage limits live in Settings ▸ Tools ▸ Knowledge Base."
 msgstr ""
 
-#: extension.js:3897
+#: extension.js:3925
 msgid "Knowledge base indexing was skipped: {reason}{hint}"
 msgstr ""
 
-#: extension.js:3951
+#: extension.js:3979
 msgid "Knowledge Base storage limits updated — applying immediately."
 msgstr ""
 
-#: extension.js:4123
+#: extension.js:4151
 msgid "No importable files found (supported: txt, md, pdf, docx, eml)."
 msgstr ""
 
-#: extension.js:4146
+#: extension.js:4174
 msgid "None of the selected files could be parsed for the knowledge base."
 msgstr ""
 
-#: extension.js:4154
+#: extension.js:4182
 msgid "Imported {count} file into the knowledge base."
 msgid_plural "Imported {count} files into the knowledge base."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:5033
+#: extension.js:5061
 msgid "Enable the Document Tool in Settings before attaching a file."
 msgstr ""
 
-#: extension.js:5062
+#: extension.js:5090
 msgid "Could not attach a file: {error}"
 msgstr ""
 
-#: extension.js:5207
+#: extension.js:5235
 msgid "Presets"
 msgstr ""
 
-#: extension.js:5656
+#: extension.js:5684
 msgid "Clear all attachments"
 msgstr ""
 
-#: extension.js:5804
+#: extension.js:5832
 msgid "Ask anything..."
 msgstr ""
 
-#: extension.js:5845
+#: extension.js:5873
 msgid "Tools and toggles"
 msgstr ""
 
-#: extension.js:5992
+#: extension.js:6020
 msgid "Attached {count} file from clipboard."
 msgid_plural "Attached {count} files from clipboard."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:6015
+#: extension.js:6043
 msgid "The prompt is already at its {limit}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document."
 msgstr ""
 
-#: extension.js:6031
+#: extension.js:6059
 msgid "Pasted text was {dropped} character too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
 msgid_plural "Pasted text was {dropped} characters too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:6056
+#: extension.js:6084
 msgid "Image attached from clipboard."
 msgstr ""
 
-#: extension.js:6146
+#: extension.js:6174
 msgid "Send Message"
 msgstr ""
 
-#: extension.js:7409
+#: extension.js:7455
 msgid "Conversation compacted — kept last {count} exchanges."
 msgstr ""
 
-#: extension.js:7412
+#: extension.js:7458
 msgid "Conversation is already compact."
 msgstr ""
 
-#: extension.js:7569
+#: extension.js:7615
 msgid "Not enough history to summarize yet — keep chatting and try again later."
 msgstr ""
 
-#: extension.js:7649
+#: extension.js:7695
 msgid "Session memory updated — {count} earlier turns summarized so the model keeps full context."
 msgstr ""
 
-#: extension.js:7967
+#: extension.js:8013
 msgid "Cache saved ~{pct}%"
 msgstr ""
 
-#: extension.js:8105
+#: extension.js:8151
 msgid "Dismiss"
 msgstr ""
 
-#: extension.js:8115
+#: extension.js:8161
 msgid "✓ Update"
 msgstr ""
 
-#: extension.js:8188
+#: extension.js:8234
 msgid "Forget"
 msgstr ""
 
-#: extension.js:8301
+#: extension.js:8347
 msgid "Saved ~{usd} this chat"
 msgstr ""
 
-#: extension.js:8559
+#: extension.js:8692
 msgid "This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request."
 msgstr ""
 
-#: extension.js:9085
+#: extension.js:9221
 msgid "Retry"
 msgstr ""
 
-#: extension.js:9089
+#: extension.js:9225
 msgid "Retry request"
 msgstr ""
 
-#: extension.js:9379
+#: extension.js:9556
 msgid "Research angle"
 msgstr ""
 
-#: extension.js:9424
+#: extension.js:9601
 msgid "After research: analyze findings for gaps, then write a comprehensive report with citations — ready in 1–3 minutes."
 msgstr ""
 
-#: extension.js:9442
+#: extension.js:9619
 msgid "Estimated effort: {cost}"
 msgstr ""
 
-#: extension.js:9461
+#: extension.js:9638
 msgid "Cancel"
 msgstr ""
 
-#: extension.js:9475
+#: extension.js:9652
 msgid "Save Edits"
 msgstr ""
 
-#: extension.js:9486
+#: extension.js:9663
 msgid "Edit plan"
 msgstr ""
 
-#: extension.js:9497
+#: extension.js:9674
 msgid "Cancel plan"
 msgstr ""
 
-#: extension.js:9511
+#: extension.js:9688
 msgid "Start research"
 msgstr ""
 
-#: extension.js:9577
+#: extension.js:9754
 msgid "✓ All {total}/{total} angles researched — moving to analysis phase."
 msgstr ""
 
-#: extension.js:9586
+#: extension.js:9763
 msgid "Researching {completed}/{total} angles — analyze findings, identify gaps, then write report."
 msgstr ""
 
-#: extension.js:9607
+#: extension.js:9784
 msgid "Search query"
 msgstr ""
 
-#: extension.js:10064
+#: extension.js:10241
 msgid "Analyzing coverage gaps..."
 msgstr ""
 
-#: extension.js:10225
+#: extension.js:10402
 msgid "Synthesis"
 msgstr ""
 
-#: extension.js:10229 extension.js:10257
+#: extension.js:10406 extension.js:10434
 msgid "Writing Report"
 msgstr ""
 
-#: extension.js:10230
+#: extension.js:10407
 msgid "Generating outline and compiling final report from all research findings..."
 msgstr ""
 
-#: extension.js:10234
+#: extension.js:10411
 msgid "Generating report outline..."
 msgstr ""
 
-#: extension.js:10250
+#: extension.js:10427
 msgid "Writing final report..."
 msgstr ""
 
-#: extension.js:10258
+#: extension.js:10435
 msgid "Streaming final research report..."
 msgstr ""
 
-#: extension.js:10459
+#: extension.js:10636
 msgid "Research may be incomplete (coverage: {score}/5)"
 msgstr ""
 
-#: extension.js:10468
+#: extension.js:10645
 msgid "• {aspect}"
 msgstr ""
 
-#: extension.js:10476
+#: extension.js:10653
 msgid "Continue Research"
 msgstr ""
 
-#: extension.js:10554
+#: extension.js:10731
 msgid "Researching missing aspects (pass {attempt})..."
 msgstr ""
 
-#: extension.js:10661
+#: extension.js:10838
 msgid "Some claims may not be fully supported by the sources"
 msgstr ""
 
-#: extension.js:10668
+#: extension.js:10845
 msgid "The report scored {score}/5 on factual grounding. Some statements may exceed what the gathered sources support — verify those claims before relying on them."
 msgstr ""
 
-#: extension.js:10681
+#: extension.js:10858
 msgid "Claims that could not be verified against sources:"
 msgstr ""
 
-#: extension.js:10688
+#: extension.js:10865
 msgid "• {claim}"
 msgstr ""
 
-#: extension.js:10699
+#: extension.js:10876
 msgid "Citations that may not support their claims:"
 msgstr ""
 
-#: extension.js:10706
+#: extension.js:10883
 msgid "• {cite}"
 msgstr ""
 
-#: extension.js:11042 extension.js:11075
+#: extension.js:11219 extension.js:11252
 msgid "Researching {completed}/{total} angles"
 msgstr ""
 
-#: extension.js:11070
+#: extension.js:11247
 msgid "\\u2713 {total}/{total} angles researched"
 msgstr ""
 
-#: extension.js:11441
+#: extension.js:11618
 msgid "+{count} more results available"
 msgstr ""
 
-#: extension.js:11953
+#: extension.js:12130
 msgid "Ran {count} tool"
 msgid_plural "Ran {count} tools"
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:12188
+#: extension.js:12365
 msgid "Ran {count} tools"
 msgstr ""
 
-#: extension.js:12318
+#: extension.js:12495
 msgid "{label}: {detail}"
 msgstr ""
 
-#: extension.js:13048
+#: extension.js:12604
+msgid "Naming this chat…"
+msgstr ""
+
+#: extension.js:12604 extension.js:12623
+msgid "Thinking…"
+msgstr ""
+
+#: extension.js:13264
 msgid "Image analysis failed ({error}). Sending without image analysis…"
 msgstr ""
 
-#: extension.js:13057
+#: extension.js:13273
 msgid "Image analysis failed ({error}). The message was sent without image analysis."
 msgstr ""
 
-#: extension.js:13088
+#: extension.js:13304
 msgid "Enable the Document Tool in Settings before using /doc."
 msgstr ""
 
-#: extension.js:13108
+#: extension.js:13324
 msgid "Katab could not resolve that file path. Use a local file and try again."
 msgstr ""
 
-#: extension.js:13120
+#: extension.js:13336
 msgid "Could not open the document picker: {error}"
 msgstr ""
 
-#: extension.js:13131
+#: extension.js:13347
 msgid "Use an absolute path, a ~/path, or the picker when attaching a file."
 msgstr ""
 
-#: extension.js:13158
+#: extension.js:13374
 msgid "Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava."
 msgstr ""
 
-#: extension.js:13239
+#: extension.js:13455
 msgid "Web search is off for this prompt. Set Search to Auto or On before using /search."
 msgstr ""
 
-#: extension.js:13263
+#: extension.js:13479
 msgid "Web search is off. Enable it in Settings > Tools > Web Search to use the /search command."
 msgstr ""
 
-#: extension.js:13273
+#: extension.js:13489
 msgid "Add a query after /search, for example: /search latest GNOME release."
 msgstr ""
 
-#: extension.js:13294
+#: extension.js:13510
 msgid "Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command."
 msgstr ""
 
-#: extension.js:13312
+#: extension.js:13528
 msgid "Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search."
 msgstr ""
 
-#: extension.js:13322
+#: extension.js:13538
 msgid "Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release."
 msgstr ""
 
-#: extension.js:13364
+#: extension.js:13580
 msgid "Deep Research mode activated for the next prompt. Type your research query."
 msgstr ""
 
-#: extension.js:13374
+#: extension.js:13590
 msgid "Deep Research mode activated. Type your research query."
 msgstr ""
 
-#: extension.js:13422
+#: extension.js:13638
 msgid "Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command."
 msgstr ""
 
-#: extension.js:13431
+#: extension.js:13647
 msgid "Add a query after /kb, for example: /kb what is the meaning of life?"
 msgstr ""
 
-#: extension.js:13442
+#: extension.js:13658
 msgid "Usage: /kb import \"~/path/to/file-or-folder\" — imports txt, md, pdf, docx, and eml files into the knowledge base."
 msgstr ""
 
-#: extension.js:13477
+#: extension.js:13693
 msgid "Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context."
 msgstr ""
 
-#: extension.js:13507
+#: extension.js:13723
 msgid "Knowledge Base search failed: {error}"
 msgstr ""
 
-#: extension.js:16711
+#: extension.js:16943
 msgid "Model '{model}' not found locally.\n\nDo you want to download it now?"
 msgstr ""
 
-#: extension.js:16721
+#: extension.js:16953
 msgid "Yes, Download"
 msgstr ""
 
-#: extension.js:16727
+#: extension.js:16959
 msgid "No, Cancel"
 msgstr ""
 
-#: extension.js:16739 extension.js:16740
+#: extension.js:16971 extension.js:16972
 msgid "Download cancelled."
 msgstr ""
 
-#: extension.js:16755
+#: extension.js:16987
 msgid "Downloading model '{model}'... (0%)"
 msgstr ""
 
-#: extension.js:16787
+#: extension.js:17019
 msgid "Cancel Download"
 msgstr ""
 
-#: extension.js:16869
+#: extension.js:17101
 msgid "Downloading model '{model}'...\n{status}"
 msgstr ""
 
-#: extension.js:16938
+#: extension.js:17170
 msgid "Last response failed"
 msgstr ""
 
-#: extension.js:17007
+#: extension.js:17239
 msgid "Current Chat"
 msgstr ""
 
-#: extension.js:17015 extension.js:17253
+#: extension.js:17247 extension.js:17485
 msgid "Resume your active conversation"
 msgstr ""
 
-#: extension.js:17026 extension.js:17269
+#: extension.js:17258 extension.js:17501
 msgid "Ready"
 msgstr ""
 
-#: extension.js:17057
+#: extension.js:17289
 msgid "Token Breakdown"
 msgstr ""
 
-#: extension.js:17063
+#: extension.js:17295
 msgid "Hatches with your next reply"
 msgstr ""
 
-#: extension.js:17154
+#: extension.js:17386
 msgid "{name} · Token Breakdown"
 msgstr ""
 
-#: extension.js:17168
+#: extension.js:17400
 msgid "{name} · {stage}"
 msgstr ""
 
-#: extension.js:17264
+#: extension.js:17496
 msgid "Replying"
 msgstr ""
 
-#: extension.js:17266
+#: extension.js:17498
 msgid "Error"
 msgstr ""
 
-#: extension.js:17268
+#: extension.js:17500
 msgid "Open"
 msgstr ""
 
-#: extension.js:17375
+#: extension.js:17607
 msgid "Recent Chats"
 msgstr ""
 
-#: extension.js:17406
+#: extension.js:17638
 msgid "Open chat"
 msgstr ""
 
-#: extension.js:17424
+#: extension.js:17656
 msgid "Delete chat"
 msgstr ""
 
@@ -600,15 +608,15 @@ msgstr ""
 msgid "Edit Conversation"
 msgstr ""
 
-#: src/ui/pickers.js:198
+#: src/ui/pickers.js:203
 msgid "Ollama Presets"
 msgstr ""
 
-#: src/ui/pickers.js:370
+#: src/ui/pickers.js:375
 msgid "Choose Engine"
 msgstr ""
 
-#: src/ui/pickers.js:436
+#: src/ui/pickers.js:441
 msgid "DeepSeek Model"
 msgstr ""
 
@@ -925,246 +933,262 @@ msgid "Choose which AI backend powers your conversations. Click a provider to sw
 msgstr ""
 
 #: src/ui/prefs/generalPage.js:46
-msgid "Keyboard Shortcut"
+msgid "Chat"
 msgstr ""
 
 #: src/ui/prefs/generalPage.js:47
+msgid "Control how new conversations are named."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:52
+msgid "Keyboard Shortcut"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:53
 msgid "Set a global shortcut to open or hide the chat from anywhere on the desktop."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:54 src/ui/usagePanel.js:60 src/ui/usagePanel.js:145
+#: src/ui/prefs/generalPage.js:60 src/ui/usagePanel.js:60 src/ui/usagePanel.js:145
 msgid "AI Token Breakdown"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:55
+#: src/ui/prefs/generalPage.js:61
 msgid "Control the local-only usage ledger, companion celebrations, default range, retention, reset, and export."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:62
+#: src/ui/prefs/generalPage.js:68
 msgid "Pet Companion"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:63
+#: src/ui/prefs/generalPage.js:69
 msgid "Choose whether the visible companion follows the active provider or stays pinned to a form selected in the Pet Collection."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:70
+#: src/ui/prefs/generalPage.js:76
 msgid "Notifications"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:71
+#: src/ui/prefs/generalPage.js:77
 msgid "Control desktop alerts and sounds for chat activity that happens while the window is closed."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:78
+#: src/ui/prefs/generalPage.js:84
 msgid "Appearance"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:79
+#: src/ui/prefs/generalPage.js:85
 msgid "Control how chat text is sized and how the glass dialog renders over your desktop."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:91
+#: src/ui/prefs/generalPage.js:97
 msgid "Toggle Chat"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:92
+#: src/ui/prefs/generalPage.js:98
 msgid "Open or hide the current chat without cancelling active responses. Press to record a key combination; Backspace clears it."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:100
+#: src/ui/prefs/generalPage.js:106
+msgid "AI-Generated Chat Titles"
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:107
+msgid "Name each new conversation from its first prompt using the active provider and model. Turn this off to keep the default title derived from the first message."
+msgstr ""
+
+#: src/ui/prefs/generalPage.js:115
 msgid "Chat Text Size"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:101
+#: src/ui/prefs/generalPage.js:116
 msgid "Comfortable is the recommended default for general readability. Compact fits more text on screen; Large is easier to read from a distance."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:110
+#: src/ui/prefs/generalPage.js:125
 msgid "Compact"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:111
+#: src/ui/prefs/generalPage.js:126
 msgid "Comfortable (Recommended)"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:112
+#: src/ui/prefs/generalPage.js:127
 msgid "Large"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:116 src/ui/prefs/generalPage.js:157 src/ui/prefs/generalPage.js:248 src/ui/prefs/ollamaPage.js:565 src/ui/prefs/ollamaPage.js:792 src/ui/prefs/tools/deepResearch.js:41 src/ui/prefs/tools/webSearch.js:203 src/ui/prefs/widgets.js:494
+#: src/ui/prefs/generalPage.js:131 src/ui/prefs/generalPage.js:172 src/ui/prefs/generalPage.js:263 src/ui/prefs/ollamaPage.js:565 src/ui/prefs/ollamaPage.js:792 src/ui/prefs/tools/deepResearch.js:41 src/ui/prefs/tools/webSearch.js:203 src/ui/prefs/widgets.js:494
 msgid "Custom ({value})"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:120
+#: src/ui/prefs/generalPage.js:135
 msgid "Glassy Translucent Dialog"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:121
+#: src/ui/prefs/generalPage.js:136
 msgid "Makes the chat dialog slightly see-through for the glass look. Turn this off for maximum text readability — the dialog then uses a more opaque surface."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:129
+#: src/ui/prefs/generalPage.js:144
 msgid "Completion Sound"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:130
+#: src/ui/prefs/generalPage.js:145
 msgid "Play a short sound when a response finishes while the chat is closed. Uses a different tone when the request fails."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:138
+#: src/ui/prefs/generalPage.js:153
 msgid "Track Token Usage"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:139
+#: src/ui/prefs/generalPage.js:154
 msgid "Record local-only token totals for the Tokens panel. Existing data stays on disk when this is off."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:147
+#: src/ui/prefs/generalPage.js:162
 msgid "Default Range"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:148
+#: src/ui/prefs/generalPage.js:163
 msgid "Initial range shown when opening the AI Token Breakdown panel or top-bar snapshot."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:161
+#: src/ui/prefs/generalPage.js:176
 msgid "Retention"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:162
+#: src/ui/prefs/generalPage.js:177
 msgid "How long to keep daily token buckets before pruning. Forever keeps the local ledger until you reset it."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:171
+#: src/ui/prefs/generalPage.js:186
 msgid "Forever"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:172
+#: src/ui/prefs/generalPage.js:187
 msgid "90 days"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:173
+#: src/ui/prefs/generalPage.js:188
 msgid "1 year"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:177
+#: src/ui/prefs/generalPage.js:192
 msgid "{value} days"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:181
+#: src/ui/prefs/generalPage.js:196
 msgid "Companion Celebrations"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:182
+#: src/ui/prefs/generalPage.js:197
 msgid "Show in-chat messages for pet hatches and growth stages."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:188
+#: src/ui/prefs/generalPage.js:203
 msgid "Monthly Budget"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:189
+#: src/ui/prefs/generalPage.js:204
 msgid "Show a monthly spend budget card in the Token Breakdown panel and warn as spending approaches the limit."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:197
+#: src/ui/prefs/generalPage.js:212
 msgid "Monthly Budget Amount"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:198
+#: src/ui/prefs/generalPage.js:213
 msgid "USD budget for a calendar month. Cost estimates use published model pricing."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:207
+#: src/ui/prefs/generalPage.js:222
 msgid "Budget Warning Threshold"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:208
+#: src/ui/prefs/generalPage.js:223
 msgid "Percentage of the monthly budget at which warnings start."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:226
+#: src/ui/prefs/generalPage.js:241
 msgid "Desktop Notifications"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:227
+#: src/ui/prefs/generalPage.js:242
 msgid "Show a desktop notification when a response finishes while the chat is closed."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:233
+#: src/ui/prefs/generalPage.js:248
 msgid "Active Companion"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:234
+#: src/ui/prefs/generalPage.js:249
 msgid "Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:243
+#: src/ui/prefs/generalPage.js:258
 msgid "Follow Current Provider"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:244
+#: src/ui/prefs/generalPage.js:259
 msgid "Pinned"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:252
+#: src/ui/prefs/generalPage.js:267
 msgid "Current Form"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:253
+#: src/ui/prefs/generalPage.js:268
 msgid "Pinned forms are selected from the Pet Collection inside the Token Breakdown panel."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:277
+#: src/ui/prefs/generalPage.js:292
 msgid "{pet} · Following"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:282 src/ui/prefs/generalPage.js:304 src/ui/prefs/tools/knowledge.js:972 src/ui/prefs/tools/knowledge.js:977
+#: src/ui/prefs/generalPage.js:297 src/ui/prefs/generalPage.js:319 src/ui/prefs/tools/knowledge.js:972 src/ui/prefs/tools/knowledge.js:977
 msgid "Unavailable"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:291
+#: src/ui/prefs/generalPage.js:306
 msgid "Usage Ledger"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:292
+#: src/ui/prefs/generalPage.js:307
 msgid "Private JSON ledger stored under ~/.local/share/katabai/token-usage.json."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:300
+#: src/ui/prefs/generalPage.js:315
 msgid "{count} tokens"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:310
+#: src/ui/prefs/generalPage.js:325
 msgid "Export Usage JSON"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:311
+#: src/ui/prefs/generalPage.js:326
 msgid "Write a timestamped copy of the local ledger into your Documents folder (or home folder if Documents is unavailable)."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:314 src/ui/prefs/tools/knowledge.js:1007
+#: src/ui/prefs/generalPage.js:329 src/ui/prefs/tools/knowledge.js:1007
 msgid "Export"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:318
+#: src/ui/prefs/generalPage.js:333
 msgid "Exported"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:321
+#: src/ui/prefs/generalPage.js:336
 msgid "Export failed"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:329
+#: src/ui/prefs/generalPage.js:344
 msgid "Reset Usage Ledger"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:330
+#: src/ui/prefs/generalPage.js:345
 msgid "Delete local token analytics and all pet XP. Chat history is not affected."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:331
+#: src/ui/prefs/generalPage.js:346
 msgid "Reset"
 msgstr ""
 

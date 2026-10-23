@@ -1,5 +1,9 @@
 # **Architecting a Local AI Assistant Harness via the Ollama API**
 
+> **Historical research report** — kept for provenance. It describes candidate designs and
+> external APIs as researched at the time; it is **not** current documentation. See
+> [README.md](../README.md) and [Technical documentation](../../Technical/) for what shipped.
+
 The integration of localized Large Language Models (LLMs) into enterprise systems, software pipelines, and autonomous agent frameworks necessitates a robust, programmatic architectural harness. Such a harness abstracts the immense complexities of direct hardware memory management, context window tokenization, and raw inference execution into manageable, programmable interfaces. The Ollama API provides a highly efficient, RESTful abstraction layer over core inference engines (such as llama.cpp), allowing developers to deploy, manage, and interact with highly capable models programmatically. This extensive architectural report delivers an exhaustive analysis of how to construct a comprehensive AI assistant harness using the Ollama API, detailing the deployment of generation endpoints, the mathematical enforcement of structured data, the integration of autonomous tool calling loops, and the rigorous optimization of hardware VRAM resources. Furthermore, to satisfy requirements for direct sourcing, the full URLs of the canonical documentation and community diagnostic discussions utilized to synthesize this architecture are woven directly into the text.
 
 ## **Core Architecture, Network Topology, and the API Lifecycle**

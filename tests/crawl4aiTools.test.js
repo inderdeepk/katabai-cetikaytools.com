@@ -17,6 +17,7 @@ import {
     looksLikePdf,
     looksLikePdfFailure,
     readCrawl4AIConfig,
+    parseNetworkRequests,
 } from '../src/tools/crawl4aiTools.js';
 import { assert, assertEqual, assertDeepEqual, runTests, createMockSettings } from './testUtils.js';
 
@@ -1141,6 +1142,134 @@ const tests = [
                 'https://docs.example.org/install.html',
                 'resolved href',
             );
+        },
+    ],
+
+    // ── parseNetworkRequests ───────────────────────────────────────────────
+
+    [
+        'parseNetworkRequests: empty and non-array input yield empty output',
+        () => {
+            assertEqual(parseNetworkRequests(null), '', 'null');
+            assertEqual(parseNetworkRequests(undefined), '', 'undefined');
+            assertEqual(parseNetworkRequests([]), '', 'empty array');
+            assertEqual(parseNetworkRequests('nope'), '', 'non-array');
+        },
+    ],
+
+    [
+        'parseNetworkRequests: keeps JSON/JS responses and skips other content types',
+        () => {
+            const text = parseNetworkRequests([
+                {
+                    url: 'https://api.example/data',
+                    method: 'GET',
+                    content_type: 'application/json',
+                    body: '{"a":1}',
+                },
+                {
+                    url: 'https://api.example/script.js',
+                    content_type: 'application/javascript',
+                    body: 'var a=1',
+                },
+                {
+                    url: 'https://api.example/page',
+                    content_type: 'text/html',
+                    body: '<html></html>',
+                },
+                { url: 'https://api.example/image', content_type: 'image/png', body: 'binary' },
+            ]);
+            assert(text.includes('https://api.example/data'), 'json kept');
+            assert(text.includes('https://api.example/script.js'), 'javascript kept');
+            assert(!text.includes('api.example/page'), 'html dropped');
+            assert(!text.includes('api.example/image'), 'image dropped');
+        },
+    ],
+
+    [
+        'parseNetworkRequests: dedupes the same URL ignoring its query string',
+        () => {
+            const text = parseNetworkRequests([
+                {
+                    url: 'https://api.example/items?page=1',
+                    content_type: 'application/json',
+                    body: '{"page":1}',
+                },
+                {
+                    url: 'https://api.example/items?page=2',
+                    content_type: 'application/json',
+                    body: '{"page":2}',
+                },
+            ]);
+            assertEqual(
+                text.split('https://api.example/items').length - 1,
+                1,
+                'duplicate path captured once',
+            );
+            assert(text.includes('{"page":1}'), 'first response kept');
+            assert(!text.includes('{"page":2}'), 'later duplicate dropped');
+        },
+    ],
+
+    [
+        'parseNetworkRequests: stringifies object bodies and skips empty ones',
+        () => {
+            const text = parseNetworkRequests([
+                {
+                    url: 'https://api.example/a',
+                    content_type: 'application/json',
+                    body: { ok: true },
+                },
+                { url: 'https://api.example/b', content_type: 'application/json', body: null },
+                { url: 'https://api.example/c', content_type: 'application/json' },
+                { content_type: 'application/json', body: '{"no":"url"}' },
+            ]);
+            assert(text.includes('{"ok":true}'), 'object body serialized');
+            assert(!text.includes('https://api.example/b'), 'null body skipped');
+            assert(!text.includes('https://api.example/c'), 'missing body skipped');
+            assert(!text.includes('no":"url'), 'entry without url skipped');
+        },
+    ],
+
+    [
+        'parseNetworkRequests: labels the method and defaults to GET',
+        () => {
+            const text = parseNetworkRequests([
+                {
+                    url: 'https://api.example/a',
+                    method: 'POST',
+                    content_type: 'application/json',
+                    body: '{}',
+                },
+                { url: 'https://api.example/b', content_type: 'application/json', body: '{}' },
+            ]);
+            assert(text.includes('// POST https://api.example/a'), 'explicit method');
+            assert(text.includes('// GET https://api.example/b'), 'default method');
+        },
+    ],
+
+    [
+        'parseNetworkRequests: truncates a long body and caps total output',
+        () => {
+            const longBody = 'x'.repeat(5000);
+            const text = parseNetworkRequests([
+                {
+                    url: 'https://api.example/long',
+                    content_type: 'application/json',
+                    body: longBody,
+                },
+            ]);
+            assert(text.includes('…'), 'truncation marker present');
+            assert(!text.includes('x'.repeat(3001)), 'body truncated at 3000 chars');
+
+            const many = Array.from({ length: 20 }, (_unused, index) => ({
+                url: `https://api.example/entry-${index}`,
+                content_type: 'application/json',
+                body: 'y'.repeat(3000),
+            }));
+            const capped = parseNetworkRequests(many);
+            assert(capped.length <= 24_000, `total output capped (${capped.length})`);
+            assert(!capped.includes('entry-19'), 'entries past the cap are dropped');
         },
     ],
 ];

@@ -16,12 +16,16 @@ This document provides a complete reference for Katab's GSettings schema, tool d
   - [Web Search Settings (SearxNG)](#web-search-settings-searxng)
   - [Web Scraper Settings (Crawl4AI)](#web-scraper-settings-crawl4ai)
   - [Knowledge Base Settings (RAG)](#knowledge-base-settings-rag)
+  - [Deep Research Settings](#deep-research-settings)
   - [Token Usage & Pets Settings](#token-usage--pets-settings)
 - [Tool Schema Reference](#tool-schema-reference)
   - [web_search](#web_search)
   - [read_url](#read_url)
   - [crawl_url](#crawl_url)
+  - [explore_docs](#explore_docs)
   - [knowledge_search](#knowledge_search)
+  - [update_knowledge](#update_knowledge)
+  - [forget_knowledge](#forget_knowledge)
   - [document](#document)
   - [deep_research](#deep_research)
 - [External Service APIs](#external-service-apis)
@@ -47,7 +51,11 @@ Path: `/org/gnome/shell/extensions/katabai/`
 |---|---|---|---|
 | `provider` | `s` | `'unsloth'` | Active AI provider: `ollama`, `unsloth`, `openai`, `anthropic`, or `deepseek` |
 | `toggle-current-chat` | `as` | `["<Control><Super>c"]` | Keyboard shortcut to toggle the chat overlay |
-| `document-tool-enabled` | `b` | `false` | Enable local document parsing tool |
+| `chat-text-scale` | `s` | `'comfortable'` | Chat text size: `compact`, `comfortable`, or `large` |
+| `ui-glass-translucent` | `b` | `true` | Translucent "glass" dialog background |
+| `completion-sound-enabled` | `b` | `true` | Play a completion sound when a response finishes while the chat is closed |
+| `auto-generate-chat-titles` | `b` | `true` | Name new chats from the first prompt with the active provider/model |
+| `document-tool-enabled` | `b` | `false` | Enable the local document parsing tool |
 
 ### Ollama Settings
 
@@ -56,6 +64,7 @@ Path: `/org/gnome/shell/extensions/katabai/`
 |---|---|---|---|
 | `ollama-url` | `s` | `'http://localhost:11434'` | Ollama API base URL |
 | `ollama-model` | `s` | `'llama3'` | Model name |
+| `ollama-preset` | `s` | `'balanced'` | Sampling workload preset: `balanced`, `code`, `factual`, `creative`, `json`, or `custom` |
 | `ollama-active-preset` | `s` | `''` | ID of the currently loaded preset |
 
 #### Context & Generation
@@ -78,7 +87,6 @@ Path: `/org/gnome/shell/extensions/katabai/`
 | `ollama-top-p` | `d` | `0.9` | 0.0–1.0 | Nucleus sampling |
 | `ollama-min-p` | `d` | `0.05` | 0.0–1.0 | Minimum probability |
 | `ollama-tfs-z` | `d` | `1.0` | 0.0–2.0 | Tail free sampling |
-| `ollama-typical-p` | `d` | `1.0` | 0.0–2.0 | Typical sampling |
 
 #### Mirostat (Dynamic Entropy)
 | Key | Type | Default | Description |
@@ -171,7 +179,7 @@ Path: `/org/gnome/shell/extensions/katabai/`
 |---|---|---|---|
 | `web-search-enabled` | `b` | `false` | Enable web search tool |
 | `web-search-url` | `s` | `'http://localhost:8080'` | SearxNG base URL (must have JSON format enabled) |
-| `web-search-result-limit` | `i` | `5` | Max results per query (1–20) |
+| `web-search-result-limit` | `i` | `5` | Max results per query (1–30) |
 | `web-search-time-range` | `s` | `''` | Time filter: `''`, `day`, `week`, `month`, `year` |
 | `web-search-safesearch` | `i` | `1` | SafeSearch: 0 (none), 1 (moderate), 2 (strict) |
 | `web-search-language` | `s` | `''` | Language code filter (e.g., `'en'`) |
@@ -182,7 +190,7 @@ Path: `/org/gnome/shell/extensions/katabai/`
 | `web-search-multiquery-enabled` | `b` | `false` | Enable multi-query expansion |
 | `web-search-autonomous-enabled` | `b` | `true` | Model can search autonomously |
 | `web-search-allow-local-addresses` | `b` | `false` | Allow private/loopback URLs |
-| `web-search-max-tool-iterations` | `i` | `10` | Max sequential tool call rounds (1–50) |
+| `web-search-max-tool-iterations` | `i` | `25` | Max tool-call iterations per turn (1–100; used by both normal and deep-research turns) |
 
 ### Web Scraper Settings (Crawl4AI)
 
@@ -199,8 +207,10 @@ Path: `/org/gnome/shell/extensions/katabai/`
 | `crawl4ai-max-chars` | `i` | `24000` | Output truncation cap (500–100000) |
 | `crawl4ai-simulate-user` | `b` | `false` | Stealth mode (mouse movements, delays) |
 | `crawl4ai-autonomous-enabled` | `b` | `true` | Model can scrape autonomously |
+| `crawl4ai-follow-links-enabled` | `b` | `true` | Follow relevance-scored subpage links during research |
+| `crawl4ai-max-follow-links` | `i` | `3` | Max subpage links followed per research branch (0–10) |
 | `crawl4ai-allow-local-addresses` | `b` | `false` | Allow private/loopback URLs |
-| `crawl4ai-job-poll-ms` | `i` | `2000` | Async job polling interval (500–10000ms) |
+| `crawl4ai-job-poll-ms` | `i` | `2000` | Polling interval for `/llm/job` tasks (500–10000 ms) |
 | `crawl4ai-capture-network` | `b` | `false` | Capture XHR/Fetch background calls |
 | `crawl4ai-extraction-mode` | `s` | `'markdown'` | Extraction mode: `'markdown'`, `'llm-schema'`, `'llm-block'` |
 | `crawl4ai-llm-provider` | `s` | `'deepseek/deepseek-flash'` | LiteLLM provider string for LLM extraction (defaults to DeepSeek V4.1 Flash). Must be allowed server-side: set `LLM_PROVIDER` (and the provider's API key) in the container's `.llm.env`, then restart |
@@ -226,7 +236,7 @@ Path: `/org/gnome/shell/extensions/katabai/`
 | `rag-auto-prune` | `b` | `true` | LRU eviction at size cap |
 | `rag-index-documents` | `b` | `true` | Index document attachments |
 | `rag-index-conversations` | `b` | `true` | Index past conversations |
-| `rag-index-research-cache` | `b` | `true` | Index web search/scape results |
+| `rag-index-research-cache` | `b` | `true` | Index web search/scrape results |
 | `rag-autonomous-enabled` | `b` | `true` | Model can search KB autonomously |
 | `rag-auto-update-enabled` | `b` | `false` | Model can update KB without confirmation |
 | `rag-fallback-enabled` | `b` | `true` | Auto web search on low-quality KB results |
@@ -235,6 +245,16 @@ Path: `/org/gnome/shell/extensions/katabai/`
 | `rag-rerank-model` | `s` | `'bge-reranker-v2-m3'` | Reranker model name |
 | `rag-rerank-candidate-multiplier` | `i` | `4` | Candidate pool multiplier (1–10) |
 | `rag-hybrid-enabled` | `b` | `true` | BM25 + dense retrieval fusion |
+| `rag-maintenance-generation` | `i` | `0` | Incremented to signal a maintenance action to the dialog |
+| `rag-maintenance-action` | `s` | `''` | Pending maintenance action (e.g. re-index, clear, import) |
+
+### Deep Research Settings
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `deep-research-depth` | `s` | `'standard'` | `standard`, `deep`, or `max` — scales the synthesis budget, quality retries, and gap queries |
+| `deep-research-compression-model` | `s` | `''` | Optional model override for high-volume page compression (empty = active model) |
+| `deep-research-synthesis-model` | `s` | `''` | Optional model override for planning, critique, outline, and the final report |
 
 ### Token Usage & Pets Settings
 
@@ -255,7 +275,8 @@ Path: `/org/gnome/shell/extensions/katabai/`
 
 ## Tool Schema Reference
 
-The following JSON schemas are sent to AI providers to enable autonomous tool calling.
+The following JSON schemas are sent to AI providers to enable autonomous tool calling. Tools marked
+"no API schema" are modes or pre-send actions and are never advertised as functions.
 
 ### web_search
 
@@ -272,17 +293,17 @@ Searches the web via SearxNG metasearch.
       "properties": {
         "query": {
           "type": "string",
-          "description": "The search query string. Be specific — use keywords and phrases likely to appear on result pages."
+          "description": "The search query string. Be specific — use keywords and phrases likely to appear on result pages. For technical queries, include version numbers or years."
         },
         "categories": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Optional SearxNG categories (e.g., [\"general\"], [\"science\"], [\"news\"])."
+          "description": "Optional SearxNG categories to filter by (e.g. [\"general\"], [\"science\"], [\"news\"]). Omit for default."
         },
         "time_range": {
           "type": "string",
           "enum": ["", "day", "week", "month", "year"],
-          "description": "Optional time filter."
+          "description": "Optional time filter. Leave empty for any time."
         },
         "limit": {
           "type": "integer",
@@ -314,7 +335,7 @@ Fetches and extracts readable text from a web page.
       "properties": {
         "url": {
           "type": "string",
-          "description": "The absolute HTTP(S) URL of the page to fetch."
+          "description": "The absolute HTTP(S) URL of the page to fetch and extract readable text from."
         }
       },
       "required": ["url"]
@@ -341,11 +362,11 @@ Deep-scrapes a page using Crawl4AI's browser rendering.
       "properties": {
         "url": {
           "type": "string",
-          "description": "The absolute HTTP(S) URL to deep-scrape."
+          "description": "The absolute HTTP(S) URL of the web page to deep-scrape with a real browser."
         },
         "query": {
           "type": "string",
-          "description": "Optional. When using BM25 fit mode, this query focuses extraction on the most relevant portions."
+          "description": "Optional. When using BM25 fit mode, this query focuses extraction on the most relevant portions of the page."
         },
         "mode": {
           "type": "string",
@@ -405,13 +426,18 @@ Queries the local RAG knowledge base.
   "type": "function",
   "function": {
     "name": "knowledge_search",
-    "description": "Search the local knowledge base for semantically relevant information. Use natural language — the search is semantic, not keyword-based.",
+    "description": "Search your personal knowledge base for semantically relevant information. The knowledge base contains past document attachments, research results, and optionally conversation history. Use this before web_search when the answer might already exist in local files or past research.",
     "parameters": {
       "type": "object",
       "properties": {
         "query": {
           "type": "string",
-          "description": "The search query in natural language."
+          "description": "The search query to find semantically relevant information in the local knowledge base. Use natural language — the search is semantic, not keyword-based."
+        },
+        "collection": {
+          "type": "string",
+          "enum": ["conversations", "documents", "research_cache"],
+          "description": "Optional: restrict the search to one collection — \"conversations\" (past chats), \"documents\" (imported/attached files), or \"research_cache\" (web research results). Omit to search everything."
         }
       },
       "required": ["query"]
@@ -421,6 +447,66 @@ Queries the local RAG knowledge base.
 ```
 
 **Danger level**: `read_only`
+**Advertised when**: the KB is enabled, reachable, non-empty, and embeddings are up.
+
+### update_knowledge
+
+Stores or replaces a durable memory fact in the knowledge base (collection `conversations`,
+ids `update_<slug>`).
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "update_knowledge",
+    "description": "Update your knowledge base when you discover that previously stored information is outdated, incorrect, or incomplete. Call this when the user tells you something that contradicts what is in your memory, when they explicitly ask you to remember or update something, or when you find conflicting information between the knowledge base and the current conversation. Only call this after you have confirmed with the user via knowledge_search that old information exists.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "about": {
+          "type": "string",
+          "description": "A short label describing what topic or fact is being updated (e.g., \"user GPU setup\", \"preferred language\")."
+        },
+        "new_fact": {
+          "type": "string",
+          "description": "The corrected or updated information to store. Be specific and complete — this replaces the old understanding."
+        }
+      },
+      "required": ["about", "new_fact"]
+    }
+  }
+}
+```
+
+**Danger level**: `potentially_unsafe` — with **Auto-update** off, the action is staged in the message's
+knowledge-base drawer and requires confirmation.
+
+### forget_knowledge
+
+Deletes a stored memory fact.
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "forget_knowledge",
+    "description": "Delete a previously saved memory from the local knowledge base. Use when the user explicitly asks you to forget something or when a stored fact must be removed. Only call this after confirming the stored memory exists via knowledge_search.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "about": {
+          "type": "string",
+          "description": "The exact topic label (\"about\" value) used when the memory was saved with update_knowledge. Deleting removes the stored fact for that topic."
+        }
+      },
+      "required": ["about"]
+    }
+  }
+}
+```
+
+**Danger level**: `potentially_unsafe` — can only delete memory-fact chunks (`update_<slug>` ids),
+never documents or conversation history; manual mode requires confirmation.
 
 ### document
 
@@ -501,17 +587,14 @@ List installed models. Used for health checks and model dropdown.
 {"models":[{"name":"llama3.2:latest","modified_at":"...","size":1234567890}]}
 ```
 
-#### GET `/api/show`
-Get model details. Used to detect vision capability.
+#### POST `/api/show`
+Get model details. Used to detect vision capability (cached per URL + model).
 
-**Request**: `POST /api/show` with `{"name": "llama3.2-vision"}`
+**Request**: `POST /api/show` with `{"model": "llama3.2-vision"}`
 
-#### POST `/tokenize`
-Token counting. Used for prompt character estimation.
-
-**Request**: `{"model":"llama3.2","text":"Hello world"}`
-
-**Response**: `{"tokens":[9906,1917]}`
+#### Token counting
+Ollama has no public tokenize route. Katab probes `POST /api/tokenize` once per session and, when
+it is absent (404/405), falls back to a character-based estimate (~3.5 chars/token).
 
 ---
 
@@ -582,7 +665,12 @@ data: {"type":"tool_result","tool_name":"web_search","content":"..."}
 ```
 
 #### POST `/tokenize`
-Token counting for prompt estimation.
+Token counting for the draft-token preview and health probe.
+
+**Request**: `{"content": "Hello world"}`
+
+**Response**: `{"tokens": [...]}` — Katab uses the array length when present and falls back to a
+character estimate otherwise.
 
 ---
 
@@ -696,11 +784,12 @@ Synchronous crawl.
 **Request**:
 ```json
 {
-  "urls": "https://example.com/article",
+  "urls": ["https://example.com/article"],
   "browser_config": {
     "headless": true,
-    "viewport_width": 1280,
-    "viewport_height": 720,
+    "verbose": false,
+    "viewport_width": 1920,
+    "viewport_height": 1080,
     "user_agent_mode": "random",
     "simulate_user": false
   },
@@ -708,17 +797,20 @@ Synchronous crawl.
     "cache_mode": "bypass",
     "word_count_threshold": 10,
     "page_timeout": 60000,
+    "capture_network_requests": false,
     "markdown_generator": {
       "type": "DefaultMarkdownGenerator",
-      "content_filter": {
-        "type": "PruningContentFilter",
-        "threshold": 0.5
+      "params": {
+        "content_filter": {
+          "type": "PruningContentFilter",
+          "params": { "threshold": 0.48, "threshold_type": "fixed" }
+        }
       }
     },
     "extraction_strategy": {
       "type": "LLMExtractionStrategy",
       "params": {
-        "provider": "openai/gpt-4o-mini",
+        "provider": "deepseek/deepseek-flash",
         "schema": { "type": "object", "properties": { "title": { "type": "string" } } },
         "chunk_token_threshold": 4000,
         "overlap_rate": 0.1
@@ -727,6 +819,9 @@ Synchronous crawl.
   }
 }
 ```
+
+BM25 mode uses `{"type": "BM25ContentFilter", "params": {"user_query": "<query>", "threshold": 0.5}}`
+instead of the pruning filter.
 
 The `extraction_strategy` block is **optional** and only sent when `crawl4ai-extraction-mode` is `llm-schema` or `llm-block`. The REST API uses `extraction_strategy` (not the Python-side `extraction_config` name), wrapped in a `{ type, params }` envelope. The LLM API key is configured server-side on the Docker container — it is never sent through this request. The requested provider must be allowed on the server: set `LLM_PROVIDER=<provider value>` and the provider's API key (e.g. `DEEPSEEK_API_KEY`) in `.llm.env`, then restart the container. Note that on secure-by-default v0.9.x builds this `/crawl` path is blocked for `LLMExtractionStrategy`; Katab routes LLM modes through the sanctioned `/llm/job` endpoint instead, which constructs the strategy server-side.
 
@@ -748,8 +843,11 @@ The `extraction_strategy` block is **optional** and only sent when `crawl4ai-ext
 
 When LLM extraction is active, the `json` field carries the schema-mode structured output and `llm` carries the block-mode freeform answer. Katab's `parseCrawlResults` maps these onto `structuredJson` / `llmResponse` and `buildCrawlResultBlock` renders them with a `[Structured JSON extracted by LLM...]` / `[LLM extraction...]` header.
 
-#### POST `/crawl/job` + GET `/crawl/job/{id}`
-Async crawl with polling. Used when synchronous crawl is slow.
+#### Async jobs
+
+Katab uses Crawl4AI's asynchronous job API only for LLM extraction (`/llm/job`, below). Plain
+Markdown crawls go through synchronous `POST /crawl`. The `crawl4ai-job-poll-ms` setting controls
+how often `/llm/job/{task_id}` is polled (default 2000 ms, range 500–10000).
 
 #### POST `/llm/job` + GET `/llm/job/{id}` (LLM extraction — sanctioned path)
 Async LLM extraction with polling. This is the **only** supported way to run LLM extraction on Crawl4AI v0.9.x secure-by-default builds — client-supplied `LLMExtractionStrategy` on `/crawl` is rejected as an untrusted request. The strategy is constructed **server-side** from the provider name; credentials come from the container environment, never from the request.
@@ -761,10 +859,10 @@ Async LLM extraction with polling. This is the **only** supported way to run LLM
   "q": "Extract the key facts, claims, and arguments from this page and summarize them concisely.",
   "provider": "deepseek/deepseek-flash",
   "cache": true,
-  "schema": { "type": "object", "properties": { "title": { "type": "string" } } }
+  "schema": "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\"}}}"
 }
 ```
-- `schema` is optional — only sent when `crawl4ai-extraction-mode` is `llm-schema`. Omit it for `llm-block` (freeform answer).
+- `schema` is optional — only sent when `crawl4ai-extraction-mode` is `llm-schema`, as a **JSON string** (Katab forwards the raw `crawl4ai-llm-schema-json` setting). Omit it for `llm-block` (freeform answer).
 - `q` is the freeform instruction (`llm-block`) or a shaping prompt (`llm-schema`).
 - `provider` must be allowed on the server: set `LLM_PROVIDER=<value>` and the provider's API key (e.g. `DEEPSEEK_API_KEY`) in `.llm.env`, then restart the container.
 

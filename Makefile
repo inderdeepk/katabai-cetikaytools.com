@@ -11,9 +11,6 @@ PO_FILES       := $(wildcard po/*.po)
 
 .PHONY: all compile-schemas check audit lint format format-check test test-verbose test-rag-server sync-rag-server pot langs package install reload logs clean help
 
-# Every JS file that must parse as an ES module (checked via node --check).
-JS_CHECK_FILES := extension.js prefs.js $(shell find src tests scripts \( -name '*.js' -o -name '*.mjs' \) 2>/dev/null)
-
 # Test suites are discovered, not listed, so test/test-verbose can never drift.
 TEST_FILES := $(wildcard tests/*.test.js)
 
@@ -25,20 +22,11 @@ compile-schemas:
 	glib-compile-schemas schemas/
 	@echo "[OK] GSettings schema compiled"
 
-## check          : Verify every JS file parses as an ES module (node --check)
+## check          : Verify every JS file parses as an ES module (+ CSS, import smoke)
 check:
-	@echo "--- ES module syntax checks (node --input-type=module --check) ---"
+	@echo "--- ES module syntax checks ---"
 	@if command -v node >/dev/null 2>&1; then \
-		count=0; fail=0; \
-		for f in $(JS_CHECK_FILES); do \
-			count=$$((count + 1)); \
-			if ! node --input-type=module --check < "$$f"; then \
-				echo "[FAIL] $$f"; \
-				fail=1; \
-			fi; \
-		done; \
-		if [ $$fail -ne 0 ]; then echo "[FAIL] Syntax errors found"; exit 1; fi; \
-		echo "[OK] $$count files parse as ES modules"; \
+		node scripts/check-syntax.mjs || exit 1; \
 	else \
 		echo "[WARN] node not found - skipping JS syntax checks (install Node.js to enable)"; \
 	fi
@@ -76,23 +64,31 @@ format:
 format-check:
 	npm run format:check
 
-## test           : Run all unit tests (discovered from tests/*.test.js)
+## test           : Run all unit tests (parallel; discovered from tests/*.test.js)
 test:
-	@echo "=== Unit tests: $(words $(TEST_FILES)) suites ==="
-	@for f in $(TEST_FILES); do \
-		echo "--- Running $$f ---"; \
-		gjs -m $$f || exit 1; \
-	done
-	@echo "[OK] All tests passed"
+	@if command -v node >/dev/null 2>&1; then \
+		node scripts/run-tests.mjs; \
+	else \
+		echo "=== Unit tests (sequential fallback): $(words $(TEST_FILES)) suites ==="; \
+		for f in $(TEST_FILES); do \
+			echo "--- Running $$f ---"; \
+			gjs -m $$f || exit 1; \
+		done; \
+		echo "[OK] All tests passed"; \
+	fi
 
-## test-verbose   : Run all unit tests with per-test output (never aborts early)
+## test-verbose   : Run all unit tests with per-suite output (never aborts early)
 test-verbose:
-	@echo "=== Full test suite (verbose): $(words $(TEST_FILES)) suites ==="
-	@for f in $(TEST_FILES); do \
-		echo "--- Running $$f ---"; \
-		gjs -m $$f || true; \
-	done
-	@echo "=== Done ==="
+	@if command -v node >/dev/null 2>&1; then \
+		node scripts/run-tests.mjs --verbose; \
+	else \
+		echo "=== Full test suite (verbose, sequential): $(words $(TEST_FILES)) suites ==="; \
+		for f in $(TEST_FILES); do \
+			echo "--- Running $$f ---"; \
+			gjs -m $$f || true; \
+		done; \
+		echo "=== Done ==="; \
+	fi
 
 ## test-rag-server : Run RAG server unit tests (stdlib unittest via the service venv)
 test-rag-server:
@@ -124,7 +120,7 @@ langs:
 	done
 
 ## package        : Create a distributable .zip for extensions.gnome.org
-package:
+package: compile-schemas
 	@rm -f $(PACKAGE_NAME)
 	@locale_arg=""; [ -d locale ] && locale_arg="locale/"; \
 	zip -r $(PACKAGE_NAME) \
@@ -135,7 +131,7 @@ package:
 	@echo "[OK] Package created: $(PACKAGE_NAME)"
 
 ## install        : Copy extension to local GNOME extensions directory
-install:
+install: compile-schemas
 	@mkdir -p $(INSTALL_DIR)
 	rsync -av --exclude='.git' --exclude='.vscode' --exclude='*.zip' --exclude='*.swp' ./ $(INSTALL_DIR)/
 	@echo "[OK] Installed to $(INSTALL_DIR)"

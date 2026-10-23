@@ -1,12 +1,16 @@
 // titleGenerator.test.js — Tests for the pure conversation title/description
 // generator helpers (transcript excerpt, prompt shape, response parsing).
 import {
+    AUTO_TITLE_MAX_CHARS,
+    AUTO_TITLE_PROMPT_MAX_CHARS,
     TITLE_GEN_DESCRIPTION_MAX_CHARS,
     TITLE_GEN_TITLE_MAX_CHARS,
     TITLE_GEN_TRANSCRIPT_MAX_CHARS,
+    buildAutoTitleMessages,
     buildTitleGenerationMessages,
     buildTranscriptExcerpt,
     messageText,
+    parseAutoTitleResponse,
     parseTitleDescriptionResponse,
 } from '../src/core/titleGenerator.js';
 import { assert, assertEqual, runTests } from './testUtils.js';
@@ -220,6 +224,137 @@ const tests = [
     ],
 
     [
+        'auto title: bounded single-user-message request',
+        () => {
+            const messages = buildAutoTitleMessages('How do I configure Ollama context?');
+            assertEqual(messages.length, 1, 'single message (anthropic-safe)');
+            assertEqual(messages[0].role, 'user', 'user role');
+            assert(messages[0].content.includes('ONLY a short title'), 'instruction present');
+            assert(
+                messages[0].content.includes('How do I configure Ollama context?'),
+                'prompt present',
+            );
+
+            const long = 'w'.repeat(AUTO_TITLE_PROMPT_MAX_CHARS + 200);
+            const capped = buildAutoTitleMessages(`  ${long}  `);
+            assert(capped[0].content.endsWith('\u2026\n"""'), 'prompt excerpt capped');
+            assert(
+                capped[0].content.includes('w'.repeat(AUTO_TITLE_PROMPT_MAX_CHARS)),
+                'keeps the budgeted prefix',
+            );
+
+            assertEqual(buildAutoTitleMessages(''), null, 'empty prompt');
+            assertEqual(buildAutoTitleMessages('   \n '), null, 'whitespace prompt');
+            assertEqual(buildAutoTitleMessages(null), null, 'null prompt');
+        },
+    ],
+
+    [
+        'auto title: tolerant parsing of plain, fenced, JSON, and labeled replies',
+        () => {
+            assertEqual(
+                parseAutoTitleResponse('  Debugging Ollama context limits.  '),
+                'Debugging Ollama context limits',
+                'plain text + trailing punctuation',
+            );
+            assertEqual(
+                parseAutoTitleResponse('```\nGNOME Shell Wayland crash\n```'),
+                'GNOME Shell Wayland crash',
+                'fenced',
+            );
+            assertEqual(
+                parseAutoTitleResponse('{"title": "Ollama context setup"}'),
+                'Ollama context setup',
+                'JSON title',
+            );
+            assertEqual(
+                parseAutoTitleResponse('**Title**: "Kyoto in November"'),
+                'Kyoto in November',
+                'labeled + quoted',
+            );
+            assertEqual(
+                parseAutoTitleResponse('Sure — here is your title: Wayland crash'),
+                'Wayland crash',
+                'prose lead-in',
+            );
+            assertEqual(
+                parseAutoTitleResponse('- Slow RAG indexing\n\nExtra explanation'),
+                'Slow RAG indexing',
+                'bullet + first line',
+            );
+            assertEqual(
+                parseAutoTitleResponse('1. Ollama context setup\u2026'),
+                'Ollama context setup',
+                'numbered list + ellipsis',
+            );
+            assertEqual(
+                parseAutoTitleResponse('[GNOME] Wayland crash'),
+                '[GNOME] Wayland crash',
+                'bracketed title is not mistaken for JSON',
+            );
+            assertEqual(parseAutoTitleResponse('## Heading ##'), 'Heading', 'heading markers');
+            assertEqual(parseAutoTitleResponse('C#'), 'C#', 'trailing hash is not markdown');
+            assertEqual(parseAutoTitleResponse('Title - Foo'), 'Foo', 'spaced label dash');
+            assertEqual(
+                parseAutoTitleResponse('Title-bar behavior'),
+                'Title-bar behavior',
+                'hyphenated word is not a label',
+            );
+        },
+    ],
+
+    [
+        'auto title: unusable replies are rejected',
+        () => {
+            assertEqual(parseAutoTitleResponse(''), '', 'empty');
+            assertEqual(parseAutoTitleResponse('   '), '', 'whitespace');
+            assertEqual(parseAutoTitleResponse(null), '', 'null');
+            assertEqual(parseAutoTitleResponse('42'), '', 'bare number');
+            assertEqual(parseAutoTitleResponse('{broken json'), '', 'broken syntax only');
+            assertEqual(parseAutoTitleResponse('[1, 2, 3]'), '', 'JSON array');
+            assertEqual(parseAutoTitleResponse('Title:'), '', 'empty labeled title');
+            assertEqual(parseAutoTitleResponse('Untitled'), '', 'placeholder title');
+            assertEqual(
+                parseAutoTitleResponse('Chat UX improvements'),
+                'Chat UX improvements',
+                'real title containing Chat',
+            );
+            assertEqual(parseAutoTitleResponse('I cannot help with that.'), '', 'refusal');
+            assertEqual(
+                parseAutoTitleResponse("Sorry, I can't help with that."),
+                '',
+                'apologetic refusal',
+            );
+            assertEqual(
+                parseAutoTitleResponse('Sorry State of Error Handling'),
+                'Sorry State of Error Handling',
+                'legitimate title beginning with Sorry',
+            );
+        },
+    ],
+
+    [
+        'auto title: cap is honored on a word boundary',
+        () => {
+            const title = parseAutoTitleResponse(
+                'one two three four five six seven eight nine ten',
+            );
+            assert(title.length <= AUTO_TITLE_MAX_CHARS, 'capped');
+            assert(!title.endsWith(' '), 'no dangling space');
+            const custom = parseAutoTitleResponse('one two three four five', { maxChars: 12 });
+            assertEqual(custom, 'one two', 'cuts at a word boundary');
+
+            const emoji = parseAutoTitleResponse('\u{1F600}'.repeat(10), { maxChars: 4 });
+            assertEqual(
+                Array.from(emoji).length,
+                4,
+                'code-point cap does not split surrogate pairs',
+            );
+            assertEqual(emoji, '\u{1F600}'.repeat(4), 'whole emoji kept');
+        },
+    ],
+
+    [
         'constants: sane ordering of generator vs transcript caps',
         () => {
             assert(
@@ -227,6 +362,7 @@ const tests = [
                 'title < transcript',
             );
             assert(TITLE_GEN_TRANSCRIPT_MAX_CHARS >= 1000, 'transcript budget usable');
+            assert(AUTO_TITLE_MAX_CHARS < TITLE_GEN_TITLE_MAX_CHARS, 'auto title stays short');
         },
     ],
 ];

@@ -54,7 +54,7 @@ const tests = [
     // ── scoreLinksByQuery ─────────────────────────────────────────────────
 
     [
-        'scoreLinksByQuery: ranks by keyword overlap in text + url',
+        'explore links: query keywords rank the matching section first',
         () => {
             const scored = scoreLinksByQuery(landingResult.links, 'engine timeout configuration');
             // "Engine Timeouts" link text matches both "engine" and "timeout".

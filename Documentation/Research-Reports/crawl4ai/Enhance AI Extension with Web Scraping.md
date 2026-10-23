@@ -1,5 +1,9 @@
 # **Architectural Integration of Crawl4AI within a GNOME AI Harness: Synergy with SearxNG for LLM-Ready Web Extraction**
 
+> **Historical research report** — kept for provenance. It describes candidate designs and
+> external APIs as researched at the time; it is **not** current documentation. See
+> [README.md](../README.md) and [Technical documentation](../../Technical/) for what shipped.
+
 ## **The Paradigm of Agentic Web Interaction in Desktop Environments**
 
 The evolution of intelligent desktop environments demands highly robust, deeply integrated mechanisms for bridging the gap between natural language processing algorithms and live, unstructured internet data. Within the context of a GNOME Artificial Intelligence (AI) harness extension, the integration of an autonomous toolchain capable of both broad discovery and deep content extraction represents a critical architectural threshold. The existing implementation of a SearxNG module successfully fulfills the role of a discovery engine. SearxNG operates as a privacy-respecting metasearch engine, executing broad web queries across multiple underlying search providers and returning structured metadata, uniform resource locators (URLs), and brief textual snippets. However, these brief snippets are fundamentally insufficient for sophisticated Large Language Model (LLM) processing. Snippets inherently lack the deep context, structural nuances, and comprehensive textual data present on the actual, fully rendered web pages. When an LLM is forced to reason over truncated search engine snippets, it frequently succumbs to hallucinations or provides shallow, uninformative responses.  

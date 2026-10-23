@@ -52,14 +52,23 @@ export const PRESET_SETTINGS = [
     { key: 'frequency-penalty', type: 'double', settingKey: 'ollama-frequency-penalty' },
 ];
 
+let _testPresetsPath = null;
+
+// Test-only override for the presets file path, so unit tests never write to
+// the real ~/.local/share/katabai/presets.json. Pass null to restore.
+export function _setPresetsPathForTesting(path) {
+    _testPresetsPath = path || null;
+}
+
 function _getPresetsFilePath() {
+    if (_testPresetsPath) return _testPresetsPath;
     return GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai', 'presets.json']);
 }
 
 function _ensureKatabaiDir() {
     try {
         Gio.File.new_for_path(
-            GLib.build_filenamev([GLib.get_user_data_dir(), 'katabai']),
+            GLib.path_get_dirname(_getPresetsFilePath()),
         ).make_directory_with_parents(null);
     } catch (_e) {
         /* already exists */

@@ -1,9 +1,9 @@
 // researchCache.test.js — Tests for persistent research result cache
 //
-// Tests the public API of researchCache.js by manipulating the in-memory
-// cache directly (bypassing GLib file I/O).  We patch the private _loadCache
-// and _scheduleFlush functions to test the cache logic in isolation.
+// Exercises the public API against an isolated on-disk cache path (the
+// _setCachePathForTesting seam) plus the crash-recovery checkpoint API.
 
+import GLib from 'gi://GLib';
 import {
     cacheSearchResults,
     getCachedSearchResults,
@@ -18,13 +18,35 @@ import {
     clearCache,
     invalidateCacheEntry,
     getAllCacheEntries,
+    flushCacheSync,
+    saveResearchCheckpoint,
+    loadResearchCheckpoint,
+    clearResearchCheckpoint,
     _setCachePathForTesting,
+    _setCheckpointPathForTesting,
 } from '../src/research/researchCache.js';
-import { assert, assertEqual, assertDeepEqual, runTests } from './testUtils.js';
+import {
+    assert,
+    assertEqual,
+    assertDeepEqual,
+    runTests,
+    makeTempDir,
+    removeTempDir,
+    readTextFile,
+} from './testUtils.js';
 
-// Redirect the on-disk cache to a throwaway temp file so running the suite
-// never wipes the real ~/.local/share/katabai/research-cache.json.
-_setCachePathForTesting('/tmp/katabai-research-cache-test.json');
+// Redirect both persistent stores into a throwaway directory so the suite
+// never touches the real ~/.local/share/katabai files.
+const TEMP_DIR = makeTempDir('katabai-research-cache-XXXXXX');
+const CACHE_PATH = GLib.build_filenamev([TEMP_DIR, 'research-cache.json']);
+const CHECKPOINT_PATH = GLib.build_filenamev([TEMP_DIR, 'research-checkpoint.json']);
+_setCachePathForTesting(CACHE_PATH);
+_setCheckpointPathForTesting(CHECKPOINT_PATH);
+
+function writeCheckpointFile(contents) {
+    GLib.mkdir_with_parents(GLib.path_get_dirname(CHECKPOINT_PATH), 0o755);
+    GLib.file_set_contents(CHECKPOINT_PATH, contents);
+}
 
 // ── In-memory store for test isolation ───────────────────────────────────────
 // We monkey-patch the internal module state between tests.
@@ -430,6 +452,142 @@ const tests = [
             assertEqual(entries[0].query, 'second query', 'newest entry first');
             assert(entries[0].key, 'entry includes its cache key');
             assertEqual(entries[0].type, 'search', 'type preserved');
+        },
+    ],
+    // ── Persistence ────────────────────────────────────────────────────────
+
+    [
+        'flushCacheSync: pending writes reach disk and reload from it',
+        () => {
+            resetForTest();
+            cacheSearchResults('persisted query', [{ title: 'kept' }]);
+            assert(
+                !readTextFile(CACHE_PATH).includes('persisted query'),
+                'write is debounced until flush',
+            );
+
+            flushCacheSync();
+            assert(
+                readTextFile(CACHE_PATH).includes('persisted query'),
+                'flushCacheSync wrote the entry to disk',
+            );
+
+            _setCachePathForTesting(CACHE_PATH); // force a reload from disk
+            const cached = getCachedSearchResults('persisted query');
+            assert(cached !== null, 'entry survives a reload');
+            assertEqual(cached[0].title, 'kept', 'payload intact');
+        },
+    ],
+
+    [
+        'cleanup checkpoint file for the checkpoint tests',
+        () => {
+            clearResearchCheckpoint();
+            assertEqual(loadResearchCheckpoint(), null, 'starts with no checkpoint');
+        },
+    ],
+
+    // ── Research checkpoints (crash recovery) ──────────────────────────────
+
+    [
+        'checkpoint: save → load round-trips and trims oversized findings',
+        () => {
+            clearResearchCheckpoint();
+            saveResearchCheckpoint({
+                plan: [{ id: 'branch-1', topic: 'Alpha' }],
+                originalQuery: 'What is X?',
+                branchResults: [
+                    {
+                        topic: 'Alpha',
+                        findings: 'a'.repeat(9000),
+                        facts: ['fact one'],
+                        sources: ['https://example.com/a'],
+                        pageCount: 3,
+                    },
+                ],
+                refinementResults: [],
+                gapRationale: 'gap',
+                synthesisOutline: 'outline',
+                citationEntries: [1, 2, 3],
+                urlToNumber: [['https://example.com/a', 1]],
+                globalContext: {
+                    summaries: [{ topic: 'Alpha', gist: 'short gist', sourceCount: 2 }],
+                },
+                messageHistoryLength: 7,
+                conversationId: 'conv_1',
+            });
+
+            const loaded = loadResearchCheckpoint();
+            assert(loaded, 'checkpoint loaded');
+            assertEqual(loaded.version, 2, 'version stamped');
+            assertEqual(loaded.originalQuery, 'What is X?', 'query preserved');
+            assertEqual(loaded.plan.length, 1, 'plan preserved');
+            assertEqual(loaded.conversationId, 'conv_1', 'conversation id preserved');
+            assertEqual(loaded.messageHistoryLength, 7, 'history length preserved');
+            assertEqual(loaded.branchResults[0].topic, 'Alpha', 'branch topic preserved');
+            assertEqual(loaded.branchResults[0].pageCount, 3, 'page count preserved');
+            assertDeepEqual(loaded.branchResults[0].facts, ['fact one'], 'facts preserved');
+            assert(
+                loaded.branchResults[0].findings.length < 9000,
+                'oversized findings were trimmed',
+            );
+            assert(
+                loaded.branchResults[0].findings.includes('[...checkpoint truncated...]'),
+                'trim marker present',
+            );
+        },
+    ],
+
+    [
+        'checkpoint: an outdated version is discarded',
+        () => {
+            writeCheckpointFile(JSON.stringify({ version: 1, plan: [] }));
+            assertEqual(loadResearchCheckpoint(), null, 'v1 payload rejected');
+            assert(
+                !GLib.file_test(CHECKPOINT_PATH, GLib.FileTest.EXISTS),
+                'outdated checkpoint deleted',
+            );
+        },
+    ],
+
+    [
+        'checkpoint: corrupt JSON is discarded without throwing',
+        () => {
+            writeCheckpointFile('{not valid json');
+            assertEqual(loadResearchCheckpoint(), null, 'corrupt payload → null');
+        },
+    ],
+
+    [
+        'checkpoint: a plan-less payload is rejected',
+        () => {
+            writeCheckpointFile(JSON.stringify({ version: 2, plan: 'nope' }));
+            assertEqual(loadResearchCheckpoint(), null, 'missing plan array → null');
+        },
+    ],
+
+    [
+        'checkpoint: clearResearchCheckpoint deletes the file',
+        () => {
+            saveResearchCheckpoint({ plan: [{ id: 'x' }], originalQuery: 'q' });
+            assert(GLib.file_test(CHECKPOINT_PATH, GLib.FileTest.EXISTS), 'checkpoint written');
+            clearResearchCheckpoint();
+            assert(
+                !GLib.file_test(CHECKPOINT_PATH, GLib.FileTest.EXISTS),
+                'checkpoint file deleted',
+            );
+            assertEqual(loadResearchCheckpoint(), null, 'nothing to load after clear');
+        },
+    ],
+
+    [
+        'cleanup: restore the real paths and remove the temp dir',
+        () => {
+            _setCachePathForTesting(null);
+            _setCheckpointPathForTesting(null);
+            clearResearchCheckpoint();
+            removeTempDir(TEMP_DIR);
+            assert(!GLib.file_test(CACHE_PATH, GLib.FileTest.EXISTS), 'temp cache removed');
         },
     ],
 ];

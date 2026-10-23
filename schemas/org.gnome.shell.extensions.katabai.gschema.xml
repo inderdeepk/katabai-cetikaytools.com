@@ -30,6 +30,11 @@
       <summary>Play Completion Sound</summary>
       <description>Play a short sound when an AI response finishes while the chat window is closed. A different tone is used when the request fails.</description>
     </key>
+    <key name="auto-generate-chat-titles" type="b">
+      <default>true</default>
+      <summary>Generate Chat Titles with AI</summary>
+      <description>Name new conversations automatically from the first prompt using the active provider and model. Turn this off to keep the default title derived from the first message.</description>
+    </key>
     <key name="document-tool-enabled" type="b">
       <default>false</default>
       <summary>Enable Document Tool</summary>

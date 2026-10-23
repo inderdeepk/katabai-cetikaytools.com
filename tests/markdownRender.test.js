@@ -19,6 +19,7 @@ const tests = [
         () => {
             const chunks = splitTextIntoBoundedChunks('line one\nline two', 100);
             assertEqual(chunks.length, 1, 'one chunk');
+            assertEqual(chunks[0], 'line one\nline two', 'content preserved verbatim');
         },
     ],
 

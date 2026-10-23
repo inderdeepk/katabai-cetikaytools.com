@@ -42,6 +42,12 @@ export function buildGeneralPage(ctx) {
     });
     page.add(generalGroup);
 
+    const chatGroup = createPreferencesGroup({
+        title: _('Chat'),
+        description: _('Control how new conversations are named.'),
+    });
+    page.add(chatGroup);
+
     const accessibilityGroup = createPreferencesGroup({
         title: _('Keyboard Shortcut'),
         description: _(
@@ -94,6 +100,15 @@ export function buildGeneralPage(ctx) {
         ),
         'toggle-current-chat',
         accessibilityGroup,
+    );
+
+    createBooleanRow(
+        _('AI-Generated Chat Titles'),
+        _(
+            'Name each new conversation from its first prompt using the active provider and model. Turn this off to keep the default title derived from the first message.',
+        ),
+        'auto-generate-chat-titles',
+        chatGroup,
     );
 
     const chatTextScaleRow = createChoiceRow(

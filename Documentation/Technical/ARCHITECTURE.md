@@ -1,360 +1,503 @@
-# Katabai Architecture
+# Katab Architecture
 
 ## Overview
 
-Katab (ਕਿਤਾਬ) is a GNOME Shell extension providing a desktop AI assistant overlay that connects to multiple LLM providers (Ollama, Unsloth, OpenAI, Anthropic, DeepSeek) with tools for web search, web scraping, document parsing, knowledge base search, and deep research.
+Katab (ਕਿਤਾਬ) is a GNOME Shell extension that provides a desktop AI-assistant overlay. It talks to
+five LLM backends (Ollama, Unsloth Studio, DeepSeek, OpenAI, Anthropic) and adds optional local
+tools: web search (SearxNG), page reading, web scraping (Crawl4AI), documentation navigation,
+document parsing, a local knowledge base (RAG), and a multi-phase deep-research pipeline.
+
+Two processes matter:
+
+- **The shell process** loads `extension.js` (ES module) and draws the overlay with Clutter/St.
+- **The preferences process** loads `prefs.js` (GTK4/Adwaita) in a separate process.
+
+Both import the same pure modules from `src/`, so payload shaping, settings readers, presets, token
+accounting, and pet rules never fork between the two surfaces.
+
+---
+
+## Contents
+
+- [Overview](#overview)
+- [Entry Points](#entry-points)
+- [Source Layout](#source-layout-src)
+- [Key Design Patterns](#key-design-patterns)
+- [Dependencies](#dependencies)
+- [Request Lifecycle](#request-lifecycle)
+- [Message Send Pipeline](#message-send-pipeline)
+- [Chat titles](#chat-titles)
+- [Context budgeting](#context-budgeting)
+- [Session Memory](#session-memory)
+- [Tool System](#tool-system)
+- [Provider Dialects](#provider-dialects)
+- [Knowledge Base (RAG)](#knowledge-base-rag)
+- [Deep Research (summary)](#deep-research-summary)
+- [Token Usage & Pet System](#token-usage--pet-system)
+- [Theme System](#theme-system)
+- [Provider Health Monitor](#provider-health-monitor)
+- [Assets](#assets)
+- [Data Files](#data-files)
+
+---
 
 ## Entry Points
 
-| File | Role | Loaded By |
+| File | Role | Loaded by |
 |---|---|---|
-| `metadata.json` | Extension manifest | GNOME Shell |
-| `extension.js` | Main JS entry — enable/disable, panel indicator, imports from `src/` | GNOME Shell |
-| `prefs.js` | GTK4/Adwaita preferences orchestrator (pages in `src/ui/prefs/`) | GNOME Shell prefs system |
-| `stylesheet.css` | Shell overlay St CSS (GNOME auto-loads from root) | GNOME Shell |
-| `prefs.css` | GTK preferences CSS (loaded by prefs.js) | prefs.js |
+| `metadata.json` | Extension manifest (UUID, shell versions, schema id) | GNOME Shell |
+| `extension.js` | Extension class, panel indicator, chat dialog, provider health monitor | GNOME Shell |
+| `prefs.js` | Preferences orchestrator (92 lines); pages live in `src/ui/prefs/` | GNOME Shell prefs |
+| `stylesheet.css` | Shell overlay St CSS | GNOME Shell (auto-loaded) |
+| `prefs.css` | GTK preferences CSS | `prefs.js` via `Gtk.CssProvider` |
+| `schemas/…gschema.xml` | All user-configurable settings | GLib/GSettings |
+
+---
 
 ## Source Layout (`src/`)
 
 ```
 src/
-├── core/          # Shared infrastructure
-│   ├── historyManager.js        ← Conversation persistence (debounced writes)
-│   ├── requestLifecycle.js      ← Request lifecycle state machine (idle → enriching → awaiting-model ⇄ tool-loop → synthesis → stopping → done/error)
-│   └── toolCallMarkup.js        ← Tool-call markup normalization/stripping
-├── providers/     # Provider adapters (request builders + stream parsing)
-│   ├── catalog.js               ← Provider labels/meta/model catalogs (single source)
-│   ├── chatRequest.js           ← Streaming request builders (all providers)
-│   ├── nonStreamingRequest.js   ← Non-streaming request builders + response extraction
-│   ├── historyPayload.js        ← Token estimates, context truncators, attachment payloads, provider-dialect sanitization
-│   └── streamParse.js           ← SSE/NDJSON line parsing + tool-call accumulation
-├── ui/            # Render-model helpers + shell widgets + preferences pages
-│   ├── markdownRender.js        ← Markdown segmentation + inline formatting
-│   ├── welcomePanel.js          ← Animated welcome scene (book, pages, dust) — owns actor tree + GLib timers
-│   ├── usagePanel.js            ← "AI Token Breakdown" panel — tabs, range dropdown, companion/activity/spending cards
-│   ├── historyView.js           ← History panel — list/search/tabs, KB search, conversation metadata editor
-│   ├── sessionInfoPopup.js      ← Floating Session Info panel — context breakdown + summarize/compact actions
-│   ├── toolsPopup.js            ← Floating Tools panel — tool rows + Auto/On/Off mode cycling
-│   ├── recentChatsPopup.js      ← Header history-button hover preview — recent conversations
-│   ├── headerBar.js             ← Chat header row (buildHeaderBar) — logo/title, provider chip, pickers, usage button + pet, history button, actions
-│   ├── pickers.js               ← Picker panels — Ollama presets, provider (engine), DeepSeek models + shared shell/rows
-│   ├── messageBubble.js         ← Chat message bubbles — row/bubble shell, thinking + tool log, footer copy/regenerate, cache/KB pills, attachments
-│   ├── assistantRender.js       ← Assistant reply rendering — streaming dispatch, markdown segments, citations, sources, selection
-│   └── prefs/                   ← Preferences window modules (prefs.js is an 86-line orchestrator)
-│       ├── widgets.js           ← createPrefsContext: shared page/group/row builders + watch()/dispose()
-│       ├── generalPage.js       ← General page (provider cards, appearance, shortcut, budget)
-│       ├── ollamaPage.js        ← Ollama page (presets, connection, sampling, hardware)
-│       ├── deepseekPage.js      ← DeepSeek page (balance, vision model, reasoning)
-│       ├── providerPages.js     ← Unsloth / OpenAI / Anthropic pages
-│       └── tools/               ← Tools page: index.js aggregator + document, webSearch, crawler, knowledge, deepResearch
-├── tools/         # Tool implementations and declarative registry
-│   ├── toolRegistry.js          ← Declarative tool registry (ToolDefinition map)
-│   ├── toolDefinitions.js       ← Concrete tool definitions (side-effect import)
-│   ├── webSearchTools.js        ← SearxNG search + read_url
-│   ├── crawl4aiTools.js         ← Crawl4AI web scraping
-│   ├── ragTools.js              ← Local RAG / knowledge base search
-│   ├── exploreDocsTools.js      ← Agent-directed docs navigation
-│   └── documentTools.js         ← Local file attachment parser
-├── research/      # Deep research pipeline
-│   ├── prompts.js               ← Research system prompts + response parsers
-│   ├── planner.js               ← Planner agent + plan revision
-│   ├── pipeline.js              ← Analysis phases (gap analysis, critiques, outline + quality check)
-│   ├── branchRunner.js          ← Branch execution (search → crawl → compress), refinement, retries
-│   ├── synthesisPrompt.js       ← Final-report prompt builder + contradiction detection
-│   ├── compressionTools.js      ← LLM-based hierarchical compression
-│   ├── citationTracker.js       ← Citation → bibliography binding
-│   └── researchCache.js         ← Persistent search/crawl result cache + checkpoints
-├── usage/         # Token economy and presets
-│   ├── tokenUsageManager.js     ← Token tracking, budget, achievements
-│   ├── deepseekPricing.js       ← DeepSeek peak/off-peak pricing (single source)
-│   └── presetManager.js         ← Ollama preset CRUD
-├── pets/          # Provider pet collection system
-│   ├── petCollection.js         ← Pet data definitions, stages, forms
-│   └── petSpriteActor.js        ← Clutter sprite renderer
-└── shared/        # Shared utilities
-    ├── httpBody.js              ← Capped HTTP body reader (shared by all tool runtimes)
-    ├── toolModes.js             ← Auto/On/Off mode constants + labels (dialog cycling + tools popup)
-    └── networkGuard.js          ← SSRF protection (IPv4/IPv6 blocklists)
+├── core/                  # Framework-free infrastructure
+│   ├── historyManager.js    ← Conversation persistence (in-memory cache + 200 ms debounced writes)
+│   ├── requestLifecycle.js  ← Send/stop FSM: idle → enriching → awaiting-model ⇄ tool-loop →
+│   │                          synthesis → stopping → done/error
+│   ├── sessionMemory.js     ← Rolling session-memory fold/prune rules and budget splitting
+│   ├── titleGenerator.js    ← Manual + first-prompt auto title generation (bounded prompts + parsers)
+│   └── toolCallMarkup.js    ← Tool-call markup normalization/stripping (healing retries)
+├── providers/             # Provider adapters
+│   ├── catalog.js            ← Provider identity/branding + DeepSeek model list (single source)
+│   ├── chatRequest.js        ← Streaming request builders (Ollama, DeepSeek, OpenAI-compatible,
+│   │                          Anthropic) + Ollama options builder
+│   ├── nonStreamingRequest.js← Non-streaming builders + response text/usage extraction
+│   ├── historyPayload.js     ← Token estimates, context truncators, attachment payloads,
+│   │                          provider-dialect sanitization
+│   └── streamParse.js        ← SSE/NDJSON line parsing + tool-call accumulation
+├── tools/                 # Tool definitions and runtimes
+│   ├── toolRegistry.js       ← Declarative registry (Map<name, ToolDefinition>)
+│   ├── toolDefinitions.js    ← Concrete definitions (side-effect import)
+│   ├── webSearchTools.js     ← SearxNG search + read_url
+│   ├── crawl4aiTools.js      ← Crawl4AI client (sync + async jobs, LLM extraction)
+│   ├── exploreDocsTools.js   ← Documentation table-of-contents navigation
+│   ├── ragTools.js           ← Knowledge-base client (health/index/search/delete)
+│   └── documentTools.js      ← Local attachment parser (txt/md/pdf/docx/eml/images)
+├── research/              # Deep-research pipeline
+│   ├── prompts.js            ← Research prompts + response parsers
+│   ├── planner.js            ← Planner + plan-revision agents (retries, format nudges)
+│   ├── pipeline.js           ← Gap analysis, critique, outline, quality check
+│   ├── branchRunner.js       ← Branch execution (search → crawl → compress), retries, subpages
+│   ├── synthesisPrompt.js    ← Final-report prompt, contradiction + grounding checks
+│   ├── compressionTools.js   ← Hierarchical LLM compression (4 levels)
+│   ├── citationTracker.js    ← Citation → bibliography binding
+│   └── researchCache.js      ← SHA-256 keyed result cache + crash-recovery checkpoints
+├── usage/
+│   ├── tokenUsageManager.js  ← Token ledger, cost, budgets, milestones, pet XP
+│   ├── deepseekPricing.js    ← Time-aware DeepSeek peak/off-peak + cache pricing
+│   └── presetManager.js      ← Ollama preset CRUD (26 settings)
+├── pets/
+│   ├── petCollection.js      ← Pet definitions, stages, form ids, persisted-state normalization
+│   └── petSpriteActor.js     ← Clutter sprite renderer (idle/sleep/celebrate/tip poses)
+├── shared/
+│   ├── contentKind.js        ← Code-heaviness detection + verbatim code excerpts
+│   ├── httpBody.js           ← Capped HTTP body reader
+│   ├── i18n.js               ← gettext bridge injected by each entry point
+│   ├── networkGuard.js       ← SSRF guard (IPv4/IPv6 blocklists, DNS + redirect validation)
+│   ├── pageLinks.js          ← Link extraction/normalization/scoring
+│   └── toolModes.js          ← Auto/On/Off vocabulary + popup labels
+└── ui/                    # Shell widgets + preferences pages
+    ├── headerBar.js            ← Chat header row (provider chip, pickers, usage button, history)
+    ├── welcomePanel.js         ← Animated welcome scene
+    ├── assistantRender.js      ← Streaming dispatch, markdown segments, citations, sources
+    ├── markdownRender.js       ← Markdown segmentation + inline formatting
+    ├── messageBubble.js        ← Message shells, thinking/tool log, footer actions, attachments
+    ├── pendingIndicator.js     ← Animated warm-up row (title generation → main-request handoff)
+    ├── historyView.js          ← History panel (list/search/tabs, KB search, metadata editor)
+    ├── sessionInfoPopup.js     ← Session Info popup (context breakdown, summarize/compact)
+    ├── toolsPopup.js           ← Floating tools panel with Auto/On/Off rows
+    ├── recentChatsPopup.js     ← Recent-conversation hover preview
+    ├── pickers.js              ← Ollama presets, provider picker, DeepSeek model picker
+    ├── usagePanel.js           ← Token Breakdown panel (Overview/Collection/Spending)
+    └── prefs/                  ← Preferences modules
+        ├── widgets.js          ← createPrefsContext + row/page factories + watch()/dispose()
+        ├── generalPage.js      ← Provider cards, chat titles, shortcut, appearance, tokens, pets, notifications
+        ├── ollamaPage.js       ← Ollama connection/sampling/hardware/system prompt/presets
+        ├── deepseekPage.js     ← DeepSeek connection, thinking, vision, balance
+        ├── providerPages.js    ← Unsloth / OpenAI / Anthropic pages
+        └── tools/              ← Tools index + document, webSearch, crawler, knowledge,
+                                  deepResearch subpages
 ```
 
-> **Decomposition status (Oct 2026)**: `prefs.js` is fully split — an 86-line orchestrator plus the `src/ui/prefs/` modules above. Provider payload shaping lives in `src/providers/historyPayload.js` (43 unit tests), the welcome scene in `src/ui/welcomePanel.js`, the token-breakdown panel in `src/ui/usagePanel.js`, the history panel (list + KB search + metadata editor) in `src/ui/historyView.js`, the Session Info popup in `src/ui/sessionInfoPopup.js`, the tools popup in `src/ui/toolsPopup.js`, the recent-chats preview in `src/ui/recentChatsPopup.js`, the chat header row in `src/ui/headerBar.js`, the picker panels in `src/ui/pickers.js`, and the chat message bubbles in `src/ui/messageBubble.js`, and the assistant reply render pipeline (streaming dispatch, segments, citations, sources) in `src/ui/assistantRender.js`. In `extension.js`, `_buildUI`, `_sendMessage` (203-line coordinator over six phases: attachments, tool commands, knowledge context, vision pre-analysis, research planner, pipeline), and `_handleToolCalls` (64-line coordinator over `_executeToolCall` + `_finishToolBatch`) are extracted into focused methods (message construction delegates to `src/ui/messageBubble.js`, and `_handleStreamEnd` — the SSE stream-end finalization — is itself a ~65-line coordinator over `_recoverThinkingOnlyFallback` (thinking-only fallback), `_recoverTextBasedToolCalls` (text-based tool-call scan), `_finalizeToolCallTurn` (tool-iteration cap + forced synthesis), and `_finalizeSynthesisTurn` (degraded-output recovery, save + notify)). The dialog constructor is decomposed into focused init methods (`_scheduleStartupRagTasks`, `_initSleepMonitor`, `_initStateFields`, `_wireSettingsWatchers`, `_initInterfaceSettings`, `_buildActorShell`, `_installStageCapture`, `_subscribeProviderHealth`) behind a ~35-line shell. Remaining work: the full i18n string-wrapping pass and the release checklist (analysis items #7–#8); the accessibility pass and the metadata version bump are done.
-
-## Assets
-
-| Directory | Contents |
-|---|---|
-| `icons/` | Provider logos + custom SVG icons (9 files) |
-| `sprites/` | Pet sprites (clyde, ollie, pearl, slothy, sparky, eggs, accents, mixie) |
-| `schemas/` | GSettings schema XML + compiled binary |
-
-## Key Design Patterns
-
-- **ES Modules**: All JS files use `import`/`export` (no CommonJS). The GNOME Shell 46+ JS engine supports ES modules natively.
-- **GObject Classes**: UI actors extend `GObject.Object` and register with `GObject.registerClass()`.
-- **Soup v3**: All HTTP communication uses `Soup.Session` v3 (`gi://Soup?version=3.0`).
-- **Provider Dialect Pattern**: Each provider's payload builder, auth headers, and stream parser live in `src/providers/` (`chatRequest.js`, `nonStreamingRequest.js`, `streamParse.js`, `historyPayload.js`, `catalog.js`). The dialog assembles config snapshots and owns the send/redirect/cancel plumbing. `historyPayload.js` additionally owns history → payload shaping (estimates, truncators, attachment blocks, `sanitizeHistoryMessage`) so the dialog supplies provider state through small callbacks.
-- **Request Lifecycle**: send/stop state is a single state machine (`src/core/requestLifecycle.js` — idle → enriching → awaiting-model ⇄ tool-loop → synthesis → stopping → done/error). Guards and UI decisions read lifecycle predicates (`canSend`, `canStop`, `isResponding`); `_setStreamingState` only applies UI and asserts consistency (`[Katab:lifecycle] state mismatch` in the journal).
-- **Host-Bag Boundaries**: extracted research/provider modules are pure functions taking an injected dependency bag (e.g. `_pipelineHost()`, `_researchBranchHost()`, or a context object for the synthesis prompt) — runtimes, UI callbacks, config readers, and stores stay in the dialog.
-- **Tool Registry**: Tools are declared in `src/tools/toolDefinitions.js` via `registerTool()` and dispatched by `extension.js::_handleToolCalls()`.
-- **Debounced Persistence**: `HistoryManager` uses in-memory cache + 200ms debounced writes.
-- **Pet Collection**: Independent XP per provider pet, crossbreed unlocks, collection rewards.
-
-## Dependencies
-
-- **GNOME Shell 46+** — `St`, `Clutter`, `Pango`, `GLib`, `Gio`, `Meta`, `Shell`
-- **Soup 3.0** — HTTP client
-- **Adw 1.5+** — Preferences window (for `Adw.NavigationPage` push_subpage)
-- **Optional external services**: Ollama, SearxNG, Crawl4AI, local RAG service, OpenAI API, Anthropic API
-- **Optional system tools**: `pdftotext` (poppler), `pandoc` (DOCX)
+`extension.js` remains the integration layer: it owns the dialog, settings snapshots, the send/stop
+state machine, tool dispatch (`_handleToolCalls` → `_executeToolCall` + `_finishToolBatch`), and the
+research orchestration that calls into `src/research/`. Extracted modules take a small host bag
+(callbacks, config readers, UI handles) so they stay free of shell imports and can be unit-tested.
 
 ---
 
-## Data Flow
+## Key Design Patterns
 
-### Message Send Pipeline
+- **ES modules everywhere** — GNOME Shell 46+ supports native `import`/`export`; there is no
+  CommonJS anywhere.
+- **GObject classes** — UI actors extend `GObject.Object` and use `GObject.registerClass()`.
+- **Soup 3 only** — every HTTP call uses `gi://Soup?version=3.0`.
+- **Provider dialect pattern** — each provider's payload, headers, and stream parser live in
+  `src/providers/`; the dialog builds a config snapshot and owns the plumbing.
+- **Declarative tools** — `registerTool()` definitions carry the model-facing JSON Schema, danger
+  level, UI label/icon, slash command, and truncation key.
+- **Host-bag boundaries** — research and provider modules receive exactly the dependencies they
+  need instead of importing the extension.
+- **Debounced persistence** — history, token ledger, cache, and presets batch writes; history
+  flushes synchronously on extension disable.
+- **Pure-logic modules first** — anything without Clutter/St/Gtk imports is covered by `gjs -m`
+  unit tests.
+
+---
+
+## Dependencies
+
+- **GNOME Shell 46–48** — `St`, `Clutter`, `Pango`, `GLib`, `Gio`, `Meta`, `Shell`.
+- **Soup 3.0** — HTTP.
+- **Adw** — Preferences window (`Adw.NavigationPage` subpages).
+- **Optional services** — Ollama, Unsloth Studio, SearxNG, Crawl4AI, the bundled RAG service.
+- **Optional system tools** — `pdftotext` (PDF), `pandoc` (DOCX), `msgfmt` (translations).
+
+---
+
+## Request Lifecycle
+
+`src/core/requestLifecycle.js` is the single source of truth for send/stop state:
 
 ```
-User types message, presses Enter
-        │
-        ▼
-_sendMessage() ── async
-    ├── Parse slash commands (/search, /doc, /crawl, /kb, /research)
-    ├── Attach documents (if /doc or footer Docs button)
-    ├── Auto KB search (if RAG enabled, Auto mode, 3s timeout)
-    ├── Vision analysis (if DeepSeek + images + vision model configured)
-    ├── Push user message to _messageHistory
-    ├── _saveCurrentConversation() + flushSync()
-    │
-    ▼
+idle → enriching → awaiting-model ⇄ tool-loop → synthesis → stopping → done/error
+```
+
+- The dialog reads predicates (`canSend`, `canStop`, `isResponding`) instead of ad-hoc booleans.
+- `_setStreamingState()` applies UI state and asserts consistency; mismatches are logged as
+  `[Katab:lifecycle] state mismatch`.
+- A send while the lifecycle is not settled is dropped, which is why a prompt can appear to do
+  nothing during KB/web enrichment.
+
+---
+
+## Message Send Pipeline
+
+```
+User submits → _sendMessage()
+    ├── Parse slash commands (/help, /doc, /search, /crawl, /kb, /research)
+    ├── Attach documents (local parse; images cached as base64)
+    ├── Validate image routing (Ollama vision model or DeepSeek vision config)
+    ├── Knowledge context:
+    │     ├── manual /kb search (20 s cap)
+    │     ├── automatic pre-send search when KB is in Auto mode (8 s cap)
+    │     └── skip auto search when /health says embeddings are down or the prompt is trivial
+    ├── Append the user message; save (debounced flush)
+    ├── First-prompt AI title (when enabled) under a bounded hand-off, with the
+    │     warm-up row showing "Naming this chat…" → "Thinking…"
+    ├── Vision pre-analysis (DeepSeek preprocess mode)
+    ├── Research planner (when Deep Research is active)
+    └── _streamResponse()
+
 _streamResponse()
-    ├── Build provider-specific payload
-    │   ├── Ollama: /api/chat with options, think, format
-    │   ├── DeepSeek: /chat/completions with thinking, reasoning_effort
-    │   ├── Unsloth: /chat/completions with enable_tools
-    │   ├── OpenAI: /chat/completions with tools
-    │   └── Anthropic: /v1/messages with system, max_tokens
-    ├── Set provider-appropriate timeout
-    ├── Inject web content safety policy
-    ├── Advertise tools (if enabled, not force-synthesizing)
-    ├── POST request via Soup.Session
-    │
-    ▼
-_readSSE() ── async recursive
-    ├── Read line from response stream
-    ├── Parse per provider:
-    │   ├── Ollama: JSON.parse(line), extract message.content/reasoning/tool_calls
-    │   ├── OpenAI/Unsloth/DeepSeek: strip "data: ", JSON.parse, extract choices[0].delta.content
-    │   └── Anthropic: parse content_block_delta, tool_use, input_json_delta
-    ├── Accumulate: responseState.accumulatedText, accumulatedThink, accumulatedToolCalls
-    ├── Render streaming UI (_renderAssistantStreamingFast)
-    │
-    ▼
-EOF (lineBytes === null)
-    ├── If tool calls present:
-    │   ├── _handleToolCalls() → execute tools (parallel for read_only, sequential for unsafe)
-    │   ├── Push tool results to _messageHistory
-    │   ├── _saveCurrentConversation() + flushSync()
-    │   ├── Check force-synthesis thresholds
-    │   └── Recurse → _streamResponse() with tool results in context
-    │
-    └── If no tool calls (or force-synthesizing):
-        ├── _buildAssistantHistoryMessage()
-        ├── Push to _messageHistory
-        ├── _saveCurrentConversation() + flushSync()
-        ├── Record token usage (tokenUsageManager.recordUsageEvent)
-        ├── Update pet XP, check combos, check budget
-        └── Render final response with sources, citations
+    ├── Snapshot settings; build provider request via src/providers/chatRequest.js
+    ├── Inject the web-content safety policy when tool/web content is in play
+    ├── Advertise tool schemas when allowed (not force-synthesizing, not JSON mode)
+    ├── Choose timeout: Ollama 0 (unbounded), DeepSeek 1800 s, others 30 s
+    └── POST with Soup.Session
+
+_readSSE()
+    ├── Ollama: raw JSON lines → message.content / message.reasoning / message.tool_calls
+    ├── OpenAI-compatible + DeepSeek: `data:` SSE → choices[0].delta
+    ├── Anthropic: content_block_start/delta/stop, input_json_delta for tool use
+    └── Accumulate text/thinking/tool calls; update the streaming bubble
+
+stream end
+    ├── Tool calls → _handleToolCalls() → save → recurse _streamResponse()
+    ├── Healing retry when raw tool-call markup was emitted (MAX_HEALING_RETRIES = 3)
+    ├── Force synthesis when the iteration cap or context threshold is reached
+    └── Otherwise finalize: save, record tokens/pet XP, render citations/sources
 ```
 
-### History Persistence
+### Chat titles
+
+- The first user turn of a new chat is named by the active provider/model
+  (`auto-generate-chat-titles`, on by default) using `buildAutoTitleMessages()`
+  (2–6 words, ≤48 chars, 24-token cap).
+- The title call has its own Soup session with a 30 s hard timeout; the send path waits only
+  `AUTO_TITLE_HANDOFF_MS` (8 s), then starts the main request while the title finishes in the
+  background.
+- Failures fall back silently to the first-60-characters history title. Manual or generated
+  titles (`customTitle`) are never overwritten.
+
+### Context budgeting
+
+- `src/core/sessionMemory.js` folds older turns into a session memory before the request; the
+  history payload then splits whatever remains within the provider's input budget.
+- `src/providers/historyPayload.js` estimates tokens (~3.5 chars/token), truncates per tier, and
+  sanitizes provider-specific message shapes.
+- One attached image is charged `IMAGE_TOKEN_ESTIMATE` (1024 tokens) instead of its base64 length.
+
+---
+
+## Session Memory
+
+Session memory keeps long chats coherent without resending the whole transcript.
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `SESSION_MEMORY_MAX_TOKENS` | 1024 | Output cap for the summarization call |
+| `SESSION_MEMORY_MAX_CHARS` | 4000 | Hard cap on persisted memory text |
+| `SESSION_MEMORY_TIMEOUT_MS` | 60 000 | Background fold timeout |
+| `SESSION_MEMORY_KEEP_EXCHANGES` | 6 | Recent exchanges a forced summarize keeps verbatim |
+| `SESSION_MEMORY_MIN_FOLD_COUNT` | 4 | Minimum messages before auto-folding |
+| `SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS` | 32 000 | Default cap for the whole fold prompt |
+
+- The memory is stored inside the conversation object (`__katab_session_memory__` marker) and
+  survives reloads and history switches.
+- Folding runs between turns; the full transcript stays visible and on disk — only the model-facing
+  payload is condensed.
+- **Summarize Now** forces a fold; **Compact** trims the visible conversation instead.
+
+---
+
+## Tool System
+
+### Registry
+
+`src/tools/toolRegistry.js` holds a `Map<name, ToolDefinition>`. Each definition provides:
+`name`, `description`, `parameters` (JSON Schema or `null`), `dangerLevel`, `handler`, `uiLabel`,
+`uiIcon`, `command`, `resultTruncationKey`, `isMeta`, `providerScoped`.
+Schema builders: `buildAllToolSchemas(provider)` and `buildToolSchemasFor(toolNames, provider)`.
+
+### Registered tools
+
+| Tool | Danger | Footer/command | Notes |
+|---|---|---|---|
+| `web_search` | read_only | Search / `/search` | SearxNG JSON API |
+| `read_url` | read_only | — | SSRF-guarded page fetch; lists page links |
+| `crawl_url` | read_only | Scrape / `/crawl` | Crawl4AI; `mode="extract"` for LLM extraction |
+| `explore_docs` | read_only | — | Docs landing page → TOC + relevant links |
+| `knowledge_search` | read_only | Knowledge / `/kb` | Local RAG; optional `collection` filter |
+| `deep_research` | read_only | Research / `/research` | Meta-mode; no API schema |
+| `document` | potentially_unsafe | Docs / `/doc` | Pre-send attachment parser; no API schema |
+| `update_knowledge` | potentially_unsafe | — | Saves/updates a memory fact |
+| `forget_knowledge` | potentially_unsafe | — | Deletes a memory fact |
+
+### Modes
+
+- Search, Scrape, and Knowledge cycle **Auto → On → Off**; On/Off is one-shot for Search and Scrape.
+- Deep Research cycles **Off → On** only and persists for the whole turn.
+- `src/shared/toolModes.js` owns the vocabulary and labels.
+
+### Execution flow
 
 ```
-HistoryManager (static)
-    ├── _cache: Array (in-memory, loaded once from disk)
-    ├── _dirty: boolean (true when cache has unsaved changes)
-    ├── _flushTimer: GLib timeout id (200ms debounce)
-    │
-    ├── load() → returns cache (reads disk on first call)
-    ├── getCached() → returns cache (never reads disk)
-    ├── saveConversation(entry) → mutate cache in-place, scheduleFlush()
-    ├── deleteConversation(id) → mutate cache in-place, scheduleFlush()
-    ├── _scheduleFlush() → set dirty, arm 200ms timer → _flushNow()
-    ├── flushSync() → clear timer, _flushNow() immediately
-    └── invalidateCache() → null cache (force reload on next load())
+_handleToolCalls(toolCalls, uiElements, reasoning, provider)
+    ├── Bail out if the response UI was torn down
+    ├── Partition calls by danger level
+    ├── Execute read-only calls in parallel; unsafe calls sequentially
+    ├── Truncate each result for the current iteration
+    ├── Append tool results to history; save
+    ├── Check force-synthesis thresholds
+    └── Recurse into _streamResponse()
 ```
+
+### Force synthesis
+
+| Trigger | Normal | Deep Research |
+|---|---|---|
+| Iterations | `web-search-max-tool-iterations` (default 25, clamped 1–100) | `max(preference, 12)` |
+| Context | `max(40 000 chars, 85 % of provider input budget)` | `max(80 000 chars, 85 % of provider input budget)` |
+
+When triggered, tools are no longer advertised and a synthesis instruction is injected so the model
+must answer with the evidence it already has.
+
+### Healing retry
+
+If a model emits raw tool-call markup instead of a function call, Katab strips the markup, injects a
+correction prompt, and retries up to `MAX_HEALING_RETRIES` (3) times without consuming a tool
+iteration.
+
+### Result truncation tiers
+
+Normal mode (iteration → limits):
+
+| Iteration | Search results | Search snippet | `read_url` | `crawl_url` | KB |
+|---|---|---|---|---|---|
+| 1–2 | 10 | 500 | 16 000 | 32 000 | 8 000 |
+| 3–4 | 8 | 400 | 8 000 | 16 000 | 5 000 |
+| 5–6 | 6 | 300 | 4 000 | 8 000 | 3 000 |
+| 7+ | 4 | 200 | 2 000 | 4 000 | 2 000 |
+
+Deep Research uses its own, larger tiers (15/12/10/6 results; 16 000/32 000 down to 4 000/8 000 for
+`read_url`/`crawl_url`).
+
+---
+
+## Provider Dialects
+
+### Ollama
+- **Endpoint**: `{url}/api/chat` · **Auth**: none · **Stream**: raw JSON lines (no `data:` prefix).
+- **Special fields**: `message.reasoning`, `message.images[]`, `message.tool_calls[]`.
+- **Final chunk**: `done: true` with `load_duration`, `prompt_eval_count`, `eval_count`,
+  `eval_duration`.
+- **Timeout**: none (local; the user can cancel).
+
+### DeepSeek
+- **Endpoint**: `{url}/chat/completions` · **Auth**: `Authorization: Bearer <api-key>`.
+- **Stream**: SSE `data:` lines. **Special**: `thinking`, `reasoning_effort`, `response_format`.
+- **Models**: `deepseek-flash` (V4.1, native image input), `deepseek-v4-pro` (reasoning, text-only),
+  and the retired `deepseek-v4-flash` alias.
+- **Images**: Flash natively, Pro through a configured vision backend (preprocess or direct routing).
+- **Timeout**: 1800 s.
+
+### Unsloth Studio
+- **Endpoint**: `{url}/chat/completions` · **Auth**: optional bearer token.
+- **Special**: `enable_tools`, `enabled_tools`, `session_id`, `tool_choice`.
+- **Tools**: `web_search`, `python`, and `terminal` run on Unsloth's servers, not locally.
+
+### OpenAI
+- **Endpoint**: `{url}/chat/completions` · **Auth**: `Authorization: Bearer <api-key>`.
+- **Tools**: OpenAI function-calling format. **Stream**: SSE `data:` lines.
+
+### Anthropic
+- **Endpoint**: `{url}/v1/messages` · **Auth**: `x-api-key` + `anthropic-version: 2023-06-01`.
+- **System prompt**: top-level `system` field, not a message.
+- **Tools**: `tool_use` blocks with `input_json_delta` fragments; `max_tokens: 4096`.
+- **Stream**: `content_block_*` + `message_stop` events.
 
 ---
 
 ## Knowledge Base (RAG)
 
 ```
-RagRuntime (src/tools/ragTools.js)           server.py (FastAPI, 127.0.0.1:11435)
-    ├── health()      ──────────►  GET  /health     (probes Ollama embedding backend)
-    ├── index()       ──────────►  POST /index      → chunk → embed → ChromaDB + BM25
-    ├── search()      ──────────►  POST /search     → dense (cosine) + BM25 fusion + optional rerank
-    └── deleteData()  ──────────►  POST /delete     → purge by id / source_id / prefix
+src/tools/ragTools.js (RagRuntime)            rag-service/server.py (FastAPI, 127.0.0.1:11435)
+    ├── health()      ──►  GET  /health     (service + embedding backend diagnostics)
+    ├── index()       ──►  POST /index      (chunk → embed → ChromaDB + BM25)
+    ├── search()      ──►  POST /search     (dense + optional BM25 fusion + optional rerank)
+    └── deleteData()  ──►  POST /delete     (by id / prefix / source_id)
         ChromaDB (~/.local/share/katabai/chroma) · embeddings via Ollama /api/embed
 ```
 
-- **Space**: collections use cosine distance; `score = 1 − distance` is a true cosine similarity. Client thresholds (`RAG_RELEVANT_MIN_SCORE` 0.55, `RAG_HIGH_CONFIDENCE_SCORE` 0.72, `RAG_FALLBACK_MIN_RESULT_SCORE` 0.45) are calibrated for this scale.
-- **What gets indexed**: conversation turns (incremental deltas with per-message metadata), tool results (`web_search`, `read_url`, `crawl_url`, `explore_docs`), attached/imported documents, memory facts (`update_<slug>` ids), and — on Re-index — the local research cache (`research-cache.json`).
-- **State**: `rag-index-state.json` tracks indexed conversations (id → message count). Maintenance actions are signalled via `rag-maintenance-generation` + `rag-maintenance-action`; Re-index triggers a full reconcile + research-cache re-import, Clear resets and stays empty, Import processes a file/folder queue.
-- **BM25**: held in memory, marked dirty on any delete/replace/eviction, and rebuilt lazily from ChromaDB before the next hybrid search (ChromaDB is the single source of truth).
-- **Send-path bounds**: all local-service awaits go through `_withTimeout` (auto KB search 8s, tool search 15s, manual `/kb` 20s). When `/health` reports embeddings down, auto search is skipped with a chat notice; trivial prompts skip auto search entirely.
-- **Tool gating**: `knowledge_search`, `update_knowledge`, and `forget_knowledge` are advertised only when the KB is enabled, reachable, non-empty, and embeddings are up; `knowledge_search` accepts an optional `collection` filter.
+- **Space**: cosine; `score = 1 − distance` is a true cosine similarity. Client gates:
+  `RAG_RELEVANT_MIN_SCORE` 0.55 (auto-inject context), `RAG_HIGH_CONFIDENCE_SCORE` 0.72 (suppress
+  web search), `RAG_FALLBACK_MIN_RESULT_SCORE` 0.45 (minimum before falling back to the web).
+- **Collections**: `conversations`, `documents`, `research_cache`.
+- **Indexed content**: conversation turns (incremental), tool results (`web_search`, `read_url`,
+  `crawl_url`, `explore_docs`), attachments/imports, memory facts (`update_<slug>` ids), and the
+  research cache on Re-index.
+- **State**: `rag-index-state.json` tracks conversation id → message count. Maintenance uses
+  `rag-maintenance-generation` + `rag-maintenance-action`.
+- **BM25**: in memory, rebuilt lazily from ChromaDB after any delete/replace/eviction.
+- **Send-path bounds**: auto search 8 s, tool search 15 s, manual `/kb` 20 s, health probe 12 s.
+- **Tool gating**: KB tools are advertised only when the KB is enabled, reachable, non-empty, and
+  embeddings are up.
 
 ---
 
-## Provider Payload Dialects
+## Deep Research (summary)
 
-### Ollama
-- **Endpoint**: `{url}/api/chat`
-- **Method**: POST
-- **Auth**: None
-- **Stream format**: Raw JSON lines (no `data:` prefix)
-- **Special fields**: `message.reasoning` (thinking), `message.images[]` (vision), `message.tool_calls[]`
-- **Final chunk**: `done: true` with `load_duration`, `prompt_eval_count`, `eval_count`, `eval_duration`
-- **Timeout**: 0 (no timeout — Ollama is local, user can cancel via stop button)
+See [DEEP_RESEARCH.md](DEEP_RESEARCH.md) for the full pipeline. The dialog orchestrates; the phase
+logic lives in `src/research/`:
 
-### DeepSeek
-- **Endpoint**: `{url}/chat/completions`
-- **Method**: POST
-- **Auth**: `Authorization: Bearer <api-key>`
-- **Stream format**: `data: {...}` SSE
-- **Special**: `thinking` object, `reasoning_effort`, `response_format` (JSON mode)
-- **Models**: `deepseek-flash` (fast, V4.1, native image input), `deepseek-v4-pro` (reasoning)
-- **Vision**: `deepseek-flash` accepts images natively; `deepseek-v4-pro` is text-only — images routed through separately configured vision model
-- **Timeout**: `DEEPSEEK_STREAM_TIMEOUT_SECONDS`
+1. **Plan** — 3–5 angles (planner retries once with a format nudge); the plan card supports edits,
+   revisions, cancel, and start.
+2. **Branches** — sequential, with per-branch search → read/crawl → compression and transient-error
+   retries with backoff.
+3. **Mid-research critique** — sufficiency scoring, dropped/added angles, contradictions.
+4. **Gap analysis** — 0–2 (Standard), 3 (Deep), or 4 (Max) follow-up queries.
+5. **Refinement** — mini-branches, 2 crawls each.
+6. **Two-pass synthesis** — outline (optionally refined) then streamed report.
+7. **Quality check** — coverage/groundedness score; retries below 3 (Standard/Deep) or 4 (Max),
+   bounded by `MAX_QUALITY_RETRY_ITERATIONS`.
 
-### Unsloth Studio
-- **Endpoint**: `{url}/chat/completions`
-- **Method**: POST
-- **Auth**: `Authorization: Bearer <api-key>` (optional)
-- **Stream format**: `data: {...}` SSE (OpenAI-compatible)
-- **Special**: `enable_tools`, `enabled_tools`, `session_id`, `tool_choice`
-- **Server-side tools**: web_search, python, terminal (not executed locally)
-
-### OpenAI
-- **Endpoint**: `{url}/chat/completions`
-- **Method**: POST
-- **Auth**: `Authorization: Bearer <api-key>`
-- **Stream format**: `data: {...}` SSE
-- **Tools**: OpenAI function-calling format
-
-### Anthropic
-- **Endpoint**: `{url}/v1/messages`
-- **Method**: POST
-- **Auth**: `x-api-key: <api-key>`
-- **Headers**: `anthropic-version: 2023-06-01`
-- **Stream format**: `data: {...}` SSE (content_block_start/delta/stop, message_stop)
-- **Tools**: Anthropic tool_use format with input_json_delta
-- **System prompt**: Top-level `system` field (not in messages array)
-- **Max tokens**: `max_tokens: 4096`
-
----
-
-## Tool-Calling Architecture
-
-### Tool Registry (`src/tools/toolRegistry.js`)
-- Declarative `Map<name, ToolDefinition>`
-- Each tool: `name`, `description`, `parameters` (JSON Schema), `dangerLevel`, `handler`, `uiLabel`, `uiIcon`, `command`, `resultTruncationKey`, `isMeta`, `providerScoped`
-- Schema builders: `buildAllToolSchemas(provider)`, `buildToolSchemasFor(toolNames, provider)`
-
-### Danger Level Model
-| Level | Tools | Execution |
-|---|---|---|
-| `read_only` | web_search, read_url, crawl_url, knowledge_search | Parallel via `Promise.all()` |
-| `potentially_unsafe` | document (reserved: python, terminal) | Sequential with delay |
-
-### Tool Execution Flow
-```
-_handleToolCalls(toolCalls, uiElements)
-    ├── Validate _responseUiAlive(uiElements)
-    ├── Partition by dangerLevel
-    ├── read_only tools → Promise.all() parallel execution
-    ├── potentially_unsafe tools → sequential with delay
-    ├── Each tool result truncated via truncateToolResultForIteration()
-    │   (src/providers/historyPayload.js)
-    ├── Push results to _messageHistory + flushSync()
-    ├── Check force-synthesis thresholds
-    └── Recurse _streamResponse() with updated context
-```
-
-### Healing Retry
-When a model emits raw tool-call markup (malformed JSON or XML) instead of proper function calls:
-1. Detect via `_contentLooksLikeToolCalls()`
-2. Strip markup with `_stripToolCallMarkup()`
-3. Inject `TOOL_CALL_HEALING_INSTRUCTION` correction prompt
-4. Retry up to `MAX_HEALING_RETRIES=3` times (does not increment `_toolIterations`)
-5. On exhaustion: show cleaned text or error
-
-### Force Synthesis
-When tool iterations or context size exceed thresholds:
-1. Set `_forceSynthesisActive = true`
-2. Stop advertising tools in the API payload
-3. Inject `FORCE_SYNTHESIS_SYSTEM_INSTRUCTION` (deep research) or `REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION` (normal)
-4. Model is compelled to write its answer without further tool calls
+Depth scales the synthesis context budget: 80 K (Standard), 120 K (Deep), 160 K (Max) characters.
 
 ---
 
 ## Token Usage & Pet System
 
-### Token Ledger (`src/usage/tokenUsageManager.js`)
-- **Storage**: `~/.local/share/katabai/token-usage.json`
-- **Record**: Per-response event with provider, model, prompt/completion/reasoning/cached tokens, source (exact or estimated), cost
-- **Aggregation**: Daily buckets, time-range summaries
-- **Pricing**: Built-in `MODEL_PRICING` table for cost estimation
-- **Achievements**: 21 badges across progression (First Reply, 100/1K/10K/100K tokens), streak (3/7/14/30-day), and special categories
-- **Combo**: Per-conversation reply streak with token score
-- **Exports**: JSON, CSV, Markdown report, self-contained HTML
+### Ledger (`src/usage/tokenUsageManager.js`)
+- **Storage**: `~/.local/share/katabai/token-usage.json` (400 ms debounced writes).
+- **Record**: per-response provider, model, prompt/completion/reasoning/cached tokens, source
+  (exact or estimated), cost.
+- **Aggregation**: daily buckets plus day/week/month/year/all summaries; 14-day timeline.
+- **Pricing**: `MODEL_PRICING` (local models are free; cloud models use built-in rates, with
+  time-aware DeepSeek peak/off-peak and cache pricing in `deepseekPricing.js`).
+- **Milestones**: first reply, first local tokens, 10k local tokens, mostly self-hosted (≥50 %
+  local), and 7 active days.
+- **Export**: JSON copy in `~/Documents/katabai-token-usage-<timestamp>.json`.
 
-### Pet Collection (`src/pets/petCollection.js`)
-- **Pure rules module**: No GNOME Shell dependencies
-- **5 provider pets**: Defined as frozen objects in `PET_DEFINITIONS`
-- **6 stages**: Frozen array in `PET_STAGES` with `rank`, `minXp`, `key`, `label`, `spriteFamily`
-- **Crossbreeds**: Computed from `getQualifyingPairKeys()` — both pets at Sprout+
-- **Mixie**: `canUnlockMixie()` — all 5 pets at Sprout+
-- **XP tracking**: Stored in `tokenUsageManager` alongside usage data
+### Pets (`src/pets/petCollection.js`)
+- Pure module with no GNOME imports; five provider pets with independent XP.
+- Six stages: Unhatched Egg (0), Hatchling (1), Sprout (10 000), Scholar (100 000),
+  Sage (1 000 000), Archmage (10 000 000).
+- Selection is `follow-provider` or `pinned` (`pet-selection-mode`, `pet-pinned-form`); pinned forms
+  are provider forms (`provider:<provider>`), validated by `parsePetForm()`.
+- XP lives in the token ledger so it survives pruning; resetting the ledger resets pets.
 
-### Pet Sprite Actor (`src/pets/petSpriteActor.js`)
-- Clutter-based renderer with idle animation (cycling through sprite frames)
-- Sleep cycle on idle timeout
-- Accent overlay sprites per provider
-- Animation gated by `_animate` flag (main companion animates, panel/collection actors are static)
+### Sprite actor
+Clutter renderer that loads `<provider>_<family>_<pose>[_0N].png` from `sprites/`, falls back to the
+egg sprite, cycles idle frames, sleeps after inactivity, and can run static (panel/collection) or
+animated (chat companion).
 
 ---
 
 ## Theme System
 
-### Two Separate Stylesheets
-- **Shell overlay**: `stylesheet.css` — St CSS, auto-loaded by GNOME Shell from extension root
-- **Preferences window**: `prefs.css` — GTK CSS, loaded by `prefs.js` via `Gtk.CssProvider`
-- **Never mix**: St CSS rules do not work in GTK, and vice versa
-
-### Detection
-- **Shell side**: Reads `org.gnome.desktop.interface` `color-scheme` key (`'prefer-dark'` = dark, `'default'` = light)
-- **Prefs side**: Uses `Adw.StyleManager.get_default()` with `notify::dark` signal
-- Both listen for live changes and update immediately
-
-### Class Application
-- Shell dialog and panel menu: `.katab-theme-dark` / `.katab-theme-light` on actor
-- Prefs window: `.katab-prefs-theme-dark` / `.katab-prefs-theme-light` on window
+- **Shell overlay**: `stylesheet.css` (St CSS) — applied classes `katab-theme-dark` /
+  `katab-theme-light` on the dialog and panel menu.
+- **Preferences**: `prefs.css` (GTK CSS) — classes `katab-prefs-theme-dark` /
+  `katab-prefs-theme-light`.
+- **Shell detection**: reads `org.gnome.desktop.interface` `color-scheme` and listens for changes.
+- **Prefs detection**: `Adw.StyleManager` `notify::dark`.
+- St CSS does not support `flex-wrap` or `text-transform`, and large `border-radius`/`box-shadow`
+  surfaces can trip offscreen-framebuffer limits.
 
 ---
 
 ## Provider Health Monitor
 
-### Architecture
-- Singleton at extension level — shared by panel indicator and dialog
-- Polls every 15 seconds (configurable)
-- Tri-state: `checking` → `online` / `down` / `needs-setup`
-- Emits status changes to subscribers
+- One monitor instance owned by the extension, shared by the panel indicator, dialog, and prefs
+  pickers.
+- Polls every 15 s (`PROVIDER_STATUS_POLL_MS`) with an 8 s probe timeout.
+- States: `checking`, `online`, `down`, `needs-setup`.
+- Probes:
 
-### Probes
-| Provider | Endpoint | What It Checks |
+| Provider | Probe | Checks |
 |---|---|---|
-| Ollama | `GET /api/tags` | Service is running, returns models |
-| Unsloth | `POST /tokenize` | API is reachable and responding |
-| OpenAI | `GET /v1/models` | API key is valid, service is up |
-| DeepSeek | `GET /user/balance` | API key is valid, balance is sufficient |
-| Anthropic | `GET /v1/models` | API key is valid, service is up |
+| Ollama | `GET /api/tags` | Service reachable, models listed |
+| Unsloth | `POST /tokenize` (`{content:"ping"}`) | Endpoint reachable |
+| OpenAI | `GET /v1/models` | Key valid, service up |
+| DeepSeek | `GET /user/balance` | Key valid, balance readable |
+| Anthropic | `GET /v1/models` (`x-api-key`) | Key valid, service up |
+
+A provider with a missing URL/key/API key is reported as `needs-setup` without a probe.
+
+---
+
+## Assets
+
+| Directory | Contents |
+|---|---|
+| `icons/` | Provider logos + Katab SVG icons |
+| `sprites/` | Per-provider sprite sets (`ollie`, `slothy`, `sparky`, `clyde`, `pearl`), `eggs/`, and the pending `mixie/` placeholder |
+| `schemas/` | GSettings XML + compiled binary (gitignored) |
+| `po/` | gettext template + `POTFILES.in` |
+| `locale/` | Compiled translations (generated by `make langs`, gitignored) |
+
+---
+
+## Data Files
+
+| File | Owner |
+|---|---|
+| `~/.local/share/katabai/history.json` | `HistoryManager` |
+| `~/.local/share/katabai/token-usage.json` | `TokenUsageManager` |
+| `~/.local/share/katabai/presets.json` | `presetManager.js` |
+| `~/.local/share/katabai/research-cache.json` | `researchCache.js` |
+| `~/.local/share/katabai/research-checkpoint.json` | `researchCache.js` |
+| `~/.local/share/katabai/rag-index-state.json` | dialog KB indexing |
+| `~/.local/share/katabai/chroma/` | RAG service (ChromaDB) |
+| dconf (`org.gnome.shell.extensions.katabai`) | settings, including API keys |
+
+All paths derive from `GLib.get_user_data_dir()`, so `XDG_DATA_HOME` is respected.

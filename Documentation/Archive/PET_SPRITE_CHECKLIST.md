@@ -1,5 +1,8 @@
 # 🐾 Katab AI — Pet Sprite Checklist
 
+> **Archived design document** — kept for provenance. See [README.md](README.md) for context;
+> the code and current [technical documentation](../Technical/) are authoritative.
+
 > **Total: 60 core sprites + 5 optional UI icons** · **Format: PNG, transparent background**  
 > **Baby stage: 64×64 px** · **Adult stage: 128×128 px** (baby bakes down, adult is native)  
 > **Eggs: 64×64 px** · **Accents: 32×32 px**  

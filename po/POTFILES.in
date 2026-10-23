@@ -40,6 +40,7 @@ src/ui/headerBar.js
 src/ui/historyView.js
 src/ui/markdownRender.js
 src/ui/messageBubble.js
+src/ui/pendingIndicator.js
 src/ui/pickers.js
 src/ui/prefs/deepseekPage.js
 src/ui/prefs/generalPage.js

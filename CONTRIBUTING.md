@@ -2,6 +2,24 @@
 
 Thanks for your interest in contributing to Katab (ਕਿਤਾਬ), the GNOME desktop AI assistant!
 
+## Contents
+
+- [Code of Conduct](#code-of-conduct)
+- [Security](#security)
+- [Development Setup](#development-setup)
+- [Branching Strategy](#branching-strategy)
+- [Coding Conventions](#coding-conventions)
+- [Project Structure](#project-structure)
+- [Make Targets](#make-targets)
+- [Adding Features](#adding-features)
+- [Testing](#testing)
+- [Translations](#translations)
+- [Release Checklist](#release-checklist)
+- [GNOME Shell Compatibility Policy](#gnome-shell-compatibility-policy)
+- [Documentation](#documentation)
+
+---
+
 ## Code of Conduct
 
 - Be respectful and constructive in all interactions.
@@ -22,29 +40,34 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
    cd ~/.local/share/gnome-shell/extensions/katabai@cetikaytools.com
    ```
 
-2. **Compile GSettings schemas**:
+2. **Install developer tooling** (Node.js 20+):
+   ```bash
+   npm ci
+   ```
+
+3. **Compile GSettings schemas**:
    ```bash
    make compile-schemas
    # or: glib-compile-schemas schemas/
    ```
 
-3. **Enable the extension**:
+4. **Enable the extension**:
    ```bash
    gnome-extensions enable katabai@cetikaytools.com
    ```
 
-4. **Reload after changes**: Use `Alt+F2`, type `r`, and press Enter (X11) or log out and back in (Wayland). Alternatively:
+5. **Reload after changes**: Use `Alt+F2`, type `r`, and press Enter (X11) or log out and back in (Wayland). Alternatively:
    ```bash
    gnome-extensions disable katabai@cetikaytools.com
    gnome-extensions enable katabai@cetikaytools.com
    ```
 
-5. **View logs**:
+6. **View logs**:
    ```bash
    journalctl -f -o cat /usr/bin/gnome-shell | grep -i katab
    ```
 
-`make reload` and `make logs` wrap steps 4 and 5 for quick iteration.
+`make reload` and `make logs` wrap steps 5 and 6 for quick iteration.
 
 ## Branching Strategy
 
@@ -98,29 +121,51 @@ For vulnerability disclosures, see [SECURITY.md](Documentation/Technical/SECURIT
 ## Project Structure
 
 ```
-extension.js          — Main entry: extension class, KatabDialog, Panel Indicator, ProviderHealthMonitor
-prefs.js              — GTK4/Adwaita preferences orchestrator (pages live in src/ui/prefs/)
-prefs.css             — Preferences window styling
-stylesheet.css        — Shell overlay St CSS
-metadata.json         — Extension manifest
-schemas/              — GSettings schema XML + compiled binary
+extension.js          — Main entry: extension class, dialog, panel indicator, health monitor,
+                        tool dispatch, research orchestration
+prefs.js              — GTK4/Adwaita preferences orchestrator (92 lines; pages in src/ui/prefs/)
+prefs.css             — Preferences window styling (GTK CSS)
+stylesheet.css        — Shell overlay styling (St CSS)
+metadata.json         — Extension manifest (UUID, shell versions, schema id)
+Makefile              — All developer tasks (see `make help`)
+package.json          — ESLint/Prettier/test-runner tooling (not shipped)
+schemas/              — GSettings schema XML + compiled binary (gitignored)
+po/                   — gettext template + POTFILES.in
+rag-service/          — Canonical FastAPI + ChromaDB service source + tests
 src/
-├── core/             — HistoryManager, request-lifecycle FSM, tool-call markup
-├── providers/        — Provider request builders, stream parsers, catalog
-├── ui/               — Markdown render-model helpers + prefs/ page modules
-├── tools/            — Tool implementations and declarative registry
-├── research/         — Deep research pipeline (planner, branch runner, synthesis, compression, citations, cache)
-├── usage/            — Token tracking, DeepSeek pricing, presets
-├── pets/             — Pet collection system
-└── shared/           — Shared utilities (HTTP body reader, SSRF guard)
-tests/                — GJS unit-test suites
-scripts/              — check-css.mjs + import-smoke.js dev checks (npm tooling in package.json; not shipped)
-Documentation/        — Help, Technical, Archive, Research Reports
-icons/                — Provider logos and custom icons
-sprites/              — Pet sprite PNGs
+├── core/             — History, request lifecycle FSM, session memory, title generator, markup
+├── providers/        — Catalog, request builders, payload shaping, stream parsers
+├── ui/               — Shell widgets (header, bubbles, history, usage panel, …) + prefs/ pages
+├── tools/            — Tool definitions, registry, and runtimes (web, crawl, docs, RAG, files)
+├── research/         — Deep research pipeline (planner, branches, synthesis, compression, cache)
+├── usage/            — Token ledger, DeepSeek pricing, presets
+├── pets/             — Pet rules + sprite renderer
+└── shared/           — HTTP body reader, SSRF guard, i18n, page links, content kinds, tool modes
+tests/                — GJS unit-test suites (36 files)
+scripts/              — Syntax/CSS/import checks, test runner, i18n extractor, fidelity audits
+Documentation/        — Index, Help, Technical, Archive, Research-Reports
+icons/                — Provider logos and Katab icons
+sprites/              — Pet sprite PNGs (per provider, eggs, pending mixie)
 ```
 
-See [ARCHITECTURE.md](Documentation/Technical/ARCHITECTURE.md) for detailed file descriptions and [DEVELOPMENT.md](Documentation/Technical/DEVELOPMENT.md) for developer guides.
+See [ARCHITECTURE.md](Documentation/Technical/ARCHITECTURE.md) for the module map and data flow, and
+[DEVELOPMENT.md](Documentation/Technical/DEVELOPMENT.md) for the contribution recipes.
+
+## Make Targets
+
+| Target | Purpose |
+|---|---|
+| `make compile-schemas` | Recompile the GSettings schema |
+| `make check` | ES-module parse, CSS delimiter balance, and GJS import smoke |
+| `make audit` | Re-run fidelity audits against git history |
+| `make test` / `make test-verbose` | Unit tests (parallel, compact / per-suite output) |
+| `make test-rag-server` | RAG service `unittest` suite |
+| `npm run lint` / `npm run format` / `npm run format:check` | ESLint / Prettier |
+| `make pot` / `make langs` | Refresh the gettext template / compile translations |
+| `make sync-rag-server` | Copy `rag-service/server.py` to the deployed location |
+| `make package` | Build the extensions.gnome.org zip |
+| `make install` / `make reload` / `make logs` | Local install / shell reload / journal tail |
+| `make clean` | Remove build artifacts |
 
 ## Adding Features
 
@@ -159,7 +204,7 @@ npm run format        # rewrite files to canonical style
 npm run format:check  # verify (CI gate)
 ```
 
-- Unit tests use GJS (`gjs -m`) and live in `tests/`.
+- Unit tests use GJS (`gjs -m`) and live in `tests/`; `make test` runs them in parallel with a per-suite timeout and prints a compact summary (`make test-verbose` shows per-suite counts).
 - Only pure-logic modules without GNOME Shell/Clutter dependencies can be unit tested.
 - The authoritative validation is a live GNOME Shell reload. Check `journalctl` for errors.
 - Functional testing of UI, streaming, and tool-calling requires a running GNOME Shell session with configured providers.
@@ -214,7 +259,7 @@ For maintainers publishing a release:
 
 1. **Bump the version** in `metadata.json` — it must be **monotonic** (extensions.gnome.org rejects uploads whose version does not increase).
 2. **Update `CHANGELOG.md`**: move the `[Unreleased]` entries under a new version/date heading.
-3. **Validate**: `make check && make test` (CI runs the same on every push), plus a live shell reload and smoke test — send, cancel mid-stream, one tool-call turn, history reload, and a deep-research run.
+3. **Validate**: `make check && make test` (CI runs the same on every push), plus a live shell reload and smoke test — send, cancel mid-stream, one tool-call turn, history reload, and a deep-research run. In a full-history clone also run `make audit`; if you changed wrapped strings, run `make pot` and commit the refreshed template.
 4. **Package**: `make package` produces the distributable zip; verify it contains `schemas/gschemas.compiled`.
 5. **Publish**: upload the zip to extensions.gnome.org (or install it locally for a final check).
 
@@ -230,9 +275,15 @@ Katab supports the shell versions listed in `metadata.json` (`shell-version`). W
 
 ## Documentation
 
+- **Index**: [Documentation/README.md](Documentation/README.md) — audience map, support READMEs, and
+  historical material.
 - **User-facing**: `README.md` and `Documentation/Help/UserGuide.md`.
-- **Technical**: `Documentation/Technical/` — architecture, security, testing, development, API reference, deep research.
+- **Technical**: `Documentation/Technical/` — architecture, API reference, deep research,
+  development, testing, security.
 - **Changelog**: `CHANGELOG.md` — update with each PR under `[Unreleased]`.
-- Use the existing document structure and style when adding new documentation.
-- Cross-reference between documents using relative Markdown links.
-- Keep documentation factual and accurate — verify all GSettings keys, endpoint URLs, and command examples.
+- **Code is the source of truth**: verify GSettings keys against the schema XML, tool schemas
+  against `src/tools/toolDefinitions.js`, and constants against the code.
+- When a PR adds or changes a setting, tool, command, file format, or data path, update the owning
+  document in the same PR (see the rules in `Documentation/README.md`).
+- Use the existing structure and style; cross-reference with relative Markdown links; use
+  `sk-xxxxxxxxxxxx` placeholders for keys.
