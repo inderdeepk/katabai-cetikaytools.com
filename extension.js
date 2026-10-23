@@ -177,6 +177,7 @@ import { Pickers } from './src/ui/pickers.js';
 import { MessageBubble } from './src/ui/messageBubble.js';
 import { AssistantRender } from './src/ui/assistantRender.js';
 import { PendingIndicator } from './src/ui/pendingIndicator.js';
+import { PendingIndicatorController } from './src/ui/pendingIndicatorController.js';
 import {
     DEEP_RESEARCH_MODE_SEQUENCE,
     TOOL_MODE_AUTO,
@@ -405,6 +406,8 @@ const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
 // to the main chat request.  The title request keeps running in the background
 // (up to AUTO_TITLE_TIMEOUT_SECONDS) so cold local models still get a title.
 const AUTO_TITLE_HANDOFF_MS = 8000;
+// The warm-up row's grace period (so fast responses never flash a loader)
+// lives with its state machine in src/ui/pendingIndicatorController.js.
 const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 30;
 const DEEPSEEK_STREAM_TIMEOUT_SECONDS = 1800;
 // Ollama runs locally; large models can take minutes to load and process
@@ -2003,7 +2006,7 @@ class KatabDialog {
                 `[Katab:lifecycle] state mismatch — cleared a response the lifecycle never began (state=${lcFinish.previous}).`,
             );
         }
-        this._hidePendingIndicator(this._activeResponseState?.uiElements);
+        this._dismissPendingIndicator(this._activeResponseState?.uiElements);
         this._activeResponseState = null;
         this._cancellable = null;
         this._setStreamingState(false);
@@ -4719,6 +4722,9 @@ class KatabDialog {
         if (!uiElements?.contentBox) {
             return;
         }
+        // Real status activity replaces the warm-up row (including its grace
+        // timer, so it can never appear on top of the status box).
+        this._dismissPendingIndicator(uiElements);
         try {
             uiElements.contentBox.destroy_all_children();
         } catch (_e) {
@@ -9110,8 +9116,8 @@ class KatabDialog {
 
     _applyAssistantRender(uiElements, rawText, options = {}) {
         // Any real render (status line, streamed text, final answer) takes
-        // over the bubble — stop the warm-up row and its timers first.
-        this._hidePendingIndicator(uiElements);
+        // over the bubble — cancel a pending grace timer and stop the row.
+        this._dismissPendingIndicator(uiElements);
         this._ensureRender().applyAssistantRender(uiElements, rawText, options);
     }
 
@@ -9396,44 +9402,75 @@ class KatabDialog {
     }
 
     // ── Warm-up indicator ────────────────────────────────────────────────
-    // A small pulsing row inside the assistant bubble. It is replaced
-    // automatically by the first real render (contentBox children are rebuilt)
-    // and explicitly destroyed on stop/error paths.
+    // A small pulsing row inside the assistant bubble.  It is armed with a
+    // short grace period so fast responses render straight into the bubble
+    // without a loader flash.  Any real activity (thinking panel, tool call,
+    // streamed text, error, stop) dismisses it for that moment; a status line
+    // (search started, retrying, …) may dismiss it too, but the first time
+    // the model is actually waited on again the row is re-armed once, so a
+    // long model wait never shows a frozen status line instead of activity.
+    // The state machine lives in src/ui/pendingIndicatorController.js.
 
-    _showPendingIndicator(uiElements, text) {
-        if (!uiElements?.contentBox || this._isActorDisposed(uiElements.contentBox)) {
-            return;
+    _getPendingController(uiElements) {
+        if (!uiElements) return null;
+        if (!uiElements._katabPending) {
+            uiElements._katabPending = new PendingIndicatorController(
+                {
+                    getContainer: () => uiElements.contentBox ?? null,
+                    isChatCurrent: () => this._isChatUiCurrent(uiElements),
+                    isDisposed: (actor) => this._isActorDisposed(actor),
+                    createIndicator: (text) => new PendingIndicator({ text }),
+                    canRecover: () => {
+                        const response = this._activeResponseState;
+                        return Boolean(
+                            response &&
+                            response.uiElements === uiElements &&
+                            !response.accumulatedText &&
+                            !response.accumulatedThink,
+                        );
+                    },
+                    scrollToBottom: () => this._scrollToBottom(),
+                    log: (message) => log(message),
+                },
+                {
+                    timeoutAdd: (ms, callback) =>
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+                            callback();
+                            return GLib.SOURCE_REMOVE;
+                        }),
+                    timeoutRemove: (id) => {
+                        try {
+                            GLib.source_remove(id);
+                        } catch (_e) {
+                            /* already fired */
+                        }
+                    },
+                },
+            );
         }
-        this._hidePendingIndicator(uiElements);
-        try {
-            const indicator = new PendingIndicator({ text });
-            uiElements.pendingIndicator = indicator;
-            uiElements.contentBox.add_child(indicator.actor);
-            indicator.start();
-            this._scrollToBottom();
-        } catch (e) {
-            log(`[Katab:title] Failed to show the warm-up indicator: ${e.message || e}`);
-        }
+        return uiElements._katabPending;
+    }
+
+    _armPendingIndicator(uiElements, text, options = {}) {
+        this._getPendingController(uiElements)?.arm(text, options);
     }
 
     _setPendingIndicatorText(uiElements, text) {
-        if (!uiElements?.pendingIndicator) return;
-        try {
-            uiElements.pendingIndicator.setText(text);
-        } catch (_e) {
-            /* bubble already disposed */
-        }
+        this._getPendingController(uiElements)?.setText(text);
     }
 
-    _hidePendingIndicator(uiElements) {
-        const indicator = uiElements?.pendingIndicator;
-        if (!indicator) return;
-        uiElements.pendingIndicator = null;
-        try {
-            indicator.destroy();
-        } catch (_e) {
-            /* bubble already disposed */
-        }
+    _hasArmedPendingIndicator(uiElements) {
+        return Boolean(this._getPendingController(uiElements)?.hasArmed());
+    }
+
+    /** Re-arm the row once for the first model wait after a status render. */
+    _recoverPendingIndicator(uiElements, text) {
+        return Boolean(this._getPendingController(uiElements)?.recover(text));
+    }
+
+    /** Stop the warm-up row (and any pending grace timer) for this response. */
+    _dismissPendingIndicator(uiElements) {
+        this._getPendingController(uiElements)?.dismiss();
     }
 
     // ── Rate-limit helpers ───────────────────────────────────────────────
@@ -12444,15 +12481,12 @@ class KatabDialog {
             return;
         }
 
-        // Re-entrancy guard: _sendMessage may await slow enrichment (RAG auto
-        // search) BEFORE streaming begins, during which the lifecycle is in
-        // ENRICHING (not yet responding).  Without this, hammering Enter while
-        // the RAG service hangs stacked concurrent sends that all fired at
-        // once once the timeout resolved.
+        // Re-entrancy guard: /kb import runs in ENRICHING before any response
+        // exists.  Normal KB/web enrichment now runs after the response is
+        // armed (AWAITING_MODEL), so the isResponding() branch above turns
+        // Enter into Stop instead of stacking sends.
         if (!this._lifecycle.canSend()) {
-            log(
-                '[Katab] Send ignored — a send is already in flight (awaiting knowledge base / web enrichment).',
-            );
+            log('[Katab] Send ignored — a send is already in flight.');
             return;
         }
 
@@ -12516,25 +12550,39 @@ class KatabDialog {
         const webSearchModeForPrompt = toolCommands.webSearchModeForPrompt;
         const crawl4aiModeForPrompt = toolCommands.crawl4aiModeForPrompt;
 
-        // ── Knowledge Base enrichment (/kb, auto search, coverage fallback) ─
-        // Manual /kb (incl. /kb import), the automatic pre-send search, and
-        // the low-coverage web fallback all run inside the helper below. It
-        // can await a slow local RAG service, so it enters the ENRICHING phase
-        // after its own validation returns; the stream's _beginActiveResponse
-        // then transitions ENRICHING → AWAITING_MODEL, and an aborted send
-        // settles via _clearActiveResponseState.
-        const enrichment = await this._prepareSendKnowledgeContext({
-            promptText,
-            crawlCommand,
-            webSearchQuery,
-            crawl4aiTargetUrl,
-        });
-        if (!enrichment) return;
-        promptText = enrichment.promptText;
-        const knowledgeContext = enrichment.knowledgeContext;
-        const autoFallbackWebSearch = enrichment.autoFallbackWebSearch;
-        const sendKnowledgeUsage = enrichment.sendKnowledgeUsage;
+        // ── /kb validation (synchronous, before the turn is committed) ──────
+        // Invalid commands must not create a user/assistant bubble.  The
+        // potentially-slow search/import work runs after the commit so the
+        // user gets immediate feedback.
+        const kb = this._classifySendKnowledgeCommand(promptText);
+        if (!kb) return;
 
+        if (kb.kind === 'import') {
+            this._entry.set_text('');
+            this._resetDraftUsage();
+            this._resetOneShotToolModes(webSearchModeForPrompt, crawl4aiModeForPrompt);
+            this._lifecycle.begin(REQUEST_STATES.ENRICHING);
+            try {
+                this._addSystemMessage(_('Importing files into the knowledge base…'), {
+                    variant: 'info',
+                });
+                await this._handleKbImportCommand(kb.path);
+            } catch (e) {
+                log(`[Katab:rag] Import failed: ${e.message || e}`);
+                this._addSystemMessage(_('The knowledge base import could not be completed.'), {
+                    variant: 'warning',
+                });
+            } finally {
+                this._lifecycle.finish();
+            }
+            return;
+        }
+
+        // ── Commit the turn before any slow work ────────────────────────────
+        // The user message, empty assistant bubble, cleared entry, and Stop
+        // button all appear in the same frame as the send.  Enrichment, title
+        // generation, and the main-model wait then share one visible state
+        // sequence behind the warm-up row.
         const userMessage = {
             role: 'user',
             // When a /crawl command was used, strip the raw command text so the
@@ -12544,26 +12592,21 @@ class KatabDialog {
             // nothing (bare "/crawl <url>"), keep the original text so the
             // message still shows in the chat history.
             content:
-                webSearchQuery !== null
-                    ? webSearchQuery
-                    : crawlCommand?.isCommand
-                      ? stripCrawl4AICommand(promptText) || promptText
-                      : promptText,
+                kb.kind === 'search'
+                    ? kb.query
+                    : webSearchQuery !== null
+                      ? webSearchQuery
+                      : crawlCommand?.isCommand
+                        ? stripCrawl4AICommand(promptText) || promptText
+                        : promptText,
         };
         if (documentMetas.length) {
             userMessage.documents = documentMetas;
-        }
-        if (knowledgeContext) {
-            userMessage.knowledgeContext = knowledgeContext;
-        }
-        if (sendKnowledgeUsage) {
-            userMessage.knowledgeUsage = [sendKnowledgeUsage];
         }
 
         this._recordSentPrompt(rawPromptText);
         this._usage?.showCompanionPose('tip', 1200);
         this._entry.set_text('');
-        this._resetOneShotToolModes(webSearchModeForPrompt, crawl4aiModeForPrompt);
         this._resetDraftUsage();
         this._hasConversationStarted = true;
         this._setWelcomeVisible(false);
@@ -12584,10 +12627,8 @@ class KatabDialog {
                 : `${documentMetas.length} attachments`,
         );
 
-        // ── First-prompt chat title + warm-up handoff ───────────────────────
-        // The title request is the first model call for a new chat. The
-        // animated warm-up row covers it, then becomes the "Thinking…" handoff
-        // to the main request (which can take a minute on a cold local model).
+        // Decide title eligibility before arming so the phase text is accurate
+        // without waiting for any model work.
         const titleSeed =
             String(userMessage.content ?? '').trim() ||
             documentMetas.map((doc) => doc.displayName).join(', ');
@@ -12599,11 +12640,65 @@ class KatabDialog {
         }
         const shouldGenerateTitle =
             Boolean(titleSeed) && autoTitlesEnabled && this._isFirstUserTurn();
-        this._showPendingIndicator(
-            uiElements,
-            shouldGenerateTitle ? _('Naming this chat…') : _('Thinking…'),
-        );
+
+        // Arm the grace timer once.  Fast replies render before it fires and
+        // never flash a loader; slow replies get the animated row in time.
+        this._armPendingIndicator(uiElements, _('Preparing context…'));
+
+        // ── Knowledge Base enrichment (/kb search, auto search, fallback) ───
+        // Runs after the commit, so the user message and warm-up row are
+        // already visible and the Stop button stays functional.
+        let enrichment;
+        try {
+            enrichment = await this._prepareSendKnowledgeContext({
+                promptText,
+                crawlCommand,
+                webSearchQuery,
+                crawl4aiTargetUrl,
+                kb,
+                cancellable: requestCancellable,
+            });
+        } catch (e) {
+            if (requestCancellable.is_cancelled() || !this._activeResponseState) return;
+            log(`[Katab:rag] Send enrichment failed: ${e.message || e}`);
+            this._renderLocalAssistantError(
+                uiElements,
+                _('Could not prepare the knowledge context for this message.'),
+            );
+            return;
+        } finally {
+            // One-shot tool modes stay live through enrichment (the auto KB/web
+            // fallback consults them) but must always be reset, including when
+            // the send is aborted mid-enrichment or cancelled by the user.
+            this._resetOneShotToolModes(webSearchModeForPrompt, crawl4aiModeForPrompt);
+        }
+        if (requestCancellable.is_cancelled() || !this._activeResponseState) return;
+        if (!enrichment) {
+            this._renderLocalAssistantError(
+                uiElements,
+                _('Could not prepare the knowledge context for this message.'),
+            );
+            return;
+        }
+        promptText = enrichment.promptText;
+        const knowledgeContext = enrichment.knowledgeContext;
+        const autoFallbackWebSearch = enrichment.autoFallbackWebSearch;
+        const sendKnowledgeUsage = enrichment.sendKnowledgeUsage;
+        if (knowledgeContext) {
+            userMessage.knowledgeContext = knowledgeContext;
+        }
+        if (sendKnowledgeUsage) {
+            userMessage.knowledgeUsage = [sendKnowledgeUsage];
+        }
+        if (knowledgeContext || sendKnowledgeUsage) {
+            this._saveCurrentConversation();
+        }
+
+        // ── First-prompt AI title ───────────────────────────────────────────
+        // Runs after context prep and before the main model request.  The
+        // indicator text follows the real phase, not a wall-clock timer.
         if (shouldGenerateTitle) {
+            this._setPendingIndicatorText(uiElements, _('Naming this chat…'));
             // Soft deadline: hand off to the main request even if a cold local
             // model is still working on the title.  The title request keeps
             // running in the background and updates history when it lands.
@@ -12620,8 +12715,8 @@ class KatabDialog {
                 this._sleepMs(AUTO_TITLE_HANDOFF_MS),
             ]);
             if (requestCancellable.is_cancelled() || !this._activeResponseState) return;
-            this._setPendingIndicatorText(uiElements, _('Thinking…'));
         }
+        this._setPendingIndicatorText(uiElements, _('Thinking…'));
 
         // Surface the pre-send KB-fallback web search in the tool-call log so
         // the UI reflects searches that ran before the model response started.
@@ -13612,6 +13707,53 @@ class KatabDialog {
         };
     }
 
+    /**
+     * Fast, synchronous /kb validation.  Runs before the user message is
+     * committed so an invalid command never creates a bubble.  Returns
+     * { kind: 'none' | 'search' | 'import', ... } or null when the user was
+     * already told why the command cannot run.
+     */
+    _classifySendKnowledgeCommand(promptText) {
+        const command = parseRagCommand(promptText);
+        if (!command?.isCommand) {
+            return { kind: 'none', command: null };
+        }
+
+        const ragConfig = readRagConfig(this._settings);
+        if (!ragConfig.enabled) {
+            this._addSystemMessage(
+                _(
+                    'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command.',
+                ),
+                { variant: 'warning' },
+            );
+            return null;
+        }
+        if (!command.query) {
+            this._addSystemMessage(
+                _('Add a query after /kb, for example: /kb what is the meaning of life?'),
+                { variant: 'warning' },
+            );
+            return null;
+        }
+
+        const importMatch = String(command.query).match(/^import(?:\s+(.+))?$/i);
+        if (importMatch) {
+            if (!importMatch[1]) {
+                this._addSystemMessage(
+                    _(
+                        'Usage: /kb import "~/path/to/file-or-folder" — imports txt, md, pdf, docx, and eml files into the knowledge base.',
+                    ),
+                    { variant: 'info' },
+                );
+                return null;
+            }
+            return { kind: 'import', command, path: importMatch[1], ragConfig };
+        }
+
+        return { kind: 'search', command, query: command.query, ragConfig };
+    }
+
     /** Run the send-path Knowledge Base enrichment: manual /kb (incl. /kb
      *  import), the automatic pre-send search, and the low-coverage web-search
      *  fallback.  Returns null (abort — the user was already told why) or
@@ -13621,117 +13763,94 @@ class KatabDialog {
         crawlCommand,
         webSearchQuery,
         crawl4aiTargetUrl,
+        kb = null,
+        cancellable = null,
     }) {
         let knowledgeContext = null;
-        // Captured when the auto KB-fallback web search actually returns results.
-        // It runs before the assistant bubble exists, so we stash it here and
-        // surface it in the tool-call log once the bubble is built.
+        // Captured when the auto KB-fallback web search actually returns
+        // results; the caller surfaces it in the assistant bubble's tool log.
         let autoFallbackWebSearch = null;
-        // Captured KB usage (manual /kb or auto KB search) so the footer pill
-        // can be shown once the assistant bubble exists.
+        // Captured KB usage (manual /kb or auto KB search); the caller renders
+        // it as the compact footer pill.
         let sendKnowledgeUsage = null;
-        const kbCommand = parseRagCommand(promptText);
-        if (kbCommand?.isCommand) {
-            const ragConfig = readRagConfig(this._settings);
-            if (!ragConfig.enabled) {
-                this._addSystemMessage(
-                    _(
-                        'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command.',
-                    ),
-                    { variant: 'warning' },
-                );
-                return null;
-            }
-            if (!kbCommand.query) {
-                this._addSystemMessage(
-                    _('Add a query after /kb, for example: /kb what is the meaning of life?'),
-                    { variant: 'warning' },
-                );
-                return null;
-            }
 
-            // /kb import "path" — index local files/folders into the KB.
-            const kbImportMatch = String(kbCommand.query).match(/^import(?:\s+(.+))?$/i);
-            if (kbImportMatch) {
-                if (!kbImportMatch[1]) {
-                    this._addSystemMessage(
-                        _(
-                            'Usage: /kb import "~/path/to/file-or-folder" — imports txt, md, pdf, docx, and eml files into the knowledge base.',
-                        ),
-                        { variant: 'info' },
-                    );
-                    return null;
-                }
+        const classified = kb || this._classifySendKnowledgeCommand(promptText);
+        if (!classified) return null;
+
+        // Post-commit enrichment runs while the response lifecycle is already
+        // active (AWAITING_MODEL), which keeps the Stop button functional.
+        // Only enter ENRICHING when this helper runs before a response exists.
+        const enterEnriching = () => {
+            if (!this._lifecycle.isActive()) {
                 this._lifecycle.begin(REQUEST_STATES.ENRICHING);
-                try {
-                    await this._handleKbImportCommand(kbImportMatch[1]);
-                } finally {
-                    this._lifecycle.finish();
-                }
-                this._entry.set_text('');
-                this._resetDraftUsage();
-                return null;
             }
+        };
 
-            // The /kb search below can await a slow local RAG service — guard
-            // against Enter-stacking concurrent sends from this point on
-            // (ENRICHING keeps canSend() false until the stream begins and
-            // names the response).
-            this._lifecycle.begin(REQUEST_STATES.ENRICHING);
+        if (classified.kind === 'import') {
+            // /kb import is a command, not a chat turn — the send path handles
+            // it before committing a message.
+            return null;
+        }
 
-            promptText = kbCommand.query;
+        if (classified.kind === 'search') {
+            enterEnriching();
+            promptText = classified.query;
             try {
                 const searchOutcome = await this._withTimeout(
-                    this._ragRuntime.search(kbCommand.query, ragConfig, null),
+                    this._ragRuntime.search(classified.query, classified.ragConfig, cancellable),
                     RAG_MANUAL_SEARCH_TIMEOUT_MS,
                 );
                 if (searchOutcome.kind === 'timeout') {
-                    log(
-                        `[Katab:rag] /kb search timed out after ${RAG_MANUAL_SEARCH_TIMEOUT_MS}ms — continuing without KB context`,
-                    );
-                    this._addSystemMessage(
-                        _(
-                            'Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context.',
-                        ),
-                        { variant: 'warning' },
-                    );
-                    sendKnowledgeUsage = {
-                        kind: 'search',
-                        query: kbCommand.query,
-                        status: 'error',
-                        error: 'Knowledge Base search timed out.',
-                    };
+                    if (!cancellable?.is_cancelled()) {
+                        log(
+                            `[Katab:rag] /kb search timed out after ${RAG_MANUAL_SEARCH_TIMEOUT_MS}ms — continuing without KB context`,
+                        );
+                        this._addSystemMessage(
+                            _(
+                                'Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context.',
+                            ),
+                            { variant: 'warning' },
+                        );
+                        sendKnowledgeUsage = {
+                            kind: 'search',
+                            query: classified.query,
+                            status: 'error',
+                            error: 'Knowledge Base search timed out.',
+                        };
+                    }
                 } else {
                     const searchResult = searchOutcome.value;
-                    knowledgeContext = buildRagResultBlock(kbCommand.query, searchResult, {
+                    knowledgeContext = buildRagResultBlock(classified.query, searchResult, {
                         mode: searchResult.mode || '',
                     });
                     sendKnowledgeUsage = {
                         kind: 'search',
-                        query: kbCommand.query,
+                        query: classified.query,
                         resultCount: searchResult.results?.length || 0,
                         mode: searchResult.mode || '',
                         status: 'success',
                     };
                     log(
-                        `[Katab:rag] /kb search for "${kbCommand.query.substring(0, 80)}" returned ${searchResult.results?.length || 0} results (mode=${searchResult.mode || 'dense'})`,
+                        `[Katab:rag] /kb search for "${classified.query.substring(0, 80)}" returned ${searchResult.results?.length || 0} results (mode=${searchResult.mode || 'dense'})`,
                     );
                 }
             } catch (e) {
-                log(`[Katab:rag] /kb search failed: ${e.message}`);
-                this._addSystemMessage(
-                    format(_('Knowledge Base search failed: {error}'), { error: e.message }),
-                    {
-                        variant: 'warning',
-                    },
-                );
-                sendKnowledgeUsage = {
-                    kind: 'search',
-                    query: kbCommand.query,
-                    status: 'error',
-                    error: e.message,
-                };
-                // Continue without knowledge context — don't block the user
+                if (!cancellable?.is_cancelled()) {
+                    log(`[Katab:rag] /kb search failed: ${e.message}`);
+                    this._addSystemMessage(
+                        format(_('Knowledge Base search failed: {error}'), { error: e.message }),
+                        {
+                            variant: 'warning',
+                        },
+                    );
+                    sendKnowledgeUsage = {
+                        kind: 'search',
+                        query: classified.query,
+                        status: 'error',
+                        error: e.message,
+                    };
+                    // Continue without knowledge context — don't block the user
+                }
             }
         } else if (
             this._knowledgeSearchMode === TOOL_MODE_AUTO &&
@@ -13746,8 +13865,10 @@ class KatabDialog {
             // user pointed at an exact page, so the scraped content is the
             // authoritative source — a KB/web supplement would only add noise.
             // Guard against Enter-stacking concurrent sends while this awaits a
-            // possibly-slow local RAG service (lifecycle ENRICHING).
-            this._lifecycle.begin(REQUEST_STATES.ENRICHING);
+            // possibly-slow local RAG service.  Post-commit the lifecycle is
+            // already active (AWAITING_MODEL), so enterEnriching() is a no-op
+            // and the Stop button keeps working.
+            enterEnriching();
             try {
                 const ragConfig = readRagConfig(this._settings);
                 if (
@@ -13772,13 +13893,15 @@ class KatabDialog {
                         // the send hostage.  After RAG_AUTO_SEARCH_TIMEOUT_MS the
                         // message goes out without KB context.
                         const searchOutcome = await this._withTimeout(
-                            this._ragRuntime.search(effectiveQuery, ragConfig, null),
+                            this._ragRuntime.search(effectiveQuery, ragConfig, cancellable),
                             RAG_AUTO_SEARCH_TIMEOUT_MS,
                         );
                         if (searchOutcome.kind === 'timeout') {
-                            log(
-                                `[Katab:rag] Auto KB search timed out after ${RAG_AUTO_SEARCH_TIMEOUT_MS}ms — continuing without KB context`,
-                            );
+                            if (!cancellable?.is_cancelled()) {
+                                log(
+                                    `[Katab:rag] Auto KB search timed out after ${RAG_AUTO_SEARCH_TIMEOUT_MS}ms — continuing without KB context`,
+                                );
+                            }
                         } else {
                             const searchResult = searchOutcome.value;
                             const results = searchResult?.results || [];
@@ -13842,7 +13965,7 @@ class KatabDialog {
                                     const webPayload = await this._webSearchRuntime.search(
                                         effectiveQuery,
                                         webConfig,
-                                        null,
+                                        cancellable,
                                     );
                                     const webResultCount = webPayload?.results?.length || 0;
                                     const webAnswerCount = webPayload?.answers?.length || 0;
@@ -13875,9 +13998,11 @@ class KatabDialog {
                                         `[Katab:rag] Web fallback for "${effectiveQuery.substring(0, 80)}" returned ${webResultCount} results`,
                                     );
                                 } catch (webErr) {
-                                    log(
-                                        `[Katab:rag] Web fallback search failed: ${webErr.message}`,
-                                    );
+                                    if (!cancellable?.is_cancelled()) {
+                                        log(
+                                            `[Katab:rag] Web fallback search failed: ${webErr.message}`,
+                                        );
+                                    }
                                     // Continue with just KB context — don't block the user
                                 }
                             }
@@ -13885,7 +14010,9 @@ class KatabDialog {
                     }
                 }
             } catch (e) {
-                log(`[Katab:rag] Auto KB search failed: ${e.message}`);
+                if (!cancellable?.is_cancelled()) {
+                    log(`[Katab:rag] Auto KB search failed: ${e.message}`);
+                }
                 // Silently continue — don't block the user
             }
         } else if (
@@ -14326,7 +14453,16 @@ class KatabDialog {
                   ? OLLAMA_STREAM_TIMEOUT_SECONDS
                   : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
 
-        this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
+        // The warm-up row covers the model wait instead of a static status
+        // line (which makes a cold local model look hung).  A status render
+        // (search started, retrying, …) may have dismissed it, so re-arm it
+        // once before the first real wait; after content has streamed, keep
+        // the explicit status so nothing is ever drawn over an answer.
+        if (this._hasArmedPendingIndicator(uiElements)) {
+            this._setPendingIndicatorText(uiElements, _('Thinking…'));
+        } else if (!this._recoverPendingIndicator(uiElements, _('Thinking…'))) {
+            this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
+        }
         if (!cancellable) {
             this._cancelStream({ clearState: false });
             this._cancellable = new Gio.Cancellable();
@@ -14957,6 +15093,7 @@ class KatabDialog {
                         deltaText = chunk.text;
                     }
                     if (chunk.think) {
+                        this._dismissPendingIndicator(uiElements);
                         responseState.usesSeparateThinkingStream = true;
                         thinkWrapper.visible = true;
                         responseState.accumulatedThink += chunk.think;
@@ -15045,6 +15182,7 @@ class KatabDialog {
                             const event = parseOpenAiCompatChunk(parsed);
                             // reasoning_content arrives before content during thinking
                             if (event.think) {
+                                this._dismissPendingIndicator(uiElements);
                                 responseState.usesSeparateThinkingStream = true;
                                 thinkWrapper.visible = true;
                                 responseState.accumulatedThink += event.think;
@@ -15188,6 +15326,9 @@ class KatabDialog {
                         // the thinking state across deltas (see streamParse.js).
                         const split = splitThinkingTags(deltaText, responseState.isThinking);
                         responseState.isThinking = split.isThinking;
+                        if (split.think) {
+                            this._dismissPendingIndicator(uiElements);
+                        }
                         if (split.openedThinking) {
                             thinkWrapper.visible = true;
                         }
@@ -15983,6 +16124,9 @@ class KatabDialog {
             log('[Katab] Tool calls dropped — response UI no longer active.');
             return;
         }
+
+        // The model chose tools — that is a real response, not a warm-up wait.
+        this._dismissPendingIndicator(uiElements);
 
         const activeProvider = provider || this._settings.get_string('provider');
         const cancellable = this._cancellable;

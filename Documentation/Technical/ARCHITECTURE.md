@@ -110,7 +110,8 @@ src/
     ├── assistantRender.js      ← Streaming dispatch, markdown segments, citations, sources
     ├── markdownRender.js       ← Markdown segmentation + inline formatting
     ├── messageBubble.js        ← Message shells, thinking/tool log, footer actions, attachments
-    ├── pendingIndicator.js     ← Animated warm-up row (title generation → main-request handoff)
+    ├── pendingIndicator.js     ← Animated warm-up row (three pulsing dots + phase label)
+    ├── pendingIndicatorController.js ← Warm-up state machine (grace timer, dismiss, one recovery)
     ├── historyView.js          ← History panel (list/search/tabs, KB search, metadata editor)
     ├── sessionInfoPopup.js     ← Session Info popup (context breakdown, summarize/compact)
     ├── toolsPopup.js           ← Floating tools panel with Auto/On/Off rows
@@ -174,8 +175,9 @@ idle → enriching → awaiting-model ⇄ tool-loop → synthesis → stopping �
 - The dialog reads predicates (`canSend`, `canStop`, `isResponding`) instead of ad-hoc booleans.
 - `_setStreamingState()` applies UI state and asserts consistency; mismatches are logged as
   `[Katab:lifecycle] state mismatch`.
-- A send while the lifecycle is not settled is dropped, which is why a prompt can appear to do
-  nothing during KB/web enrichment.
+- Normal turns commit the user message + assistant bubble before KB/web enrichment, so the
+  lifecycle stays `AWAITING_MODEL` through the wait and Enter/Stop behaves consistently. Only
+  pre-commit commands (e.g. `/kb import`) can temporarily reject a send while `ENRICHING`.
 
 ---
 
@@ -186,19 +188,28 @@ User submits → _sendMessage()
     ├── Parse slash commands (/help, /doc, /search, /crawl, /kb, /research)
     ├── Attach documents (local parse; images cached as base64)
     ├── Validate image routing (Ollama vision model or DeepSeek vision config)
-    ├── Knowledge context:
+    ├── Validate /kb synchronously (invalid commands never create a bubble)
+    ├── Append the user message + empty assistant bubble; clear the entry; arm the warm-up row
+    ├── Knowledge context (post-commit, Stop stays active):
     │     ├── manual /kb search (20 s cap)
     │     ├── automatic pre-send search when KB is in Auto mode (8 s cap)
     │     └── skip auto search when /health says embeddings are down or the prompt is trivial
-    ├── Append the user message; save (debounced flush)
-    ├── First-prompt AI title (when enabled) under a bounded hand-off, with the
-    │     warm-up row showing "Naming this chat…" → "Thinking…"
+    ├── First-prompt AI title (when enabled) under a bounded hand-off
     ├── Vision pre-analysis (DeepSeek preprocess mode)
     ├── Research planner (when Deep Research is active)
     └── _streamResponse()
 
+Warm-up row phases: "Preparing context…" → "Naming this chat…" → "Thinking…".
+`src/ui/pendingIndicatorController.js` owns the rules: armed with a 300 ms grace period so fast
+replies render without a loader flash; any thinking block, tool call, streamed token, error, or
+stop dismisses it; if a status render (search started, retrying, …) dismissed it, the first real
+model wait re-arms it exactly once, so a long model wait never leaves a frozen status line. The
+row is never drawn over answer content.
+
 _streamResponse()
     ├── Snapshot settings; build provider request via src/providers/chatRequest.js
+    ├── Keep the warm-up row during the initial model wait, re-arming it once if a status
+    │   render dismissed it (later iterations show "Waiting for response...")
     ├── Inject the web-content safety policy when tool/web content is in play
     ├── Advertise tool schemas when allowed (not force-synthesizing, not JSON mode)
     ├── Choose timeout: Ollama 0 (unbounded), DeepSeek 1800 s, others 30 s
@@ -222,9 +233,10 @@ stream end
 - The first user turn of a new chat is named by the active provider/model
   (`auto-generate-chat-titles`, on by default) using `buildAutoTitleMessages()`
   (2–6 words, ≤48 chars, 24-token cap).
-- The title call has its own Soup session with a 30 s hard timeout; the send path waits only
-  `AUTO_TITLE_HANDOFF_MS` (8 s), then starts the main request while the title finishes in the
-  background.
+- The title call runs after context prep and before the main model request; the warm-up row
+  reflects that phase. It has its own Soup session with a 30 s hard timeout, and the send path
+  waits only `AUTO_TITLE_HANDOFF_MS` (8 s) before handing off. A slow title keeps running in the
+  background and updates history when it lands.
 - Failures fall back silently to the first-60-characters history title. Manual or generated
   titles (`customTitle`) are never overwritten.
 

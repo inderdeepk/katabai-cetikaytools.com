@@ -128,10 +128,10 @@ katabai@cetikaytools.com/
 │   ├── usage/                # tokenUsageManager, deepseekPricing, presetManager (26 settings)
 │   ├── pets/                 # petCollection (rules), petSpriteActor (Clutter renderer)
 │   ├── shared/               # contentKind, httpBody, i18n, networkGuard, pageLinks, toolModes
-│   └── ui/                   # headerBar, welcomePanel, pendingIndicator, assistantRender,
+│   └── ui/                   # headerBar, welcomePanel, pendingIndicator(+Controller), assistantRender,
 │                             #   markdownRender, messageBubble, historyView, sessionInfoPopup,
 │                             #   toolsPopup, recentChatsPopup, pickers, usagePanel, prefs/*
-├── tests/                    # GJS unit-test suites (36 files, run via scripts/run-tests.mjs)
+├── tests/                    # GJS unit-test suites (37 files, run via scripts/run-tests.mjs)
 ├── icons/                    # Provider logos + Katab SVG icons
 ├── sprites/                  # Per-provider sprite sets + eggs + pending mixie
 └── Documentation/            # Index, Help, Technical, Archive, Research-Reports

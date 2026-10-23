@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Katab - AI Assistant\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-23 00:52-0400\n"
+"POT-Creation-Date: 2026-10-23 01:42-0400\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,553 +18,569 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: extension.js:262 extension.js:303 src/ui/prefs/tools/index.js:50 src/ui/prefs/tools/webSearch.js:24
+#: extension.js:263 extension.js:304 src/ui/prefs/tools/index.js:50 src/ui/prefs/tools/webSearch.js:24
 msgid "Web Search"
 msgstr ""
 
-#: extension.js:270
+#: extension.js:271
 msgid "Python"
 msgstr ""
 
-#: extension.js:278
+#: extension.js:279
 msgid "Terminal"
 msgstr ""
 
-#: extension.js:293
+#: extension.js:294
 msgid "Document"
 msgstr ""
 
-#: extension.js:312 src/ui/prefs/tools/crawler.js:30 src/ui/prefs/tools/index.js:58
+#: extension.js:313 src/ui/prefs/tools/crawler.js:30 src/ui/prefs/tools/index.js:58
 msgid "Web Scraper"
 msgstr ""
 
-#: extension.js:321 src/tools/toolDefinitions.js:242
+#: extension.js:322 src/tools/toolDefinitions.js:242
 msgid "Knowledge"
 msgstr ""
 
-#: extension.js:338 src/ui/prefs/tools/deepResearch.js:14 src/ui/prefs/tools/deepResearch.js:18 src/ui/prefs/tools/index.js:79
+#: extension.js:339 src/ui/prefs/tools/deepResearch.js:14 src/ui/prefs/tools/deepResearch.js:18 src/ui/prefs/tools/index.js:79
 msgid "Deep Research"
 msgstr ""
 
-#: extension.js:1621
+#: extension.js:1624
 msgid "Switched engine to {provider}."
 msgstr ""
 
-#: extension.js:2014
+#: extension.js:2017
 msgid "Request failed — open the chat for details."
 msgstr ""
 
-#: extension.js:2017
+#: extension.js:2020
 msgid "Response ready — open the chat to read it."
 msgstr ""
 
-#: extension.js:2240
+#: extension.js:2243
 msgid "{pet} hatched and joined your collection!"
 msgstr ""
 
-#: extension.js:2246
+#: extension.js:2249
 msgid "{pet} reached {stage} at {xp} XP."
 msgstr ""
 
-#: extension.js:2266
+#: extension.js:2269
 msgid "{count} pet collection milestone unlocked."
 msgid_plural "{count} pet collection milestones unlocked."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:2373
+#: extension.js:2376
 msgid "Stopped while downloading model '{model}'."
 msgstr ""
 
-#: extension.js:2375
+#: extension.js:2378
 msgid "Stopped while preparing '{model}'."
 msgstr ""
 
-#: extension.js:2377
+#: extension.js:2380
 msgid "Response stopped while running local tools."
 msgstr ""
 
-#: extension.js:2378
+#: extension.js:2381
 msgid "Response stopped."
 msgstr ""
 
-#: extension.js:2384
+#: extension.js:2387
 msgid "Response stopped while the model was thinking."
 msgstr ""
 
-#: extension.js:2386
+#: extension.js:2389
 msgid "Response stopped before tool execution completed."
 msgstr ""
 
-#: extension.js:2984 src/tools/toolDefinitions.js:182
+#: extension.js:2987 src/tools/toolDefinitions.js:182
 msgid "Docs"
 msgstr ""
 
-#: extension.js:2986 src/tools/toolDefinitions.js:69
+#: extension.js:2989 src/tools/toolDefinitions.js:69
 msgid "Search"
 msgstr ""
 
-#: extension.js:2988 src/tools/toolDefinitions.js:162
+#: extension.js:2991 src/tools/toolDefinitions.js:162
 msgid "Scrape"
 msgstr ""
 
-#: extension.js:2990 src/tools/toolDefinitions.js:203
+#: extension.js:2993 src/tools/toolDefinitions.js:203
 msgid "Research"
 msgstr ""
 
-#: extension.js:2992
+#: extension.js:2995
 msgid "Term"
 msgstr ""
 
-#: extension.js:2994
+#: extension.js:2997
 msgid "Tool"
 msgstr ""
 
-#: extension.js:3754
+#: extension.js:3757
 msgid "Knowledge Base service is not running. Start it with:\n`systemctl --user start katabai-rag`"
 msgstr ""
 
-#: extension.js:3769
+#: extension.js:3772
 msgid "Knowledge Base service is back online."
 msgstr ""
 
-#: extension.js:3794
+#: extension.js:3797
 msgid "Knowledge Base embeddings are available again."
 msgstr ""
 
-#: extension.js:3825
+#: extension.js:3828
 msgid "Knowledge base is {pct}% full ({used} of {cap} chunks). When full, the oldest entries are pruned automatically — raise the cap or clear old data in Settings ▸ Tools ▸ Knowledge Base."
 msgstr ""
 
-#: extension.js:3922
+#: extension.js:3925
 msgid " Storage limits live in Settings ▸ Tools ▸ Knowledge Base."
 msgstr ""
 
-#: extension.js:3925
+#: extension.js:3928
 msgid "Knowledge base indexing was skipped: {reason}{hint}"
 msgstr ""
 
-#: extension.js:3979
+#: extension.js:3982
 msgid "Knowledge Base storage limits updated — applying immediately."
 msgstr ""
 
-#: extension.js:4151
+#: extension.js:4154
 msgid "No importable files found (supported: txt, md, pdf, docx, eml)."
 msgstr ""
 
-#: extension.js:4174
+#: extension.js:4177
 msgid "None of the selected files could be parsed for the knowledge base."
 msgstr ""
 
-#: extension.js:4182
+#: extension.js:4185
 msgid "Imported {count} file into the knowledge base."
 msgid_plural "Imported {count} files into the knowledge base."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:5061
+#: extension.js:5067
 msgid "Enable the Document Tool in Settings before attaching a file."
 msgstr ""
 
-#: extension.js:5090
+#: extension.js:5096
 msgid "Could not attach a file: {error}"
 msgstr ""
 
-#: extension.js:5235
+#: extension.js:5241
 msgid "Presets"
 msgstr ""
 
-#: extension.js:5684
+#: extension.js:5690
 msgid "Clear all attachments"
 msgstr ""
 
-#: extension.js:5832
+#: extension.js:5838
 msgid "Ask anything..."
 msgstr ""
 
-#: extension.js:5873
+#: extension.js:5879
 msgid "Tools and toggles"
 msgstr ""
 
-#: extension.js:6020
+#: extension.js:6026
 msgid "Attached {count} file from clipboard."
 msgid_plural "Attached {count} files from clipboard."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:6043
+#: extension.js:6049
 msgid "The prompt is already at its {limit}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document."
 msgstr ""
 
-#: extension.js:6059
+#: extension.js:6065
 msgid "Pasted text was {dropped} character too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
 msgid_plural "Pasted text was {dropped} characters too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:6084
+#: extension.js:6090
 msgid "Image attached from clipboard."
 msgstr ""
 
-#: extension.js:6174
+#: extension.js:6180
 msgid "Send Message"
 msgstr ""
 
-#: extension.js:7455
+#: extension.js:7461
 msgid "Conversation compacted — kept last {count} exchanges."
 msgstr ""
 
-#: extension.js:7458
+#: extension.js:7464
 msgid "Conversation is already compact."
 msgstr ""
 
-#: extension.js:7615
+#: extension.js:7621
 msgid "Not enough history to summarize yet — keep chatting and try again later."
 msgstr ""
 
-#: extension.js:7695
+#: extension.js:7701
 msgid "Session memory updated — {count} earlier turns summarized so the model keeps full context."
 msgstr ""
 
-#: extension.js:8013
+#: extension.js:8019
 msgid "Cache saved ~{pct}%"
 msgstr ""
 
-#: extension.js:8151
+#: extension.js:8157
 msgid "Dismiss"
 msgstr ""
 
-#: extension.js:8161
+#: extension.js:8167
 msgid "✓ Update"
 msgstr ""
 
-#: extension.js:8234
+#: extension.js:8240
 msgid "Forget"
 msgstr ""
 
-#: extension.js:8347
+#: extension.js:8353
 msgid "Saved ~{usd} this chat"
 msgstr ""
 
-#: extension.js:8692
+#: extension.js:8698
 msgid "This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request."
 msgstr ""
 
-#: extension.js:9221
+#: extension.js:9227
 msgid "Retry"
 msgstr ""
 
-#: extension.js:9225
+#: extension.js:9231
 msgid "Retry request"
 msgstr ""
 
-#: extension.js:9556
+#: extension.js:9593
 msgid "Research angle"
 msgstr ""
 
-#: extension.js:9601
+#: extension.js:9638
 msgid "After research: analyze findings for gaps, then write a comprehensive report with citations — ready in 1–3 minutes."
 msgstr ""
 
-#: extension.js:9619
+#: extension.js:9656
 msgid "Estimated effort: {cost}"
 msgstr ""
 
-#: extension.js:9638
+#: extension.js:9675
 msgid "Cancel"
 msgstr ""
 
-#: extension.js:9652
+#: extension.js:9689
 msgid "Save Edits"
 msgstr ""
 
-#: extension.js:9663
+#: extension.js:9700
 msgid "Edit plan"
 msgstr ""
 
-#: extension.js:9674
+#: extension.js:9711
 msgid "Cancel plan"
 msgstr ""
 
-#: extension.js:9688
+#: extension.js:9725
 msgid "Start research"
 msgstr ""
 
-#: extension.js:9754
+#: extension.js:9791
 msgid "✓ All {total}/{total} angles researched — moving to analysis phase."
 msgstr ""
 
-#: extension.js:9763
+#: extension.js:9800
 msgid "Researching {completed}/{total} angles — analyze findings, identify gaps, then write report."
 msgstr ""
 
-#: extension.js:9784
+#: extension.js:9821
 msgid "Search query"
 msgstr ""
 
-#: extension.js:10241
+#: extension.js:10278
 msgid "Analyzing coverage gaps..."
 msgstr ""
 
-#: extension.js:10402
+#: extension.js:10439
 msgid "Synthesis"
 msgstr ""
 
-#: extension.js:10406 extension.js:10434
+#: extension.js:10443 extension.js:10471
 msgid "Writing Report"
 msgstr ""
 
-#: extension.js:10407
+#: extension.js:10444
 msgid "Generating outline and compiling final report from all research findings..."
 msgstr ""
 
-#: extension.js:10411
+#: extension.js:10448
 msgid "Generating report outline..."
 msgstr ""
 
-#: extension.js:10427
+#: extension.js:10464
 msgid "Writing final report..."
 msgstr ""
 
-#: extension.js:10435
+#: extension.js:10472
 msgid "Streaming final research report..."
 msgstr ""
 
-#: extension.js:10636
+#: extension.js:10673
 msgid "Research may be incomplete (coverage: {score}/5)"
 msgstr ""
 
-#: extension.js:10645
+#: extension.js:10682
 msgid "• {aspect}"
 msgstr ""
 
-#: extension.js:10653
+#: extension.js:10690
 msgid "Continue Research"
 msgstr ""
 
-#: extension.js:10731
+#: extension.js:10768
 msgid "Researching missing aspects (pass {attempt})..."
 msgstr ""
 
-#: extension.js:10838
+#: extension.js:10875
 msgid "Some claims may not be fully supported by the sources"
 msgstr ""
 
-#: extension.js:10845
+#: extension.js:10882
 msgid "The report scored {score}/5 on factual grounding. Some statements may exceed what the gathered sources support — verify those claims before relying on them."
 msgstr ""
 
-#: extension.js:10858
+#: extension.js:10895
 msgid "Claims that could not be verified against sources:"
 msgstr ""
 
-#: extension.js:10865
+#: extension.js:10902
 msgid "• {claim}"
 msgstr ""
 
-#: extension.js:10876
+#: extension.js:10913
 msgid "Citations that may not support their claims:"
 msgstr ""
 
-#: extension.js:10883
+#: extension.js:10920
 msgid "• {cite}"
 msgstr ""
 
-#: extension.js:11219 extension.js:11252
+#: extension.js:11256 extension.js:11289
 msgid "Researching {completed}/{total} angles"
 msgstr ""
 
-#: extension.js:11247
+#: extension.js:11284
 msgid "\\u2713 {total}/{total} angles researched"
 msgstr ""
 
-#: extension.js:11618
+#: extension.js:11655
 msgid "+{count} more results available"
 msgstr ""
 
-#: extension.js:12130
+#: extension.js:12167
 msgid "Ran {count} tool"
 msgid_plural "Ran {count} tools"
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:12365
+#: extension.js:12402
 msgid "Ran {count} tools"
 msgstr ""
 
-#: extension.js:12495
+#: extension.js:12529
 msgid "{label}: {detail}"
 msgstr ""
 
-#: extension.js:12604
+#: extension.js:12566
+msgid "Importing files into the knowledge base…"
+msgstr ""
+
+#: extension.js:12572
+msgid "The knowledge base import could not be completed."
+msgstr ""
+
+#: extension.js:12646
+msgid "Preparing context…"
+msgstr ""
+
+#: extension.js:12666 extension.js:12679
+msgid "Could not prepare the knowledge context for this message."
+msgstr ""
+
+#: extension.js:12701
 msgid "Naming this chat…"
 msgstr ""
 
-#: extension.js:12604 extension.js:12623
+#: extension.js:12719 extension.js:14462 extension.js:14463
 msgid "Thinking…"
 msgstr ""
 
-#: extension.js:13264
+#: extension.js:13359
 msgid "Image analysis failed ({error}). Sending without image analysis…"
 msgstr ""
 
-#: extension.js:13273
+#: extension.js:13368
 msgid "Image analysis failed ({error}). The message was sent without image analysis."
 msgstr ""
 
-#: extension.js:13304
+#: extension.js:13399
 msgid "Enable the Document Tool in Settings before using /doc."
 msgstr ""
 
-#: extension.js:13324
+#: extension.js:13419
 msgid "Katab could not resolve that file path. Use a local file and try again."
 msgstr ""
 
-#: extension.js:13336
+#: extension.js:13431
 msgid "Could not open the document picker: {error}"
 msgstr ""
 
-#: extension.js:13347
+#: extension.js:13442
 msgid "Use an absolute path, a ~/path, or the picker when attaching a file."
 msgstr ""
 
-#: extension.js:13374
+#: extension.js:13469
 msgid "Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava."
 msgstr ""
 
-#: extension.js:13455
+#: extension.js:13550
 msgid "Web search is off for this prompt. Set Search to Auto or On before using /search."
 msgstr ""
 
-#: extension.js:13479
+#: extension.js:13574
 msgid "Web search is off. Enable it in Settings > Tools > Web Search to use the /search command."
 msgstr ""
 
-#: extension.js:13489
+#: extension.js:13584
 msgid "Add a query after /search, for example: /search latest GNOME release."
 msgstr ""
 
-#: extension.js:13510
+#: extension.js:13605
 msgid "Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command."
 msgstr ""
 
-#: extension.js:13528
+#: extension.js:13623
 msgid "Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search."
 msgstr ""
 
-#: extension.js:13538
+#: extension.js:13633
 msgid "Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release."
 msgstr ""
 
-#: extension.js:13580
+#: extension.js:13675
 msgid "Deep Research mode activated for the next prompt. Type your research query."
 msgstr ""
 
-#: extension.js:13590
+#: extension.js:13685
 msgid "Deep Research mode activated. Type your research query."
 msgstr ""
 
-#: extension.js:13638
+#: extension.js:13725
 msgid "Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command."
 msgstr ""
 
-#: extension.js:13647
+#: extension.js:13734
 msgid "Add a query after /kb, for example: /kb what is the meaning of life?"
 msgstr ""
 
-#: extension.js:13658
+#: extension.js:13744
 msgid "Usage: /kb import \"~/path/to/file-or-folder\" — imports txt, md, pdf, docx, and eml files into the knowledge base."
 msgstr ""
 
-#: extension.js:13693
+#: extension.js:13809
 msgid "Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context."
 msgstr ""
 
-#: extension.js:13723
+#: extension.js:13841
 msgid "Knowledge Base search failed: {error}"
 msgstr ""
 
-#: extension.js:16943
+#: extension.js:17087
 msgid "Model '{model}' not found locally.\n\nDo you want to download it now?"
 msgstr ""
 
-#: extension.js:16953
+#: extension.js:17097
 msgid "Yes, Download"
 msgstr ""
 
-#: extension.js:16959
+#: extension.js:17103
 msgid "No, Cancel"
 msgstr ""
 
-#: extension.js:16971 extension.js:16972
+#: extension.js:17115 extension.js:17116
 msgid "Download cancelled."
 msgstr ""
 
-#: extension.js:16987
+#: extension.js:17131
 msgid "Downloading model '{model}'... (0%)"
 msgstr ""
 
-#: extension.js:17019
+#: extension.js:17163
 msgid "Cancel Download"
 msgstr ""
 
-#: extension.js:17101
+#: extension.js:17245
 msgid "Downloading model '{model}'...\n{status}"
 msgstr ""
 
-#: extension.js:17170
+#: extension.js:17314
 msgid "Last response failed"
 msgstr ""
 
-#: extension.js:17239
+#: extension.js:17383
 msgid "Current Chat"
 msgstr ""
 
-#: extension.js:17247 extension.js:17485
+#: extension.js:17391 extension.js:17629
 msgid "Resume your active conversation"
 msgstr ""
 
-#: extension.js:17258 extension.js:17501
+#: extension.js:17402 extension.js:17645
 msgid "Ready"
 msgstr ""
 
-#: extension.js:17289
+#: extension.js:17433
 msgid "Token Breakdown"
 msgstr ""
 
-#: extension.js:17295
+#: extension.js:17439
 msgid "Hatches with your next reply"
 msgstr ""
 
-#: extension.js:17386
+#: extension.js:17530
 msgid "{name} · Token Breakdown"
 msgstr ""
 
-#: extension.js:17400
+#: extension.js:17544
 msgid "{name} · {stage}"
 msgstr ""
 
-#: extension.js:17496
+#: extension.js:17640
 msgid "Replying"
 msgstr ""
 
-#: extension.js:17498
+#: extension.js:17642
 msgid "Error"
 msgstr ""
 
-#: extension.js:17500
+#: extension.js:17644
 msgid "Open"
 msgstr ""
 
-#: extension.js:17607
+#: extension.js:17751
 msgid "Recent Chats"
 msgstr ""
 
-#: extension.js:17638
+#: extension.js:17782
 msgid "Open chat"
 msgstr ""
 
-#: extension.js:17656
+#: extension.js:17800
 msgid "Delete chat"
 msgstr ""
 
