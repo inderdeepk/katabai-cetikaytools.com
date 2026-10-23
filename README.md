@@ -15,8 +15,8 @@ of pet companions — all from an overlay in your top panel.
   Switch from the header or from preferences.
 - **Streaming chat** with a chat-friendly markdown renderer, code blocks with copy buttons,
   thinking/reasoning blocks, inline `[N]` citations, and source buttons.
-- **Instant AI chat titles** — a new conversation is named from its first prompt, with a warm-up
-  indicator while the title and first reply are prepared.
+- **Instant AI chat titles** — a new conversation is named from its first prompt without ever
+  delaying the reply (cloud titles run in the background, local titles after the answer).
 - **Session memory** — older turns fold into a persistent rolling summary so long chats keep
   context without resending the whole transcript.
 - **Document attachments** — `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.eml`, `.png`, `.jpg`,
@@ -168,8 +168,9 @@ natively, or any DeepSeek model routed through a configured vision backend).
 - Thinking/reasoning output collapses into a **Show Thinking** block.
 - After tool use, responses include source buttons and clickable `[N]` citations; Deep Research
   reports also include a bibliography.
-- A warm-up row (*Naming this chat…* → *Thinking…*) covers the first-prompt title request and the
-  handoff to the main response.
+- A warm-up row covers context prep and the first model wait, with elapsed seconds and a
+  cold-model hint for long waits. Ollama models are pre-loaded while you type, so a restarted
+  model has a head start instead of loading only after you send.
 - The prompt counter turns amber near the limit and red at the 16,000-character cap.
 
 ### Session memory

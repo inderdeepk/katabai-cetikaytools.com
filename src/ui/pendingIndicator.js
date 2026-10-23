@@ -81,6 +81,11 @@ export class PendingIndicator {
         });
     }
 
+    /** True after the row was destroyed (by us or an external box rebuild). */
+    isDestroyed() {
+        return this._destroyed;
+    }
+
     setText(text) {
         if (this._destroyed || !this._label) return;
         this._label.set_text(String(text ?? ''));

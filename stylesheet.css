@@ -1327,7 +1327,7 @@
     spacing: 8px;
 }
 
-/* Warm-up row shown while a new chat is named and the main request starts. */
+/* Warm-up row shown while context prep / the first model wait is in flight. */
 .katab-pending-row {
     spacing: 10px;
     padding: 2px 0 4px 0;

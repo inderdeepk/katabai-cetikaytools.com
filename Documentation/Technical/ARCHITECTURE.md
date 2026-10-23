@@ -68,7 +68,7 @@ src/
 ├── providers/             # Provider adapters
 │   ├── catalog.js            ← Provider identity/branding + DeepSeek model list (single source)
 │   ├── chatRequest.js        ← Streaming request builders (Ollama, DeepSeek, OpenAI-compatible,
-│   │                          Anthropic) + Ollama options builder
+│   │                          Anthropic) + Ollama options/preload builders
 │   ├── nonStreamingRequest.js← Non-streaming builders + response text/usage extraction
 │   ├── historyPayload.js     ← Token estimates, context truncators, attachment payloads,
 │   │                          provider-dialect sanitization
@@ -194,17 +194,22 @@ User submits → _sendMessage()
     │     ├── manual /kb search (20 s cap)
     │     ├── automatic pre-send search when KB is in Auto mode (8 s cap)
     │     └── skip auto search when /health says embeddings are down or the prompt is trivial
-    ├── First-prompt AI title (when enabled) under a bounded hand-off
+    ├── First-prompt AI title (when enabled): background for cloud providers,
+    │   deferred until the reply ends for local models (one request at a time)
     ├── Vision pre-analysis (DeepSeek preprocess mode)
     ├── Research planner (when Deep Research is active)
     └── _streamResponse()
 
-Warm-up row phases: "Preparing context…" → "Naming this chat…" → "Thinking…".
-`src/ui/pendingIndicatorController.js` owns the rules: armed with a 300 ms grace period so fast
-replies render without a loader flash; any thinking block, tool call, streamed token, error, or
-stop dismisses it; if a status render (search started, retrying, …) dismissed it, the first real
-model wait re-arms it exactly once, so a long model wait never leaves a frozen status line. The
-row is never drawn over answer content.
+Warm-up row phases follow the real work: "Preparing context…" → "Searching your knowledge
+base…" / "Searching the web…" (when enrichment runs) → "Thinking…".  Once the row is visible it
+ticks every second: after 4 s the label gains an elapsed counter ("Thinking… · 12s"), and a
+provider-specific slow hint replaces the phase after 10 s for local models ("Loading the model
+into memory …") or 15 s for cloud models.  `src/ui/pendingIndicatorController.js` owns the
+rules: armed with a 300 ms grace period so fast replies render without a loader flash; any
+thinking block, tool call, streamed token, error, or stop dismisses it; if a status render
+(search started, retrying, …) dismissed it, the first real model wait re-arms it once, so a long
+model wait never leaves a frozen status line.  The row is never drawn over answer content, and an
+empty reply keeps the bubble's content box empty so the row has something to occupy.
 
 _streamResponse()
     ├── Snapshot settings; build provider request via src/providers/chatRequest.js
@@ -233,12 +238,13 @@ stream end
 - The first user turn of a new chat is named by the active provider/model
   (`auto-generate-chat-titles`, on by default) using `buildAutoTitleMessages()`
   (2–6 words, ≤48 chars, 24-token cap).
-- The title call runs after context prep and before the main model request; the warm-up row
-  reflects that phase. It has its own Soup session with a 30 s hard timeout, and the send path
-  waits only `AUTO_TITLE_HANDOFF_MS` (8 s) before handing off. A slow title keeps running in the
-  background and updates history when it lands.
-- Failures fall back silently to the first-60-characters history title. Manual or generated
-  titles (`customTitle`) are never overwritten.
+- The title never delays the answer. Cloud providers run the request in the background as soon
+  as context prep finishes; local providers (Ollama/Unsloth) defer it until the response
+  completes, because a cold local model serves one request at a time — racing the title against
+  the first chat request made the reply wait for the title's cold model load.
+- The title request has its own Soup session with a 30 s hard timeout and updates history when it
+  lands. Failures fall back silently to the first-60-characters history title. Manual or
+  generated titles (`customTitle`) are never overwritten.
 
 ### Context budgeting
 
@@ -353,6 +359,10 @@ Deep Research uses its own, larger tiers (15/12/10/6 results; 16 000/32 000 down
 - **Final chunk**: `done: true` with `load_duration`, `prompt_eval_count`, `eval_count`,
   `eval_duration`.
 - **Timeout**: none (local; the user can cancel).
+- **Warm-up**: when the user starts typing a prompt, Katab POSTs `{url}/api/generate` with an
+  empty prompt and the configured `keep_alive` (debounced, at most once per model every five
+  minutes) so a cold model is already loading — or resident — by the time the message is sent.
+  Failures are silent; the normal request path is unchanged.
 
 ### DeepSeek
 - **Endpoint**: `{url}/chat/completions` · **Auth**: `Authorization: Bearer <api-key>`.

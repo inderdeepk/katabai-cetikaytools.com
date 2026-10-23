@@ -126,6 +126,7 @@ import {
     buildAnthropicStreamRequest,
     buildDeepSeekStreamRequest,
     buildOllamaStreamRequest,
+    buildOllamaPreloadRequest,
 } from './src/providers/chatRequest.js';
 import {
     splitThinkingTags,
@@ -402,14 +403,17 @@ const PROVIDER_STATUS_STYLE_CLASSES = Object.values(PROVIDER_STATUS).map(
 
 const PROVIDER_STATUS_POLL_MS = 15000;
 const PROVIDER_STATUS_TIMEOUT_SECONDS = 8;
-// How long the first send waits for the chat-title request before handing off
-// to the main chat request.  The title request keeps running in the background
-// (up to AUTO_TITLE_TIMEOUT_SECONDS) so cold local models still get a title.
-const AUTO_TITLE_HANDOFF_MS = 8000;
 // The warm-up row's grace period (so fast responses never flash a loader)
 // lives with its state machine in src/ui/pendingIndicatorController.js.
 const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 30;
 const DEEPSEEK_STREAM_TIMEOUT_SECONDS = 1800;
+// Ollama warm-up: once the user starts composing a prompt, load the model in
+// the background so a cold model does not add its load time to the first
+// reply.  Debounced so a burst of keystrokes issues one request; re-armed at
+// most once per model every few minutes.
+const OLLAMA_PRELOAD_DEBOUNCE_MS = 600;
+const OLLAMA_PRELOAD_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const OLLAMA_PRELOAD_TIMEOUT_SECONDS = 600;
 // Ollama runs locally; large models can take minutes to load and process
 // 128K-context prompts.  Use 0 (= no timeout) since the user can cancel via
 // the UI stop button and network latency is not a concern for localhost.
@@ -1531,6 +1535,14 @@ class KatabDialog {
         this._titleSession = new Soup.Session();
         this._titleSession.timeout = AUTO_TITLE_TIMEOUT_SECONDS;
         this._titleCancellable = null;
+        this._deferredChatTitle = null; // local models: title after the reply
+        // Ollama warm-up state (see _maybePreloadLocalModel).
+        this._modelPreloadSession = new Soup.Session();
+        this._modelPreloadSession.timeout = OLLAMA_PRELOAD_TIMEOUT_SECONDS;
+        this._modelPreloadTimeoutId = 0;
+        this._modelPreloadKey = '';
+        this._modelPreloadAt = 0;
+        this._modelPreloadInFlight = false;
         this._cancellable = null;
         this._retrySourceId = 0;
         // Request lifecycle: the single source of truth for send/stop state
@@ -2011,6 +2023,10 @@ class KatabDialog {
         this._cancellable = null;
         this._setStreamingState(false);
 
+        // Local providers defer the first-prompt AI title until the answer is
+        // complete so it never queues ahead of (or behind) the reply.
+        this._runDeferredChatTitle();
+
         if (this._shouldNotifyOnResponseComplete && !this.isOpen) {
             this._shouldNotifyOnResponseComplete = false;
             if (this._lastResponseErrored) {
@@ -2342,6 +2358,10 @@ class KatabDialog {
         if (!this._cancellable) {
             return;
         }
+
+        // A stopped response must not start a deferred title request right
+        // after the user asked it to stop.
+        this._deferredChatTitle = null;
 
         // Phase-6 dual-run recorder (bookkeeping only).
         const lcStop = this._lifecycle.stop();
@@ -5948,6 +5968,7 @@ class KatabDialog {
                 return GLib.SOURCE_REMOVE;
             });
 
+            this._maybePreloadLocalModel();
             this._syncPromptHintVisibility();
             this._renderPromptCharCounter((this._entry.get_text() ?? '').length);
             this._queuePromptScrollHeightSync();
@@ -6434,6 +6455,10 @@ class KatabDialog {
         }
 
         this._releasePromptFocus();
+        if (this._modelPreloadTimeoutId) {
+            GLib.source_remove(this._modelPreloadTimeoutId);
+            this._modelPreloadTimeoutId = 0;
+        }
         if (cancelStream) {
             this._cancelStream();
         }
@@ -6477,6 +6502,9 @@ class KatabDialog {
     }
 
     destroy() {
+        // Teardown must never start a deferred title request: close() clears
+        // the response state, which normally flushes it.
+        this._deferredChatTitle = null;
         this.close({ cancelStream: true, saveConversation: true });
         this._recentChats?.destroy();
         this._recentChatsPopup = null;
@@ -6566,6 +6594,20 @@ class KatabDialog {
                 /* session already gone */
             }
             this._tokenizeSession = null;
+        }
+
+        // Stop a pending model warm-up and release its session.
+        if (this._modelPreloadTimeoutId) {
+            GLib.source_remove(this._modelPreloadTimeoutId);
+            this._modelPreloadTimeoutId = 0;
+        }
+        if (this._modelPreloadSession) {
+            try {
+                this._modelPreloadSession.abort();
+            } catch (_e) {
+                /* session already gone */
+            }
+            this._modelPreloadSession = null;
         }
 
         // Stop a first-prompt title request that outlived the dialog.
@@ -8402,10 +8444,178 @@ class KatabDialog {
     }
 
     /**
+     * Warm the local Ollama model as soon as the user starts composing a
+     * prompt.  The load runs in the background (debounced, once per model per
+     * few minutes) so pressing Enter does not pay the cold-model load time.
+     * Remote/cloud providers and any active response are ignored.
+     */
+    _maybePreloadLocalModel() {
+        if (this._currentProvider !== 'ollama') return;
+        if (this._lifecycle?.isActive()) return;
+        if (this._modelPreloadTimeoutId) return;
+
+        let draft = '';
+        try {
+            draft = (this._entry.get_text() ?? '').trim();
+        } catch (_e) {
+            return;
+        }
+        if (!draft) return;
+
+        let model = '';
+        let baseUrl = '';
+        try {
+            model = (this._settings.get_string('ollama-model') || '').trim();
+            baseUrl = (this._settings.get_string('ollama-url') || '').trim();
+        } catch (_e) {
+            return;
+        }
+        if (!model || !baseUrl) return;
+
+        const key = `${baseUrl}|${model}`;
+        if (this._modelPreloadKey === key) {
+            if (this._modelPreloadInFlight) return;
+            if (Date.now() - this._modelPreloadAt < OLLAMA_PRELOAD_MIN_INTERVAL_MS) return;
+        }
+
+        this._modelPreloadTimeoutId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT,
+            OLLAMA_PRELOAD_DEBOUNCE_MS,
+            () => {
+                this._modelPreloadTimeoutId = 0;
+                this._preloadOllamaModel();
+                return GLib.SOURCE_REMOVE;
+            },
+        );
+    }
+
+    /** Ollama sampling/context options from the current settings. */
+    _buildOllamaOptionsFromSettings() {
+        const getOpt = (prop, type) => {
+            try {
+                return this._settings[`get_${type}`](`ollama-${prop}`);
+            } catch (_e) {
+                return null;
+            }
+        };
+        return buildOllamaOptions(getOpt);
+    }
+
+    _preloadOllamaModel() {
+        if (this._currentProvider !== 'ollama' || this._lifecycle?.isActive()) return;
+        if (!this._modelPreloadSession) return;
+        try {
+            // The draft may have been cleared during the debounce window.
+            if (!(this._entry.get_text() ?? '').trim()) return;
+        } catch (_e) {
+            return;
+        }
+
+        let model = '';
+        let baseUrl = '';
+        let keepAlive = '5m';
+        let options = {};
+        try {
+            model = (this._settings.get_string('ollama-model') || '').trim();
+            baseUrl = (this._settings.get_string('ollama-url') || '').trim();
+            keepAlive = normalizeOllamaKeepAlive(
+                this._settings.get_string('ollama-keep-alive') || '5m',
+            );
+            options = this._buildOllamaOptionsFromSettings();
+        } catch (_e) {
+            return;
+        }
+        if (!model || !baseUrl) return;
+        // A zero keep-alive unloads the model immediately — nothing to warm.
+        if (keepAlive === '0' || keepAlive === '0s') return;
+
+        this._modelPreloadKey = `${baseUrl}|${model}`;
+        this._modelPreloadAt = Date.now();
+        this._modelPreloadInFlight = true;
+
+        const built = buildOllamaPreloadRequest({ baseUrl, model, keepAlive, options });
+        let message;
+        try {
+            message = Soup.Message.new('POST', built.endpoint);
+            for (const name in built.headers) {
+                message.get_request_headers().append(name, built.headers[name]);
+            }
+            message.set_request_body_from_bytes(
+                'application/json',
+                new GLib.Bytes(new TextEncoder().encode(JSON.stringify(built.payload))),
+            );
+        } catch (e) {
+            this._modelPreloadInFlight = false;
+            log(`[Katab:warmup] Could not build the Ollama preload request: ${e.message || e}`);
+            return;
+        }
+
+        log(`[Katab:warmup] Preloading Ollama model ${model}…`);
+        try {
+            this._modelPreloadSession.send_and_read_async(
+                message,
+                GLib.PRIORITY_LOW,
+                null,
+                (session, res) => {
+                    this._modelPreloadInFlight = false;
+                    try {
+                        session.send_and_read_finish(res);
+                        log(`[Katab:warmup] Ollama model ${model} is loaded and ready`);
+                    } catch (e) {
+                        log(`[Katab:warmup] Ollama preload failed: ${e.message || e}`);
+                    }
+                },
+            );
+        } catch (e) {
+            this._modelPreloadInFlight = false;
+            log(`[Katab:warmup] Ollama preload could not start: ${e.message || e}`);
+        }
+    }
+
+    /** Local model backends serve one request at a time, so a cold model
+     *  makes any concurrent request wait behind it. */
+    _isLocalChatProvider(provider = this._currentProvider) {
+        return provider === 'ollama' || provider === 'unsloth';
+    }
+
+    /** Warm-up row slow-wait hint while the model reply is pending. */
+    _modelWaitIndicatorOptions(provider = this._currentProvider) {
+        if (this._isLocalChatProvider(provider)) {
+            return {
+                slowHint: _(
+                    'Loading the model into memory — the first reply after a restart can take a moment…',
+                ),
+                slowHintAfterMs: 10000,
+            };
+        }
+        return {
+            slowHint: _('Still waiting for the model…'),
+            slowHintAfterMs: 15000,
+        };
+    }
+
+    /** Run a first-prompt title request that was deferred until the response
+     *  finished (local models generate it only once the answer is complete). */
+    _runDeferredChatTitle() {
+        const pending = this._deferredChatTitle;
+        if (!pending) return;
+        this._deferredChatTitle = null;
+        if (!pending.seed || !pending.conversationId) return;
+        this._maybeGenerateAutoChatTitle({
+            seed: pending.seed,
+            conversationId: pending.conversationId,
+            cancellable: null,
+        }).catch((e) => {
+            log(`[Katab:title] Deferred title-generation error: ${e.message || e}`);
+            return '';
+        });
+    }
+
+    /**
      * Name a brand-new chat from its first prompt using the active provider.
-     * Starts before the main request and is awaited for at most
-     * AUTO_TITLE_HANDOFF_MS; a slow local model may finish in the background
-     * (the request itself is bounded by AUTO_TITLE_TIMEOUT_SECONDS).
+     * Runs in the background (cloud) or after the response (local); it never
+     * delays the main chat request.  The request itself is bounded by
+     * AUTO_TITLE_TIMEOUT_SECONDS.
      * Falls back silently to the first-message title on any failure.  The
      * generated title is stored as `customTitle` so later auto-saves keep it.
      */
@@ -9455,8 +9665,8 @@ class KatabDialog {
         this._getPendingController(uiElements)?.arm(text, options);
     }
 
-    _setPendingIndicatorText(uiElements, text) {
-        this._getPendingController(uiElements)?.setText(text);
+    _setPendingIndicatorText(uiElements, text, options = {}) {
+        this._getPendingController(uiElements)?.setText(text, options);
     }
 
     _hasArmedPendingIndicator(uiElements) {
@@ -9464,8 +9674,8 @@ class KatabDialog {
     }
 
     /** Re-arm the row once for the first model wait after a status render. */
-    _recoverPendingIndicator(uiElements, text) {
-        return Boolean(this._getPendingController(uiElements)?.recover(text));
+    _recoverPendingIndicator(uiElements, text, options = {}) {
+        return Boolean(this._getPendingController(uiElements)?.recover(text, options));
     }
 
     /** Stop the warm-up row (and any pending grace timer) for this response. */
@@ -12580,9 +12790,9 @@ class KatabDialog {
 
         // ── Commit the turn before any slow work ────────────────────────────
         // The user message, empty assistant bubble, cleared entry, and Stop
-        // button all appear in the same frame as the send.  Enrichment, title
-        // generation, and the main-model wait then share one visible state
-        // sequence behind the warm-up row.
+        // button all appear in the same frame as the send.  Enrichment and
+        // the main-model wait then share one visible state sequence behind
+        // the warm-up row.
         const userMessage = {
             role: 'user',
             // When a /crawl command was used, strip the raw command text so the
@@ -12657,6 +12867,7 @@ class KatabDialog {
                 crawl4aiTargetUrl,
                 kb,
                 cancellable: requestCancellable,
+                uiElements,
             });
         } catch (e) {
             if (requestCancellable.is_cancelled() || !this._activeResponseState) return;
@@ -12695,28 +12906,34 @@ class KatabDialog {
         }
 
         // ── First-prompt AI title ───────────────────────────────────────────
-        // Runs after context prep and before the main model request.  The
-        // indicator text follows the real phase, not a wall-clock timer.
+        // A cosmetic title must never delay the answer.  Cloud providers get
+        // the title request in the background immediately.  Local providers
+        // (Ollama/Unsloth) are deferred until the response finishes: a cold
+        // local model serves one request at a time, so racing the title
+        // against the first chat request made the reply wait for the title's
+        // cold model load (10–20 s after a restarted Ollama).
         if (shouldGenerateTitle) {
-            this._setPendingIndicatorText(uiElements, _('Naming this chat…'));
-            // Soft deadline: hand off to the main request even if a cold local
-            // model is still working on the title.  The title request keeps
-            // running in the background and updates history when it lands.
-            await Promise.race([
+            if (this._isLocalChatProvider()) {
+                this._deferredChatTitle = {
+                    seed: titleSeed,
+                    conversationId: this._currentConversationId,
+                };
+            } else {
                 this._maybeGenerateAutoChatTitle({
                     seed: titleSeed,
                     conversationId: this._currentConversationId,
-                    cancellable: requestCancellable,
+                    cancellable: null,
                 }).catch((e) => {
-                    // A cosmetic title must never take the send down.
                     log(`[Katab:title] Unexpected title-generation error: ${e.message || e}`);
                     return '';
-                }),
-                this._sleepMs(AUTO_TITLE_HANDOFF_MS),
-            ]);
-            if (requestCancellable.is_cancelled() || !this._activeResponseState) return;
+                });
+            }
         }
-        this._setPendingIndicatorText(uiElements, _('Thinking…'));
+        this._setPendingIndicatorText(
+            uiElements,
+            _('Thinking…'),
+            this._modelWaitIndicatorOptions(),
+        );
 
         // Surface the pre-send KB-fallback web search in the tool-call log so
         // the UI reflects searches that ran before the model response started.
@@ -13765,6 +13982,7 @@ class KatabDialog {
         crawl4aiTargetUrl,
         kb = null,
         cancellable = null,
+        uiElements = null,
     }) {
         let knowledgeContext = null;
         // Captured when the auto KB-fallback web search actually returns
@@ -13795,6 +14013,7 @@ class KatabDialog {
         if (classified.kind === 'search') {
             enterEnriching();
             promptText = classified.query;
+            this._setPendingIndicatorText(uiElements, _('Searching your knowledge base…'));
             try {
                 const searchOutcome = await this._withTimeout(
                     this._ragRuntime.search(classified.query, classified.ragConfig, cancellable),
@@ -13892,6 +14111,10 @@ class KatabDialog {
                         // /search blocked on Ollama embeddings) must never hold
                         // the send hostage.  After RAG_AUTO_SEARCH_TIMEOUT_MS the
                         // message goes out without KB context.
+                        this._setPendingIndicatorText(
+                            uiElements,
+                            _('Searching your knowledge base…'),
+                        );
                         const searchOutcome = await this._withTimeout(
                             this._ragRuntime.search(effectiveQuery, ragConfig, cancellable),
                             RAG_AUTO_SEARCH_TIMEOUT_MS,
@@ -13962,6 +14185,10 @@ class KatabDialog {
                                 );
                                 try {
                                     const webConfig = readWebSearchConfig(this._settings);
+                                    this._setPendingIndicatorText(
+                                        uiElements,
+                                        _('Searching the web…'),
+                                    );
                                     const webPayload = await this._webSearchRuntime.search(
                                         effectiveQuery,
                                         webConfig,
@@ -14347,17 +14574,11 @@ class KatabDialog {
                 }
             }
 
-            const getOpt = (prop, type) => {
-                try {
-                    return this._settings[`get_${type}`](`ollama-${prop}`);
-                } catch (e) {
-                    return null;
-                }
-            };
-
             // Sampling/context options (null pruning + the repeat_last_n = -1
-            // sentinel translation) live in chatRequest.js.
-            const options = buildOllamaOptions(getOpt);
+            // sentinel translation) live in chatRequest.js.  The warm-up
+            // preload reuses the same builder so the loaded runner options
+            // match and Ollama does not reload the model on the real request.
+            const options = this._buildOllamaOptionsFromSettings();
 
             const keepAlive = normalizeOllamaKeepAlive(
                 this._settings.get_string('ollama-keep-alive'),
@@ -14458,9 +14679,10 @@ class KatabDialog {
         // (search started, retrying, …) may have dismissed it, so re-arm it
         // once before the first real wait; after content has streamed, keep
         // the explicit status so nothing is ever drawn over an answer.
+        const modelWaitHint = this._modelWaitIndicatorOptions(provider);
         if (this._hasArmedPendingIndicator(uiElements)) {
-            this._setPendingIndicatorText(uiElements, _('Thinking…'));
-        } else if (!this._recoverPendingIndicator(uiElements, _('Thinking…'))) {
+            this._setPendingIndicatorText(uiElements, _('Thinking…'), modelWaitHint);
+        } else if (!this._recoverPendingIndicator(uiElements, _('Thinking…'), modelWaitHint)) {
             this._applyAssistantRender(uiElements, 'Waiting for response...', { plain: true });
         }
         if (!cancellable) {

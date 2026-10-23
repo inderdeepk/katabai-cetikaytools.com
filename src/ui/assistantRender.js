@@ -387,11 +387,9 @@ export class AssistantRender {
 
         contentBox.destroy_all_children();
 
-        let hasChildren = false;
         for (let segment of segments) {
             if (segment.type === 'code') {
                 contentBox.add_child(this._createCodeBlockWidget(segment.language, segment.code));
-                hasChildren = true;
                 continue;
             }
 
@@ -403,19 +401,16 @@ export class AssistantRender {
                 });
                 this._renderAssistantSegments(quoteBox, segment.segments || []);
                 contentBox.add_child(quoteBox);
-                hasChildren = true;
                 continue;
             }
 
             if (segment.type === 'table') {
                 contentBox.add_child(this._createMarkdownTableWidget(segment));
-                hasChildren = true;
                 continue;
             }
 
             if (segment.type === 'rule') {
                 contentBox.add_child(this._createMarkdownRuleWidget());
-                hasChildren = true;
                 continue;
             }
 
@@ -431,12 +426,12 @@ export class AssistantRender {
                     segment.fallbackText || '',
                 ),
             );
-            hasChildren = true;
         }
 
-        if (!hasChildren) {
-            contentBox.add_child(this._createAssistantTextLabel('', ''));
-        }
+        // An empty reply intentionally leaves the content box empty.  A blank
+        // placeholder label here counted as "the answer already rendered" and
+        // made the warm-up row drop itself during the send's grace period, so
+        // slow cold-model waits showed nothing until the first stream event.
     }
 
     _openExternalLink(url) {

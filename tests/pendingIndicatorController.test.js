@@ -5,7 +5,9 @@
 // streamed token.  Timers and actors are injected, so the whole lifecycle is
 // driven synchronously here.
 import {
+    PENDING_INDICATOR_ELAPSED_AFTER_MS,
     PENDING_INDICATOR_GRACE_MS,
+    PENDING_INDICATOR_TICK_MS,
     PendingIndicatorController,
 } from '../src/ui/pendingIndicatorController.js';
 import { assert, assertEqual, runTests } from './testUtils.js';
@@ -33,6 +35,9 @@ function makeIndicator(text) {
         destroyed: false,
         start() {
             this.started = true;
+        },
+        isDestroyed() {
+            return this.destroyed;
         },
         setText(value) {
             this.text = value;
@@ -66,6 +71,12 @@ function makeEnv(overrides = {}) {
         for (const [id, entry] of [...timers]) {
             timers.delete(id);
             entry.callback();
+        }
+    };
+    // Advance the visible row's one-second ticker by `count` ticks.
+    env.advance = (count = 1) => {
+        for (let i = 0; i < count; i++) {
+            env.fireTimers();
         }
     };
 
@@ -153,16 +164,24 @@ const tests = [
         () => {
             const env = makeEnv();
             env.controller.arm('Preparing context…');
-            env.controller.setText('Naming this chat…');
-            env.controller.arm('Naming this chat…');
+            env.controller.setText('Searching your knowledge base…');
+            env.controller.arm('Searching your knowledge base…');
             assertEqual(env.scheduled.length, 1, 'single grace timer');
 
             env.fireTimers();
-            assertEqual(env.created[0].text, 'Naming this chat…', 'latest phase shown');
+            assertEqual(
+                env.created[0].text,
+                'Searching your knowledge base…',
+                'latest phase shown',
+            );
 
             env.controller.setText('Thinking…');
             assertEqual(env.created[0].text, 'Thinking…', 'live phase update');
-            assertEqual(env.scheduled.length, 1, 'no extra timer');
+            assertEqual(
+                env.scheduled.filter((entry) => entry.ms === PENDING_INDICATOR_GRACE_MS).length,
+                1,
+                'grace period never restarted',
+            );
         },
     ],
 
@@ -249,6 +268,23 @@ const tests = [
     ],
 
     [
+        'an externally destroyed row stops the elapsed ticker',
+        () => {
+            const env = makeEnv();
+            env.controller.arm('Thinking…');
+            env.fireTimers();
+            const indicator = env.created[0];
+            assertEqual(env.pendingTimers(), 1, 'ticker running');
+
+            indicator.destroyed = true; // content render replaced the row
+            env.advance(1);
+
+            assertEqual(env.pendingTimers(), 0, 'ticker stopped');
+            assert(!env.controller.hasArmed(), 'treated as dismissed');
+        },
+    ],
+
+    [
         'a contentBox rebuild that removed the actor counts as dismissed',
         () => {
             const env = makeEnv();
@@ -275,7 +311,86 @@ const tests = [
             env.controller.dismiss();
             assert(indicator.destroyed, 'row destroyed once');
             assert(!env.controller.hasArmed(), 'not armed');
-            assertEqual(env.removed.length, 0, 'timer already fired');
+            assertEqual(env.removed.length, 1, 'elapsed ticker cancelled');
+            assertEqual(env.pendingTimers(), 0, 'nothing left ticking');
+        },
+    ],
+
+    [
+        'elapsed seconds appear once the wait stops feeling instant',
+        () => {
+            const env = makeEnv();
+            env.controller.arm('Thinking…');
+            env.fireTimers();
+            const indicator = env.created[0];
+            assertEqual(indicator.text, 'Thinking…', 'quiet at first');
+
+            const ticks = Math.ceil(PENDING_INDICATOR_ELAPSED_AFTER_MS / PENDING_INDICATOR_TICK_MS);
+            env.advance(ticks - 1);
+            assertEqual(indicator.text, 'Thinking…', 'still quiet just before the threshold');
+
+            env.advance(1);
+            assertEqual(indicator.text, `Thinking… · ${ticks}s`, 'elapsed counter shown');
+
+            env.advance(1);
+            assertEqual(indicator.text, `Thinking… · ${ticks + 1}s`, 'counter advances');
+        },
+    ],
+
+    [
+        'slow hint replaces the phase for a long cold-model wait',
+        () => {
+            const env = makeEnv();
+            env.controller.arm('Thinking…', {
+                slowHint: 'Loading the model into memory…',
+                slowHintAfterMs: 2000,
+            });
+            env.fireTimers();
+            const indicator = env.created[0];
+            assertEqual(indicator.text, 'Thinking…', 'phase first');
+
+            env.advance(2);
+            assertEqual(indicator.text, 'Loading the model into memory…', 'slow hint takes over');
+
+            env.advance(2);
+            assertEqual(
+                indicator.text,
+                'Loading the model into memory… · 4s',
+                'elapsed time still counts during the slow hint',
+            );
+        },
+    ],
+
+    [
+        'a new phase restarts the elapsed counter',
+        () => {
+            const env = makeEnv();
+            env.controller.arm('Preparing context…');
+            env.fireTimers();
+            const indicator = env.created[0];
+
+            env.advance(6);
+            assert(indicator.text.includes('6s'), 'counter running');
+
+            env.controller.setText('Thinking…');
+            assertEqual(indicator.text, 'Thinking…', 'counter cleared for the new phase');
+            assertEqual(env.pendingTimers(), 1, 'ticker keeps running');
+        },
+    ],
+
+    [
+        'a phase set before the row appears is used without a loader flash',
+        () => {
+            const env = makeEnv();
+            env.controller.arm('Preparing context…');
+            env.controller.setText('Searching your knowledge base…', {
+                slowHint: 'Still searching…',
+                slowHintAfterMs: 3000,
+            });
+            assertEqual(env.created.length, 0, 'grace period still pending');
+
+            env.fireTimers();
+            assertEqual(env.created[0].text, 'Searching your knowledge base…', 'latest phase');
         },
     ],
 

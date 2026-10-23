@@ -6,6 +6,7 @@ import {
     buildAnthropicStreamRequest,
     buildDeepSeekStreamRequest,
     buildOllamaStreamRequest,
+    buildOllamaPreloadRequest,
 } from '../src/providers/chatRequest.js';
 // Side-effect import: registers all tool definitions so buildToolSchemasFor
 // resolves real schemas (extension.js imports it the same way).
@@ -478,6 +479,47 @@ const tests = [
                 ollama.endpoint,
                 'http://localhost:11434/api/chat',
                 'ollama suffix kept, slash stripped',
+            );
+        },
+    ],
+
+    [
+        'ollama warm-up: empty prompt loads the model without generating',
+        () => {
+            const built = buildOllamaPreloadRequest({
+                baseUrl: 'http://localhost:11434/',
+                model: 'llama3.2',
+                keepAlive: '30m',
+                options: { num_ctx: 8192, num_gpu: -1 },
+            });
+            assertEqual(built.endpoint, 'http://localhost:11434/api/generate', 'preload endpoint');
+            assertEqual(built.payload.model, 'llama3.2', 'model');
+            assertEqual(built.payload.prompt, '', 'empty prompt');
+            assertEqual(built.payload.stream, false, 'single JSON response');
+            assertEqual(built.payload.keep_alive, '30m', 'keep-alive forwarded');
+            assertEqual(built.payload.options.num_ctx, 8192, 'runner options mirrored');
+            assertEqual(built.headers['Content-Type'], 'application/json', 'json header');
+
+            const suffixed = buildOllamaPreloadRequest({
+                baseUrl: 'http://localhost:11434/api/generate',
+                model: 'm',
+            });
+            assertEqual(
+                suffixed.endpoint,
+                'http://localhost:11434/api/generate',
+                'already-suffixed endpoint not doubled',
+            );
+            assertEqual(suffixed.payload.keep_alive, '5m', 'default keep-alive');
+            assertEqual(JSON.stringify(suffixed.payload.options), '{}', 'options default');
+
+            const chatBase = buildOllamaPreloadRequest({
+                baseUrl: 'http://localhost:11434/api/chat',
+                model: 'm',
+            });
+            assertEqual(
+                chatBase.endpoint,
+                'http://localhost:11434/api/generate',
+                'chat base URL mapped to generate',
             );
         },
     ],

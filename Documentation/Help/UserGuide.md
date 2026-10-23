@@ -209,11 +209,17 @@ tools are in a non-default mode. Each row is an action plus, for tools that supp
 ### Warm-Up Indicator
 After you send a prompt, your message and the assistant bubble appear immediately. The animated
 three-dot row is armed with a short grace period: if the reply arrives quickly, no loader is shown.
-Slower sends show the current phase — *Preparing context…*, *Naming this chat…*, then *Thinking…*
-— until the first real content arrives. Any thinking block, tool call, streamed token, or error
-replaces the row immediately, so it never covers an active response. When a status line such as a
-web search or retry appears first, the row comes back once for the model wait that follows, so a
-slow model never looks frozen.
+Slower sends show the current phase — *Preparing context…*, *Searching your knowledge base…*,
+*Searching the web…*, then *Thinking…* — until the first real content arrives. Once a wait passes
+a few seconds the row also shows elapsed time (*Thinking… · 12s*), and a cold local model swaps in
+a hint such as *Loading the model into memory…* so the wait never looks frozen. Any thinking
+block, tool call, streamed token, or error replaces the row immediately, so it never covers an
+active response. When a status line such as a web search or retry appears first, the row comes
+back once for the model wait that follows.
+
+With Ollama, Katab also pre-loads the selected model as soon as you start typing (debounced, at
+most once every few minutes), so the first reply after a restart usually avoids the full
+model-load wait.
 
 ### Markdown Rendering
 Responses support a chat-friendly markdown subset: headings, bold, italic, bullet and numbered lists, blockquotes, inline code, and fenced code blocks. Code blocks include syntax highlighting and a **Copy** button.
@@ -740,7 +746,7 @@ Katab automatically saves your conversations.
 - Loading, searching, and deleting work the same in both tabs.
 
 ### Titles & Descriptions
-- New chats are named automatically from the first prompt by the active provider/model. The warm-up row (`Preparing context…` → `Naming this chat…` → `Thinking…`) covers context prep, the title request, and the main-response handoff. Disable it under **Preferences → General → Chat → AI-Generated Chat Titles**; the history then keeps the first-message title.
+- New chats are named automatically from the first prompt by the active provider/model. The title is generated in the background and never delays the reply; with local models (Ollama/Unsloth) it is generated after the response completes. Disable it under **Preferences → General → Chat → AI-Generated Chat Titles**; the history then keeps the first-message title.
 - The pencil button on a history row opens the conversation editor with a **Title** field and an optional one-line **Description**.
 - **Generate with AI** asks the active provider to draft both from the conversation transcript; the result lands in the editable fields — nothing is saved until you press **Save**.
 - Descriptions appear under the title in the history list, and both fields are searchable.

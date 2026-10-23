@@ -107,6 +107,32 @@ export function buildOpenAiCompatStreamRequest({
 }
 
 /**
+ * Build the Ollama warm-up request.  An empty prompt loads the model into
+ * memory without generating anything; `keep_alive` keeps it resident for the
+ * next real request.  Used while the user types so a cold model load is not
+ * added to the first reply's turnaround time.
+ */
+export function buildOllamaPreloadRequest({ baseUrl, model, keepAlive = '5m', options = {} }) {
+    let endpoint = normalizeBaseUrl(baseUrl);
+    // Accept the same forms as the chat builder, including a base URL that
+    // already points at /api/chat.
+    if (endpoint.endsWith('/api/chat')) {
+        endpoint = endpoint.slice(0, -'/api/chat'.length);
+    }
+    if (!endpoint.endsWith('api/generate')) {
+        endpoint += '/api/generate';
+    }
+    return {
+        endpoint,
+        headers: { 'Content-Type': 'application/json' },
+        // `options` must mirror the chat request's runner options (num_ctx,
+        // GPU layers, …) — Ollama reloads the model when they differ, which
+        // would defeat the warm-up.
+        payload: { model, prompt: '', stream: false, keep_alive: keepAlive, options },
+    };
+}
+
+/**
  * Build the streaming request for Anthropic (system prompt hoisted to the
  * top-level `system` field, system-role messages filtered from the array).
  */
