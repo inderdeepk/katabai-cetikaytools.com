@@ -125,7 +125,7 @@ export function parseOpenAiCompatChunk(parsed) {
         const toolName = parsed.tool_use_id || 'Tool';
         result.serverToolResult = `\n\n> **Server-side tool executed (${toolName})**:\n> \`\`\`\n> ${toolContent.split('\n').join('\n> ')}\n> \`\`\`\n\n`;
     } else if (parsed.choices && parsed.choices.length > 0) {
-        const delta = parsed.choices[0].delta;
+        const delta = parsed.choices[0]?.delta;
         if (delta) {
             // reasoning_content arrives before content during thinking
             if (delta.reasoning_content) {

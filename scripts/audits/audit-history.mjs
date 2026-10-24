@@ -158,8 +158,23 @@ const PAIRS = [
     ['_updateHistoryTabLabels', '_updateTabLabels', [], []],
     ['_setConversationArchived', '_setArchived', [], []],
     ['_renderHistoryList', 'renderList', [], []],
-    ['_executeKbSearch', '_executeKbSearch', [], []],
-    ['_renderKbSearchResults', '_renderKbSearchResults', [], []],
+    // Intentional hardening: the async RAG search now bails out when the
+    // dialog/history view was destroyed while the local service was thinking.
+    [
+        '_executeKbSearch',
+        '_executeKbSearch',
+        [],
+        [
+            '            // The dialog or the history view may have been torn down while the\n            // local RAG service was thinking — never touch disposed widgets.\n            if (this._host.isActorDisposed(this._container)) return;\n',
+            '            if (this._host.isActorDisposed(this._container)) return;\n',
+        ],
+    ],
+    [
+        '_renderKbSearchResults',
+        '_renderKbSearchResults',
+        [],
+        ['        if (this._host.isActorDisposed(this._container)) return;\n'],
+    ],
 ];
 
 let fails = 0;
@@ -264,8 +279,8 @@ for (const wire of WIRES) {
     }
 }
 const invalidateCount = (NEW.match(/this\._history\?\.invalidateList\(\)/g) || []).length;
-if (invalidateCount !== 3) {
-    console.log(`!! invalidateList wires: expected 3, found ${invalidateCount}`);
+if (invalidateCount !== 4) {
+    console.log(`!! invalidateList wires: expected 4, found ${invalidateCount}`);
     fails++;
 }
 

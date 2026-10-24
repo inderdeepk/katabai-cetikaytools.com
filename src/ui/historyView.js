@@ -701,6 +701,9 @@ export class HistoryView {
                 this._host.getRagRuntime().search(query, ragConfig, null),
                 this._host.ragManualSearchTimeoutMs,
             );
+            // The dialog or the history view may have been torn down while the
+            // local RAG service was thinking — never touch disposed widgets.
+            if (this._host.isActorDisposed(this._container)) return;
             if (searchOutcome.kind === 'timeout') {
                 log(
                     `[Katab:rag] KB search timed out after ${this._host.ragManualSearchTimeoutMs}ms`,
@@ -718,6 +721,7 @@ export class HistoryView {
                 this._renderKbSearchResults(query, searchOutcome.value);
             }
         } catch (e) {
+            if (this._host.isActorDisposed(this._container)) return;
             log(`[Katab:rag] KB search failed: ${e.message}`);
             this._container.destroy_all_children();
             let errorLabel = new St.Label({
@@ -734,6 +738,7 @@ export class HistoryView {
     /** Render KB search results as clickable rows in the history container.
      *  Each row shows: score badge, source collection, snippet, timestamp. */
     _renderKbSearchResults(query, searchResult) {
+        if (this._host.isActorDisposed(this._container)) return;
         this._kbSearchViewActive = true;
         this._container.destroy_all_children();
 
@@ -796,8 +801,8 @@ export class HistoryView {
                 scorePct >= 80
                     ? 'katab-kb-score-high'
                     : scorePct >= 60
-                      ? 'katab-kb-score-mid'
-                      : 'katab-kb-score-low';
+                        ? 'katab-kb-score-mid'
+                        : 'katab-kb-score-low';
             let scoreBadge = new St.Label({
                 text: `${scorePct}%`,
                 style_class: `katab-kb-score-badge ${scoreClass}`,

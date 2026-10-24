@@ -12,6 +12,7 @@ import {
     readRagConfig,
     RagError,
     RagRuntime,
+    httpStatusPhrase,
 } from '../src/tools/ragTools.js';
 
 const tests = [
@@ -278,6 +279,33 @@ const tests = [
     ],
 
     [
+        'RagRuntime.index honours explicit replaceIds for multi-part documents',
+        async () => {
+            const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
+            let captured = null;
+            runtime._request = async (_m, _u, body) => {
+                captured = body;
+                return { status: 200, body: { indexed: 2, chunks: 2 } };
+            };
+            await runtime.index(
+                [
+                    { id: 'doc_a#part-0', content: 'one' },
+                    { id: 'doc_a#part-1', content: 'two' },
+                ],
+                'documents',
+                { serviceUrl: 'http://localhost:11435' },
+                null,
+                { replaceIds: ['doc_a'] },
+            );
+            assertDeepEqual(
+                captured.replace_ids,
+                ['doc_a'],
+                'the base id must replace every previously stored part',
+            );
+        },
+    ],
+
+    [
         'RagRuntime.index empty input is a no-op',
         async () => {
             const runtime = new RagRuntime({ session: {}, timeoutSeconds: 5 });
@@ -506,6 +534,29 @@ const tests = [
             assert(e instanceof Error, 'RagError should be an Error');
             assertEqual(e.name, 'RagError');
             assertEqual(e.code, 'x');
+            assertEqual(e.statusCode, null, 'no status by default');
+        },
+    ],
+
+    [
+        'RagError keeps the HTTP status code',
+        () => {
+            const e = new RagError('too large', { code: 'http-error', statusCode: 413 });
+            assertEqual(e.statusCode, 413, 'status code preserved');
+        },
+    ],
+
+    [
+        'httpStatusPhrase handles codes missing from the Soup enum',
+        () => {
+            // 429/413 are absent from libsoup 3.4's Soup.Status enum; the
+            // phrase lookup must never throw (it used to surface as a bogus
+            // "connection failed" error).
+            assertEqual(typeof httpStatusPhrase(429), 'string', '429 phrase');
+            assertEqual(typeof httpStatusPhrase(413), 'string', '413 phrase');
+            assert(httpStatusPhrase(429).length > 0, '429 phrase is non-empty');
+            assert(httpStatusPhrase(413).length > 0, '413 phrase is non-empty');
+            assertEqual(typeof httpStatusPhrase(999), 'string', 'unknown code');
         },
     ],
 ];

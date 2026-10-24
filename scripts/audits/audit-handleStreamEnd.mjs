@@ -76,7 +76,16 @@ const NAMES = {
     S4: '_finalizeSynthesisTurn',
 };
 for (const key of ['S1', 'S2', 'S3', 'S4']) {
-    const oldFlat = flat(slices[key]);
+    let oldFlat = flat(slices[key]);
+    // Intentional change: every re-stream now goes through the guarded
+    // `_startStreamResponse` wrapper so an unexpected pre-send failure can
+    // never leave the request lifecycle active (stuck Stop button).
+    if (key === 'S3' || key === 'S4') {
+        oldFlat = oldFlat.replaceAll(
+            'this._streamResponse(uiElements);',
+            'this._startStreamResponse(uiElements);',
+        );
+    }
     let newFlat = flat(helpers[key]);
     if (key === 'S1' || key === 'S2') {
         if (!newFlat.endsWith(RETURN_PAIR)) {

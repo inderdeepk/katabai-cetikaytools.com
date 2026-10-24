@@ -5,6 +5,7 @@ import { gettext as _, format } from '../../../shared/i18n.js';
 export function buildDocumentSection(ctx) {
     const {
         settings,
+        watch,
         createToolSubpage,
         createPreferencesGroup,
         createBooleanRow,
@@ -36,13 +37,13 @@ export function buildDocumentSection(ctx) {
     const syncDocumentUsageRow = () => {
         documentUsageRow.subtitle = settings.get_boolean('document-tool-enabled')
             ? _(
-                  'Use the attachment button in chat or type /doc with a quoted path. Katab extracts text from supported documents locally, and sends PNG/JPG images only to Ollama vision models.',
-              )
+                'Use the attachment button in chat or type /doc with a quoted path. Katab extracts text from supported documents locally, and sends PNG/JPG images only to Ollama vision models.',
+            )
             : _(
-                  'Turn this on only if you want local file parsing. Normal chat does not depend on this tool.',
-              );
+                'Turn this on only if you want local file parsing. Normal chat does not depend on this tool.',
+            );
     };
-    settings.connect('changed::document-tool-enabled', syncDocumentUsageRow);
+    watch('changed::document-tool-enabled', syncDocumentUsageRow);
     syncDocumentUsageRow();
 
     const capabilityGroup = createPreferencesGroup({

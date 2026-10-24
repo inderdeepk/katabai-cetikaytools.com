@@ -810,17 +810,17 @@ function getProviderConfig(settings, provider = null) {
 
     try {
         baseUrl = getProviderBaseUrl(activeProvider, settings.get_string(`${activeProvider}-url`));
-    } catch (_e) {}
+    } catch (_e) { }
 
     if (activeProvider !== 'ollama') {
         try {
             apiKey = settings.get_string(`${activeProvider}-api-key`).trim();
-        } catch (_e) {}
+        } catch (_e) { }
     }
 
     try {
         model = settings.get_string(`${activeProvider}-model`).trim();
-    } catch (_e) {}
+    } catch (_e) { }
 
     return {
         provider: activeProvider,
@@ -864,7 +864,7 @@ function extractErrorSummary(responseBody) {
         if (typeof parsed.message === 'string' && parsed.message.trim()) {
             return parsed.message.trim();
         }
-    } catch (_e) {}
+    } catch (_e) { }
 
     let firstLine = responseBody
         .split('\n')
@@ -1953,8 +1953,8 @@ class KatabDialog {
             title: savedTitle
                 ? this._truncateText(savedTitle, 44)
                 : userMessage
-                  ? this._truncateText(userMessage.content.replace(/\s+/g, ' ').trim(), 44)
-                  : 'Current Chat',
+                    ? this._truncateText(userMessage.content.replace(/\s+/g, ' ').trim(), 44)
+                    : 'Current Chat',
         };
     }
 
@@ -2141,7 +2141,7 @@ class KatabDialog {
                 return GLib.SOURCE_REMOVE;
             }
 
-            this._streamResponse(uiElements, { retryAttempt: nextAttempt });
+            this._startStreamResponse(uiElements, { retryAttempt: nextAttempt });
             return GLib.SOURCE_REMOVE;
         });
 
@@ -2220,7 +2220,7 @@ class KatabDialog {
                 completionTokens = Math.ceil(
                     ((responseState.accumulatedText || '').length +
                         (responseState.accumulatedThink || '').length) /
-                        4,
+                    4,
                 );
             }
 
@@ -2283,13 +2283,13 @@ class KatabDialog {
                 messages.length === 1
                     ? messages[0]
                     : format(
-                          ngettext(
-                              '{count} pet collection milestone unlocked.',
-                              '{count} pet collection milestones unlocked.',
-                              messages.length,
-                          ),
-                          { count: messages.length },
-                      ),
+                        ngettext(
+                            '{count} pet collection milestone unlocked.',
+                            '{count} pet collection milestones unlocked.',
+                            messages.length,
+                        ),
+                        { count: messages.length },
+                    ),
             );
         }
     }
@@ -2396,10 +2396,10 @@ class KatabDialog {
             mode === 'pull' && modelName
                 ? format(_("Stopped while downloading model '{model}'."), { model: modelName })
                 : mode === 'document' && modelName
-                  ? format(_("Stopped while preparing '{model}'."), { model: modelName })
-                  : mode === 'tool'
-                    ? _('Response stopped while running local tools.')
-                    : _('Response stopped.');
+                    ? format(_("Stopped while preparing '{model}'."), { model: modelName })
+                    : mode === 'tool'
+                        ? _('Response stopped while running local tools.')
+                        : _('Response stopped.');
 
         if (!finalContent) {
             if (mode === 'pull' && modelName) {
@@ -3225,8 +3225,9 @@ class KatabDialog {
             ) {
                 continue;
             }
-            // Skip tool result messages (role: 'tool')
-            if (msg.role === 'tool') continue;
+            // Skip tool result messages (role: 'tool') and Anthropic
+            // tool_result turns (stored as user messages).
+            if (msg.role === 'tool' || this._isToolResultOnlyMessage(msg)) continue;
 
             const role =
                 msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : msg.role;
@@ -3293,13 +3294,21 @@ class KatabDialog {
         };
 
         let docs = [];
+        let replaceIds = null;
         if (prevCount === undefined || prevCount < 0) {
             // First index (or legacy v1 sentinel with unknown count): embed the
             // full conversation, split into bounded documents so a single text
-            // over ~100K chars can't 413.  replace_ids matches the old chunk
-            // ids, so a v1-migrated conversation is cleanly re-indexed.
+            // over ~100K chars can't 413.  Every part reports the conversation
+            // id as its source_id and the id itself as replace target, so a
+            // re-index also removes stale parts from a longer previous version.
             const text = this._buildConversationIndexText(entry);
-            if (text) docs = this._splitIndexText(entry.id, text);
+            if (text) {
+                docs = this._splitIndexText(entry.id, text).map((doc) => ({
+                    ...doc,
+                    metadata: { ...metadata, source_id: entry.id },
+                }));
+                replaceIds = [entry.id];
+            }
         } else {
             // Incremental index: only the messages added since the last run.
             docs = this._buildConversationDeltaDocs(entry, prevCount);
@@ -3317,6 +3326,7 @@ class KatabDialog {
                 'conversations',
                 ragConfig,
                 null,
+                { replaceIds },
             );
 
             // Gate success on actually stored chunks.  The service reports
@@ -3370,8 +3380,9 @@ class KatabDialog {
             ) {
                 continue;
             }
-            // Skip tool result messages (role: 'tool')
-            if (msg.role === 'tool') continue;
+            // Skip tool result messages (role: 'tool') and Anthropic
+            // tool_result turns (stored as user messages).
+            if (msg.role === 'tool' || this._isToolResultOnlyMessage(msg)) continue;
 
             const role =
                 msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : msg.role;
@@ -3561,17 +3572,22 @@ class KatabDialog {
      *  Stable ids (path-based) replace previous chunks for the same file. */
     async _indexParsedDocuments(parsedDocs, ragConfig) {
         const texts = [];
+        const replaceIds = [];
         for (const doc of parsedDocs) {
             if (!doc || doc.kind === 'image') continue; // images have no text
             const content = typeof doc.text === 'string' ? doc.text : '';
             if (!content.trim()) continue;
             const stableId = `doc_${this._stableIdHash(doc.path || doc.displayName || '')}`;
+            replaceIds.push(stableId);
             for (const part of this._splitIndexText(stableId, content)) {
                 texts.push({
                     id: part.id,
                     content: part.content,
                     metadata: {
                         source: 'document',
+                        // Stable base id so re-importing an edited file (with
+                        // more or fewer parts) replaces ALL of its old chunks.
+                        source_id: stableId,
                         title: doc.displayName || '',
                         path: doc.path || '',
                         mimeType: doc.mimeType || '',
@@ -3582,7 +3598,9 @@ class KatabDialog {
         }
         if (texts.length === 0) return;
         try {
-            const result = await this._ragRuntime.index(texts, 'documents', ragConfig, null);
+            const result = await this._ragRuntime.index(texts, 'documents', ragConfig, null, {
+                replaceIds,
+            });
             if (result.chunks > 0) {
                 this._ragHasContent = true;
                 log(
@@ -3986,9 +4004,9 @@ class KatabDialog {
         if (!ragConfig.enabled) return;
         log(
             `[Katab:rag] Storage limits changed (${key}) \u2014 applying immediately ` +
-                `(cap=${ragConfig.maxChunksPerCollection} chunks, ` +
-                `total=${ragConfig.maxTotalSizeMb} MB, ` +
-                `auto-prune=${ragConfig.autoPrune ? 'on' : 'off'})`,
+            `(cap=${ragConfig.maxChunksPerCollection} chunks, ` +
+            `total=${ragConfig.maxTotalSizeMb} MB, ` +
+            `auto-prune=${ragConfig.autoPrune ? 'on' : 'off'})`,
         );
         // Re-arm the once-per-session / hourly notices so they re-evaluate
         // against the new limits...
@@ -4258,8 +4276,8 @@ class KatabDialog {
                             typeof r.structuredJson === 'string'
                                 ? r.structuredJson
                                 : r.structuredJson
-                                  ? JSON.stringify(r.structuredJson)
-                                  : '';
+                                    ? JSON.stringify(r.structuredJson)
+                                    : '';
                         content = [r.llmResponse || '', json].filter(Boolean).join('\n\n');
                     } else if (entry.type === 'search') {
                         const results = Array.isArray(entry.results) ? entry.results : [];
@@ -4515,24 +4533,24 @@ class KatabDialog {
         try {
             backend =
                 this._settings.get_string('deepseek-vision-backend') || DEEPSEEK_VISION_BACKEND_OFF;
-        } catch (_e) {}
+        } catch (_e) { }
         try {
             mode =
                 this._settings.get_string('deepseek-vision-mode') ||
                 DEEPSEEK_VISION_MODE_PREPROCESS;
-        } catch (_e) {}
+        } catch (_e) { }
         try {
             model = this._settings.get_string('deepseek-vision-model') || '';
-        } catch (_e) {}
+        } catch (_e) { }
         try {
             fallbackModel = this._settings.get_string('deepseek-vision-fallback-model') || '';
-        } catch (_e) {}
+        } catch (_e) { }
         try {
             url = this._settings.get_string('deepseek-vision-url') || '';
-        } catch (_e) {}
+        } catch (_e) { }
         try {
             apiKey = this._settings.get_string('deepseek-vision-api-key') || '';
-        } catch (_e) {}
+        } catch (_e) { }
         const enabled =
             backend === DEEPSEEK_VISION_BACKEND_OLLAMA ||
             backend === DEEPSEEK_VISION_BACKEND_OPENAI;
@@ -4807,7 +4825,7 @@ class KatabDialog {
                 for (const tp of this._clipboardTempFiles) {
                     try {
                         Gio.File.new_for_path(tp).delete(null);
-                    } catch (_e) {}
+                    } catch (_e) { }
                 }
                 this._clipboardTempFiles = [];
             }
@@ -4829,7 +4847,7 @@ class KatabDialog {
             ) {
                 try {
                     Gio.File.new_for_path(doc.path).delete(null);
-                } catch (_e) {}
+                } catch (_e) { }
                 this._clipboardTempFiles = this._clipboardTempFiles.filter((p) => p !== doc.path);
             }
             this._pendingDocuments.splice(index, 1);
@@ -5415,19 +5433,6 @@ class KatabDialog {
     _updateHeaderPetSprite() {
         if (!this._headerPetBox || !this._headerPetFallback) return;
 
-        // Remove any existing sprite
-        if (this._headerPetSprite) {
-            try {
-                this._headerPetSprite.destroy();
-            } catch (_e) {
-                /* disposed */
-            }
-            this._headerPetSprite = null;
-        }
-
-        const selection = this._getPetSelection();
-        const companion = selection.companion;
-
         // Load the usage summary to get the companion face
         let face = '─ ‿ ─';
         try {
@@ -5437,6 +5442,9 @@ class KatabDialog {
         } catch (_e) {
             // Fall back to default face
         }
+
+        const selection = this._getPetSelection();
+        const companion = selection.companion;
 
         // Apply stage-key class for per-stage border/glow coloring
         const stageKey = companion.stageKey || 'egg';
@@ -5450,6 +5458,29 @@ class KatabDialog {
         ];
         for (const cls of stageClasses) this._headerPetBox.remove_style_class_name(cls);
         if (stageKey) this._headerPetBox.add_style_class_name(`katab-usage-btn-pet-${stageKey}`);
+
+        // Reuse the existing sprite when possible — rebuilding it on every
+        // recorded response destroyed/recreated the actor (and re-resolved its
+        // textures) just to reflect an XP stage change.
+        if (this._headerPetSprite && this._headerPetSprite.get_parent?.()) {
+            try {
+                this._headerPetSprite.setCompanion({ ...companion, fallbackText: face });
+                this._headerPetFallback.hide();
+                return;
+            } catch (_e) {
+                /* fall through to a full rebuild */
+            }
+        }
+
+        // Remove any existing sprite
+        if (this._headerPetSprite) {
+            try {
+                this._headerPetSprite.destroy();
+            } catch (_e) {
+                /* disposed */
+            }
+            this._headerPetSprite = null;
+        }
 
         // Try to render the actual pet sprite image at header-friendly size
         try {
@@ -6352,7 +6383,7 @@ class KatabDialog {
             timedOut = true;
             try {
                 subprocess.force_exit();
-            } catch (_e) {}
+            } catch (_e) { }
             return GLib.SOURCE_REMOVE;
         });
 
@@ -6479,7 +6510,7 @@ class KatabDialog {
             for (const tempPath of this._clipboardTempFiles) {
                 try {
                     Gio.File.new_for_path(tempPath).delete(null);
-                } catch (_e) {}
+                } catch (_e) { }
             }
             this._clipboardTempFiles = [];
         }
@@ -6520,6 +6551,12 @@ class KatabDialog {
         // Clean up Tools popup timeouts
         this._tools?.destroy();
         this._toolsPopup = null;
+
+        // Close the usage panel's floating range dropdown (its stage-wide
+        // click-capture handler would otherwise outlive the dialog).
+        this._usage?.destroy();
+        this._usage = null;
+        this._usagePanel = null;
 
         // Stop any pending KB health retry (background timer)
         if (this._ragHealthRetryId) {
@@ -6721,9 +6758,9 @@ class KatabDialog {
                 let body =
                     provider === 'ollama'
                         ? JSON.stringify({
-                              model: this._settings.get_string('ollama-model') || 'llama3',
-                              prompt: text,
-                          })
+                            model: this._settings.get_string('ollama-model') || 'llama3',
+                            prompt: text,
+                        })
                         : JSON.stringify({ content: text });
 
                 let message = Soup.Message.new('POST', url);
@@ -6735,7 +6772,7 @@ class KatabDialog {
                     let apiKey = '';
                     try {
                         apiKey = this._settings.get_string('unsloth-api-key');
-                    } catch (_e) {}
+                    } catch (_e) { }
                     if (apiKey)
                         message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
                 }
@@ -6971,8 +7008,8 @@ class KatabDialog {
             this._sessionMemoryStatus === 'compacting'
                 ? 'compacting'
                 : memoryText
-                  ? 'active'
-                  : 'empty';
+                    ? 'active'
+                    : 'empty';
 
         return {
             contextWindow: {
@@ -7004,12 +7041,12 @@ class KatabDialog {
             },
             research: hasResearch
                 ? {
-                      cumulative: researchCumulative,
-                      toolIterations,
-                      synthesisActive,
-                      contextTokens: contextFormatted,
-                      contextTokenCount: contextTokens,
-                  }
+                    cumulative: researchCumulative,
+                    toolIterations,
+                    synthesisActive,
+                    contextTokens: contextFormatted,
+                    contextTokenCount: contextTokens,
+                }
                 : null,
         };
     }
@@ -7220,8 +7257,8 @@ class KatabDialog {
             ? this._noResultsSynthesis
                 ? NO_RESULTS_SYNTHESIS_SYSTEM_INSTRUCTION
                 : this._isDeepResearchActive()
-                  ? FORCE_SYNTHESIS_SYSTEM_INSTRUCTION
-                  : REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION
+                    ? FORCE_SYNTHESIS_SYSTEM_INSTRUCTION
+                    : REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION
             : '';
         let systemPromptText = this._mergeSystemPromptParts(
             this._buildDateSystemPromptLine(),
@@ -7234,13 +7271,13 @@ class KatabDialog {
             try {
                 deepseekSystemPrompt =
                     this._settings.get_string('deepseek-system-prompt').trim() || '';
-            } catch (_e) {}
+            } catch (_e) { }
             systemPromptText = this._mergeSystemPromptParts(deepseekSystemPrompt, systemPromptText);
         } else if (provider === 'ollama') {
             let ollamaSystemPrompt = DEFAULT_OLLAMA_SYSTEM_PROMPT;
             try {
                 ollamaSystemPrompt = this._settings.get_string('ollama-system-prompt').trim();
-            } catch (_e) {}
+            } catch (_e) { }
             systemPromptText = this._mergeSystemPromptParts(ollamaSystemPrompt, systemPromptText);
         }
         if (provider === 'anthropic') {
@@ -7436,6 +7473,20 @@ class KatabDialog {
     // Trim message history to keep the first system message + the most
     // recent N exchanges, then rebuild the chat UI.
     _compactConversation() {
+        // Compaction replaces the whole history array and tears down the
+        // message list.  Doing that mid-stream would orphan the active
+        // response (its user message could even be trimmed away), so require
+        // a settled request first.
+        if (this._lifecycle.isResponding()) {
+            this._addSystemMessage(
+                'Stop the current response before compacting the conversation.',
+                { variant: 'warning' },
+            );
+            return;
+        }
+        // A pending first-turn title no longer describes the trimmed chat.
+        this._deferredChatTitle = null;
+
         const keepExchanges = COMPACT_CONVERSATION_KEEP_EXCHANGES;
         const keepCount = keepExchanges * 2; // user + assistant per exchange
 
@@ -7458,7 +7509,24 @@ class KatabDialog {
         const nonSystem =
             systemIdx >= 0 ? this._messageHistory.slice(systemIdx + 1) : [...this._messageHistory];
         const recent = nonSystem.slice(-keepCount);
-        newHistory.push(...recent);
+        // Drop leading messages that belong to a trimmed-away exchange: an
+        // orphaned tool result / empty tool-call turn / internal injection at
+        // the head would make the next API payload invalid.
+        let start = 0;
+        while (
+            start < recent.length &&
+            (recent[start].role === 'tool' ||
+                this._isToolResultOnlyMessage(recent[start]) ||
+                this._isToolCallIntermediary(recent[start]) ||
+                recent[start]._healingInjection ||
+                recent[start]._researchSummary ||
+                recent[start]._synthesisRetry ||
+                recent[start]._planInjection ||
+                isSessionMemoryMessage(recent[start]))
+        ) {
+            start++;
+        }
+        newHistory.push(...recent.slice(start));
 
         // Insert a notice if messages were actually trimmed
         const trimmed = this._messageHistory.length - newHistory.length;
@@ -7482,13 +7550,27 @@ class KatabDialog {
         this._loadingConversation = true;
         try {
             for (const msg of this._messageHistory) {
+                // Same visibility rules as _loadConversation: never render
+                // internal injections, tool-result turns, or blank tool-call
+                // intermediates as chat bubbles.
+                if (
+                    msg._healingInjection ||
+                    msg._researchSummary ||
+                    msg._synthesisRetry ||
+                    msg._planInjection ||
+                    isSessionMemoryMessage(msg)
+                ) {
+                    continue;
+                }
                 if (msg.role === 'user') {
-                    this._addChatMessage('You', String(msg.content ?? '').trim(), 'user', msg);
+                    if (this._isToolResultOnlyMessage(msg)) continue;
+                    this._addChatMessage('You', this._extractMessageText(msg).trim(), 'user', msg);
                 } else if (msg.role === 'assistant') {
-                    const displayContent =
-                        typeof msg.content === 'string' && msg.content.trim()
-                            ? msg.content
-                            : '[No response content was saved for this message.]';
+                    if (this._isToolCallIntermediary(msg)) continue;
+                    let displayContent = this._extractMessageText(msg).trim();
+                    if (!displayContent) {
+                        displayContent = '[No response content was saved for this message.]';
+                    }
                     this._addChatMessage('Katab AI', displayContent, 'assistant', msg);
                 }
             }
@@ -7502,8 +7584,8 @@ class KatabDialog {
         this._addSystemMessage(
             trimmed > 0
                 ? format(_('Conversation compacted — kept last {count} exchanges.'), {
-                      count: keepExchanges,
-                  })
+                    count: keepExchanges,
+                })
                 : _('Conversation is already compact.'),
             trimmed > 0 ? { variant: 'info' } : { variant: 'muted' },
         );
@@ -7636,7 +7718,16 @@ class KatabDialog {
         let tail = [];
         try {
             tail = this._messageHistory
-                .filter((message) => !isSessionMemoryMessage(message))
+                .filter(
+                    (message) =>
+                        !isSessionMemoryMessage(message) &&
+                        // Transient retry/plan instructions are model-facing
+                        // scaffolding, not conversation content — folding them
+                        // into the summary only adds noise.
+                        !message._healingInjection &&
+                        !message._synthesisRetry &&
+                        !message._planInjection,
+                )
                 .map((message) => this._sanitizeHistoryMessage(message, { provider }));
         } catch (e) {
             // Never swallow this silently — a persistent sanitize failure would
@@ -7854,7 +7945,7 @@ class KatabDialog {
         let username = '';
         try {
             username = GLib.get_user_name() || '';
-        } catch (_e) {}
+        } catch (_e) { }
 
         let normalized = String(username)
             .trim()
@@ -8086,7 +8177,7 @@ class KatabDialog {
         addLine('Prompt caching made this reply cheaper', 'katab-cache-drawer-title');
         addLine(
             `DeepSeek reused ${savings.hitTokens.toLocaleString()} of ${savings.promptTokens.toLocaleString()} input tokens ` +
-                `(${savings.hitRatePct}% cache hit) from an earlier request and billed them at a fraction of the normal price.`,
+            `(${savings.hitRatePct}% cache hit) from an earlier request and billed them at a fraction of the normal price.`,
             'katab-cache-drawer-line',
         );
         addLine(
@@ -8224,10 +8315,10 @@ class KatabDialog {
                                     outcome.ok
                                         ? { status: 'success' }
                                         : {
-                                              status: 'error',
-                                              error:
-                                                  outcome.error || 'Knowledge base update failed.',
-                                          },
+                                            status: 'error',
+                                            error:
+                                                outcome.error || 'Knowledge base update failed.',
+                                        },
                                 );
                             })
                             .catch((e) => {
@@ -8293,10 +8384,10 @@ class KatabDialog {
                                     outcome.ok
                                         ? { status: 'success' }
                                         : {
-                                              status: 'error',
-                                              error:
-                                                  outcome.error || 'Knowledge base forget failed.',
-                                          },
+                                            status: 'error',
+                                            error:
+                                                outcome.error || 'Knowledge base forget failed.',
+                                        },
                                 );
                             })
                             .catch((e) => {
@@ -8561,6 +8652,16 @@ class KatabDialog {
                     this._modelPreloadInFlight = false;
                     try {
                         session.send_and_read_finish(res);
+                        // A 404 (model not pulled) or 5xx must not be logged
+                        // as "ready" — the next real send would then pay the
+                        // cold-load cost with no hint about why.
+                        const status = message.status_code;
+                        if (status < 200 || status >= 300) {
+                            log(
+                                `[Katab:warmup] Ollama preload returned HTTP ${status} for ${model} — the model may not be available.`,
+                            );
+                            return;
+                        }
                         log(`[Katab:warmup] Ollama model ${model} is loaded and ready`);
                     } catch (e) {
                         log(`[Katab:warmup] Ollama preload failed: ${e.message || e}`);
@@ -8722,6 +8823,17 @@ class KatabDialog {
         }
     }
 
+    /** Anthropic tool-result turns are persisted as user messages whose
+     *  content is an array of tool_result blocks — not real user prompts. */
+    _isToolResultOnlyMessage(msg) {
+        return Boolean(
+            msg &&
+            Array.isArray(msg.content) &&
+            msg.content.length > 0 &&
+            msg.content.every((block) => block?.type === 'tool_result'),
+        );
+    }
+
     _isToolCallIntermediary(msg) {
         // Non-Anthropic path: _handleToolCalls pushes
         //   { role: 'assistant', tool_calls: [...] }
@@ -8760,6 +8872,8 @@ class KatabDialog {
         }
         this._cancelStream();
         this._lastResponseErrored = false;
+        // A title deferred for the previous chat must not fire for this one.
+        this._deferredChatTitle = null;
         this._currentConversationId = entry.id;
         this._messageHistory = [...entry.messages];
         this._loadSessionMemoryFromHistory();
@@ -8821,11 +8935,7 @@ class KatabDialog {
                     continue;
                 }
                 if (msg.role === 'user') {
-                    if (
-                        Array.isArray(msg.content) &&
-                        msg.content.length > 0 &&
-                        msg.content.every((b) => b?.type === 'tool_result')
-                    ) {
+                    if (this._isToolResultOnlyMessage(msg)) {
                         continue;
                     }
                     if (Array.isArray(msg.knowledgeUsage)) {
@@ -8834,7 +8944,9 @@ class KatabDialog {
                     if (this._getMessageAttachments(msg).length > 0) {
                         hasDetachedAttachments = true;
                     }
-                    this._addChatMessage('You', String(msg.content ?? '').trim(), 'user', {
+                    // Structured content arrays (e.g. native vision text +
+                    // image blocks) must not render as "[object Object]".
+                    this._addChatMessage('You', this._extractMessageText(msg).trim(), 'user', {
                         ...msg,
                         _showMissingAttachmentNotice: true,
                     });
@@ -8872,12 +8984,12 @@ class KatabDialog {
                     // If content is missing/empty but this is a legitimate
                     // assistant message (not a tool intermediary), render it
                     // with a placeholder so the bubble is still visible.
-                    const displayContent =
-                        typeof msg.content === 'string' && msg.content.trim()
-                            ? msg.content
-                            : msg.content !== undefined && msg.content !== null
-                              ? String(msg.content)
-                              : '[No response content was saved for this message.]';
+                    // Content arrays (Anthropic text blocks) are extracted to
+                    // plain text, never stringified as "[object Object]".
+                    let displayContent = this._extractMessageText(msg).trim();
+                    if (!displayContent) {
+                        displayContent = '[No response content was saved for this message.]';
+                    }
                     lastAssistantUI = this._addChatMessage(
                         'Katab AI',
                         displayContent,
@@ -9061,6 +9173,7 @@ class KatabDialog {
         HistoryManager.flushSync();
         this._currentConversationId = null;
         this._messageHistory = [];
+        this._deferredChatTitle = null;
         this._sessionMemory = '';
         this._sessionMemoryStatus = 'empty';
         this._compactionInFlight = false;
@@ -9247,8 +9360,8 @@ class KatabDialog {
                     typeof message.content === 'string'
                         ? message.content
                         : Array.isArray(message.content)
-                          ? message.content.map((b) => b?.content || '').join('\n')
-                          : '';
+                            ? message.content.map((b) => b?.content || '').join('\n')
+                            : '';
                 // Only the page itself counts as a source — not the navigation
                 // links its result now lists (followed pages are collected
                 // from their own tool calls).  explore_docs results are a pure
@@ -9379,7 +9492,7 @@ class KatabDialog {
         } finally {
             try {
                 inputStream.close(null);
-            } catch (_e) {}
+            } catch (_e) { }
         }
 
         return chunks.join('').trim();
@@ -9468,13 +9581,17 @@ class KatabDialog {
     }
 
     _regenerateResponse() {
-        // Find the last user message and re-send it.
-        let userMessages = this._messageHistory.filter((m) => m.role === 'user');
+        // Find the last REAL user prompt and re-send it.  Anthropic tool-result
+        // turns are stored as user messages with array content; using one here
+        // used to put "[object Object]" into the prompt box.
+        let userMessages = this._messageHistory.filter(
+            (m) => m.role === 'user' && !this._isToolResultOnlyMessage(m),
+        );
         if (userMessages.length === 0) {
             return;
         }
         let lastUserMsg = userMessages[userMessages.length - 1];
-        let promptText = String(lastUserMsg.content ?? '').trim();
+        let promptText = String(this._extractMessageText(lastUserMsg) ?? '').trim();
         if (promptText === '') {
             return;
         }
@@ -10253,7 +10370,7 @@ class KatabDialog {
         clearResearchCheckpoint();
         this._cancelResearchPlan(
             error.message ||
-                'Deep research stopped: the web search / scraping service is unreachable.',
+            'Deep research stopped: the web search / scraping service is unreachable.',
         );
     }
 
@@ -10719,7 +10836,7 @@ class KatabDialog {
             'Compiling research report from all gathered data\u2026',
             { plain: true },
         );
-        this._streamResponse(uiElements);
+        this._startStreamResponse(uiElements);
         return true;
     }
 
@@ -10746,8 +10863,8 @@ class KatabDialog {
                     this._globalResearchContext.coveredUrls instanceof Set
                         ? [...this._globalResearchContext.coveredUrls]
                         : Array.isArray(this._globalResearchContext.coveredUrls)
-                          ? this._globalResearchContext.coveredUrls
-                          : [];
+                            ? this._globalResearchContext.coveredUrls
+                            : [];
                 serializableContext = {
                     summaries: this._globalResearchContext.summaries || [],
                     coveredUrls: coveredUrlsArr,
@@ -12806,10 +12923,10 @@ class KatabDialog {
                 kb.kind === 'search'
                     ? kb.query
                     : webSearchQuery !== null
-                      ? webSearchQuery
-                      : crawlCommand?.isCommand
-                        ? stripCrawl4AICommand(promptText) || promptText
-                        : promptText,
+                        ? webSearchQuery
+                        : crawlCommand?.isCommand
+                            ? stripCrawl4AICommand(promptText) || promptText
+                            : promptText,
         };
         if (documentMetas.length) {
             userMessage.documents = documentMetas;
@@ -13472,7 +13589,7 @@ class KatabDialog {
                 });
             }
 
-            this._streamResponse(uiElements, { cancellable: requestCancellable });
+            this._startStreamResponse(uiElements, { cancellable: requestCancellable });
         } catch (e) {
             if (this._isRequestCancelled(e)) {
                 return;
@@ -13646,7 +13763,7 @@ class KatabDialog {
                 } catch (error) {
                     this._addSystemMessage(
                         error.message ||
-                            format(_('Could not open the document picker: {error}'), { error }),
+                        format(_('Could not open the document picker: {error}'), { error }),
                     );
                     return null;
                 }
@@ -14258,6 +14375,36 @@ class KatabDialog {
         return { promptText, knowledgeContext, autoFallbackWebSearch, sendKnowledgeUsage };
     }
 
+    /**
+     * Fire-and-forget wrapper around _streamResponse.  Every re-stream site
+     * (tool loop, synthesis retry, DeepSeek retry, research phase) calls the
+     * async method without awaiting it.  An unexpected failure during the
+     * pre-send setup therefore used to become an unhandled rejection AND leave
+     * the request lifecycle active forever (the send button stayed on Stop).
+     * This wrapper observes the promise and always settles the response.
+     */
+    _startStreamResponse(uiElements, options = {}) {
+        this._streamResponse(uiElements, options).catch((error) => {
+            if (this._isRequestCancelled(error)) return;
+            log(`[Katab] Streaming request failed unexpectedly: ${error?.message || error}`);
+            if (!this._responseUiAlive(uiElements)) {
+                this._clearActiveResponseState();
+                return;
+            }
+            try {
+                this._renderLocalAssistantError(
+                    uiElements,
+                    error?.message || 'The request could not be started.',
+                );
+            } catch (renderError) {
+                log(
+                    `[Katab] Failed to render the streaming error: ${renderError?.message || renderError}`,
+                );
+                this._clearActiveResponseState();
+            }
+        });
+    }
+
     async _streamResponse(uiElements, { cancellable = null, retryAttempt = 0 } = {}) {
         const provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
@@ -14265,7 +14412,7 @@ class KatabDialog {
         if (provider !== 'ollama') {
             try {
                 apiKey = this._settings.get_string(`${provider}-api-key`);
-            } catch (e) {}
+            } catch (e) { }
         }
         let model = this._settings.get_string(`${provider}-model`);
 
@@ -14413,8 +14560,8 @@ class KatabDialog {
             ? this._noResultsSynthesis
                 ? NO_RESULTS_SYNTHESIS_SYSTEM_INSTRUCTION
                 : this._isDeepResearchActive()
-                  ? FORCE_SYNTHESIS_SYSTEM_INSTRUCTION
-                  : REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION
+                    ? FORCE_SYNTHESIS_SYSTEM_INSTRUCTION
+                    : REGULAR_SYNTHESIS_SYSTEM_INSTRUCTION
             : '';
         // The current date is injected for every provider so replies can reason about
         // "today"; the web-safety policy is appended only when web tools are active.
@@ -14486,7 +14633,7 @@ class KatabDialog {
             if (visionConfig.backend === DEEPSEEK_VISION_BACKEND_OLLAMA) {
                 try {
                     visionBaseUrl = this._settings.get_string('ollama-url') || '';
-                } catch (_e) {}
+                } catch (_e) { }
             } else {
                 visionBaseUrl =
                     visionConfig.url ||
@@ -14672,8 +14819,8 @@ class KatabDialog {
             provider === 'deepseek'
                 ? DEEPSEEK_STREAM_TIMEOUT_SECONDS
                 : provider === 'ollama'
-                  ? OLLAMA_STREAM_TIMEOUT_SECONDS
-                  : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+                    ? OLLAMA_STREAM_TIMEOUT_SECONDS
+                    : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
 
         // The warm-up row covers the model wait instead of a static status
         // line (which makes a cold local model look hung).  A status render
@@ -15012,7 +15159,7 @@ class KatabDialog {
                 this._applyAssistantRender(uiElements, 'Retrying synthesis…', {
                     plain: true,
                 });
-                this._streamResponse(uiElements);
+                this._startStreamResponse(uiElements);
                 return;
             }
 
@@ -15114,7 +15261,7 @@ class KatabDialog {
                 this._applyAssistantRender(uiElements, 'Refining synthesis…', {
                     plain: true,
                 });
-                this._streamResponse(uiElements);
+                this._startStreamResponse(uiElements);
                 return;
             }
             log(`[Katab:synth-gate] Synthesis retry exhausted — accepting current response.`);
@@ -15181,7 +15328,7 @@ class KatabDialog {
                     this._applyAssistantRender(uiElements, 'Retrying synthesis…', {
                         plain: true,
                     });
-                    this._streamResponse(uiElements);
+                    this._startStreamResponse(uiElements);
                     return;
                 }
                 log(`[Katab:synthesis] Synthesis retry exhausted — showing fallback.`);
@@ -15214,7 +15361,7 @@ class KatabDialog {
                 this._applyAssistantRender(uiElements, 'Retrying with corrected tool format…', {
                     plain: true,
                 });
-                this._streamResponse(uiElements);
+                this._startStreamResponse(uiElements);
                 return;
             }
             log(`[Katab:heal] Healing retries exhausted — stripping markup.`);
@@ -15673,8 +15820,9 @@ class KatabDialog {
                 ) {
                     continue;
                 }
-                // Skip synthesis retry messages (will be re-added)
-                if (msg._synthesisRetry) {
+                // Skip synthesis retry / healing / plan injections (will be
+                // re-added or no longer relevant for the synthesis turn).
+                if (msg._synthesisRetry || msg._healingInjection || msg._planInjection) {
                     continue;
                 }
                 keepMessages.push(msg);
@@ -15933,15 +16081,15 @@ class KatabDialog {
             provider === 'deepseek'
                 ? DEEPSEEK_STREAM_TIMEOUT_SECONDS
                 : provider === 'ollama'
-                  ? OLLAMA_STREAM_TIMEOUT_SECONDS
-                  : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
+                    ? OLLAMA_STREAM_TIMEOUT_SECONDS
+                    : DEFAULT_PROVIDER_TIMEOUT_SECONDS;
         soupSession.timeout = timeoutSeconds ?? defaultTimeout;
 
         let apiKey = '';
         if (provider !== 'ollama') {
             try {
                 apiKey = this._settings.get_string(`${provider}-api-key`);
-            } catch (_e) {}
+            } catch (_e) { }
         }
 
         // Provider request dialects (endpoint, headers, payload) live in
@@ -16045,7 +16193,7 @@ class KatabDialog {
             let ollamaUrl = '';
             try {
                 ollamaUrl = this._settings.get_string('ollama-url') || '';
-            } catch (_e) {}
+            } catch (_e) { }
             endpoint = ollamaUrl.trim();
             if (!endpoint) {
                 return {
@@ -16107,7 +16255,7 @@ class KatabDialog {
             if (!baseUrl) {
                 try {
                     baseUrl = this._settings.get_string('deepseek-url') || '';
-                } catch (_e) {}
+                } catch (_e) { }
             }
             if (!baseUrl) {
                 return {
@@ -16213,7 +16361,7 @@ class KatabDialog {
                     backend === DEEPSEEK_VISION_BACKEND_OLLAMA
                         ? (parsed.prompt_eval_count || 0) + (parsed.eval_count || 0)
                         : (parsed.usage?.prompt_tokens || 0) +
-                          (parsed.usage?.completion_tokens || 0);
+                        (parsed.usage?.completion_tokens || 0);
                 if (usageTokens > 0) {
                     this._currentUsage += usageTokens;
                     this._renderTokenCounter();
@@ -16444,8 +16592,8 @@ class KatabDialog {
                     toolName === CRAWL4AI_TOOL_NAME
                         ? 'Scraped URL'
                         : toolName === EXPLORE_DOCS_TOOL_NAME
-                          ? 'Explored URL'
-                          : 'Page URL';
+                            ? 'Explored URL'
+                            : 'Page URL';
                 expandValue = u;
             }
         }
@@ -16461,13 +16609,13 @@ class KatabDialog {
         const logEntry = isKbTool
             ? null
             : this._addToolCallLogEntry(uiElements, {
-                  toolName: toolName || 'unknown',
-                  status: 'pending',
-                  detail: argsSummary || 'Executing…',
-                  expandLabel,
-                  expandValue,
-                  parentBox: groupBody,
-              });
+                toolName: toolName || 'unknown',
+                status: 'pending',
+                detail: argsSummary || 'Executing…',
+                expandLabel,
+                expandValue,
+                parentBox: groupBody,
+            });
 
         let resultText = '';
 
@@ -16532,9 +16680,9 @@ class KatabDialog {
                     }
                     const categoriesValue = Array.isArray(args.categories)
                         ? args.categories
-                              .map((c) => String(c ?? '').trim())
-                              .filter(Boolean)
-                              .join(',')
+                            .map((c) => String(c ?? '').trim())
+                            .filter(Boolean)
+                            .join(',')
                         : String(args.categories ?? '').trim();
                     if (categoriesValue) {
                         // Explicit categories replace the default category
@@ -16931,8 +17079,8 @@ class KatabDialog {
                 e instanceof WebSearchToolError
                     ? `Web search error: ${e.message}`
                     : e instanceof Crawl4AIError
-                      ? `Web scraping error: ${e.message}`
-                      : `Error executing tool: ${e.message}`;
+                        ? `Web scraping error: ${e.message}`
+                        : `Error executing tool: ${e.message}`;
 
             if (isFetchFailure && turn.consecutiveReadUrlFailures >= 2) {
                 errorBase += `\n\nNOTE: This is the ${turn.consecutiveReadUrlFailures}th consecutive page that could not be read — these sites may require JavaScript, block scraping, or use paywalls. Prefer crawl_url for JavaScript-heavy pages, try different sources, or follow links from pages you have already read.`;
@@ -17146,7 +17294,7 @@ class KatabDialog {
         }
 
         this._applyAssistantRender(uiElements, 'Waiting for final response...', { plain: true });
-        this._streamResponse(uiElements);
+        this._startStreamResponse(uiElements);
     }
 
     // ── Research findings summary builder ────────────────────────────────────
@@ -17302,7 +17450,7 @@ class KatabDialog {
         // Need to close stream since we got a 404
         try {
             inputStream.close(null);
-        } catch (e) {}
+        } catch (e) { }
 
         let { contentBox } = uiElements;
         this._applyAssistantRender(
@@ -17444,20 +17592,28 @@ class KatabDialog {
 
         dataInputStream.read_line_async(GLib.PRIORITY_DEFAULT, cancellable, (stream, res) => {
             if (cancellable && cancellable.is_cancelled()) {
-                if (cancelBtn) cancelBtn.destroy();
+                try {
+                    cancelBtn?.destroy();
+                } catch (_e) {
+                    /* already disposed by the Cancel handler */
+                }
                 return;
             }
             try {
                 let [lineBytes] = stream.read_line_finish(res);
                 if (lineBytes === null) {
                     // Pull finished
-                    if (cancelBtn) cancelBtn.destroy();
+                    try {
+                        cancelBtn?.destroy();
+                    } catch (_e) {
+                        /* already disposed */
+                    }
                     this._applyAssistantRender(
                         uiElements,
                         `Model '${model}' pulled. Resuming request...`,
                         { plain: true },
                     );
-                    this._streamResponse(uiElements);
+                    this._startStreamResponse(uiElements);
                     return;
                 }
 
@@ -17479,9 +17635,33 @@ class KatabDialog {
                 this._readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn);
             } catch (e) {
                 if (cancellable && cancellable.is_cancelled()) {
-                    if (cancelBtn) cancelBtn.destroy();
+                    try {
+                        cancelBtn?.destroy();
+                    } catch (_e) {
+                        /* already disposed */
+                    }
                     return;
                 }
+                // A GLib error from read_line_finish means the socket is dead
+                // (connection reset / broken pipe).  Re-arming the read would
+                // fail identically forever in a busy loop — surface the
+                // interruption and clean up instead.
+                if (e && typeof e.matches === 'function') {
+                    log(`[Katab] Model pull stream read error — stopping: ${e.message || e}`);
+                    try {
+                        cancelBtn?.destroy();
+                    } catch (_e) {
+                        /* already disposed */
+                    }
+                    this._renderLocalAssistantError(
+                        uiElements,
+                        format(_("Downloading model '{model}' was interrupted. Try again."), {
+                            model,
+                        }),
+                    );
+                    return;
+                }
+                // Parse errors on partial/non-JSON lines are safe to skip.
                 this._readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn);
             }
         });
@@ -17855,17 +18035,17 @@ const Indicator = GObject.registerClass(
             let status = state.isStreaming
                 ? 'replying'
                 : state.hasError
-                  ? 'error'
-                  : state.isOpen
-                    ? 'open'
-                    : 'ready';
+                    ? 'error'
+                    : state.isOpen
+                        ? 'open'
+                        : 'ready';
             let statusLabel = state.isStreaming
                 ? _('Replying')
                 : state.hasError
-                  ? _('Error')
-                  : state.isOpen
-                    ? _('Open')
-                    : _('Ready');
+                    ? _('Error')
+                    : state.isOpen
+                        ? _('Open')
+                        : _('Ready');
             this._currentChatStatusLabel.set_text(statusLabel);
 
             const statusClasses = [
@@ -18022,9 +18202,12 @@ const Indicator = GObject.registerClass(
                     x_align: Clutter.ActorAlign.CENTER,
                     accessible_name: _('Delete chat'),
                 });
-                // Avoid bubbling the clicked event to the main item
+                // Avoid bubbling the clicked event to the main item.
+                // Deletion must also purge the conversation from the local
+                // knowledge base — deleting only the history row left the
+                // chat searchable in RAG forever.
                 deleteBtn.connect('clicked', () => {
-                    HistoryManager.deleteConversation(entry.id);
+                    this._extension.deleteConversation(entry.id);
                     this._updateHistoryMenu();
                 });
                 item.add_child(deleteBtn);
@@ -18058,6 +18241,39 @@ export default class KatabExtension extends Extension {
         Main.panel.addToStatusArea(this.uuid, this._indicator);
         this._dialog = null;
         this._registerKeybindings();
+    }
+
+    /**
+     * Delete a saved conversation from every local store.  The dialog owns the
+     * purge logic when it exists; otherwise delete the history entry here and
+     * purge the knowledge base with a one-off runtime so a chat deleted from
+     * the panel menu never stays searchable in RAG.
+     */
+    deleteConversation(id) {
+        if (!id) return;
+        if (this._dialog) {
+            this._dialog._deleteConversation(id);
+            return;
+        }
+        HistoryManager.deleteConversation(id);
+        this.notifyCurrentChatChanged();
+        try {
+            const ragConfig = readRagConfig(this._settings);
+            if (!ragConfig.enabled) return;
+            const runtime = new RagRuntime();
+            runtime
+                .deleteData({ prefixes: [id] }, ragConfig, null)
+                .then((res) =>
+                    log(
+                        `[Katab:rag] Purged ${res.deleted} chunk(s) for deleted conversation ${id}`,
+                    ),
+                )
+                .catch((e) =>
+                    log(`[Katab:rag] Failed to purge conversation ${id} from KB: ${e.message}`),
+                );
+        } catch (_e) {
+            /* settings read may fail during teardown */
+        }
     }
 
     disable() {
@@ -18211,7 +18427,7 @@ export default class KatabExtension extends Extension {
             } else {
                 Main.wm.removeKeybinding('toggle-current-chat');
             }
-        } catch (_e) {}
+        } catch (_e) { }
 
         this._keybindingRegisteredViaExtension = false;
         this._hasRegisteredKeybinding = false;

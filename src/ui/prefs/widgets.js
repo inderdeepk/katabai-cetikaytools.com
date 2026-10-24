@@ -121,7 +121,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         };
 
         syncFromSettings();
-        settings.connect(`changed::${key}`, syncFromSettings);
+        watch(`changed::${key}`, syncFromSettings);
 
         row.connect(signal, () => {
             if (syncing) return;
@@ -460,7 +460,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         };
 
         syncRowState();
-        settings.connect('changed::provider', syncRowState);
+        watch('changed::provider', syncRowState);
 
         row.connect('activated', () => {
             settings.set_string('provider', provider);
@@ -513,7 +513,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         };
 
         syncFromSettings();
-        settings.connect(`changed::${key}`, syncFromSettings);
+        watch(`changed::${key}`, syncFromSettings);
 
         row.connect('notify::selected', () => {
             if (syncing) return;
@@ -661,7 +661,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         };
 
         syncFromSettings();
-        settings.connect(`changed::${key}`, syncFromSettings);
+        watch(`changed::${key}`, syncFromSettings);
         buffer.connect('changed', () => {
             if (syncing) {
                 return;
@@ -810,7 +810,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         };
 
         syncShortcutRow();
-        settings.connect(`changed::${key}`, syncShortcutRow);
+        watch(`changed::${key}`, syncShortcutRow);
 
         row.add_suffix(buttonBox);
         row.activatable_widget = shortcutButton;

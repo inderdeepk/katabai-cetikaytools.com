@@ -60,11 +60,26 @@ const RAG_READ_CHUNK_BYTES = 64 * 1024; // 64 KB
  * @param {string} message - Human-readable error description.
  * @param {{ code?: string, detail?: string }} [opts]
  */
-export function RagError(message, { code = 'rag-error', detail = '' } = {}) {
+export function RagError(message, { code = 'rag-error', detail = '', statusCode = null } = {}) {
     this.message = String(message || '');
     this.code = String(code || '');
     this.detail = String(detail || '');
+    this.statusCode = statusCode === null ? null : Number(statusCode);
     this.name = 'RagError';
+}
+
+/**
+ * Resolve a human-readable HTTP status phrase without relying on
+ * `Soup.Status` enum conversion (which rejects codes this libsoup build does
+ * not enumerate, e.g. 429/413 on GNOME 46 / libsoup 3.4).
+ */
+export function httpStatusPhrase(status) {
+    const code = Number(status) || 0;
+    try {
+        return Soup.Status.get_phrase(code) || 'Unknown Error';
+    } catch (_e) {
+        return 'Unknown Error';
+    }
 }
 RagError.prototype = Object.create(Error.prototype);
 RagError.prototype.constructor = RagError;
@@ -410,7 +425,13 @@ export class RagRuntime {
             });
             disconnectCancelHandler();
 
-            const status = message.get_status();
+            // Read the raw integer status.  `message.get_status()` converts
+            // the code to a `Soup.Status` enum value and THROWS for codes this
+            // libsoup build does not enumerate (429 and 413 are missing on
+            // GNOME 46 / libsoup 3.4).  That throw used to be caught as a
+            // generic "connection-failed", hiding the service's real response
+            // (e.g. the KB's HTTP 413 document cap).
+            const status = message.status_code;
             const decoder = new TextDecoder('utf-8');
             const text = decoder.decode(responseBytes || new Uint8Array());
 
@@ -421,15 +442,19 @@ export class RagRuntime {
                 body = text;
             }
 
-            if (status !== Soup.Status.OK && status !== Soup.Status.CREATED) {
+            if (status < 200 || status >= 300) {
                 const detail =
                     typeof body === 'object'
                         ? body.detail || body.message || text.slice(0, 500)
                         : text.slice(0, 500);
-                throw new RagError(`RAG service returned HTTP ${status}`, {
-                    code: 'http-error',
-                    detail,
-                });
+                throw new RagError(
+                    `RAG service returned HTTP ${status} (${httpStatusPhrase(status)})`,
+                    {
+                        code: 'http-error',
+                        detail,
+                        statusCode: status,
+                    },
+                );
             }
 
             return { status, body };
@@ -509,7 +534,7 @@ export class RagRuntime {
      * @param {Gio.Cancellable|null} [cancellable]
      * @returns {Promise<{ indexed: number, chunks: number }>}
      */
-    async index(texts, collection, config, cancellable = null) {
+    async index(texts, collection, config, cancellable = null, { replaceIds = null } = {}) {
         if (!texts || texts.length === 0) {
             return { indexed: 0, chunks: 0 };
         }
@@ -529,8 +554,14 @@ export class RagRuntime {
             max_chunks_per_collection: config.maxChunksPerCollection ?? 10000,
             max_total_size_mb: config.maxTotalSizeMb ?? 500,
             auto_prune: config.autoPrune ?? true,
-            // Replace old chunks when re-indexing the same document IDs
-            replace_ids: texts.map((t) => String(t.id || '')),
+            // Replace old chunks when re-indexing the same document IDs.
+            // Multi-part documents pass their BASE id here so every old part
+            // (including parts left over from a longer previous version) is
+            // deleted instead of only the ids that still exist now.
+            replace_ids: (Array.isArray(replaceIds) && replaceIds.length > 0
+                ? replaceIds
+                : texts.map((t) => t.id)
+            ).map(String),
         };
 
         const { body } = await this._request('POST', url, payload, cancellable);

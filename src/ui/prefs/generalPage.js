@@ -12,6 +12,7 @@ import { gettext as _, format } from '../../shared/i18n.js';
 export function buildGeneralPage(ctx) {
     const {
         settings,
+        watch,
         window,
         createPreferencesPage,
         createPreferencesGroup,
@@ -235,7 +236,7 @@ export function buildGeneralPage(ctx) {
         budgetWarningRow.visible = enabled;
     };
     syncBudgetVisibility();
-    settings.connect('changed::token-budget-enabled', syncBudgetVisibility);
+    watch('changed::token-budget-enabled', syncBudgetVisibility);
 
     createBooleanRow(
         _('Desktop Notifications'),
@@ -290,17 +291,17 @@ export function buildGeneralPage(ctx) {
             const label = isValidPin
                 ? companion.name
                 : format(_('{pet} · Following'), {
-                      pet: getPetDefinition(currentProvider)?.name || companion.name,
-                  });
+                    pet: getPetDefinition(currentProvider)?.name || companion.name,
+                });
             setStatusBadge(activePetBadge, label, 'katab-prefs-status-detected');
         } catch (_e) {
             setStatusBadge(activePetBadge, _('Unavailable'), 'katab-prefs-status-install');
         }
     };
     refreshActivePetBadge();
-    settings.connect('changed::provider', refreshActivePetBadge);
-    settings.connect('changed::pet-selection-mode', refreshActivePetBadge);
-    settings.connect('changed::pet-pinned-form', refreshActivePetBadge);
+    watch('changed::provider', refreshActivePetBadge);
+    watch('changed::pet-selection-mode', refreshActivePetBadge);
+    watch('changed::pet-pinned-form', refreshActivePetBadge);
 
     const { badge: tokenUsageBadge } = createStatusRow(
         _('Usage Ledger'),

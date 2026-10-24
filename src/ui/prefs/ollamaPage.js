@@ -22,6 +22,7 @@ import { gettext as _, format } from '../../shared/i18n.js';
 export function buildOllamaPage(ctx) {
     const {
         settings,
+        watch,
         window,
         createProviderPage,
         createPreferencesGroup,
@@ -241,7 +242,7 @@ export function buildOllamaPage(ctx) {
         for (const row of _savedPresetRows) {
             try {
                 modelPresetsGroup.remove(row);
-            } catch (_e) {}
+            } catch (_e) { }
         }
         _savedPresetRows = [];
 
@@ -348,8 +349,8 @@ export function buildOllamaPage(ctx) {
             const temp =
                 preset['temperature'] !== undefined
                     ? format(_('temp {value}'), {
-                          value: Number(preset['temperature']).toFixed(2),
-                      })
+                        value: Number(preset['temperature']).toFixed(2),
+                    })
                     : '';
             const subtitleParts = [modelName, ctx, temp].filter(Boolean);
 
@@ -430,9 +431,9 @@ export function buildOllamaPage(ctx) {
 
     // Refresh list when active preset changes (e.g., from chat window) or
     // when the prefs window is shown (in case presets.json changed)
-    settings.connect('changed::ollama-active-preset', refreshSavedPresetRows);
+    watch('changed::ollama-active-preset', refreshSavedPresetRows);
     for (const { settingKey } of PRESET_SETTINGS) {
-        settings.connect(`changed::${settingKey}`, () => queuePresetDriftCheck(settingKey));
+        watch(`changed::${settingKey}`, () => queuePresetDriftCheck(settingKey));
     }
 
     const reconciledActivePreset = reconcileActivePreset(settings);
@@ -520,9 +521,9 @@ export function buildOllamaPage(ctx) {
         applyPreset(presetId);
     });
 
-    settings.connect('changed::ollama-preset', syncPresetRow);
+    watch('changed::ollama-preset', syncPresetRow);
     for (const suffix of Object.keys(ollamaSettingTypes)) {
-        settings.connect(`changed::ollama-${suffix}`, () => {
+        watch(`changed::ollama-${suffix}`, () => {
             if (applyingPreset) return;
 
             syncPresetRow();
@@ -627,7 +628,7 @@ export function buildOllamaPage(ctx) {
         syncingContextRow = false;
     };
 
-    settings.connect('changed::ollama-num-ctx', syncContextRow);
+    watch('changed::ollama-num-ctx', syncContextRow);
     syncContextRow();
 
     ctxRow.connect('notify::selected', () => {
@@ -825,7 +826,7 @@ export function buildOllamaPage(ctx) {
         topPRow.sensitive = !active;
         minPRow.sensitive = !active;
     };
-    settings.connect('changed::ollama-mirostat', syncMirostatState);
+    watch('changed::ollama-mirostat', syncMirostatState);
     syncMirostatState();
     generationGroup.add(mirostatExpander);
 

@@ -132,7 +132,7 @@ export function truncateOllamaMessages(messages, { maxBodyChars = 200000 } = {})
 
     if (!Array.isArray(messages) || messages.length <= 4) {
         log(
-            `[Katab:truncate] Skipping (${messages.length} msgs ≤ 4) — estimate=${estimateSize(messages)} chars`,
+            `[Katab:truncate] Skipping (${Array.isArray(messages) ? messages.length : 0} msgs ≤ 4) — estimate=${estimateSize(messages)} chars`,
         );
         return messages;
     }
@@ -354,8 +354,8 @@ export function truncateToolResultForIteration(text, { toolName, iteration = 0, 
         const maxChars = isRead
             ? tier.readUrlChars
             : isCrawl
-              ? tier.crawlChars
-              : tier.knowledgeChars || tier.crawlChars;
+                ? tier.crawlChars
+                : tier.knowledgeChars || tier.crawlChars;
         if (text.length > maxChars) {
             const trimNote = `[Content trimmed at iteration ${iteration} to manage context — re-read this page later if you need the rest.]`;
             if (isRead || isCrawl) {
@@ -574,6 +574,114 @@ export function buildApiAttachmentPayload(
 // ── Provider-dialect sanitization ───────────────────────────────────────────
 
 /**
+ * Deep-clone `tool_calls` (array + function objects) so provider-specific
+ * normalization never rewrites the stored history.  The old in-place rewrite
+ * corrupted cross-provider conversations: sending an Ollama-origin history to
+ * DeepSeek stringified `function.arguments` PERMANENTLY, and switching back to
+ * Ollama then sent a JSON string where the native API expects an object.
+ */
+function cloneToolCalls(toolCalls) {
+    if (!Array.isArray(toolCalls)) return toolCalls;
+    return toolCalls.map((call) => {
+        if (!call || typeof call !== 'object') return call;
+        const cloned = { ...call };
+        if (call.function && typeof call.function === 'object') {
+            cloned.function = { ...call.function };
+        }
+        return cloned;
+    });
+}
+
+/** Ollama expects `function.arguments` as an object; older turns may store a
+ *  JSON string after a provider switch, so parse it back when possible. */
+function normalizeOllamaToolCall(call) {
+    if (!call || typeof call !== 'object') return call;
+    const fn = call.function;
+    if (!fn || typeof fn !== 'object' || typeof fn.arguments !== 'string') return call;
+    const raw = fn.arguments.trim();
+    if (!raw) return call;
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed !== null && typeof parsed === 'object') {
+            return { ...call, function: { ...fn, arguments: parsed } };
+        }
+    } catch (_e) {
+        /* not JSON — leave the original string untouched */
+    }
+    return call;
+}
+
+/**
+ * Convert an OpenAI/DeepSeek-shaped history message into Anthropic's dialect.
+ * Without this, switching providers mid-conversation sent `role:'tool'` rows
+ * (Anthropic only accepts user/assistant) and raw `tool_calls` objects, which
+ * the API rejects with HTTP 400.
+ */
+function finalizeAnthropicMessage(sanitized, message) {
+    // Tool results → a user message carrying a `tool_result` content block.
+    if (
+        sanitized.role === 'tool' ||
+        (message?.tool_call_id !== undefined && sanitized.role !== 'assistant')
+    ) {
+        const text =
+            typeof sanitized.content === 'string'
+                ? sanitized.content
+                : extractMessageText({ content: sanitized.content ?? '' });
+        const toolUseId = String(message?.tool_call_id ?? message?.tool_calls?.[0]?.id ?? '');
+        return {
+            role: 'user',
+            content: [
+                {
+                    type: 'tool_result',
+                    tool_use_id: toolUseId,
+                    content: text || '(no output)',
+                },
+            ],
+        };
+    }
+
+    // Assistant tool calls → `tool_use` content blocks (text first, if any).
+    if (sanitized.role === 'assistant' && Array.isArray(sanitized.tool_calls)) {
+        const blocks = [];
+        const text =
+            typeof sanitized.content === 'string'
+                ? sanitized.content
+                : extractMessageText({ content: sanitized.content ?? '' });
+        if (text && text.trim()) {
+            blocks.push({ type: 'text', text });
+        }
+        for (const call of sanitized.tool_calls) {
+            if (!call || typeof call !== 'object') continue;
+            const fn = call.function && typeof call.function === 'object' ? call.function : {};
+            let input = {};
+            if (fn.arguments && typeof fn.arguments === 'object') {
+                input = fn.arguments;
+            } else if (typeof fn.arguments === 'string' && fn.arguments.trim()) {
+                try {
+                    input = JSON.parse(fn.arguments);
+                } catch (_e) {
+                    input = {};
+                }
+            }
+            blocks.push({
+                type: 'tool_use',
+                id: String(call.id || `toolu_${blocks.length}`),
+                name: String(fn.name || ''),
+                input,
+            });
+        }
+        if (blocks.length > 0) {
+            return { role: 'assistant', content: blocks };
+        }
+    }
+
+    // Anthropic message objects accept only role + content.
+    const content =
+        sanitized.content === undefined || sanitized.content === null ? '' : sanitized.content;
+    return { role: sanitized.role, content };
+}
+
+/**
  * Convert one stored history message into the provider-facing message shape.
  *
  * @param {Object} message - Stored history message (may carry UI-only fields)
@@ -724,7 +832,9 @@ export function sanitizeHistoryMessage(
     }
 
     if (message.tool_calls !== undefined) {
-        sanitized.tool_calls = message.tool_calls;
+        // Clone before any dialect-specific normalization below so the stored
+        // history keeps its original (provider-native) argument shape.
+        sanitized.tool_calls = cloneToolCalls(message.tool_calls);
         // OpenAI-compatible APIs (DeepSeek, OpenAI, Ollama) require content
         // to be null or absent when tool_calls is present. Strip empty/falsy
         // content so the API does not reject the message or return an empty reply.
@@ -827,6 +937,18 @@ export function sanitizeHistoryMessage(
         if (images.length) {
             sanitized.images = images;
         }
+        // Ollama's native tool_calls expect `arguments` as an object (not the
+        // OpenAI JSON string) — restore it for turns recorded under another
+        // provider.
+        if (Array.isArray(sanitized.tool_calls)) {
+            sanitized.tool_calls = sanitized.tool_calls.map(normalizeOllamaToolCall);
+        }
+    }
+
+    // Anthropic accepts only user/assistant roles and content blocks — adapt
+    // OpenAI/DeepSeek-style tool history instead of sending it verbatim.
+    if (provider === 'anthropic') {
+        return finalizeAnthropicMessage(sanitized, message);
     }
 
     return sanitized;

@@ -140,7 +140,28 @@ const ALLOWED_EXTRA = new Set([
     ...METHODS.map((n) => `${n}() {`),
 ]);
 
-// (c) i18n wrap allowance (Oct 2026, surface B): the Switched-engine notice
+// (c) Intentional additions (Oct 2026 warm-up feature): the dedicated
+//     first-prompt title session and the Ollama preload state live in
+//     _initStateFields. Exact lines only.
+const WARMUP_STATE_BLOCK = `        // Dedicated session for the first-prompt chat-title request so its
+        // short timeout (and cancellation) can never touch an in-flight chat
+        // request on the shared session.
+        this._titleSession = new Soup.Session();
+        this._titleSession.timeout = AUTO_TITLE_TIMEOUT_SECONDS;
+        this._titleCancellable = null;
+        this._deferredChatTitle = null; // local models: title after the reply
+        // Ollama warm-up state (see _maybePreloadLocalModel).
+        this._modelPreloadSession = new Soup.Session();
+        this._modelPreloadSession.timeout = OLLAMA_PRELOAD_TIMEOUT_SECONDS;
+        this._modelPreloadTimeoutId = 0;
+        this._modelPreloadKey = '';
+        this._modelPreloadAt = 0;
+        this._modelPreloadInFlight = false;`;
+for (const line of normalizedLines(WARMUP_STATE_BLOCK)) {
+    ALLOWED_EXTRA.add(line);
+}
+
+// (d) i18n wrap allowance (Oct 2026, surface B): the Switched-engine notice
 //     inside _wireSettingsWatchers now builds its text through the shared
 //     format() helper. Exact lines only — accepted when every replacement
 //     line is present on the new side, and subtracted before the extras check.
@@ -203,6 +224,9 @@ for (const name of METHODS) {
         'this._addSystemMessage(`Switchedengineto${getProviderLabel(this._currentProvider)}.`);',
     );
     if (name === '_initStateFields') {
+        // The warm-up feature appended title-session + Ollama-preload state
+        // after the decomposition; remove it before the contiguity check.
+        fb = fb.replace(flat(WARMUP_STATE_BLOCK), '');
         const j = fb.indexOf('this._monitorChangedId=0;');
         const part1 = fb.slice(0, j);
         const part2 = fb.slice(j);

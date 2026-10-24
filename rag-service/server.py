@@ -1103,7 +1103,13 @@ def index_texts(req: IndexRequest):
                     "content": chunk,
                     "metadata": {
                         **text.metadata,
-                        "source_id": text.id,
+                        # A client-supplied source_id groups multi-part
+                        # documents under one replace target so re-indexing a
+                        # shorter version deletes stale parts too.  Defaults to
+                        # the item id for backwards compatibility.
+                        "source_id": str(
+                            (text.metadata or {}).get("source_id") or text.id
+                        ),
                         "indexed_at": time.time(),
                     },
                 }

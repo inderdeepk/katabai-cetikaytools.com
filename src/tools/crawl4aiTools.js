@@ -1168,10 +1168,10 @@ export class Crawl4AIRuntime {
 
         log(
             `[Katab:crawl4ai] Scraping ${validatedUrls.length} URL(s) — mode=${config.extractionMode}` +
-                (llmExtractionActive
-                    ? `, provider=${config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER}`
-                    : '') +
-                `: ${validatedUrls.join(', ')}`,
+            (llmExtractionActive
+                ? `, provider=${config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER}`
+                : '') +
+            `: ${validatedUrls.join(', ')}`,
         );
 
         // ── PDF URLs: native download + pdftotext extraction ───────────
@@ -1460,8 +1460,21 @@ export class Crawl4AIRuntime {
                 'application/pdf, application/octet-stream, */*',
             );
 
+            // Cancel the in-flight message when the caller's cancellable
+            // fires, and disconnect the handler once the send settles so a
+            // long-lived request cancellable does not accumulate handlers.
+            let cancelHandlerId = 0;
+            const disconnectCancelHandler = () => {
+                if (!cancelHandlerId || !cancellable) return;
+                try {
+                    cancellable.disconnect(cancelHandlerId);
+                } catch (_e) {
+                    /* ignore */
+                }
+                cancelHandlerId = 0;
+            };
             if (cancellable) {
-                cancellable.connect(() => {
+                cancelHandlerId = cancellable.connect(() => {
                     try {
                         message.cancel();
                     } catch (_e) {
@@ -1475,6 +1488,7 @@ export class Crawl4AIRuntime {
                 GLib.PRIORITY_DEFAULT,
                 cancellable,
                 (session, result) => {
+                    disconnectCancelHandler();
                     let inputStream = null;
                     try {
                         inputStream = session.send_finish(result);
@@ -1569,6 +1583,7 @@ export class Crawl4AIRuntime {
                                 );
                             });
                     } catch (error) {
+                        disconnectCancelHandler();
                         if (inputStream) {
                             try {
                                 inputStream.close(null);
@@ -1624,8 +1639,8 @@ export class Crawl4AIRuntime {
                 proc = Gio.Subprocess.new(
                     ['pdftotext', '-layout', '-q', '-', '-'],
                     Gio.SubprocessFlags.STDIN_PIPE |
-                        Gio.SubprocessFlags.STDOUT_PIPE |
-                        Gio.SubprocessFlags.STDERR_SILENCE,
+                    Gio.SubprocessFlags.STDOUT_PIPE |
+                    Gio.SubprocessFlags.STDERR_SILENCE,
                 );
             } catch (_error) {
                 reject(new Error('Could not launch pdftotext to read the PDF.'));
@@ -1782,8 +1797,8 @@ export class Crawl4AIRuntime {
                 const detail = completedResult?.structuredJson
                     ? `structured JSON (${JSON.stringify(completedResult.structuredJson).length} chars)`
                     : completedResult?.llmResponse
-                      ? `LLM response (${completedResult.llmResponse.length} chars)`
-                      : 'no output';
+                        ? `LLM response (${completedResult.llmResponse.length} chars)`
+                        : 'no output';
                 log(`[Katab:crawl4ai] LLM extraction completed for ${url} — ${detail}`);
                 return completedResult;
             }
@@ -1818,7 +1833,7 @@ export class Crawl4AIRuntime {
         let llmBlockedByServer = false;
         let results = null;
 
-        for (;;) {
+        for (; ;) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' });
             }
@@ -1889,9 +1904,9 @@ export class Crawl4AIRuntime {
             if (result && result.url) {
                 log(
                     `[Katab:crawl4ai] Markdown scrape ${result.success ? 'completed' : 'FAILED'} for ${result.url}` +
-                        (result.success
-                            ? ` — ${(result.fitMarkdown || '').length} chars`
-                            : ` — ${result.errorMessage || 'unknown error'}`),
+                    (result.success
+                        ? ` — ${(result.fitMarkdown || '').length} chars`
+                        : ` — ${result.errorMessage || 'unknown error'}`),
                 );
             }
         }

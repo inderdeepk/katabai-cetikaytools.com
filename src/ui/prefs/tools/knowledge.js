@@ -11,6 +11,7 @@ import { gettext as _, ngettext, format } from '../../../shared/i18n.js';
 export function buildKnowledgeSection(ctx) {
     const {
         settings,
+        watch,
         window,
         extensionPath,
         createToolSubpage,
@@ -281,10 +282,10 @@ export function buildKnowledgeSection(ctx) {
                             );
                             ragConnStatusRow.subtitle = body.version
                                 ? format(_('Reachable. v{version}, {collections}.{features}'), {
-                                      version: body.version,
-                                      collections: collectionsText,
-                                      features: featuresSuffix,
-                                  })
+                                    version: body.version,
+                                    collections: collectionsText,
+                                    features: featuresSuffix,
+                                })
                                 : format(_('Reachable.{features}'), { features: featuresSuffix });
                         } else {
                             setStatusBadge(ragConnBadge, _('Failed'), 'katab-prefs-status-install');
@@ -443,11 +444,11 @@ export function buildKnowledgeSection(ctx) {
                     );
                     ragServiceStatusRow.subtitle = venvReady
                         ? _(
-                              'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up &amp; Start" to create it and launch the service.',
-                          )
+                            'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up &amp; Start" to create it and launch the service.',
+                        )
                         : _(
-                              'No service is set up yet. Use "Set Up &amp; Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).',
-                          );
+                            'No service is set up yet. Use "Set Up &amp; Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).',
+                        );
                     updateServiceButtons(false, false);
                 } else if (active) {
                     setStatusBadge(ragServiceBadge, _('Running'), 'katab-prefs-status-detected');
@@ -578,9 +579,9 @@ export function buildKnowledgeSection(ctx) {
                             if (!install.success) {
                                 showServiceError(
                                     install.stderr?.trim() ||
-                                        _(
-                                            'Dependency installation failed \u2014 install them manually from the Setup section below.',
-                                        ),
+                                    _(
+                                        'Dependency installation failed \u2014 install them manually from the Setup section below.',
+                                    ),
                                 );
                                 return;
                             }
@@ -849,7 +850,7 @@ export function buildKnowledgeSection(ctx) {
         }
     };
     updateFallbackSubtitle();
-    settings.connect('changed::rag-fallback-threshold', updateFallbackSubtitle);
+    watch('changed::rag-fallback-threshold', updateFallbackSubtitle);
 
     // -- Reranking --
     createBooleanRow(

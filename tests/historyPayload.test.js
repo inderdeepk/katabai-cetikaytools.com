@@ -758,6 +758,88 @@ const tests = [
             assert(String(out.content).includes('Previously attached document: doc.pdf'), 'notice');
         },
     ],
+    [
+        'sanitize: anthropic — openai tool history becomes tool_use/tool_result blocks',
+        () => {
+            const assistant = {
+                role: 'assistant',
+                content: 'Let me search.',
+                tool_calls: [
+                    {
+                        id: 'call_1',
+                        type: 'function',
+                        function: { name: 'web_search', arguments: '{"query":"x"}' },
+                    },
+                ],
+            };
+            const toolResult = {
+                role: 'tool',
+                name: 'web_search',
+                tool_call_id: 'call_1',
+                content: 'search output',
+            };
+            const outAssistant = sanitizeHistoryMessage(assistant, { provider: 'anthropic' });
+            assertEqual(outAssistant.role, 'assistant', 'assistant role kept');
+            assert(Array.isArray(outAssistant.content), 'assistant content is a block array');
+            assertEqual(outAssistant.content[0].type, 'text', 'text block first');
+            assertEqual(outAssistant.content[1].type, 'tool_use', 'tool_use block');
+            assertEqual(outAssistant.content[1].id, 'call_1', 'tool_use id preserved');
+            assertDeepEqual(
+                outAssistant.content[1].input,
+                { query: 'x' },
+                'tool_use input parsed from arguments',
+            );
+            assertEqual(outAssistant.tool_calls, undefined, 'raw tool_calls removed');
+
+            const outTool = sanitizeHistoryMessage(toolResult, { provider: 'anthropic' });
+            assertEqual(outTool.role, 'user', 'tool result becomes a user message');
+            assertEqual(outTool.content[0].type, 'tool_result', 'tool_result block');
+            assertEqual(outTool.content[0].tool_use_id, 'call_1', 'tool_use_id preserved');
+            assertEqual(outTool.content[0].content, 'search output', 'tool output preserved');
+            assertEqual(outTool.name, undefined, 'tool name stripped for anthropic');
+        },
+    ],
+    [
+        'sanitize: tool_calls are cloned — stored history keeps native arguments',
+        () => {
+            const stored = {
+                role: 'assistant',
+                tool_calls: [
+                    { function: { name: 'web_search', arguments: { query: 'x', limit: 3 } } },
+                ],
+            };
+            const before = JSON.stringify(stored);
+            const out = sanitizeHistoryMessage(stored, { provider: 'deepseek' });
+            assertEqual(
+                out.tool_calls[0].function.arguments,
+                '{"query":"x","limit":3}',
+                'outgoing arguments are an OpenAI JSON string',
+            );
+            assertEqual(JSON.stringify(stored), before, 'stored history is not rewritten');
+            assertDeepEqual(
+                stored.tool_calls[0].function.arguments,
+                { query: 'x', limit: 3 },
+                'stored arguments stay an object',
+            );
+        },
+    ],
+    [
+        'sanitize: ollama restores stringified arguments to objects',
+        () => {
+            const out = sanitizeHistoryMessage(
+                {
+                    role: 'assistant',
+                    tool_calls: [{ function: { name: 'web_search', arguments: '{"query":"y"}' } }],
+                },
+                { provider: 'ollama' },
+            );
+            assertDeepEqual(
+                out.tool_calls[0].function.arguments,
+                { query: 'y' },
+                'ollama arguments are objects again',
+            );
+        },
+    ],
 ];
 
 await runTests(tests);

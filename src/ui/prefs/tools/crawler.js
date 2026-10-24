@@ -9,6 +9,7 @@ import { gettext as _, format } from '../../../shared/i18n.js';
 export function buildCrawlerSection(ctx) {
     const {
         settings,
+        watch,
         createToolSubpage,
         createPreferencesGroup,
         createInfoRow,
@@ -392,13 +393,13 @@ export function buildCrawlerSection(ctx) {
         _('How to enable AI extraction'),
         _(
             'Models request extraction per crawl (mode="extract"); the Extraction Mode below decides its shape ' +
-                '(Schema for structured JSON, Block for a freeform answer). ' +
-                'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
-                'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
-                'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
-                'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
-                '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
-                'different fields. Katab never sees or stores your API key.',
+            '(Schema for structured JSON, Block for a freeform answer). ' +
+            'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
+            'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
+            'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
+            'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
+            '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
+            'different fields. Katab never sees or stores your API key.',
         ),
         llmGroup,
     );
@@ -504,7 +505,7 @@ export function buildCrawlerSection(ctx) {
         validateSchemaRow.visible = mode === 'llm-schema';
     };
     syncLLMVisibility();
-    settings.connect('changed::crawl4ai-extraction-mode', syncLLMVisibility);
+    watch('changed::crawl4ai-extraction-mode', syncLLMVisibility);
 
     // ---- Advanced ----
     const advancedGroup = createPreferencesGroup({

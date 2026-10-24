@@ -9,6 +9,7 @@ import { gettext as _, format } from '../../shared/i18n.js';
 
 export function buildDeepSeekPage(ctx) {
     const {
+        watch,
         settings,
         window,
         createProviderPage,
@@ -98,7 +99,7 @@ export function buildDeepSeekPage(ctx) {
         effortRow.selected = idx >= 0 ? idx : 0;
     };
     syncEffortRow();
-    settings.connect('changed::deepseek-reasoning-effort', syncEffortRow);
+    watch('changed::deepseek-reasoning-effort', syncEffortRow);
     effortRow.connect('notify::selected', () => {
         const effort = effortRow._choiceValues?.[effortRow.selected] || 'high';
         if (settings.get_string('deepseek-reasoning-effort') !== effort) {
@@ -111,7 +112,7 @@ export function buildDeepSeekPage(ctx) {
         effortRow.sensitive = settings.get_boolean('deepseek-thinking-enabled');
     };
     syncEffortRowVisibility();
-    settings.connect('changed::deepseek-thinking-enabled', syncEffortRowVisibility);
+    watch('changed::deepseek-thinking-enabled', syncEffortRowVisibility);
 
     deepseekPage.add(deepseekReasoningGroup);
 
@@ -148,7 +149,7 @@ export function buildDeepSeekPage(ctx) {
         visionModeRow.selected = idx >= 0 ? idx : 0;
     };
     syncVisionModeRow();
-    settings.connect('changed::deepseek-vision-mode', syncVisionModeRow);
+    watch('changed::deepseek-vision-mode', syncVisionModeRow);
     visionModeRow.connect('notify::selected', () => {
         const value = visionModeRow._choiceValues?.[visionModeRow.selected] || 'preprocess';
         if (settings.get_string('deepseek-vision-mode') !== value) {
@@ -174,7 +175,7 @@ export function buildDeepSeekPage(ctx) {
         visionBackendRow.selected = idx >= 0 ? idx : 0;
     };
     syncVisionBackendRow();
-    settings.connect('changed::deepseek-vision-backend', syncVisionBackendRow);
+    watch('changed::deepseek-vision-backend', syncVisionBackendRow);
     visionBackendRow.connect('notify::selected', () => {
         const value = visionBackendRow._choiceValues?.[visionBackendRow.selected] || '';
         if (settings.get_string('deepseek-vision-backend') !== value) {
@@ -352,8 +353,8 @@ export function buildDeepSeekPage(ctx) {
         visionKeyRow.visible = backend === 'openai';
     };
     syncVisionVisibility();
-    settings.connect('changed::deepseek-vision-backend', syncVisionVisibility);
-    settings.connect('changed::deepseek-vision-model', syncVisionVisibility);
+    watch('changed::deepseek-vision-backend', syncVisionVisibility);
+    watch('changed::deepseek-vision-model', syncVisionVisibility);
 
     deepseekPage.add(deepseekVisionGroup);
 
@@ -494,7 +495,7 @@ export function buildDeepSeekPage(ctx) {
         'deepseek-balance-topped-up',
         'deepseek-balance-last-checked',
     ]) {
-        settings.connect(`changed::${key}`, () => {
+        watch(`changed::${key}`, () => {
             for (const sync of balanceSyncers) {
                 sync();
             }

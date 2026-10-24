@@ -39,6 +39,16 @@ function extractMethod(src, name) {
 }
 
 const SUBS = [
+    // Intentional behavior change (warm-up fix): the blank placeholder label
+    // for an empty reply was removed so an empty content box no longer counts
+    // as "the answer already rendered" (which hid the warm-up row during the
+    // send's grace period).
+    [/let hasChildren = false;/g, ''],
+    [/hasChildren = true;/g, ''],
+    [
+        /if \(!hasChildren\) \{\s*contentBox\.add_child\(this\._createAssistantTextLabel\('', ''\)\);\s*\}/g,
+        '',
+    ],
     // Intentional comment update: method renamed to the public makeTextSelectable.
     [/after _makeTextSelectable so selection/g, 'after makeTextSelectable so selection'],
     [
@@ -104,6 +114,9 @@ function flat(text) {
             line = line.slice(0, bc);
         }
         line = line.replace(/\s+/g, ' ').trim();
+        // Whole-line `//` comments are documentation, not behavior: intentional
+        // comment edits inside moved bodies must not fail the audit.
+        if (line.startsWith('//')) continue;
         if (line) out.push(line);
     }
     return out
