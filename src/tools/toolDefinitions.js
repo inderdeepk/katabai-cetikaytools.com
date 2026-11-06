@@ -173,7 +173,8 @@ registerTool({
 registerTool({
     name: 'document',
     description:
-        'Attach and parse a local file (txt, md, pdf, docx, eml, png, jpg, jpeg). ' +
+        'Attach and parse a local file (txt, md, pdf, Word docx/doc/odt/rtf, ' +
+        'Excel xlsx/xls/ods/csv/tsv, PowerPoint pptx/ppt/odp, eml, png, jpg, jpeg). ' +
         'The file content is included in the conversation context so the AI can read, analyze, or summarize it.',
     parameters: null, // No API schema — this is a pre-send tool
     dangerLevel: DANGER_POTENTIALLY_UNSAFE,

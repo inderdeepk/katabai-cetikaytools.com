@@ -8,10 +8,14 @@ import {
     buildVisionAnalysisPromptBlock,
     getDocumentToolCapabilities,
     getAttachmentInfoForPath,
+    getDocumentIconName,
+    getSupportedFormatSummary,
+    isParsableDocumentPath,
     looksLikeImageAttachment,
     parseEmlText,
     formatEmlDocument,
     DOCUMENT_TOOL_COMMAND,
+    DOCUMENT_TOOL_ICON,
     DOCUMENT_TOOL_MAX_CHARS,
 } from '../src/tools/documentTools.js';
 import { assert, assertEqual, assertThrows, runTests } from './testUtils.js';
@@ -332,10 +336,10 @@ const tests = [
         'getDocumentToolCapabilities: built-in capabilities always available',
         () => {
             const caps = getDocumentToolCapabilities();
-            assert(caps.text.available, 'text always available');
-            assert(caps.image.available, 'image always available');
-            assertEqual(caps.text.status, 'builtin', 'text is builtin');
-            assertEqual(caps.image.status, 'builtin', 'image is builtin');
+            for (const key of ['text', 'image', 'csv', 'word', 'spreadsheet', 'presentation']) {
+                assert(caps[key].available, `${key} always available (built-in reader)`);
+                assertEqual(caps[key].status, 'builtin', `${key} is builtin`);
+            }
         },
     ],
 
@@ -343,11 +347,42 @@ const tests = [
         'getDocumentToolCapabilities: all capability keys present',
         () => {
             const caps = getDocumentToolCapabilities();
-            const expectedKeys = ['text', 'image', 'pdf', 'docx'];
+            const expectedKeys = [
+                'text',
+                'image',
+                'eml',
+                'csv',
+                'word',
+                'spreadsheet',
+                'presentation',
+                'pdf',
+                'legacy',
+            ];
             for (const key of expectedKeys) {
                 assert(caps[key] !== undefined, `${key} capability exists`);
                 assert(typeof caps[key].label === 'string', `${key} has label`);
                 assert(typeof caps[key].available === 'boolean', `${key} has available flag`);
+                assert(Array.isArray(caps[key].extensions), `${key} lists extensions`);
+            }
+        },
+    ],
+
+    [
+        'getDocumentToolCapabilities: external helpers report install status when missing',
+        () => {
+            const caps = getDocumentToolCapabilities();
+            for (const key of ['pdf', 'legacy']) {
+                const capability = caps[key];
+                assert(
+                    ['builtin', 'detected', 'install'].includes(capability.status),
+                    `${key} status`,
+                );
+                assertEqual(
+                    capability.available,
+                    capability.status !== 'install',
+                    `${key} availability matches status`,
+                );
+                assert(capability.installLabel, `${key} tells the user what package to install`);
             }
         },
     ],
@@ -493,13 +528,80 @@ const tests = [
                 ['/tmp/photo.JPEG', 'image', 'image', 'image/jpeg'],
                 ['/tmp/mail.eml', 'eml', 'document', null],
                 ['/tmp/doc.pdf', 'pdf', 'document', null],
-                ['/tmp/doc.docx', 'docx', 'document', null],
+                ['/tmp/doc.docx', 'word', 'document', null],
+                ['/tmp/doc.DOCM', 'word', 'document', null],
+                ['/tmp/notes.odt', 'word', 'document', null],
+                ['/tmp/notes.rtf', 'word', 'document', null],
+                ['/tmp/books.xlsx', 'spreadsheet', 'document', null],
+                ['/tmp/books.XLSM', 'spreadsheet', 'document', null],
+                ['/tmp/books.ods', 'spreadsheet', 'document', null],
+                ['/tmp/deck.pptx', 'presentation', 'document', null],
+                ['/tmp/deck.pptm', 'presentation', 'document', null],
+                ['/tmp/deck.odp', 'presentation', 'document', null],
+                ['/tmp/draw.odg', 'presentation', 'document', null],
+                ['/tmp/data.csv', 'csv', 'document', null],
+                ['/tmp/data.tsv', 'csv', 'document', null],
+                ['/tmp/legacy.doc', 'legacy', 'document', null],
+                ['/tmp/legacy.xls', 'legacy', 'document', null],
+                ['/tmp/legacy.ppt', 'legacy', 'document', null],
             ];
             for (const [filePath, capabilityKey, kind, mimeType] of cases) {
                 const info = getAttachmentInfoForPath(filePath);
                 assertEqual(info.capability?.key, capabilityKey, `${filePath} capability`);
                 assertEqual(info.kind, kind, `${filePath} kind`);
                 assertEqual(info.mimeType, mimeType, `${filePath} mime type`);
+            }
+        },
+    ],
+
+    [
+        'getDocumentIconName: Office formats get their own symbolic icons',
+        () => {
+            const cases = [
+                [{ path: '/tmp/pic.png', kind: 'image' }, 'image-x-generic-symbolic'],
+                [{ path: '/tmp/budget.xlsx' }, 'x-office-spreadsheet-symbolic'],
+                [{ path: '/tmp/data.csv' }, 'x-office-spreadsheet-symbolic'],
+                [{ path: '/tmp/deck.pptx' }, 'x-office-presentation-symbolic'],
+                [{ path: '/tmp/report.docx' }, 'x-office-document-symbolic'],
+                [{ path: '/tmp/report.pdf' }, 'x-office-document-symbolic'],
+                [{ path: '/tmp/mail.eml' }, 'mail-unread-symbolic'],
+                [{ path: '/tmp/notes.md' }, 'text-x-generic-symbolic'],
+            ];
+            for (const [meta, expected] of cases) {
+                assertEqual(getDocumentIconName(meta), expected, `${meta.path} icon`);
+            }
+            assertEqual(getDocumentIconName(null), DOCUMENT_TOOL_ICON, 'unknown meta falls back');
+        },
+    ],
+
+    [
+        'isParsableDocumentPath: only readable text documents are importable',
+        () => {
+            assert(isParsableDocumentPath('/tmp/notes.md'), 'markdown is importable');
+            assert(isParsableDocumentPath('/tmp/report.docx'), 'docx is importable');
+            assert(isParsableDocumentPath('/tmp/budget.xlsx'), 'xlsx is importable');
+            assert(isParsableDocumentPath('/tmp/slides.pptx'), 'pptx is importable');
+            assert(!isParsableDocumentPath('/tmp/pic.png'), 'images are not imported as text');
+            assert(!isParsableDocumentPath('/tmp/archive.zip'), 'unknown formats are rejected');
+        },
+    ],
+
+    [
+        'getSupportedFormatSummary: lists every supported family',
+        () => {
+            const summary = getSupportedFormatSummary();
+            for (const extension of [
+                'txt',
+                'pdf',
+                'docx',
+                'xlsx',
+                'pptx',
+                'odt',
+                'csv',
+                'eml',
+                'png',
+            ]) {
+                assert(summary.includes(extension), `${extension} advertised`);
             }
         },
     ],

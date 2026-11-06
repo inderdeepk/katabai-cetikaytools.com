@@ -72,9 +72,13 @@ All optional tools are disabled by default and can be enabled individually under
 ### Document tool
 
 - Reads local files the user selects; it never shells out through a command interpreter.
-- PDF and DOCX parsing use direct `Gio.Subprocess` argv calls to `pdftotext` / `pandoc` (no shell
-  expansion).
-- Plain text, Markdown, images, and `.eml` are parsed in-process.
+- PDF parsing uses direct `Gio.Subprocess` argv calls to `pdftotext`; legacy `.doc/.xls/.ppt` files
+  are converted by `soffice` during a bounded, subprocess-only call (no shell expansion).
+- Only the ZIP container is read in-process for Office documents — entries are inflated with
+  `Gio.ZlibDecompressor` and parsed as XML; paths inside the archive are never written to disk,
+  entry sizes are capped, and encrypted entries are rejected.
+- Plain text, Markdown, CSV/TSV, Word/Excel/PowerPoint/OpenDocument, RTF, images, and `.eml` are
+  parsed in-process.
 - Saved conversations keep attachment **metadata only**; reattach a file to reuse its text.
 
 ### Web search (SearxNG)

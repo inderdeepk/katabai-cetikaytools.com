@@ -43,6 +43,9 @@ import {
     DocumentToolError,
     DocumentToolRuntime,
     getAttachmentInfoForPath,
+    getDocumentIconName,
+    getSupportedFormatSummary,
+    isParsableDocumentPath,
     looksLikeImageAttachment,
     parseDocumentCommand,
     resolveDocumentPath,
@@ -4141,7 +4144,6 @@ class KatabDialog {
     /** Recursively collect importable files (supported text formats only),
      *  bounded by maxFiles to keep a folder import reasonable. */
     _collectImportableFiles(rawPaths, maxFiles = 50) {
-        const IMPORTABLE_EXTENSIONS = new Set(['txt', 'md', 'pdf', 'docx', 'eml']);
         const out = [];
         const seen = new Set();
         const visit = (path, depth) => {
@@ -4163,8 +4165,7 @@ class KatabDialog {
                     children.close(null);
                     return;
                 }
-                const ext = path.includes('.') ? path.split('.').pop().toLowerCase() : '';
-                if (!IMPORTABLE_EXTENSIONS.has(ext)) return;
+                if (!isParsableDocumentPath(path)) return;
                 if (!seen.has(path)) {
                     seen.add(path);
                     out.push(path);
@@ -4190,7 +4191,9 @@ class KatabDialog {
         const files = this._collectImportableFiles(rawPaths, 50);
         if (files.length === 0) {
             this._addSystemMessage(
-                _('No importable files found (supported: txt, md, pdf, docx, eml).'),
+                format(_('No importable files found. Supported formats: {formats}.'), {
+                    formats: getSupportedFormatSummary(),
+                }),
                 { variant: 'warning' },
             );
             return;
@@ -4422,7 +4425,9 @@ class KatabDialog {
 
         // Document tool (needs enable)
         if (this._isDocumentToolEnabled()) {
-            lines.push('/doc "path" — Attach a local file (txt, md, pdf, docx, png, jpg, eml)');
+            lines.push(
+                `/doc "path" — Attach a local file (${getSupportedFormatSummary()})`,
+            );
         } else {
             lines.push('/doc — Attach a local file (disabled — enable in Settings > Tools)');
         }
@@ -4870,7 +4875,6 @@ class KatabDialog {
 
         for (let i = 0; i < this._pendingDocuments.length; i++) {
             const doc = this._pendingDocuments[i];
-            const isImage = looksLikeImageAttachment(doc);
 
             const chip = new St.BoxLayout({
                 style_class: 'katab-attachment-chip',
@@ -4879,7 +4883,7 @@ class KatabDialog {
             });
 
             const icon = new St.Icon({
-                icon_name: isImage ? 'image-x-generic-symbolic' : 'text-x-generic-symbolic',
+                icon_name: getDocumentIconName(doc),
                 style_class: 'katab-attachment-chip-icon',
                 y_align: Clutter.ActorAlign.CENTER,
             });
@@ -13303,8 +13307,14 @@ class KatabDialog {
                             this._setPendingDocument(null);
                         }
                         this._maybeIndexParsedDocuments(rawParsedDocs);
-                        // Build document context for the planner prompt
-                        const docBlocks = parsedDocs.map((d) => buildDocumentPromptBlock(d));
+                        // Build document context from the parsed documents (the
+                        // serialized metas carry no text) so the planner sees the
+                        // actual attachment contents.
+                        const docBlocks = rawParsedDocs
+                            .filter(
+                                (doc) => doc.kind !== 'image' && typeof doc.text === 'string',
+                            )
+                            .map((doc) => buildDocumentPromptBlock(doc));
                         documentContext = docBlocks.join('\n\n');
                         this._researchDocumentContext = documentContext;
                         log(
@@ -14076,8 +14086,11 @@ class KatabDialog {
         if (importMatch) {
             if (!importMatch[1]) {
                 this._addSystemMessage(
-                    _(
-                        'Usage: /kb import "~/path/to/file-or-folder" — imports txt, md, pdf, docx, and eml files into the knowledge base.',
+                    format(
+                        _(
+                            'Usage: /kb import "~/path/to/file-or-folder" — imports {formats} files into the knowledge base.',
+                        ),
+                        { formats: getSupportedFormatSummary() },
                     ),
                     { variant: 'info' },
                 );

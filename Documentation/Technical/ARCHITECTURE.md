@@ -160,7 +160,7 @@ research orchestration that calls into `src/research/`. Extracted modules take a
 - **Soup 3.0** — HTTP.
 - **Adw** — Preferences window (`Adw.NavigationPage` subpages).
 - **Optional services** — Ollama, Unsloth Studio, SearxNG, Crawl4AI, the bundled RAG service.
-- **Optional system tools** — `pdftotext` (PDF), `pandoc` (DOCX), `msgfmt` (translations).
+- **Optional system tools** — `pdftotext` (PDF), `soffice` from LibreOffice (legacy `.doc/.xls/.ppt`), `msgfmt` (translations). Modern Office/OpenDocument formats are parsed in-process.
 
 ---
 

@@ -1,5 +1,8 @@
-import GLib from 'gi://GLib';
 import { gettext as _, format } from '../../../shared/i18n.js';
+import {
+    getDocumentToolCapabilities,
+    invalidateDocumentToolCapabilities,
+} from '../../../tools/documentTools.js';
 
 // Document Tool settings section for the Tools page.
 export function buildDocumentSection(ctx) {
@@ -37,7 +40,7 @@ export function buildDocumentSection(ctx) {
     const syncDocumentUsageRow = () => {
         documentUsageRow.subtitle = settings.get_boolean('document-tool-enabled')
             ? _(
-                'Use the attachment button in chat or type /doc with a quoted path. Katab extracts text from supported documents locally, and sends PNG/JPG images only to Ollama vision models.',
+                'Use the attachment button in chat or type /doc with a quoted path. Word, Excel, PowerPoint, OpenDocument, PDF, CSV, email, and image files are parsed locally before anything is sent to a provider.',
             )
             : _(
                 'Turn this on only if you want local file parsing. Normal chat does not depend on this tool.',
@@ -49,7 +52,7 @@ export function buildDocumentSection(ctx) {
     const capabilityGroup = createPreferencesGroup({
         title: _('Detected Capabilities'),
         description: _(
-            'Katab scans the local system at runtime. Text, Markdown, PNG/JPG, and EML support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc.',
+            'Katab scans the local system at runtime. Text, CSV/TSV, Word, Excel, PowerPoint, OpenDocument, EML, and image support is built in; PDF parsing needs poppler-utils; legacy .doc/.xls/.ppt files need LibreOffice.',
         ),
     });
     detailPage.add(capabilityGroup);
@@ -66,14 +69,44 @@ export function buildDocumentSection(ctx) {
         ),
         capabilityGroup,
     );
+    const csvStatusRow = createStatusRow(
+        _('Spreadsheet Text (CSV/TSV)'),
+        _(
+            'CSV and TSV files are parsed into Markdown tables by built-in code, with automatic delimiter detection.',
+        ),
+        capabilityGroup,
+    );
+    const wordStatusRow = createStatusRow(
+        _('Word and OpenDocument Text'),
+        _(
+            'DOCX, DOCM, ODT, and RTF files are read by the built-in Office reader \u2014 headings, lists, and tables are preserved.',
+        ),
+        capabilityGroup,
+    );
+    const spreadsheetStatusRow = createStatusRow(
+        _('Excel and OpenDocument Spreadsheets'),
+        _(
+            'XLSX, XLSM, and ODS workbooks are read by the built-in Office reader; every sheet becomes a Markdown table.',
+        ),
+        capabilityGroup,
+    );
+    const presentationStatusRow = createStatusRow(
+        _('PowerPoint and OpenDocument Presentations'),
+        _(
+            'PPTX, PPTM, PPSX, ODP, and ODG files are read by the built-in Office reader; slide text becomes a slide-by-slide outline.',
+        ),
+        capabilityGroup,
+    );
     const pdfStatusRow = createStatusRow(
         _('PDF Documents'),
         _('Install poppler-utils to expose pdftotext for fast PDF text extraction.'),
         capabilityGroup,
     );
-    const docxStatusRow = createStatusRow(
-        _('Word Documents (.docx)'),
-        _('Install pandoc to convert DOCX files into plain text before sending them to the model.'),
+    const legacyStatusRow = createStatusRow(
+        _('Legacy Office (.doc, .xls, .ppt)'),
+        _(
+            'Install LibreOffice to convert legacy binary Office files before Katab reads them.',
+        ),
         capabilityGroup,
     );
     const emlStatusRow = createStatusRow(
@@ -85,37 +118,46 @@ export function buildDocumentSection(ctx) {
     );
 
     const refreshDocumentToolStatus = () => {
+        // The Refresh button must always re-scan, even if detection ran a
+        // moment ago while building the page.
+        invalidateDocumentToolCapabilities();
+        const capabilities = getDocumentToolCapabilities();
+
         setStatusBadge(textStatusRow.badge, _('Built in'), 'katab-prefs-status-builtin');
         setStatusBadge(imageStatusRow.badge, _('Built in'), 'katab-prefs-status-builtin');
+        setStatusBadge(csvStatusRow.badge, _('Built in'), 'katab-prefs-status-builtin');
+        setStatusBadge(wordStatusRow.badge, _('Built in'), 'katab-prefs-status-builtin');
+        setStatusBadge(spreadsheetStatusRow.badge, _('Built in'), 'katab-prefs-status-builtin');
+        setStatusBadge(presentationStatusRow.badge, _('Built in'), 'katab-prefs-status-builtin');
         setStatusBadge(emlStatusRow.badge, _('Built in'), 'katab-prefs-status-builtin');
 
-        const pdfPath = GLib.find_program_in_path('pdftotext');
-        if (pdfPath) {
-            pdfStatusRow.row.subtitle = format(
-                _('Detected pdftotext at {path}. PDF parsing is ready.'),
-                { path: pdfPath },
-            );
-            setStatusBadge(pdfStatusRow.badge, _('Detected'), 'katab-prefs-status-detected');
-        } else {
-            pdfStatusRow.row.subtitle = _(
-                'Install poppler-utils to expose pdftotext for fast PDF text extraction.',
-            );
-            setStatusBadge(pdfStatusRow.badge, _('Install'), 'katab-prefs-status-install');
-        }
+        const applyHelperStatus = (statusRow, capability, detectedLabel, missingLabel) => {
+            if (capability?.available) {
+                statusRow.row.subtitle = format(detectedLabel, {
+                    path: capability.commandPath || '',
+                });
+                setStatusBadge(statusRow.badge, _('Detected'), 'katab-prefs-status-detected');
+            } else {
+                statusRow.row.subtitle = missingLabel;
+                setStatusBadge(statusRow.badge, _('Install'), 'katab-prefs-status-install');
+            }
+        };
 
-        const pandocPath = GLib.find_program_in_path('pandoc');
-        if (pandocPath) {
-            docxStatusRow.row.subtitle = format(
-                _('Detected pandoc at {path}. DOCX parsing is ready.'),
-                { path: pandocPath },
-            );
-            setStatusBadge(docxStatusRow.badge, _('Detected'), 'katab-prefs-status-detected');
-        } else {
-            docxStatusRow.row.subtitle = _(
-                'Install pandoc to convert DOCX files into plain text before sending them to the model.',
-            );
-            setStatusBadge(docxStatusRow.badge, _('Install'), 'katab-prefs-status-install');
-        }
+        applyHelperStatus(
+            pdfStatusRow,
+            capabilities.pdf,
+            _('Detected pdftotext at {path}. PDF parsing is ready.'),
+            _('Install poppler-utils to expose pdftotext for fast PDF text extraction.'),
+        );
+
+        applyHelperStatus(
+            legacyStatusRow,
+            capabilities.legacy,
+            _('Detected LibreOffice at {path}. Legacy .doc/.xls/.ppt attachments are ready.'),
+            _(
+                'Install LibreOffice to convert legacy binary Office files before Katab reads them.',
+            ),
+        );
     };
 
     createButtonRow(

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Katab - AI Assistant\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-23 18:45-0400\n"
+"POT-Creation-Date: 2026-11-06 12:39-0500\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,585 +18,585 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: extension.js:264 extension.js:305 src/ui/prefs/tools/index.js:50 src/ui/prefs/tools/webSearch.js:24
+#: extension.js:267 extension.js:308 src/ui/prefs/tools/index.js:50 src/ui/prefs/tools/webSearch.js:24
 msgid "Web Search"
 msgstr ""
 
-#: extension.js:272
+#: extension.js:275
 msgid "Python"
 msgstr ""
 
-#: extension.js:280
+#: extension.js:283
 msgid "Terminal"
 msgstr ""
 
-#: extension.js:295
+#: extension.js:298
 msgid "Document"
 msgstr ""
 
-#: extension.js:314 src/ui/prefs/tools/crawler.js:31 src/ui/prefs/tools/index.js:58
+#: extension.js:317 src/ui/prefs/tools/crawler.js:31 src/ui/prefs/tools/index.js:58
 msgid "Web Scraper"
 msgstr ""
 
-#: extension.js:323 src/tools/toolDefinitions.js:242
+#: extension.js:326 src/tools/toolDefinitions.js:243
 msgid "Knowledge"
 msgstr ""
 
-#: extension.js:340 src/ui/prefs/tools/deepResearch.js:14 src/ui/prefs/tools/deepResearch.js:18 src/ui/prefs/tools/index.js:79
+#: extension.js:343 src/ui/prefs/tools/deepResearch.js:14 src/ui/prefs/tools/deepResearch.js:18 src/ui/prefs/tools/index.js:79
 msgid "Deep Research"
 msgstr ""
 
-#: extension.js:1637
+#: extension.js:1640
 msgid "Switched engine to {provider}."
 msgstr ""
 
-#: extension.js:2034
+#: extension.js:2037
 msgid "Request failed — open the chat for details."
 msgstr ""
 
-#: extension.js:2037
+#: extension.js:2040
 msgid "Response ready — open the chat to read it."
 msgstr ""
 
-#: extension.js:2260
+#: extension.js:2263
 msgid "{pet} hatched and joined your collection!"
 msgstr ""
 
-#: extension.js:2266
+#: extension.js:2269
 msgid "{pet} reached {stage} at {xp} XP."
 msgstr ""
 
-#: extension.js:2286
+#: extension.js:2289
 msgid "{count} pet collection milestone unlocked."
 msgid_plural "{count} pet collection milestones unlocked."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:2397
+#: extension.js:2400
 msgid "Stopped while downloading model '{model}'."
 msgstr ""
 
-#: extension.js:2399
+#: extension.js:2402
 msgid "Stopped while preparing '{model}'."
 msgstr ""
 
-#: extension.js:2401
+#: extension.js:2404
 msgid "Response stopped while running local tools."
 msgstr ""
 
-#: extension.js:2402
+#: extension.js:2405
 msgid "Response stopped."
 msgstr ""
 
-#: extension.js:2408
+#: extension.js:2411
 msgid "Response stopped while the model was thinking."
 msgstr ""
 
-#: extension.js:2410
+#: extension.js:2413
 msgid "Response stopped before tool execution completed."
 msgstr ""
 
-#: extension.js:3008 src/tools/toolDefinitions.js:182
+#: extension.js:3011 src/tools/toolDefinitions.js:183
 msgid "Docs"
 msgstr ""
 
-#: extension.js:3010 src/tools/toolDefinitions.js:69
+#: extension.js:3013 src/tools/toolDefinitions.js:69
 msgid "Search"
 msgstr ""
 
-#: extension.js:3012 src/tools/toolDefinitions.js:162
+#: extension.js:3015 src/tools/toolDefinitions.js:162
 msgid "Scrape"
 msgstr ""
 
-#: extension.js:3014 src/tools/toolDefinitions.js:203
+#: extension.js:3017 src/tools/toolDefinitions.js:204
 msgid "Research"
 msgstr ""
 
-#: extension.js:3016
+#: extension.js:3019
 msgid "Term"
 msgstr ""
 
-#: extension.js:3018
+#: extension.js:3021
 msgid "Tool"
 msgstr ""
 
-#: extension.js:3780
+#: extension.js:3799
 msgid "Knowledge Base service is not running. Start it with:\n`systemctl --user start katabai-rag`"
 msgstr ""
 
-#: extension.js:3795
+#: extension.js:3814
 msgid "Knowledge Base service is back online."
 msgstr ""
 
-#: extension.js:3820
+#: extension.js:3839
 msgid "Knowledge Base embeddings are available again."
 msgstr ""
 
-#: extension.js:3851
+#: extension.js:3870
 msgid "Knowledge base is {pct}% full ({used} of {cap} chunks). When full, the oldest entries are pruned automatically — raise the cap or clear old data in Settings ▸ Tools ▸ Knowledge Base."
 msgstr ""
 
-#: extension.js:3948
+#: extension.js:3967
 msgid " Storage limits live in Settings ▸ Tools ▸ Knowledge Base."
 msgstr ""
 
-#: extension.js:3951
+#: extension.js:3970
 msgid "Knowledge base indexing was skipped: {reason}{hint}"
 msgstr ""
 
-#: extension.js:4005
+#: extension.js:4024
 msgid "Knowledge Base storage limits updated — applying immediately."
 msgstr ""
 
-#: extension.js:4177
-msgid "No importable files found (supported: txt, md, pdf, docx, eml)."
+#: extension.js:4194
+msgid "No importable files found. Supported formats: {formats}."
 msgstr ""
 
-#: extension.js:4200
+#: extension.js:4219
 msgid "None of the selected files could be parsed for the knowledge base."
 msgstr ""
 
-#: extension.js:4208
+#: extension.js:4227
 msgid "Imported {count} file into the knowledge base."
 msgid_plural "Imported {count} files into the knowledge base."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:5090
+#: extension.js:5110
 msgid "Enable the Document Tool in Settings before attaching a file."
 msgstr ""
 
-#: extension.js:5119
+#: extension.js:5139
 msgid "Could not attach a file: {error}"
 msgstr ""
 
-#: extension.js:5264
+#: extension.js:5284
 msgid "Presets"
 msgstr ""
 
-#: extension.js:5726
+#: extension.js:5746
 msgid "Clear all attachments"
 msgstr ""
 
-#: extension.js:5874
+#: extension.js:5894
 msgid "Ask anything..."
 msgstr ""
 
-#: extension.js:5915
+#: extension.js:5935
 msgid "Tools and toggles"
 msgstr ""
 
-#: extension.js:6063
+#: extension.js:6083
 msgid "Attached {count} file from clipboard."
 msgid_plural "Attached {count} files from clipboard."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:6086
+#: extension.js:6106
 msgid "The prompt is already at its {limit}-character limit, so the pasted text was not added. Send or shorten the current draft, or attach long content as a document."
 msgstr ""
 
-#: extension.js:6102
+#: extension.js:6122
 msgid "Pasted text was {dropped} character too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
 msgid_plural "Pasted text was {dropped} characters too long and was trimmed to fit the {limit}-character prompt limit. For long content, attach it as a document instead."
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:6127
+#: extension.js:6147
 msgid "Image attached from clipboard."
 msgstr ""
 
-#: extension.js:6217
+#: extension.js:6237
 msgid "Send Message"
 msgstr ""
 
-#: extension.js:7570
+#: extension.js:7590
 msgid "Conversation compacted — kept last {count} exchanges."
 msgstr ""
 
-#: extension.js:7573
+#: extension.js:7593
 msgid "Conversation is already compact."
 msgstr ""
 
-#: extension.js:7739
+#: extension.js:7759
 msgid "Not enough history to summarize yet — keep chatting and try again later."
 msgstr ""
 
-#: extension.js:7819
+#: extension.js:7839
 msgid "Session memory updated — {count} earlier turns summarized so the model keeps full context."
 msgstr ""
 
-#: extension.js:8137
+#: extension.js:8157
 msgid "Cache saved ~{pct}%"
 msgstr ""
 
-#: extension.js:8275
+#: extension.js:8295
 msgid "Dismiss"
 msgstr ""
 
-#: extension.js:8285
+#: extension.js:8305
 msgid "✓ Update"
 msgstr ""
 
-#: extension.js:8358
+#: extension.js:8378
 msgid "Forget"
 msgstr ""
 
-#: extension.js:8471
+#: extension.js:8491
 msgid "Saved ~{usd} this chat"
 msgstr ""
 
-#: extension.js:8671
+#: extension.js:8691
 msgid "Loading the model into memory — the first reply after a restart can take a moment…"
 msgstr ""
 
-#: extension.js:8678
+#: extension.js:8698
 msgid "Still waiting for the model…"
 msgstr ""
 
-#: extension.js:9005
+#: extension.js:9025
 msgid "This saved chat includes attachments that are no longer cached in the current session. Reattach any file you want included in a new request."
 msgstr ""
 
-#: extension.js:9535
+#: extension.js:9555
 msgid "Retry"
 msgstr ""
 
-#: extension.js:9539
+#: extension.js:9559
 msgid "Retry request"
 msgstr ""
 
-#: extension.js:9905
+#: extension.js:9925
 msgid "Research angle"
 msgstr ""
 
-#: extension.js:9950
+#: extension.js:9970
 msgid "After research: analyze findings for gaps, then write a comprehensive report with citations — ready in 1–3 minutes."
 msgstr ""
 
-#: extension.js:9968
+#: extension.js:9988
 msgid "Estimated effort: {cost}"
 msgstr ""
 
-#: extension.js:9987
+#: extension.js:10007
 msgid "Cancel"
 msgstr ""
 
-#: extension.js:10001
+#: extension.js:10021
 msgid "Save Edits"
 msgstr ""
 
-#: extension.js:10012
+#: extension.js:10032
 msgid "Edit plan"
 msgstr ""
 
-#: extension.js:10023
+#: extension.js:10043
 msgid "Cancel plan"
 msgstr ""
 
-#: extension.js:10037
+#: extension.js:10057
 msgid "Start research"
 msgstr ""
 
-#: extension.js:10103
+#: extension.js:10123
 msgid "✓ All {total}/{total} angles researched — moving to analysis phase."
 msgstr ""
 
-#: extension.js:10112
+#: extension.js:10132
 msgid "Researching {completed}/{total} angles — analyze findings, identify gaps, then write report."
 msgstr ""
 
-#: extension.js:10133
+#: extension.js:10153
 msgid "Search query"
 msgstr ""
 
-#: extension.js:10590
+#: extension.js:10610
 msgid "Analyzing coverage gaps..."
 msgstr ""
 
-#: extension.js:10751
+#: extension.js:10771
 msgid "Synthesis"
 msgstr ""
 
-#: extension.js:10755 extension.js:10783
+#: extension.js:10775 extension.js:10803
 msgid "Writing Report"
 msgstr ""
 
-#: extension.js:10756
+#: extension.js:10776
 msgid "Generating outline and compiling final report from all research findings..."
 msgstr ""
 
-#: extension.js:10760
+#: extension.js:10780
 msgid "Generating report outline..."
 msgstr ""
 
-#: extension.js:10776
+#: extension.js:10796
 msgid "Writing final report..."
 msgstr ""
 
-#: extension.js:10784
+#: extension.js:10804
 msgid "Streaming final research report..."
 msgstr ""
 
-#: extension.js:10985
+#: extension.js:11005
 msgid "Research may be incomplete (coverage: {score}/5)"
 msgstr ""
 
-#: extension.js:10994
+#: extension.js:11014
 msgid "• {aspect}"
 msgstr ""
 
-#: extension.js:11002
+#: extension.js:11022
 msgid "Continue Research"
 msgstr ""
 
-#: extension.js:11080
+#: extension.js:11100
 msgid "Researching missing aspects (pass {attempt})..."
 msgstr ""
 
-#: extension.js:11187
+#: extension.js:11207
 msgid "Some claims may not be fully supported by the sources"
 msgstr ""
 
-#: extension.js:11194
+#: extension.js:11214
 msgid "The report scored {score}/5 on factual grounding. Some statements may exceed what the gathered sources support — verify those claims before relying on them."
 msgstr ""
 
-#: extension.js:11207
+#: extension.js:11227
 msgid "Claims that could not be verified against sources:"
 msgstr ""
 
-#: extension.js:11214
+#: extension.js:11234
 msgid "• {claim}"
 msgstr ""
 
-#: extension.js:11225
+#: extension.js:11245
 msgid "Citations that may not support their claims:"
 msgstr ""
 
-#: extension.js:11232
+#: extension.js:11252
 msgid "• {cite}"
 msgstr ""
 
-#: extension.js:11568 extension.js:11601
+#: extension.js:11588 extension.js:11621
 msgid "Researching {completed}/{total} angles"
 msgstr ""
 
-#: extension.js:11596
+#: extension.js:11616
 msgid "\\u2713 {total}/{total} angles researched"
 msgstr ""
 
-#: extension.js:11967
+#: extension.js:11987
 msgid "+{count} more results available"
 msgstr ""
 
-#: extension.js:12479
+#: extension.js:12499
 msgid "Ran {count} tool"
 msgid_plural "Ran {count} tools"
 msgstr[0] ""
 msgstr[1] ""
 
-#: extension.js:12714
+#: extension.js:12734
 msgid "Ran {count} tools"
 msgstr ""
 
-#: extension.js:12841
+#: extension.js:12861
 msgid "{label}: {detail}"
 msgstr ""
 
-#: extension.js:12878
+#: extension.js:12898
 msgid "Importing files into the knowledge base…"
 msgstr ""
 
-#: extension.js:12884
+#: extension.js:12904
 msgid "The knowledge base import could not be completed."
 msgstr ""
 
-#: extension.js:12958
+#: extension.js:12978
 msgid "Preparing context…"
 msgstr ""
 
-#: extension.js:12979 extension.js:12992
+#: extension.js:12999 extension.js:13012
 msgid "Could not prepare the knowledge context for this message."
 msgstr ""
 
-#: extension.js:13036 extension.js:14816 extension.js:14817
+#: extension.js:13056 extension.js:14839 extension.js:14840
 msgid "Thinking…"
 msgstr ""
 
-#: extension.js:13678
+#: extension.js:13698
 msgid "Image analysis failed ({error}). Sending without image analysis…"
 msgstr ""
 
-#: extension.js:13687
+#: extension.js:13707
 msgid "Image analysis failed ({error}). The message was sent without image analysis."
 msgstr ""
 
-#: extension.js:13718
+#: extension.js:13738
 msgid "Enable the Document Tool in Settings before using /doc."
 msgstr ""
 
-#: extension.js:13738
+#: extension.js:13758
 msgid "Katab could not resolve that file path. Use a local file and try again."
 msgstr ""
 
-#: extension.js:13750
+#: extension.js:13770
 msgid "Could not open the document picker: {error}"
 msgstr ""
 
-#: extension.js:13761
+#: extension.js:13781
 msgid "Use an absolute path, a ~/path, or the picker when attaching a file."
 msgstr ""
 
-#: extension.js:13788
+#: extension.js:13808
 msgid "Image attachments currently work only with the Ollama provider (or DeepSeek with a configured vision model). Switch to Ollama and use a vision-capable model such as llama3.2-vision or llava."
 msgstr ""
 
-#: extension.js:13869
+#: extension.js:13889
 msgid "Web search is off for this prompt. Set Search to Auto or On before using /search."
 msgstr ""
 
-#: extension.js:13893
+#: extension.js:13913
 msgid "Web search is off. Enable it in Settings > Tools > Web Search to use the /search command."
 msgstr ""
 
-#: extension.js:13903
+#: extension.js:13923
 msgid "Add a query after /search, for example: /search latest GNOME release."
 msgstr ""
 
-#: extension.js:13924
+#: extension.js:13944
 msgid "Web scraping is off. Enable it in Settings > Tools > Web Scraper to use the /crawl command."
 msgstr ""
 
-#: extension.js:13942
+#: extension.js:13962
 msgid "Web search must also be enabled to use /crawl with a search query. Enable it in Settings > Tools > Web Search."
 msgstr ""
 
-#: extension.js:13952
+#: extension.js:13972
 msgid "Add a URL or search query after /crawl, for example: /crawl https://example.com or /crawl latest GNOME release."
 msgstr ""
 
-#: extension.js:13994
+#: extension.js:14014
 msgid "Deep Research mode activated for the next prompt. Type your research query."
 msgstr ""
 
-#: extension.js:14004
+#: extension.js:14024
 msgid "Deep Research mode activated. Type your research query."
 msgstr ""
 
-#: extension.js:14044
+#: extension.js:14064
 msgid "Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base to use the /kb command."
 msgstr ""
 
-#: extension.js:14053
+#: extension.js:14073
 msgid "Add a query after /kb, for example: /kb what is the meaning of life?"
 msgstr ""
 
-#: extension.js:14063
-msgid "Usage: /kb import \"~/path/to/file-or-folder\" — imports txt, md, pdf, docx, and eml files into the knowledge base."
+#: extension.js:14084
+msgid "Usage: /kb import \"~/path/to/file-or-folder\" — imports {formats} files into the knowledge base."
 msgstr ""
 
-#: extension.js:14118 extension.js:14218
+#: extension.js:14141 extension.js:14241
 msgid "Searching your knowledge base…"
 msgstr ""
 
-#: extension.js:14130
+#: extension.js:14153
 msgid "Knowledge Base search timed out — the RAG service is unresponsive. Continuing without KB context."
 msgstr ""
 
-#: extension.js:14162
+#: extension.js:14185
 msgid "Knowledge Base search failed: {error}"
 msgstr ""
 
-#: extension.js:14292
+#: extension.js:14315
 msgid "Searching the web…"
 msgstr ""
 
-#: extension.js:17442
+#: extension.js:17465
 msgid "Model '{model}' not found locally.\n\nDo you want to download it now?"
 msgstr ""
 
-#: extension.js:17452
+#: extension.js:17475
 msgid "Yes, Download"
 msgstr ""
 
-#: extension.js:17458
+#: extension.js:17481
 msgid "No, Cancel"
 msgstr ""
 
-#: extension.js:17470 extension.js:17471
+#: extension.js:17493 extension.js:17494
 msgid "Download cancelled."
 msgstr ""
 
-#: extension.js:17486
+#: extension.js:17509
 msgid "Downloading model '{model}'... (0%)"
 msgstr ""
 
-#: extension.js:17518
+#: extension.js:17541
 msgid "Cancel Download"
 msgstr ""
 
-#: extension.js:17608
+#: extension.js:17631
 msgid "Downloading model '{model}'...\n{status}"
 msgstr ""
 
-#: extension.js:17642
+#: extension.js:17665
 msgid "Downloading model '{model}' was interrupted. Try again."
 msgstr ""
 
-#: extension.js:17701
+#: extension.js:17724
 msgid "Last response failed"
 msgstr ""
 
-#: extension.js:17770
+#: extension.js:17793
 msgid "Current Chat"
 msgstr ""
 
-#: extension.js:17778 extension.js:18016
+#: extension.js:17801 extension.js:18039
 msgid "Resume your active conversation"
 msgstr ""
 
-#: extension.js:17789 extension.js:18032
+#: extension.js:17812 extension.js:18055
 msgid "Ready"
 msgstr ""
 
-#: extension.js:17820
+#: extension.js:17843
 msgid "Token Breakdown"
 msgstr ""
 
-#: extension.js:17826
+#: extension.js:17849
 msgid "Hatches with your next reply"
 msgstr ""
 
-#: extension.js:17917
+#: extension.js:17940
 msgid "{name} · Token Breakdown"
 msgstr ""
 
-#: extension.js:17931
+#: extension.js:17954
 msgid "{name} · {stage}"
 msgstr ""
 
-#: extension.js:18027
+#: extension.js:18050
 msgid "Replying"
 msgstr ""
 
-#: extension.js:18029
+#: extension.js:18052
 msgid "Error"
 msgstr ""
 
-#: extension.js:18031
+#: extension.js:18054
 msgid "Open"
 msgstr ""
 
-#: extension.js:18138
+#: extension.js:18161
 msgid "Recent Chats"
 msgstr ""
 
-#: extension.js:18169
+#: extension.js:18192
 msgid "Open chat"
 msgstr ""
 
-#: extension.js:18187
+#: extension.js:18210
 msgid "Delete chat"
 msgstr ""
 
@@ -936,7 +936,7 @@ msgstr ""
 msgid "Never"
 msgstr ""
 
-#: src/ui/prefs/deepseekPage.js:482 src/ui/prefs/tools/knowledge.js:907
+#: src/ui/prefs/deepseekPage.js:482 src/ui/prefs/tools/knowledge.js:909
 msgid "Unknown"
 msgstr ""
 
@@ -1180,7 +1180,7 @@ msgstr ""
 msgid "{pet} · Following"
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:298 src/ui/prefs/generalPage.js:320 src/ui/prefs/tools/knowledge.js:973 src/ui/prefs/tools/knowledge.js:978
+#: src/ui/prefs/generalPage.js:298 src/ui/prefs/generalPage.js:320 src/ui/prefs/tools/knowledge.js:975 src/ui/prefs/tools/knowledge.js:980
 msgid "Unavailable"
 msgstr ""
 
@@ -1204,7 +1204,7 @@ msgstr ""
 msgid "Write a timestamped copy of the local ledger into your Documents folder (or home folder if Documents is unavailable)."
 msgstr ""
 
-#: src/ui/prefs/generalPage.js:330 src/ui/prefs/tools/knowledge.js:1008
+#: src/ui/prefs/generalPage.js:330 src/ui/prefs/tools/knowledge.js:1010
 msgid "Export"
 msgstr ""
 
@@ -1752,7 +1752,7 @@ msgstr ""
 msgid "Reachable."
 msgstr ""
 
-#: src/ui/prefs/tools/crawler.js:298 src/ui/prefs/tools/crawler.js:304 src/ui/prefs/tools/knowledge.js:291 src/ui/prefs/tools/knowledge.js:295 src/ui/prefs/tools/knowledge.js:300 src/ui/prefs/tools/knowledge.js:375 src/ui/prefs/tools/knowledge.js:1064 src/ui/prefs/tools/knowledge.js:1070
+#: src/ui/prefs/tools/crawler.js:298 src/ui/prefs/tools/crawler.js:304 src/ui/prefs/tools/knowledge.js:291 src/ui/prefs/tools/knowledge.js:295 src/ui/prefs/tools/knowledge.js:300 src/ui/prefs/tools/knowledge.js:375 src/ui/prefs/tools/knowledge.js:1066 src/ui/prefs/tools/knowledge.js:1072
 msgid "Failed"
 msgstr ""
 
@@ -1944,7 +1944,7 @@ msgstr ""
 msgid "Mimic human mouse movements, scrolls, and timing to reduce CAPTCHA and bot-detection challenges. Slower but more reliable for protected sites."
 msgstr ""
 
-#: src/ui/prefs/tools/crawler.js:527 src/ui/prefs/tools/knowledge.js:772 src/ui/prefs/tools/webSearch.js:248
+#: src/ui/prefs/tools/crawler.js:527 src/ui/prefs/tools/knowledge.js:774 src/ui/prefs/tools/webSearch.js:248
 msgid "Autonomous Tool Use"
 msgstr ""
 
@@ -2053,7 +2053,7 @@ msgid "How it works"
 msgstr ""
 
 #: src/ui/prefs/tools/document.js:39
-msgid "Use the attachment button in chat or type /doc with a quoted path. Katab extracts text from supported documents locally, and sends PNG/JPG images only to Ollama vision models."
+msgid "Use the attachment button in chat or type /doc with a quoted path. Word, Excel, PowerPoint, OpenDocument, PDF, CSV, email, and image files are parsed locally before anything is sent to a provider."
 msgstr ""
 
 #: src/ui/prefs/tools/document.js:42
@@ -2065,7 +2065,7 @@ msgid "Detected Capabilities"
 msgstr ""
 
 #: src/ui/prefs/tools/document.js:51
-msgid "Katab scans the local system at runtime. Text, Markdown, PNG/JPG, and EML support is built in; PDF parsing needs poppler-utils; DOCX conversion needs pandoc."
+msgid "Katab scans the local system at runtime. Text, CSV/TSV, Word, Excel, PowerPoint, OpenDocument, EML, and image support is built in; PDF parsing needs poppler-utils; legacy .doc/.xls/.ppt files need LibreOffice."
 msgstr ""
 
 #: src/ui/prefs/tools/document.js:58
@@ -2085,58 +2085,90 @@ msgid "PNG and JPG attachments are base64-encoded locally and sent only to Ollam
 msgstr ""
 
 #: src/ui/prefs/tools/document.js:70
+msgid "Spreadsheet Text (CSV/TSV)"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:71
+msgid "CSV and TSV files are parsed into Markdown tables by built-in code, with automatic delimiter detection."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:77
+msgid "Word and OpenDocument Text"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:78
+msgid "DOCX, DOCM, ODT, and RTF files are read by the built-in Office reader — headings, lists, and tables are preserved."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:84
+msgid "Excel and OpenDocument Spreadsheets"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:85
+msgid "XLSX, XLSM, and ODS workbooks are read by the built-in Office reader; every sheet becomes a Markdown table."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:91
+msgid "PowerPoint and OpenDocument Presentations"
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:92
+msgid "PPTX, PPTM, PPSX, ODP, and ODG files are read by the built-in Office reader; slide text becomes a slide-by-slide outline."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:98
 msgid "PDF Documents"
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:71 src/ui/prefs/tools/document.js:100
+#: src/ui/prefs/tools/document.js:99 src/ui/prefs/tools/document.js:142
 msgid "Install poppler-utils to expose pdftotext for fast PDF text extraction."
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:75
-msgid "Word Documents (.docx)"
+#: src/ui/prefs/tools/document.js:103
+msgid "Legacy Office (.doc, .xls, .ppt)"
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:76 src/ui/prefs/tools/document.js:114
-msgid "Install pandoc to convert DOCX files into plain text before sending them to the model."
+#: src/ui/prefs/tools/document.js:104 src/ui/prefs/tools/document.js:149
+msgid "Install LibreOffice to convert legacy binary Office files before Katab reads them."
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:80
+#: src/ui/prefs/tools/document.js:110
 msgid "Email Messages (.eml)"
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:81
+#: src/ui/prefs/tools/document.js:111
 msgid "EML email files are parsed locally with Katab's built-in MIME reader — headers, body text, and attachment names are extracted without any external tool."
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:88 src/ui/prefs/tools/document.js:89 src/ui/prefs/tools/document.js:90
+#: src/ui/prefs/tools/document.js:120 src/ui/prefs/tools/document.js:121 src/ui/prefs/tools/document.js:122 src/ui/prefs/tools/document.js:123 src/ui/prefs/tools/document.js:124 src/ui/prefs/tools/document.js:125 src/ui/prefs/tools/document.js:126
 msgid "Built in"
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:95
-msgid "Detected pdftotext at {path}. PDF parsing is ready."
-msgstr ""
-
-#: src/ui/prefs/tools/document.js:98 src/ui/prefs/tools/document.js:112
+#: src/ui/prefs/tools/document.js:131
 msgid "Detected"
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:103 src/ui/prefs/tools/document.js:117
+#: src/ui/prefs/tools/document.js:134
 msgid "Install"
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:109
-msgid "Detected pandoc at {path}. DOCX parsing is ready."
+#: src/ui/prefs/tools/document.js:141
+msgid "Detected pdftotext at {path}. PDF parsing is ready."
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:122
+#: src/ui/prefs/tools/document.js:148
+msgid "Detected LibreOffice at {path}. Legacy .doc/.xls/.ppt attachments are ready."
+msgstr ""
+
+#: src/ui/prefs/tools/document.js:156
 msgid "Refresh Detection"
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:123
+#: src/ui/prefs/tools/document.js:157
 msgid "Re-scan the local system after installing or removing parser packages."
 msgstr ""
 
-#: src/ui/prefs/tools/document.js:124 src/ui/prefs/tools/knowledge.js:986
+#: src/ui/prefs/tools/document.js:158 src/ui/prefs/tools/knowledge.js:988
 msgid "Refresh"
 msgstr ""
 
@@ -2302,7 +2334,7 @@ msgstr ""
 msgid "Checking the systemd unit…"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:372 src/ui/prefs/tools/knowledge.js:431 src/ui/prefs/tools/knowledge.js:910 src/ui/prefs/widgets.js:341
+#: src/ui/prefs/tools/knowledge.js:372 src/ui/prefs/tools/knowledge.js:431 src/ui/prefs/tools/knowledge.js:912 src/ui/prefs/widgets.js:341
 msgid "Checking"
 msgstr ""
 
@@ -2334,7 +2366,7 @@ msgstr ""
 msgid "No service is set up yet. Use \"Set Up &amp; Start\" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install)."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:454 src/ui/prefs/tools/knowledge.js:1010 src/ui/prefs/tools/knowledge.js:1233
+#: src/ui/prefs/tools/knowledge.js:454 src/ui/prefs/tools/knowledge.js:1012 src/ui/prefs/tools/knowledge.js:1235
 msgid "Running"
 msgstr ""
 
@@ -2499,328 +2531,328 @@ msgid "Index Document Attachments"
 msgstr ""
 
 #: src/ui/prefs/tools/knowledge.js:749
-msgid "Automatically add attached documents (txt, md, pdf, docx) to the knowledge base."
+msgid "Automatically add attached documents (text, PDF, Word, Excel, PowerPoint, OpenDocument, CSV, email) to the knowledge base."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:755
+#: src/ui/prefs/tools/knowledge.js:757
 msgid "Index Conversations"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:756
+#: src/ui/prefs/tools/knowledge.js:758
 msgid "Automatically add past conversation turns to the knowledge base for cross-session retrieval."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:764
+#: src/ui/prefs/tools/knowledge.js:766
 msgid "Index Research Cache"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:765
+#: src/ui/prefs/tools/knowledge.js:767
 msgid "Automatically add web search and scraping results to the knowledge base."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:773
+#: src/ui/prefs/tools/knowledge.js:775
 msgid "Let supported models call knowledge_search on their own when they think it would help."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:780
+#: src/ui/prefs/tools/knowledge.js:782
 msgid "Allow Model-Triggered Knowledge Search"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:781
+#: src/ui/prefs/tools/knowledge.js:783
 msgid "Advertise the knowledge_search tool to capable models. When disabled, only the manual /kb command works."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:789
+#: src/ui/prefs/tools/knowledge.js:791
 msgid "Auto-Update Knowledge Base"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:790
+#: src/ui/prefs/tools/knowledge.js:792
 msgid "When enabled, the model can update the knowledge base without asking for confirmation each time. When disabled, you'll be asked to confirm each update."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:799
+#: src/ui/prefs/tools/knowledge.js:801
 msgid "Advanced Retrieval"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:800
+#: src/ui/prefs/tools/knowledge.js:802
 msgid "Fine-tune how the knowledge base finds and ranks results. These features require additional models and add latency, but significantly improve result quality."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:808
+#: src/ui/prefs/tools/knowledge.js:810
 msgid "Auto-Fallback to Web Search"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:809
+#: src/ui/prefs/tools/knowledge.js:811
 msgid "When knowledge base results are low-quality, automatically trigger a web search as a supplement. This is the reverse direction of the existing suppression for high-confidence KB results."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:817
+#: src/ui/prefs/tools/knowledge.js:819
 msgid "Strict (only fallback when KB is very poor)"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:818
+#: src/ui/prefs/tools/knowledge.js:820
 msgid "Moderate (recommended)"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:819
+#: src/ui/prefs/tools/knowledge.js:821
 msgid "Aggressive (fallback frequently)"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:822
+#: src/ui/prefs/tools/knowledge.js:824
 msgid "Fallback Threshold"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:823
+#: src/ui/prefs/tools/knowledge.js:825
 msgid "Minimum best-result score (0.0–1.0) before auto-triggering web search."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:844
+#: src/ui/prefs/tools/knowledge.js:846
 msgid "Current: {value} — {desc}"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:857
+#: src/ui/prefs/tools/knowledge.js:859
 msgid "Reranking"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:858
+#: src/ui/prefs/tools/knowledge.js:860
 msgid "Re-rank top candidate chunks with a local scoring model (bge-reranker-v2-m3 or similar) on your Ollama host. Chunks are scored in one batched call per 10 candidates. Requires the model to be pulled first."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:866
+#: src/ui/prefs/tools/knowledge.js:868
 msgid "Reranker Model"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:867
+#: src/ui/prefs/tools/knowledge.js:869
 msgid "Ollama model used for cross-encoder reranking. Must be pulled first."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:873
+#: src/ui/prefs/tools/knowledge.js:875
 msgid "Candidate Pool Multiplier"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:874
+#: src/ui/prefs/tools/knowledge.js:876
 msgid "How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:886
+#: src/ui/prefs/tools/knowledge.js:888
 msgid "Hybrid BM25 + Dense Retrieval"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:887
+#: src/ui/prefs/tools/knowledge.js:889
 msgid "Combine keyword matching (BM25) with semantic search (dense embeddings) for better recall. Enabled by default — the service falls back to dense-only if rank-bm25 is not installed."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:896
+#: src/ui/prefs/tools/knowledge.js:898
 msgid "Maintenance"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:897
+#: src/ui/prefs/tools/knowledge.js:899
 msgid "Export, rebuild, or clear the knowledge base."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:903
+#: src/ui/prefs/tools/knowledge.js:905
 msgid "Current Usage"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:904
+#: src/ui/prefs/tools/knowledge.js:906
 msgid "Click \"Refresh\" to check usage against your storage limits."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:911
+#: src/ui/prefs/tools/knowledge.js:913
 msgid "Querying the RAG service…"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:933
+#: src/ui/prefs/tools/knowledge.js:935
 msgid " ({pct}% of cap)"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:936
+#: src/ui/prefs/tools/knowledge.js:938
 msgid "(none)"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:946
+#: src/ui/prefs/tools/knowledge.js:948
 msgid "{chunks} chunks, ~{size} MB{cap} — {collections}{features}"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:957 src/ui/prefs/tools/knowledge.js:1035 src/ui/prefs/tools/knowledge.js:1298
+#: src/ui/prefs/tools/knowledge.js:959 src/ui/prefs/tools/knowledge.js:1037 src/ui/prefs/tools/knowledge.js:1300
 msgid "Empty"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:958
+#: src/ui/prefs/tools/knowledge.js:960
 msgid "Knowledge base is empty.{features}"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:964
+#: src/ui/prefs/tools/knowledge.js:966
 msgid "Near Limit"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:969
+#: src/ui/prefs/tools/knowledge.js:971
 msgid "Healthy"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:974 src/ui/prefs/tools/knowledge.js:979
+#: src/ui/prefs/tools/knowledge.js:976 src/ui/prefs/tools/knowledge.js:981
 msgid "Cannot reach RAG service."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:984
+#: src/ui/prefs/tools/knowledge.js:986
 msgid "Refresh Usage"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:985
+#: src/ui/prefs/tools/knowledge.js:987
 msgid "Query the RAG service for current chunk counts and estimated disk usage."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:999
+#: src/ui/prefs/tools/knowledge.js:1001
 msgid "Operation Status"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1000
+#: src/ui/prefs/tools/knowledge.js:1002
 msgid "Idle."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1003
+#: src/ui/prefs/tools/knowledge.js:1005
 msgid "Idle"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1006
+#: src/ui/prefs/tools/knowledge.js:1008
 msgid "Export Knowledge Base"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1007
+#: src/ui/prefs/tools/knowledge.js:1009
 msgid "Download all indexed data as a JSON file for backup or inspection."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1011
+#: src/ui/prefs/tools/knowledge.js:1013
 msgid "Fetching data from the RAG service…"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1036
+#: src/ui/prefs/tools/knowledge.js:1038
 msgid "Knowledge base is empty — nothing to export."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1058 src/ui/prefs/tools/knowledge.js:1124 src/ui/prefs/tools/knowledge.js:1286
+#: src/ui/prefs/tools/knowledge.js:1060 src/ui/prefs/tools/knowledge.js:1126 src/ui/prefs/tools/knowledge.js:1288
 msgid "Done"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1060
+#: src/ui/prefs/tools/knowledge.js:1062
 msgid "Exported {count} entries ({collections}) to {path}"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1066
+#: src/ui/prefs/tools/knowledge.js:1068
 msgid "Export failed — is the RAG service running?"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1071
+#: src/ui/prefs/tools/knowledge.js:1073
 msgid "Export failed."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1078
+#: src/ui/prefs/tools/knowledge.js:1080
 msgid "Re-index Knowledge Base"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1079
+#: src/ui/prefs/tools/knowledge.js:1081
 msgid "Reset index tracking and rebuild from your saved conversations and the research cache. Documents are re-indexed as you use them."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1082
+#: src/ui/prefs/tools/knowledge.js:1084
 msgid "Re-index"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1089
+#: src/ui/prefs/tools/knowledge.js:1091
 msgid "Re-index the entire knowledge base?"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1090
+#: src/ui/prefs/tools/knowledge.js:1092
 msgid "This will clear all existing index state and re-process your documents, conversations, and research cache on the next chat message."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1125
+#: src/ui/prefs/tools/knowledge.js:1127
 msgid "Index state cleared — re-indexing will start now."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1155
+#: src/ui/prefs/tools/knowledge.js:1157
 msgid "Queued"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1157
+#: src/ui/prefs/tools/knowledge.js:1159
 msgid "Queued {count} path(s) — the running extension will import them now."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1162
+#: src/ui/prefs/tools/knowledge.js:1164
 msgid "Could not queue the import."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1167
+#: src/ui/prefs/tools/knowledge.js:1169
 msgid "Import Files"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1168
-msgid "Add files (txt, md, pdf, docx, eml) from disk to the knowledge base. Up to 50 files per import."
+#: src/ui/prefs/tools/knowledge.js:1170
+msgid "Add files (text, Markdown, PDF, Word, Excel, PowerPoint, OpenDocument, CSV/TSV, email) from disk to the knowledge base. Up to 50 files per import."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1171
+#: src/ui/prefs/tools/knowledge.js:1173
 msgid "Select Files…"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1174
+#: src/ui/prefs/tools/knowledge.js:1176
 msgid "Import files into the knowledge base"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1196
+#: src/ui/prefs/tools/knowledge.js:1198
 msgid "Import Folder"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1197
+#: src/ui/prefs/tools/knowledge.js:1199
 msgid "Import every supported file in a folder (and up to 3 levels of subfolders)."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1198
+#: src/ui/prefs/tools/knowledge.js:1200
 msgid "Select Folder…"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1201
+#: src/ui/prefs/tools/knowledge.js:1203
 msgid "Import a folder into the knowledge base"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1217
+#: src/ui/prefs/tools/knowledge.js:1219
 msgid "Clear Knowledge Base"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1218
+#: src/ui/prefs/tools/knowledge.js:1220
 msgid "Permanently delete ALL indexed data from the vector database. This cannot be undone."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1219
+#: src/ui/prefs/tools/knowledge.js:1221
 msgid "Clear"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1226
+#: src/ui/prefs/tools/knowledge.js:1228
 msgid "Delete the entire knowledge base?"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1227
+#: src/ui/prefs/tools/knowledge.js:1229
 msgid "All indexed documents, conversations, and research cache will be permanently removed from the ChromaDB database. This cannot be undone."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1234
+#: src/ui/prefs/tools/knowledge.js:1236
 msgid "Clearing all collections…"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1290
+#: src/ui/prefs/tools/knowledge.js:1292
 msgid "Cleared {count} collection: {names}."
 msgid_plural "Cleared {count} collections: {names}."
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/prefs/tools/knowledge.js:1299
+#: src/ui/prefs/tools/knowledge.js:1301
 msgid "Knowledge base was already empty."
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1311
+#: src/ui/prefs/tools/knowledge.js:1313
 msgid "Clear failed — is the RAG service running?"
 msgstr ""
 
-#: src/ui/prefs/tools/knowledge.js:1317
+#: src/ui/prefs/tools/knowledge.js:1319
 msgid "Clear failed."
 msgstr ""
 

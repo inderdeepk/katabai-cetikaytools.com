@@ -1,5 +1,12 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import {
+    LEGACY_OFFICE_TARGETS,
+    extractOfficeText,
+    isLegacyOfficeExtension,
+    isOfficeExtension,
+    listOfficeExtensions,
+} from './officeParsers.js';
 
 export const DOCUMENT_TOOL_COMMAND = '/doc';
 export const DOCUMENT_TOOL_NAME = 'document';
@@ -14,8 +21,23 @@ const IMAGE_MIME_TYPES = new Map([
 ]);
 const IMAGE_EXTENSIONS = new Set(IMAGE_MIME_TYPES.keys());
 const PDF_EXTENSION = 'pdf';
-const DOCX_EXTENSION = 'docx';
 const EML_EXTENSION = 'eml';
+const WORD_EXTENSIONS = new Set([
+    ...listOfficeExtensions('word'),
+    ...listOfficeExtensions('odf-text'),
+    ...listOfficeExtensions('rtf'),
+]);
+const SPREADSHEET_EXTENSIONS = new Set([
+    ...listOfficeExtensions('sheet'),
+    ...listOfficeExtensions('odf-sheet'),
+]);
+const PRESENTATION_EXTENSIONS = new Set([
+    ...listOfficeExtensions('slides'),
+    ...listOfficeExtensions('odf-presentation'),
+    ...listOfficeExtensions('odf-drawing'),
+]);
+const DELIMITED_EXTENSIONS = new Set(listOfficeExtensions('delimited'));
+const LEGACY_OFFICE_EXTENSIONS = new Set(LEGACY_OFFICE_TARGETS.keys());
 
 // Parsed documents (including full base64 image payloads, which can be
 // several MB each) are cached per file so repeat sends don't re-parse.  The
@@ -46,6 +68,38 @@ const CAPABILITY_META = {
         installLabel: null,
         extensions: Array.from(IMAGE_EXTENSIONS),
     },
+    csv: {
+        kind: 'document',
+        label: 'Spreadsheet Text (CSV/TSV)',
+        status: TOOL_STATUS.BUILTIN,
+        parserName: 'Katab table reader',
+        installLabel: null,
+        extensions: Array.from(DELIMITED_EXTENSIONS),
+    },
+    word: {
+        kind: 'document',
+        label: 'Word and OpenDocument Text',
+        status: TOOL_STATUS.BUILTIN,
+        parserName: 'Katab Office reader',
+        installLabel: null,
+        extensions: [...WORD_EXTENSIONS],
+    },
+    spreadsheet: {
+        kind: 'document',
+        label: 'Excel and OpenDocument Spreadsheets',
+        status: TOOL_STATUS.BUILTIN,
+        parserName: 'Katab Office reader',
+        installLabel: null,
+        extensions: [...SPREADSHEET_EXTENSIONS],
+    },
+    presentation: {
+        kind: 'document',
+        label: 'PowerPoint and OpenDocument Presentations',
+        status: TOOL_STATUS.BUILTIN,
+        parserName: 'Katab Office reader',
+        installLabel: null,
+        extensions: [...PRESENTATION_EXTENSIONS],
+    },
     pdf: {
         kind: 'document',
         label: 'PDF Documents',
@@ -54,13 +108,13 @@ const CAPABILITY_META = {
         installLabel: 'poppler-utils',
         extensions: [PDF_EXTENSION],
     },
-    docx: {
+    legacy: {
         kind: 'document',
-        label: 'Word Documents (.docx)',
-        command: 'pandoc',
-        parserName: 'pandoc',
-        installLabel: 'pandoc',
-        extensions: [DOCX_EXTENSION],
+        label: 'Legacy Office (.doc, .xls, .ppt)',
+        command: 'soffice',
+        parserName: 'LibreOffice + Katab Office reader',
+        installLabel: 'libreoffice',
+        extensions: Array.from(LEGACY_OFFICE_EXTENSIONS),
     },
     eml: {
         kind: 'document',
@@ -81,11 +135,34 @@ export class DocumentToolError extends Error {
     }
 }
 
-export function getDocumentToolCapabilities() {
-    const pdfPath = GLib.find_program_in_path(CAPABILITY_META.pdf.command);
-    const pandocPath = GLib.find_program_in_path(CAPABILITY_META.docx.command);
+export function findLibreOfficePath() {
+    for (const command of ['soffice', 'libreoffice']) {
+        const path = GLib.find_program_in_path(command);
+        if (path) return path;
+    }
+    return null;
+}
 
-    return {
+// Detection runs a PATH scan per helper.  Attachment metadata and folder
+// imports ask for it once per file, so a short cache keeps that cheap while
+// still reacting to installs/removals almost immediately.
+const CAPABILITY_CACHE_MS = 2000;
+let capabilityCache = { builtAt: 0, value: null };
+
+export function invalidateDocumentToolCapabilities() {
+    capabilityCache = { builtAt: 0, value: null };
+}
+
+export function getDocumentToolCapabilities() {
+    const nowMs = GLib.get_monotonic_time() / 1000;
+    if (capabilityCache.value && nowMs - capabilityCache.builtAt < CAPABILITY_CACHE_MS) {
+        return capabilityCache.value;
+    }
+
+    const pdfPath = GLib.find_program_in_path(CAPABILITY_META.pdf.command);
+    const libreOfficePath = findLibreOfficePath();
+
+    const capabilities = {
         text: {
             key: 'text',
             available: true,
@@ -98,6 +175,36 @@ export function getDocumentToolCapabilities() {
             commandPath: null,
             ...CAPABILITY_META.image,
         },
+        eml: {
+            key: 'eml',
+            available: true,
+            commandPath: null,
+            ...CAPABILITY_META.eml,
+        },
+        csv: {
+            key: 'csv',
+            available: true,
+            commandPath: null,
+            ...CAPABILITY_META.csv,
+        },
+        word: {
+            key: 'word',
+            available: true,
+            commandPath: null,
+            ...CAPABILITY_META.word,
+        },
+        spreadsheet: {
+            key: 'spreadsheet',
+            available: true,
+            commandPath: null,
+            ...CAPABILITY_META.spreadsheet,
+        },
+        presentation: {
+            key: 'presentation',
+            available: true,
+            commandPath: null,
+            ...CAPABILITY_META.presentation,
+        },
         pdf: {
             key: 'pdf',
             available: Boolean(pdfPath),
@@ -105,20 +212,24 @@ export function getDocumentToolCapabilities() {
             status: pdfPath ? TOOL_STATUS.DETECTED : TOOL_STATUS.INSTALL,
             ...CAPABILITY_META.pdf,
         },
-        docx: {
-            key: 'docx',
-            available: Boolean(pandocPath),
-            commandPath: pandocPath || null,
-            status: pandocPath ? TOOL_STATUS.DETECTED : TOOL_STATUS.INSTALL,
-            ...CAPABILITY_META.docx,
-        },
-        eml: {
-            key: 'eml',
-            available: true,
-            commandPath: null,
-            ...CAPABILITY_META.eml,
+        legacy: {
+            key: 'legacy',
+            available: Boolean(libreOfficePath),
+            commandPath: libreOfficePath || null,
+            status: libreOfficePath ? TOOL_STATUS.DETECTED : TOOL_STATUS.INSTALL,
+            ...CAPABILITY_META.legacy,
         },
     };
+
+    capabilityCache = { builtAt: nowMs, value: capabilities };
+    return capabilities;
+}
+
+// Single human-readable list of everything the document tool can parse.  Used
+// by the unsupported-format error, the /doc help line, and the knowledge-base
+// import messages so the advertised formats never drift apart.
+export function getSupportedFormatSummary() {
+    return 'txt, md, markdown, pdf, docx, doc, odt, rtf, xlsx, xls, ods, csv, tsv, pptx, ppt, odp, eml, png, jpg, jpeg';
 }
 
 export function parseDocumentCommand(promptText) {
@@ -237,7 +348,7 @@ export function buildDocumentPromptBlock(document) {
 
     lines.push('');
     lines.push('Document text follows:');
-    lines.push(document.text);
+    lines.push(String(document.text ?? ''));
 
     return lines.join('\n');
 }
@@ -269,6 +380,36 @@ export function buildVisionAnalysisPromptBlock(analysisText, modelName) {
 
 export function getAttachmentInfoForPath(path) {
     return getAttachmentInfoForExtension(getFileExtension(path));
+}
+
+const ATTACHMENT_ICON_BY_CAPABILITY = {
+    text: 'text-x-generic-symbolic',
+    image: 'image-x-generic-symbolic',
+    csv: 'x-office-spreadsheet-symbolic',
+    spreadsheet: 'x-office-spreadsheet-symbolic',
+    presentation: 'x-office-presentation-symbolic',
+    word: 'x-office-document-symbolic',
+    pdf: 'x-office-document-symbolic',
+    legacy: 'x-office-document-symbolic',
+    eml: 'mail-unread-symbolic',
+};
+
+/** Symbolic icon name for an attachment chip (Office files get their own). */
+export function getDocumentIconName(attachmentMeta) {
+    if (looksLikeImageAttachment(attachmentMeta)) return ATTACHMENT_ICON_BY_CAPABILITY.image;
+    const info = getAttachmentInfoForPath(
+        attachmentMeta?.path || attachmentMeta?.displayName || '',
+    );
+    return ATTACHMENT_ICON_BY_CAPABILITY[info.capability?.key] || DOCUMENT_TOOL_ICON;
+}
+
+// True when the path is a text document the document tool can actually parse
+// right now (images and formats whose helper is missing are excluded).  The
+// knowledge-base folder import uses this so the announced and accepted
+// formats cannot drift apart.
+export function isParsableDocumentPath(path) {
+    const info = getAttachmentInfoForPath(path);
+    return info.kind === 'document' && Boolean(info.capability?.available);
 }
 
 // True when the attachment metadata (or its file extension) describes an
@@ -305,30 +446,17 @@ function getFileExtension(path) {
     return filename.slice(lastDot + 1).toLowerCase();
 }
 
+const CAPABILITY_KEY_BY_EXTENSION = new Map();
+for (const [key, meta] of Object.entries(CAPABILITY_META)) {
+    for (const extension of meta.extensions) {
+        CAPABILITY_KEY_BY_EXTENSION.set(extension, key);
+    }
+}
+
 function getCapabilityForExtension(extension) {
-    const capabilities = getDocumentToolCapabilities();
-
-    if (TEXT_EXTENSIONS.has(extension)) {
-        return capabilities.text;
-    }
-
-    if (IMAGE_EXTENSIONS.has(extension)) {
-        return capabilities.image;
-    }
-
-    if (extension === PDF_EXTENSION) {
-        return capabilities.pdf;
-    }
-
-    if (extension === DOCX_EXTENSION) {
-        return capabilities.docx;
-    }
-
-    if (extension === EML_EXTENSION) {
-        return capabilities.eml;
-    }
-
-    return null;
+    const key = CAPABILITY_KEY_BY_EXTENSION.get(extension);
+    if (!key) return null;
+    return getDocumentToolCapabilities()[key] || null;
 }
 
 function getAttachmentInfoForExtension(extension) {
@@ -422,7 +550,8 @@ async function loadContentsAsync(file, cancellable = null) {
     return new TextDecoder('utf-8').decode(contents);
 }
 
-function runCommandAsync(argv, cancellable = null, installLabel = null) {
+function runCommandAsync(argv, cancellable = null, installLabel = null, options = {}) {
+    const { timeoutSeconds = 0 } = options;
     return new Promise((resolve, reject) => {
         let subprocess;
         try {
@@ -443,9 +572,39 @@ function runCommandAsync(argv, cancellable = null, installLabel = null) {
             return;
         }
 
+        // LibreOffice can hang on a damaged file; the timeout keeps the chat
+        // request from waiting forever.
+        let timedOut = false;
+        let timeoutId = 0;
+        const clearTimeoutSource = () => {
+            if (!timeoutId) return;
+            GLib.source_remove(timeoutId);
+            timeoutId = 0;
+        };
+        if (timeoutSeconds > 0) {
+            timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, timeoutSeconds, () => {
+                timeoutId = 0;
+                timedOut = true;
+                try {
+                    subprocess.force_exit();
+                } catch (_e) {
+                    /* already gone */
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+
+        const timeoutError = () =>
+            new DocumentToolError(
+                `${argv[0]} did not finish within ${timeoutSeconds} seconds. The file may be too large or damaged.`,
+                { code: 'command-timeout', installLabel },
+            );
+
         subprocess.communicate_utf8_async(null, cancellable, (source, result) => {
+            clearTimeoutSource();
             try {
                 const [, stdout, stderr] = source.communicate_utf8_finish(result);
+                if (timedOut) throw timeoutError();
                 if (!source.get_successful()) {
                     throw new DocumentToolError(
                         stderr?.trim() || `${argv[0]} returned a non-zero exit status.`,
@@ -459,14 +618,86 @@ function runCommandAsync(argv, cancellable = null, installLabel = null) {
                 resolve(stdout || '');
             } catch (error) {
                 // Cancelling the request must not leave the helper (e.g.
-                // pdftotext/pandoc) running to completion.
+                // pdftotext/LibreOffice) running to completion.
                 try {
                     subprocess.force_exit();
                 } catch (_e) {}
-                reject(error);
+                reject(timedOut && !(error instanceof DocumentToolError) ? timeoutError() : error);
             }
         });
     });
+}
+
+function runOfficeParser(bytes, extension, displayName) {
+    try {
+        return extractOfficeText(bytes, extension);
+    } catch (error) {
+        throw new DocumentToolError(`Katab could not read ${displayName}: ${error.message}`, {
+            code: error.code || 'office-parse-failed',
+        });
+    }
+}
+
+function findConvertedOfficeFile(directoryPath, extension) {
+    let children;
+    try {
+        children = Gio.File.new_for_path(directoryPath).enumerate_children(
+            'standard::name,standard::type',
+            Gio.FileQueryInfoFlags.NONE,
+            null,
+        );
+    } catch (_e) {
+        return null;
+    }
+
+    const suffix = `.${extension}`.toLowerCase();
+    let converted = null;
+    let info;
+    try {
+        while ((info = children.next_file(null)) !== null) {
+            const name = info.get_name();
+            if (
+                info.get_file_type() === Gio.FileType.REGULAR &&
+                name.toLowerCase().endsWith(suffix)
+            ) {
+                converted = GLib.build_filenamev([directoryPath, name]);
+                break;
+            }
+        }
+    } catch (_e) {
+        converted = null;
+    } finally {
+        try {
+            children.close(null);
+        } catch (_e) {}
+    }
+    return converted;
+}
+
+function removeDirectoryRecursively(path) {
+    try {
+        const directory = Gio.File.new_for_path(path);
+        const children = directory.enumerate_children(
+            'standard::name,standard::type',
+            Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+            null,
+        );
+        let info;
+        while ((info = children.next_file(null)) !== null) {
+            const childPath = GLib.build_filenamev([path, info.get_name()]);
+            if (info.get_file_type() === Gio.FileType.DIRECTORY) {
+                removeDirectoryRecursively(childPath);
+            } else {
+                try {
+                    Gio.File.new_for_path(childPath).delete(null);
+                } catch (_e) {}
+            }
+        }
+        children.close(null);
+        directory.delete(null);
+    } catch (_e) {
+        // Best effort — a leftover temp folder is harmless.
+    }
 }
 
 // ── .eml email parsing (pure JS, no external tool) ─────────────────────
@@ -922,7 +1153,7 @@ export class DocumentToolRuntime {
         const { capability, extension, kind, mimeType } = attachmentInfo;
         if (!capability) {
             throw new DocumentToolError(
-                'Unsupported file format. Use .txt, .md, .pdf, .docx, .png, .jpg, .jpeg, or .eml.',
+                `Unsupported file format. Katab can read ${getSupportedFormatSummary()}.`,
                 {
                     code: 'unsupported-format',
                 },
@@ -986,16 +1217,20 @@ export class DocumentToolRuntime {
                 cancellable,
                 capability.installLabel,
             );
-        } else if (extension === DOCX_EXTENSION) {
-            extractedText = await runCommandAsync(
-                [capability.command, '-f', 'docx', '-t', 'plain', '--wrap=none', resolvedPath],
-                cancellable,
-                capability.installLabel,
-            );
         } else if (extension === EML_EXTENSION) {
             // EML parsing is pure JS — no external helper needed.
             const rawBytes = await loadBinaryContentsAsync(file, cancellable);
             extractedText = formatEmlDocument(parseEmlText(decodeEmlBytes(rawBytes)));
+        } else if (isLegacyOfficeExtension(extension)) {
+            extractedText = await this._convertLegacyOfficeDocument(
+                resolvedPath,
+                extension,
+                capability,
+                cancellable,
+            );
+        } else if (isOfficeExtension(extension)) {
+            const rawBytes = await loadBinaryContentsAsync(file, cancellable);
+            extractedText = runOfficeParser(rawBytes, extension, displayName);
         }
 
         const normalizedText = normalizeDocumentText(extractedText);
@@ -1027,6 +1262,72 @@ export class DocumentToolRuntime {
 
         this._cacheStore(cacheKey, result);
         return result;
+    }
+
+    // Legacy binary Office files (.doc/.xls/.ppt) are OLE compound documents
+    // that only LibreOffice can decode reliably.  Converting them to OOXML in
+    // a throwaway profile keeps the output identical to the native readers and
+    // avoids fighting a LibreOffice instance the user already has open.
+    async _convertLegacyOfficeDocument(resolvedPath, extension, capability, cancellable) {
+        const targetExtension = LEGACY_OFFICE_TARGETS.get(extension);
+        const displayName = GLib.path_get_basename(resolvedPath);
+        if (!targetExtension) {
+            throw new DocumentToolError(`Katab does not know how to convert .${extension} files.`, {
+                code: 'unsupported-format',
+            });
+        }
+
+        const tempDir = GLib.dir_make_tmp('katab-office-XXXXXX');
+        if (!tempDir) {
+            throw new DocumentToolError(
+                `Katab could not create a temporary folder to convert ${displayName}.`,
+                { code: 'temp-dir-failed' },
+            );
+        }
+
+        try {
+            const profileUri = Gio.File.new_for_path(
+                GLib.build_filenamev([tempDir, 'profile']),
+            ).get_uri();
+            await runCommandAsync(
+                [
+                    capability.commandPath || capability.command,
+                    '--headless',
+                    '--norestore',
+                    '--nolockcheck',
+                    '--nodefault',
+                    '--nofirststartwizard',
+                    `-env:UserInstallation=${profileUri}`,
+                    '--convert-to',
+                    targetExtension,
+                    '--outdir',
+                    tempDir,
+                    resolvedPath,
+                ],
+                cancellable,
+                capability.installLabel,
+                { timeoutSeconds: 120 },
+            );
+
+            const convertedPath = findConvertedOfficeFile(tempDir, targetExtension);
+            if (!convertedPath) {
+                throw new DocumentToolError(
+                    `LibreOffice could not convert ${displayName}. The file may be damaged or password-protected.`,
+                    {
+                        code: 'conversion-failed',
+                        installLabel: capability.installLabel,
+                    },
+                );
+            }
+
+            const bytes = await loadBinaryContentsAsync(
+                Gio.File.new_for_path(convertedPath),
+                cancellable,
+            );
+            return runOfficeParser(bytes, targetExtension, displayName);
+        } finally {
+            removeDirectoryRecursively(tempDir);
+        }
     }
 
     _buildCacheKey(path, info) {

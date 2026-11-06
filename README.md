@@ -19,8 +19,9 @@ of pet companions — all from an overlay in your top panel.
   delaying the reply (cloud titles run in the background, local titles after the answer).
 - **Session memory** — older turns fold into a persistent rolling summary so long chats keep
   context without resending the whole transcript.
-- **Document attachments** — `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.eml`, `.png`, `.jpg`,
-  `.jpeg`; parsed locally before anything is sent to a provider.
+- **Document attachments** — text and Markdown, PDF, Word (`.docx`/`.doc`/`.odt`/`.rtf`), Excel
+  (`.xlsx`/`.xls`/`.ods`/`.csv`/`.tsv`), PowerPoint (`.pptx`/`.ppt`/`.odp`), email (`.eml`), and
+  images (`.png`/`.jpg`/`.jpeg`); parsed locally before anything is sent to a provider.
 - **Web search** through your own [SearxNG](https://docs.searxng.org/) instance (`/search`).
 - **Web scraping** through your own [Crawl4AI](https://github.com/unclecode/crawl4ai) container
   (`/crawl`), with optional server-side LLM extraction.
@@ -88,10 +89,11 @@ Katab works with only a provider configured. The tools below are opt-in and disa
 | Tool | Package | Needed for |
 |---|---|---|
 | `pdftotext` | `poppler-utils` (Debian/Ubuntu), `poppler` (Arch) | PDF attachments and PDF page reads |
-| `pandoc` | `pandoc` | DOCX attachments |
+| `soffice` | `libreoffice` | Legacy binary Office attachments (`.doc`, `.xls`, `.ppt`) |
 | `msgfmt` | `gettext` | Compiling translations (`make langs`) |
 
-Everything else (plain text, Markdown, images, `.eml` email) is parsed with built-in code.
+Everything else (plain text, Markdown, Word/OpenDocument, Excel/CSV, PowerPoint, `.eml` email, and
+images) is parsed with built-in code — no pandoc or LibreOffice needed for modern Office formats.
 
 ---
 
@@ -187,9 +189,12 @@ lives in `history.json` and in the visible chat; only the model-facing payload i
 
 Disabled by default, enabled under **Settings → Tools → Document Tool**.
 
-- Built-in parsing for `.txt`, `.md`, `.markdown`, `.eml`, `.png`, `.jpg`, `.jpeg`.
-- `.pdf` needs `pdftotext`; `.docx` needs `pandoc`; the preferences page shows
-  **Built in / Detected / Install** capability badges.
+- Built-in parsing for `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.docx`/`.docm`, `.odt`,
+  `.rtf`, `.xlsx`/`.xlsm`, `.ods`, `.pptx`/`.pptm`/`.ppsx`, `.odp`/`.odg`, `.eml`, `.png`, `.jpg`,
+  `.jpeg` — Word headings/lists/tables, one Markdown table per worksheet, and a slide-by-slide
+  outline for presentations.
+- `.pdf` needs `pdftotext`; legacy `.doc`/`.xls`/`.ppt` files need LibreOffice for conversion. The
+  preferences page shows **Built in / Detected / Install** capability badges.
 - Attach from **Tools → Docs** (footer gear) or with `/doc "path" [instruction]`.
 - Documents are parsed locally. Images are base64-encoded locally and only sent to providers that
   can accept them.

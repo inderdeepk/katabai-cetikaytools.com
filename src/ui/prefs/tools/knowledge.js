@@ -746,7 +746,9 @@ export function buildKnowledgeSection(ctx) {
 
     createBooleanRow(
         _('Index Document Attachments'),
-        _('Automatically add attached documents (txt, md, pdf, docx) to the knowledge base.'),
+        _(
+            'Automatically add attached documents (text, PDF, Word, Excel, PowerPoint, OpenDocument, CSV, email) to the knowledge base.',
+        ),
         'rag-index-documents',
         indexingGroup,
     );
@@ -1166,7 +1168,7 @@ export function buildKnowledgeSection(ctx) {
     createButtonRow(
         _('Import Files'),
         _(
-            'Add files (txt, md, pdf, docx, eml) from disk to the knowledge base. Up to 50 files per import.',
+            'Add files (text, Markdown, PDF, Word, Excel, PowerPoint, OpenDocument, CSV/TSV, email) from disk to the knowledge base. Up to 50 files per import.',
         ),
         _('Select Files…'),
         () => {

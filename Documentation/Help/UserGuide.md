@@ -170,7 +170,7 @@ Type `/help` at any time to see available commands for your current provider and
 | Command | Description |
 |---|---|
 | `/help` | Show available commands |
-| `/doc "path"` | Attach a local file (`.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.png`, `.jpg`, `.jpeg`, `.eml`) |
+| `/doc "path"` | Attach a local file (text/Markdown, PDF, Word, Excel, PowerPoint, OpenDocument, CSV/TSV, `.eml`, `.png`, `.jpg`, `.jpeg`) |
 | `/search query` | Search the web via SearxNG |
 | `/crawl URL` | Deep-scrape a web page with Crawl4AI |
 | `/crawl query` | Search then scrape the top result |
@@ -276,26 +276,37 @@ Katab includes an optional document tool for attaching local files to chat. It i
 | `.txt` / `.md` / `.markdown` | Built in | No extra packages |
 | `.png` / `.jpg` / `.jpeg` | Built in | Only sent for Ollama with vision-capable model |
 | `.eml` | Built in | Email messages; headers, body text, and attachment names parsed locally |
+| `.csv` / `.tsv` | Built in | Rendered as Markdown tables; delimiter sniffed automatically |
+| `.docx` / `.docm` / `.dotx` / `.dotm` | Built in | Headings, lists, and tables preserved |
+| `.odt` / `.ott` / `.rtf` | Built in | OpenDocument Text and Rich Text Format |
+| `.xlsx` / `.xlsm` / `.xltx` / `.xltm` | Built in | Every worksheet becomes a Markdown table |
+| `.ods` / `.ots` | Built in | OpenDocument Spreadsheet |
+| `.pptx` / `.pptm` / `.ppsx` / `.ppsm` / `.potx` / `.potm` | Built in | Slide-by-slide text outline |
+| `.odp` / `.otp` / `.odg` | Built in | OpenDocument Presentation and Drawing |
+| `.fodt` / `.fods` / `.fodp` / `.fodg` | Built in | Flat (XML-only) OpenDocument files |
 | `.pdf` | `pdftotext` (poppler-utils) | |
-| `.docx` | `pandoc` | |
+| `.doc` / `.xls` / `.ppt` (and `.dot`/`.xlt`/`.pps`/`.pot`) | `soffice` (libreoffice) | Converted to OOXML locally, then read by the built-in reader |
 
 ### Installing Missing Tools
 ```bash
 # Debian / Ubuntu
-sudo apt install poppler-utils pandoc
+sudo apt install poppler-utils libreoffice
 
 # Fedora
-sudo dnf install poppler-utils pandoc
+sudo dnf install poppler-utils libreoffice
 
 # Arch
-sudo pacman -S poppler pandoc
+sudo pacman -S poppler libreoffice
 ```
 
 Verify with:
 ```bash
 which pdftotext
-which pandoc
+which soffice
 ```
+
+Only PDF and legacy binary Office files need an external helper — modern Word, Excel, PowerPoint,
+and OpenDocument files are parsed by built-in code.
 
 ### Attaching Files
 Two methods:
@@ -305,6 +316,8 @@ Two methods:
    /doc
    /doc "/absolute/path/to/file.pdf"
    /doc "/absolute/path/to/file.docx" summarize the main points
+   /doc "/absolute/path/to/budget.xlsx" which quarter grew fastest?
+   /doc "/absolute/path/to/slides.pptx" turn this deck into an outline
    /doc "/absolute/path/to/screenshot.png" describe this image
    /doc "/absolute/path/to/email.eml" summarize this email
    ```
@@ -553,7 +566,7 @@ checkout so you can restart it independently of GNOME Shell.
 
 ### Adding content
 - **Automatic**: conversations are indexed incrementally as you chat; web research results (`web_search`, `read_url`, `crawl_url`, `explore_docs`) are indexed as they happen; attached documents are indexed when you send them.
-- **Manual imports**: `/kb import "~/Documents/notes"` or `/kb import "~/file.pdf"` — imports files (`txt`, `md`, `pdf`, `docx`, `eml`; up to 50 per import, folders scanned up to 3 levels deep). The same is available in Preferences → Tools → Knowledge Base → **Import Files** / **Import Folder**.
+- **Manual imports**: `/kb import "~/Documents/notes"` or `/kb import "~/file.pdf"` — imports every supported document format (text, PDF, Word, Excel, PowerPoint, OpenDocument, CSV/TSV, email; up to 50 per import, folders scanned up to 3 levels deep). The same is available in Preferences → Tools → Knowledge Base → **Import Files** / **Import Folder**.
 - **Memory updates**: with capable models, Katab can save durable facts (`update_knowledge`) or delete them (`forget_knowledge`) when you ask. Unless **Auto-Update** is enabled, saves and deletes appear as pending actions in the message's knowledge-base drawer and require your confirmation.
 
 ### Maintenance
