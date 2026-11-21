@@ -124,7 +124,9 @@ function _splitByMarkdownHeadings(text) {
  * Falls back to a simple head/tail character split if sentence detection fails.
  */
 function _truncateToSentences(text, maxChars) {
+    if (maxChars <= 0) return '';
     if (text.length <= maxChars) return text;
+    if (maxChars <= 5) return text.slice(0, maxChars);
 
     // Split by sentence-ending punctuation followed by whitespace.
     // Uses a simple split (no lookbehind — GJS/SpiderMonkey 115 supports it,
@@ -165,7 +167,7 @@ function _truncateToSentences(text, maxChars) {
 
     if (!result) {
         // Even one sentence didn't fit — hard truncate
-        result = text.slice(0, maxChars - 3) + '...';
+        result = text.slice(0, Math.max(0, maxChars - 3)) + '...';
     }
 
     return result.trim();
@@ -306,18 +308,65 @@ function _truncateForPrompt(text, maxChars = MAX_PAGE_CHARS) {
     return _truncateToSentences(text, maxChars);
 }
 
+function _extractBalancedJsonArray(text) {
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch === '\\') {
+                escaped = true;
+            } else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === '[') {
+            if (depth === 0) start = i;
+            depth++;
+        } else if (ch === ']' && depth > 0) {
+            depth--;
+            if (depth === 0 && start >= 0) {
+                const slice = text.slice(start, i + 1);
+                try {
+                    const parsed = JSON.parse(slice);
+                    if (Array.isArray(parsed)) return parsed;
+                } catch (_e) {
+                    // Keep scanning for another balanced array
+                }
+                start = -1;
+            }
+        }
+    }
+    return null;
+}
+
 function _safeParseJson(text) {
     try {
-        // Extract JSON array from possible markdown wrapping
         const clean = String(text || '').trim();
-        // Try direct parse first
+        if (!clean) return null;
         try {
             return JSON.parse(clean);
-        } catch (_) {}
-        // Try to find a JSON array in the response (non-greedy)
-        const match = clean.match(/\[\s*\{[\s\S]*?\}\s*\]/);
-        if (match) return JSON.parse(match[0]);
-        return null;
+        } catch (_) {
+            /* try fence / balanced extraction */
+        }
+        const fence = clean.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
+        if (fence) {
+            try {
+                return JSON.parse(fence[1].trim());
+            } catch (_) {
+                /* fall through */
+            }
+        }
+        return _extractBalancedJsonArray(clean);
     } catch (_e) {
         return null;
     }
@@ -382,6 +431,7 @@ export async function compressPage({
         const parsed = _safeParseJson(response);
         if (Array.isArray(parsed) && parsed.length > 0) {
             return parsed
+                .filter((item) => item && typeof item === 'object')
                 .map((item) => ({
                     claim: String(item.claim || '').trim(),
                     url: String(item.url || sourceUrl).trim(),
@@ -402,11 +452,12 @@ export async function compressPage({
         }
         return [];
     } catch (e) {
-        // Never swallow silently — an auth failure or provider outage must be
-        // distinguishable from "the page had no facts".
-        log(
-            `[Katab:compress] Page compression failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
-        );
+        if (cancellable?.is_cancelled?.()) {
+            throw e;
+        }
+        // Never swallow silently — log so auth failure or provider outage is
+        // visible in journalctl while letting caller fall back cleanly.
+        log(`[Katab:compress] Page compression failed: ${e?.message || e}`);
         return [];
     }
 }
@@ -444,11 +495,12 @@ export async function mergePageSummaries({ summaries, topic, llmCall, cancellabl
             cancellable,
             maxTokens: DEFAULT_MAX_TOKENS_MERGE,
         });
-        return String(response || '').trim();
+        return String(response || '').trim() || summaries.join('\n\n');
     } catch (e) {
-        log(
-            `[Katab:compress] Summary merge failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
-        );
+        if (cancellable?.is_cancelled?.()) {
+            throw e;
+        }
+        log(`[Katab:compress] Summary merge failed: ${e?.message || e}`);
         // Fallback: simple concatenation
         return summaries.join('\n\n');
     }
@@ -485,11 +537,12 @@ export async function clusterThemes({ topicSummaries, llmCall, cancellable = nul
             cancellable,
             maxTokens: DEFAULT_MAX_TOKENS_CLUSTER,
         });
-        return String(response || '').trim();
+        return String(response || '').trim() || combined;
     } catch (e) {
-        log(
-            `[Katab:compress] Theme clustering failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
-        );
+        if (cancellable?.is_cancelled?.()) {
+            throw e;
+        }
+        log(`[Katab:compress] Theme clustering failed: ${e?.message || e}`);
         return combined;
     }
 }
@@ -530,11 +583,12 @@ export async function buildSectionDraft({
             cancellable,
             maxTokens: DEFAULT_MAX_TOKENS_DRAFT,
         });
-        return String(response || '').trim();
+        return String(response || '').trim() || themedParagraphs;
     } catch (e) {
-        log(
-            `[Katab:compress] Section draft failed${cancellable?.is_cancelled?.() ? ' (cancelled)' : ''}: ${e?.message || e}`,
-        );
+        if (cancellable?.is_cancelled?.()) {
+            throw e;
+        }
+        log(`[Katab:compress] Section draft failed: ${e?.message || e}`);
         return themedParagraphs;
     }
 }

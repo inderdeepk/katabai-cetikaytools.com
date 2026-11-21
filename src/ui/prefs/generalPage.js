@@ -1,6 +1,7 @@
 // General preferences page — provider selection cards, keyboard shortcut,
 // token-usage ledger controls (range/retention/budget/export/reset), pet
 // companion selection, notifications, and appearance settings.
+import Gtk from 'gi://Gtk';
 import {
     formatTokenCount,
     TOKEN_USAGE_RANGES,
@@ -240,7 +241,9 @@ export function buildGeneralPage(ctx) {
 
     createBooleanRow(
         _('Desktop Notifications'),
-        _('Show a desktop notification when a response finishes while the chat is closed.'),
+        _(
+            'Show GNOME desktop notifications when replies finish while the chat is closed, and for companion milestones or budget alerts.',
+        ),
         'token-desktop-notifications-enabled',
         notificationGroup,
     );
@@ -248,7 +251,7 @@ export function buildGeneralPage(ctx) {
     const petSelectionRow = createChoiceRow(
         _('Active Companion'),
         _(
-            'Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → View Collection.',
+            'Follow the provider selected for chat, or keep showing the form chosen from Token Breakdown → Collection.',
         ),
         petCompanionGroup,
     );
@@ -291,8 +294,8 @@ export function buildGeneralPage(ctx) {
             const label = isValidPin
                 ? companion.name
                 : format(_('{pet} · Following'), {
-                    pet: getPetDefinition(currentProvider)?.name || companion.name,
-                });
+                      pet: getPetDefinition(currentProvider)?.name || companion.name,
+                  });
             setStatusBadge(activePetBadge, label, 'katab-prefs-status-detected');
         } catch (_e) {
             setStatusBadge(activePetBadge, _('Unavailable'), 'katab-prefs-status-install');
@@ -341,17 +344,34 @@ export function buildGeneralPage(ctx) {
         tokenUsageGroup,
     );
 
-    createButtonRow(
+    const resetRow = createButtonRow(
         _('Reset Usage Ledger'),
         _('Delete local token analytics and all pet XP. Chat history is not affected.'),
         _('Reset'),
         () => {
-            TokenUsageManager.reset();
-            settings.set_string('pet-pinned-form', '');
-            settings.set_string('pet-selection-mode', PET_SELECTION_MODES.FOLLOW_PROVIDER);
-            refreshTokenUsageBadge();
-            refreshActivePetBadge();
+            const dialog = new Gtk.MessageDialog({
+                transient_for: window,
+                modal: true,
+                message_type: Gtk.MessageType.WARNING,
+                buttons: Gtk.ButtonsType.OK_CANCEL,
+                text: _('Reset the usage ledger and pet XP?'),
+                secondary_text: _(
+                    'This permanently deletes all recorded token totals and resets every companion back to an egg. Your saved chat history will not be affected.',
+                ),
+            });
+            dialog.connect('response', (dlg, responseId) => {
+                if (responseId === Gtk.ResponseType.OK) {
+                    TokenUsageManager.reset();
+                    settings.set_string('pet-pinned-form', '');
+                    settings.set_string('pet-selection-mode', PET_SELECTION_MODES.FOLLOW_PROVIDER);
+                    refreshTokenUsageBadge();
+                    refreshActivePetBadge();
+                }
+                dlg.destroy();
+            });
+            dialog.present();
         },
         tokenUsageGroup,
     );
+    resetRow.activatable_widget?.add_css_class('destructive-action');
 }

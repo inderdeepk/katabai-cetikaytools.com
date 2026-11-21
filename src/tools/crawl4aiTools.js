@@ -304,20 +304,32 @@ export function readCrawl4AIConfig(settings) {
         }
     };
 
-    const getDouble = (key) => {
+    const getDouble = (key, fallback = 0.5) => {
         try {
-            return settings.get_double(key);
+            const val = settings.get_double(key);
+            if (!Number.isFinite(val)) return fallback;
+            // Distinguish an explicit 0.0 user value from a mock settings stub returning 0.
+            if (val === 0 && typeof settings.get_user_value === 'function') {
+                return settings.get_user_value(key) !== null ? 0 : fallback;
+            }
+            return val;
         } catch (_error) {
-            return 0.5;
+            return fallback;
         }
     };
+
+    const rawOverlap = getDouble('crawl4ai-llm-overlap-rate', CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE);
+    const hasExplicitZeroOverlap =
+        rawOverlap === 0 &&
+        typeof settings.get_user_value === 'function' &&
+        settings.get_user_value('crawl4ai-llm-overlap-rate') !== null;
 
     return {
         enabled: getBoolean('crawl4ai-enabled'),
         url: getString('crawl4ai-url'),
         apiToken: getString('crawl4ai-api-token'),
         fitMarkdownMode: getString('crawl4ai-fit-markdown-mode') || 'pruning',
-        bm25Threshold: getDouble('crawl4ai-bm25-threshold'),
+        bm25Threshold: getDouble('crawl4ai-bm25-threshold', 0.5),
         cacheMode: getString('crawl4ai-cache-mode') || 'bypass',
         wordCountThreshold: getInt('crawl4ai-word-count-threshold') || CRAWL4AI_DEFAULT_WORD_COUNT,
         pageTimeout: getInt('crawl4ai-page-timeout') || CRAWL4AI_DEFAULT_PAGE_TIMEOUT,
@@ -337,7 +349,9 @@ export function readCrawl4AIConfig(settings) {
         llmChunkTokenThreshold:
             getInt('crawl4ai-llm-chunk-token-threshold') ||
             CRAWL4AI_DEFAULT_LLM_CHUNK_TOKEN_THRESHOLD,
-        llmOverlapRate: getDouble('crawl4ai-llm-overlap-rate') || CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE,
+        llmOverlapRate: hasExplicitZeroOverlap
+            ? 0
+            : rawOverlap || CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE,
     };
 }
 
@@ -373,11 +387,10 @@ export function parseCrawl4AICommand(promptText) {
         return parseCommandRest(rest);
     }
 
-    // Suffix: https://example.com /crawl  or  query /crawl
-    const endsWithCommand = text.endsWith(` ${command}`) || text.endsWith(`\t${command}`);
-    if (endsWithCommand) {
-        const rest = text.slice(0, -command.length - 1).trim();
-        return parseCommandRest(rest);
+    // Suffix: https://example.com /crawl  or  query\n/crawl
+    const suffixMatch = text.match(/([\s\S]+?)\s+\/crawl$/);
+    if (suffixMatch) {
+        return parseCommandRest(suffixMatch[1].trim());
     }
 
     // Inline form: "Explain X. /crawl https://example.com" — a standalone
@@ -402,9 +415,15 @@ function parseCommandRest(rest) {
         return { isCommand: true, url: '', query: '' };
     }
 
-    // If it looks like a URL, treat it as direct scrape
-    if (/^https?:\/\//i.test(rest)) {
-        return { isCommand: true, url: rest, query: '' };
+    // If it starts with a URL, extract the URL token and preserve any trailing
+    // instructions in `query` instead of gluing spaces onto the URL.
+    const urlMatch = rest.match(/^(https?:\/\/\S+)(?:\s+([\s\S]+))?$/i);
+    if (urlMatch) {
+        return {
+            isCommand: true,
+            url: urlMatch[1].replace(/[.,;:!?]+$/, '').trim(),
+            query: (urlMatch[2] || '').trim(),
+        };
     }
 
     // Otherwise treat it as a search query that will first hit SearxNG
@@ -432,27 +451,30 @@ export function stripCrawl4AICommand(promptText) {
         return '';
     }
 
-    // Prefix: /crawl <rest> → the whole prompt is the command (URL or search
-    // query target), so there is no conversational text left to keep.
+    // Prefix: /crawl <url> [trailing prompt] keeps any trailing instructions,
+    // while /crawl <url> or /crawl <query> leaves no separate conversational text.
     const startsWithCommand = text.startsWith(command) && /\s/.test(text[command.length] || '');
     if (startsWithCommand) {
-        return '';
+        const rest = text.slice(command.length).trim();
+        const urlMatch = rest.match(/^https?:\/\/\S+(?:\s+([\s\S]+))?$/i);
+        return urlMatch && urlMatch[1] ? urlMatch[1].trim() : '';
     }
 
-    // Suffix: <rest> /crawl → drop the trailing command.
-    const endsWithCommand = text.endsWith(` ${command}`) || text.endsWith(`\t${command}`);
-    if (endsWithCommand) {
-        return text.slice(0, -command.length - 1).trim();
+    // Suffix: <rest> /crawl (space, tab, or newline before /crawl) → drop the trailing command.
+    const suffixMatch = text.match(/([\s\S]+?)\s+\/crawl$/);
+    if (suffixMatch) {
+        return suffixMatch[1].trim();
     }
 
-    // Inline URL form: remove the "/crawl <url>" segment, keeping the rest.
-    const inlineUrlMatch = text.match(/(?:^|[^\w/])\/crawl\s+(https?:\/\/\S+)/i);
+    // Inline URL form: remove the "/crawl <url>" segment, keeping surrounding text
+    // and preserving any non-whitespace punctuation immediately before /crawl.
+    const inlineUrlMatch = text.match(/(^|[^\w/])\/crawl\s+(https?:\/\/\S+)/i);
     if (inlineUrlMatch) {
         const matchStart = inlineUrlMatch.index;
         const fullMatch = inlineUrlMatch[0];
-        // The leading boundary char (space, etc.) is part of the match — drop
-        // it too so we don't leave a dangling space/punctuation.
-        const before = text.slice(0, matchStart);
+        const boundary = inlineUrlMatch[1] || '';
+        const keepBoundary = boundary && !/\s/.test(boundary) ? boundary : '';
+        const before = text.slice(0, matchStart) + keepBoundary;
         const after = text.slice(matchStart + fullMatch.length);
         return `${before.trim()} ${after.trim()}`.trim();
     }
@@ -597,7 +619,10 @@ export function buildLLMExtractionStrategy(config) {
         provider: config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER,
         chunk_token_threshold:
             config.llmChunkTokenThreshold || CRAWL4AI_DEFAULT_LLM_CHUNK_TOKEN_THRESHOLD,
-        overlap_rate: config.llmOverlapRate || CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE,
+        overlap_rate:
+            Number.isFinite(config.llmOverlapRate) && config.llmOverlapRate >= 0
+                ? config.llmOverlapRate
+                : CRAWL4AI_DEFAULT_LLM_OVERLAP_RATE,
     };
 
     if (mode === 'llm-schema') {
@@ -643,7 +668,10 @@ export function buildCrawlPayload(urls, config) {
 
     const filterParams =
         config.fitMarkdownMode === 'bm25'
-            ? { user_query: config.query || '', threshold: config.bm25Threshold || 0.5 }
+            ? {
+                  user_query: config.query || '',
+                  threshold: Number.isFinite(config.bm25Threshold) ? config.bm25Threshold : 0.5,
+              }
             : { threshold: 0.48, threshold_type: 'fixed' };
 
     // Crawl4AI v0.9.x expects flat browser_config / crawler_config objects
@@ -897,18 +925,42 @@ export function parseCrawlResults(results, config) {
         }
 
         // Append captured network (XHR/Fetch) responses when available.
-        // This surfaces API JSON from SPAs without needing to parse the DOM.
+        // Reserve space for the captured API block when truncating so long pages
+        // do not slice off the XHR/Fetch payload entirely.
         const capturedBlock = parseNetworkRequests(result.network_requests);
         let networkCaptureCount = 0;
+        let truncated = false;
         if (capturedBlock) {
             networkCaptureCount = (capturedBlock.match(/^\/\/ /gm) || []).length;
-            fitMarkdown = fitMarkdown
-                ? `${fitMarkdown}\n\n--- Captured API responses ---\n${capturedBlock}`
-                : `--- Captured API responses ---\n${capturedBlock}`;
-        }
-
-        let truncated = false;
-        if (fitMarkdown.length > maxChars) {
+            const header = fitMarkdown
+                ? '\n\n--- Captured API responses ---\n'
+                : '--- Captured API responses ---\n';
+            const reservedForApi = Math.min(
+                capturedBlock.length + header.length,
+                Math.floor(maxChars * 0.4),
+            );
+            const bodyLimit = Math.max(0, maxChars - reservedForApi);
+            if (fitMarkdown.length > bodyLimit) {
+                fitMarkdown = fitMarkdown.slice(0, bodyLimit).trimEnd();
+                truncated = true;
+            }
+            const remaining = Math.max(0, maxChars - fitMarkdown.length - header.length);
+            if (remaining > 0) {
+                const apiSlice =
+                    capturedBlock.length > remaining
+                        ? capturedBlock.slice(0, remaining).trimEnd()
+                        : capturedBlock;
+                if (capturedBlock.length > remaining) {
+                    truncated = true;
+                }
+                fitMarkdown = fitMarkdown
+                    ? `${fitMarkdown}${header}${apiSlice}`
+                    : `${header}${apiSlice}`;
+            } else if (fitMarkdown.length > maxChars) {
+                fitMarkdown = fitMarkdown.slice(0, maxChars).trimEnd();
+                truncated = true;
+            }
+        } else if (fitMarkdown.length > maxChars) {
             fitMarkdown = fitMarkdown.slice(0, maxChars).trimEnd();
             truncated = true;
         }
@@ -970,7 +1022,7 @@ export function buildLlmJobInstruction(config) {
  * consumed by buildCrawlResultBlock.
  * @returns {{url, success, fitMarkdown, truncated, errorMessage, llmExtractionUsed, structuredJson, llmResponse}}
  */
-export function normalizeLlmJobResult(url, result, config) {
+export function normalizeLlmJobResult(url, result, config = {}) {
     const base = {
         url,
         success: true,
@@ -989,7 +1041,13 @@ export function normalizeLlmJobResult(url, result, config) {
     if (typeof result === 'object') {
         base.structuredJson = result;
     } else {
-        base.llmResponse = String(result);
+        const maxChars = config?.maxChars || CRAWL4AI_DEFAULT_MAX_CHARS;
+        let text = String(result);
+        if (maxChars > 0 && text.length > maxChars) {
+            text = text.slice(0, maxChars).trimEnd();
+            base.truncated = true;
+        }
+        base.llmResponse = text;
     }
     return base;
 }
@@ -1096,6 +1154,7 @@ export class Crawl4AIRuntime {
     constructor({ session = null, timeoutSeconds = CRAWL4AI_DEFAULT_TIMEOUT_SECONDS } = {}) {
         if (session) {
             this._session = session;
+            this._ownsSession = false;
         } else {
             this._session = new Soup.Session();
             this._session.timeout = Math.max(
@@ -1103,15 +1162,55 @@ export class Crawl4AIRuntime {
                 Math.trunc(timeoutSeconds) || CRAWL4AI_DEFAULT_TIMEOUT_SECONDS,
             );
             this._session.user_agent = CRAWL4AI_USER_AGENT;
+            this._ownsSession = true;
         }
         this._timeoutSeconds = Math.max(
             5,
             Math.trunc(timeoutSeconds) || CRAWL4AI_DEFAULT_TIMEOUT_SECONDS,
         );
+        this._decoder = new TextDecoder('utf-8', { fatal: false });
+        this._destroyed = false;
         // Request slots: a promise-chain mutex that keeps at most
         // CRAWL4AI_MAX_CONCURRENT_REQUESTS Crawl4AI HTTP calls in flight.
         this._requestSlotsInUse = 0;
         this._requestWaiters = [];
+    }
+
+    destroy() {
+        this._destroyed = true;
+        const waiters = this._requestWaiters.splice(0);
+        for (const waiter of waiters) {
+            try {
+                waiter.reject(new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' }));
+            } catch (_e) {
+                /* ignore */
+            }
+        }
+        if (this._ownsSession && this._session) {
+            try {
+                this._session.abort();
+            } catch (_e) {
+                /* ignore */
+            }
+        }
+    }
+
+    _buildCrawlCacheKey(url, config = {}) {
+        const mode = config.fitMarkdownMode || 'pruning';
+        const bm25Query = mode === 'bm25' ? String(config.query || '').trim() : '';
+        const bm25Threshold =
+            mode === 'bm25' && Number.isFinite(config.bm25Threshold) ? config.bm25Threshold : '';
+        const captureNet = config.captureNetwork ? '1' : '0';
+        const maxChars = config.maxChars || CRAWL4AI_DEFAULT_MAX_CHARS;
+        if (mode === 'pruning' && captureNet === '0' && maxChars === CRAWL4AI_DEFAULT_MAX_CHARS) {
+            return url;
+        }
+        return `${url}::crawl:${mode}:${bm25Threshold}:${bm25Query}:net=${captureNet}:max=${maxChars}`;
+    }
+
+    _buildPdfCacheKey(url, config = {}) {
+        const maxChars = config.maxChars || CRAWL4AI_DEFAULT_MAX_CHARS;
+        return maxChars === CRAWL4AI_DEFAULT_MAX_CHARS ? url : `${url}::pdf:max=${maxChars}`;
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -1144,9 +1243,11 @@ export class Crawl4AIRuntime {
         // touch /llm or /crawl (they are extracted natively), so they live in
         // the plain crawl cache.
         const llmExtractionActive = isLLMExtractionMode(config);
-        if (validatedUrls.length === 1) {
+        if (validatedUrls.length === 1 && !config?.bypassLocalCache) {
             if (isPdfUrl(validatedUrls[0])) {
-                const cached = getCachedCrawlResult(validatedUrls[0]);
+                const cached = getCachedCrawlResult(
+                    this._buildPdfCacheKey(validatedUrls[0], config),
+                );
                 if (cached) {
                     log(`[Katab:crawl4ai] Cache HIT for "${validatedUrls[0]}"`);
                     return cached;
@@ -1158,7 +1259,9 @@ export class Crawl4AIRuntime {
                     return cached;
                 }
             } else {
-                const cached = getCachedCrawlResult(validatedUrls[0]);
+                const cached = getCachedCrawlResult(
+                    this._buildCrawlCacheKey(validatedUrls[0], config),
+                );
                 if (cached) {
                     log(`[Katab:crawl4ai] Cache HIT for "${validatedUrls[0]}"`);
                     return cached;
@@ -1168,10 +1271,10 @@ export class Crawl4AIRuntime {
 
         log(
             `[Katab:crawl4ai] Scraping ${validatedUrls.length} URL(s) — mode=${config.extractionMode}` +
-            (llmExtractionActive
-                ? `, provider=${config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER}`
-                : '') +
-            `: ${validatedUrls.join(', ')}`,
+                (llmExtractionActive
+                    ? `, provider=${config.llmProvider || CRAWL4AI_DEFAULT_LLM_PROVIDER}`
+                    : '') +
+                `: ${validatedUrls.join(', ')}`,
         );
 
         // ── PDF URLs: native download + pdftotext extraction ───────────
@@ -1300,17 +1403,20 @@ export class Crawl4AIRuntime {
      * @param {Gio.Cancellable|null} cancellable
      * @returns {Promise<{url, success, fitMarkdown, truncated, errorMessage, llmExtractionUsed}>}
      */
-    async _scrapePdf(url, config, cancellable) {
+    async _scrapePdf(url, config, cancellable, { alreadyValidated = true } = {}) {
         // Reuse the plain crawl cache (PDFs never hit /llm or /crawl).
-        const cached = getCachedCrawlResult(url);
-        if (cached) {
-            log(`[Katab:crawl4ai] Cache HIT for "${url}"`);
-            return Array.isArray(cached) ? cached[0] : cached;
+        const cacheKey = this._buildPdfCacheKey(url, config);
+        if (!config?.bypassLocalCache) {
+            const cached = getCachedCrawlResult(cacheKey);
+            if (cached) {
+                log(`[Katab:crawl4ai] Cache HIT for "${url}"`);
+                return Array.isArray(cached) ? cached[0] : cached;
+            }
         }
 
         let downloaded;
         try {
-            downloaded = await this._downloadBytes(url, config, cancellable);
+            downloaded = await this._downloadBytes(url, config, cancellable, { alreadyValidated });
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) throw error;
             return {
@@ -1380,7 +1486,7 @@ export class Crawl4AIRuntime {
         log(
             `[Katab:crawl4ai] PDF extracted for ${url} — ${text.length} chars${truncated ? ' (truncated)' : ''}`,
         );
-        cacheCrawlResult(url, [result]);
+        cacheCrawlResult(cacheKey, [result]);
         return result;
     }
 
@@ -1390,18 +1496,20 @@ export class Crawl4AIRuntime {
     // webSearchTools._requestWithRedirects — libsoup3's automatic redirect
     // handling would bypass the network guard.  The Crawl4AI API token is NOT
     // attached (it belongs to the scraper server, not the target site).
-    async _downloadBytes(url, config, cancellable) {
+    async _downloadBytes(url, config, cancellable, { alreadyValidated = false } = {}) {
         const maxRedirects = 3;
         let currentUrl = url;
         for (let redirects = 0; redirects <= maxRedirects; redirects++) {
-            // SSRF + DNS validation for the initial URL AND every redirect hop.
-            const validated = await this._validateScrapeUrls([currentUrl], config, cancellable);
-            if (!validated.length) {
-                throw new Crawl4AIError(`Downloading ${url} is blocked by the network guard.`, {
-                    code: 'blocked-host',
-                });
+            // SSRF + DNS validation for unvalidated initial URL AND every redirect hop.
+            if (redirects > 0 || !alreadyValidated) {
+                const validated = await this._validateScrapeUrls([currentUrl], config, cancellable);
+                if (!validated.length) {
+                    throw new Crawl4AIError(`Downloading ${url} is blocked by the network guard.`, {
+                        code: 'blocked-host',
+                    });
+                }
+                currentUrl = validated[0];
             }
-            currentUrl = validated[0];
 
             const response = await this._downloadOnce(currentUrl, cancellable);
             if (response.status >= 300 && response.status < 400) {
@@ -1421,16 +1529,6 @@ export class Crawl4AIRuntime {
                 }
                 currentUrl = resolveRedirectUrl(currentUrl, response.location);
                 continue;
-            }
-            if (response.status !== 200) {
-                throw new Crawl4AIError(
-                    `Failed to download ${url}: HTTP ${response.status} ${httpStatusPhrase(response.status)}`,
-                    {
-                        code: 'http-error',
-                        detail: `${response.status}`,
-                        statusCode: response.status,
-                    },
-                );
             }
             return { bytes: response.bytes };
         }
@@ -1461,8 +1559,7 @@ export class Crawl4AIRuntime {
             );
 
             // Cancel the in-flight message when the caller's cancellable
-            // fires, and disconnect the handler once the send settles so a
-            // long-lived request cancellable does not accumulate handlers.
+            // fires, keeping the handler connected until body download settles.
             let cancelHandlerId = 0;
             const disconnectCancelHandler = () => {
                 if (!cancelHandlerId || !cancellable) return;
@@ -1473,10 +1570,14 @@ export class Crawl4AIRuntime {
                 }
                 cancelHandlerId = 0;
             };
+            const settle = (fn, value) => {
+                disconnectCancelHandler();
+                fn(value);
+            };
             if (cancellable) {
                 cancelHandlerId = cancellable.connect(() => {
                     try {
-                        message.cancel();
+                        message.cancel?.();
                     } catch (_e) {
                         /* ignore */
                     }
@@ -1488,7 +1589,6 @@ export class Crawl4AIRuntime {
                 GLib.PRIORITY_DEFAULT,
                 cancellable,
                 (session, result) => {
-                    disconnectCancelHandler();
                     let inputStream = null;
                     try {
                         inputStream = session.send_finish(result);
@@ -1502,7 +1602,7 @@ export class Crawl4AIRuntime {
                             } catch (_e) {
                                 /* ignore */
                             }
-                            resolve({ status, location, bytes: new Uint8Array() });
+                            settle(resolve, { status, location, bytes: new Uint8Array() });
                             return;
                         }
                         if (status !== 200) {
@@ -1521,7 +1621,8 @@ export class Crawl4AIRuntime {
                             } else if (status === 502 || status === 503 || status === 504) {
                                 code = 'server-busy';
                             }
-                            reject(
+                            settle(
+                                reject,
                                 new Crawl4AIError(
                                     `Failed to download ${url}: HTTP ${status} ${reasonPhrase}`,
                                     {
@@ -1547,7 +1648,8 @@ export class Crawl4AIRuntime {
                             } catch (_e) {
                                 /* ignore */
                             }
-                            reject(
+                            settle(
+                                reject,
                                 new Crawl4AIError(
                                     `The PDF at ${url} is too large to read safely (${(contentLength / (1024 * 1024)).toFixed(1)} MB).`,
                                     {
@@ -1560,14 +1662,15 @@ export class Crawl4AIRuntime {
                         }
 
                         this._readCappedBytes(inputStream, CRAWL4AI_PDF_MAX_BYTES, cancellable)
-                            .then((bytes) => resolve({ status, bytes }))
+                            .then((bytes) => settle(resolve, { status, bytes }))
                             .catch((err) => {
                                 if (cancellable && cancellable.is_cancelled()) {
-                                    reject(err);
+                                    settle(reject, err);
                                     return;
                                 }
                                 if (String(err?.message || '').includes('safety limit')) {
-                                    reject(
+                                    settle(
+                                        reject,
                                         new Crawl4AIError(
                                             `The PDF at ${url} is too large to read safely (${err.message}).`,
                                             { code: 'response-too-large', detail: err?.message },
@@ -1575,7 +1678,8 @@ export class Crawl4AIRuntime {
                                     );
                                     return;
                                 }
-                                reject(
+                                settle(
+                                    reject,
                                     new Crawl4AIError(
                                         `Network error downloading ${url}: ${err.message}`,
                                         { code: 'network-error', detail: err?.message },
@@ -1583,7 +1687,6 @@ export class Crawl4AIRuntime {
                                 );
                             });
                     } catch (error) {
-                        disconnectCancelHandler();
                         if (inputStream) {
                             try {
                                 inputStream.close(null);
@@ -1592,10 +1695,11 @@ export class Crawl4AIRuntime {
                             }
                         }
                         if (cancellable && cancellable.is_cancelled()) {
-                            reject(error);
+                            settle(reject, error);
                             return;
                         }
-                        reject(
+                        settle(
+                            reject,
                             new Crawl4AIError(
                                 `Network error downloading ${url}: ${error.message}`,
                                 { code: 'network-error', detail: error?.message },
@@ -1639,17 +1743,90 @@ export class Crawl4AIRuntime {
                 proc = Gio.Subprocess.new(
                     ['pdftotext', '-layout', '-q', '-', '-'],
                     Gio.SubprocessFlags.STDIN_PIPE |
-                    Gio.SubprocessFlags.STDOUT_PIPE |
-                    Gio.SubprocessFlags.STDERR_SILENCE,
+                        Gio.SubprocessFlags.STDOUT_PIPE |
+                        Gio.SubprocessFlags.STDERR_SILENCE,
                 );
             } catch (_error) {
                 reject(new Error('Could not launch pdftotext to read the PDF.'));
                 return;
             }
-            proc.communicate_async(new GLib.Bytes(bytes), cancellable, (process, res) => {
+
+            let settled = false;
+            let timedOut = false;
+            const childCancellable = new Gio.Cancellable();
+            let parentCancelId = 0;
+            let timeoutId = 0;
+
+            const cleanup = () => {
+                if (timeoutId) {
+                    try {
+                        GLib.source_remove(timeoutId);
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                    timeoutId = 0;
+                }
+                if (parentCancelId && cancellable) {
+                    try {
+                        cancellable.disconnect(parentCancelId);
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                    parentCancelId = 0;
+                }
+            };
+
+            if (cancellable) {
+                if (cancellable.is_cancelled()) {
+                    try {
+                        proc.force_exit();
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                    reject(new Crawl4AIError('PDF extraction cancelled.', { code: 'cancelled' }));
+                    return;
+                }
+                parentCancelId = cancellable.connect(() => {
+                    childCancellable.cancel();
+                    try {
+                        proc.force_exit();
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                });
+            }
+
+            timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30_000, () => {
+                timeoutId = 0;
+                timedOut = true;
+                childCancellable.cancel();
+                try {
+                    proc.force_exit();
+                } catch (_e) {
+                    /* ignore */
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+
+            proc.communicate_async(new GLib.Bytes(bytes), childCancellable, (process, res) => {
+                cleanup();
+                if (settled) return;
+                settled = true;
                 try {
                     // communicate_finish → [ok, stdout, stderr]; stdout is a GLib.Bytes.
                     const tuple = process.communicate_finish(res);
+                    if (timedOut) {
+                        reject(new Error('pdftotext timed out while extracting text from PDF.'));
+                        return;
+                    }
+                    if (typeof process.get_successful === 'function' && !process.get_successful()) {
+                        reject(
+                            new Error(
+                                `pdftotext failed (exit status ${typeof process.get_exit_status === 'function' ? process.get_exit_status() : 'unknown'}).`,
+                            ),
+                        );
+                        return;
+                    }
                     const stdoutBytes = Array.isArray(tuple) ? tuple[tuple.length - 2] : null;
                     const data = stdoutBytes?.get_data?.() || stdoutBytes;
                     resolve(data ? this._decodeBytes(data) : '');
@@ -1660,7 +1837,11 @@ export class Crawl4AIRuntime {
                     } catch (_e) {
                         /* ignore */
                     }
-                    reject(error);
+                    if (timedOut) {
+                        reject(new Error('pdftotext timed out while extracting text from PDF.'));
+                    } else {
+                        reject(error);
+                    }
                 }
             });
         });
@@ -1695,7 +1876,16 @@ export class Crawl4AIRuntime {
             cache: true,
         };
         if (config.extractionMode === 'llm-schema' && String(config.llmSchemaJson || '').trim()) {
-            payload.schema = String(config.llmSchemaJson).trim();
+            const rawSchema = String(config.llmSchemaJson).trim();
+            try {
+                JSON.parse(rawSchema);
+            } catch (error) {
+                throw new Crawl4AIError(`Invalid LLM extraction schema JSON: ${error.message}`, {
+                    code: 'bad-response',
+                    detail: error.message,
+                });
+            }
+            payload.schema = rawSchema;
         }
 
         let jobBytes;
@@ -1782,7 +1972,7 @@ export class Crawl4AIRuntime {
                 config.apiToken,
                 CRAWL4AI_JSON_MAX_BYTES,
                 cancellable,
-                { label: 'GET /llm/job' },
+                { label: 'GET /llm/job', bypassSlot: true },
             );
             let statusResponse;
             try {
@@ -1792,30 +1982,38 @@ export class Crawl4AIRuntime {
                     code: 'bad-response',
                 });
             }
-            if (statusResponse.status === 'completed') {
+            const jobStatus = String(statusResponse.status || '').toLowerCase();
+            if (jobStatus === 'completed') {
                 const completedResult = normalizeLlmJobResult(url, statusResponse.result, config);
                 const detail = completedResult?.structuredJson
                     ? `structured JSON (${JSON.stringify(completedResult.structuredJson).length} chars)`
                     : completedResult?.llmResponse
-                        ? `LLM response (${completedResult.llmResponse.length} chars)`
-                        : 'no output';
+                      ? `LLM response (${completedResult.llmResponse.length} chars)`
+                      : 'no output';
                 log(`[Katab:crawl4ai] LLM extraction completed for ${url} — ${detail}`);
                 return completedResult;
             }
-            if (statusResponse.status === 'failed') {
+            if (
+                jobStatus === 'failed' ||
+                jobStatus === 'error' ||
+                jobStatus === 'cancelled' ||
+                jobStatus === 'canceled'
+            ) {
                 log(
-                    `[Katab:crawl4ai] LLM extraction job FAILED for ${url} — ${statusResponse.error || 'unknown error'}`,
+                    `[Katab:crawl4ai] LLM extraction job ${jobStatus.toUpperCase()} for ${url} — ${statusResponse.error || 'unknown error'}`,
                 );
                 return {
                     url,
                     success: false,
                     fitMarkdown: '',
                     truncated: false,
-                    errorMessage: statusResponse.error || 'The LLM extraction job failed.',
+                    errorMessage:
+                        statusResponse.error ||
+                        `The LLM extraction job ended with status "${jobStatus}".`,
                     llmExtractionUsed: true,
                 };
             }
-            // status === 'processing' → keep polling
+            // status === 'processing' / 'pending' → keep polling
         }
         throw new Crawl4AIError('The LLM extraction job timed out.', { code: 'timeout' });
     }
@@ -1833,7 +2031,7 @@ export class Crawl4AIRuntime {
         let llmBlockedByServer = false;
         let results = null;
 
-        for (; ;) {
+        for (;;) {
             if (cancellable && cancellable.is_cancelled()) {
                 throw new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' });
             }
@@ -1896,7 +2094,7 @@ export class Crawl4AIRuntime {
             for (let i = 0; i < urls.length && i < results.length; i++) {
                 const result = results[i];
                 if (result && result.success) {
-                    cacheCrawlResult(urls[i], [result]);
+                    cacheCrawlResult(this._buildCrawlCacheKey(urls[i], activeConfig), [result]);
                 }
             }
         }
@@ -1904,9 +2102,9 @@ export class Crawl4AIRuntime {
             if (result && result.url) {
                 log(
                     `[Katab:crawl4ai] Markdown scrape ${result.success ? 'completed' : 'FAILED'} for ${result.url}` +
-                    (result.success
-                        ? ` — ${(result.fitMarkdown || '').length} chars`
-                        : ` — ${result.errorMessage || 'unknown error'}`),
+                        (result.success
+                            ? ` — ${(result.fitMarkdown || '').length} chars`
+                            : ` — ${result.errorMessage || 'unknown error'}`),
                 );
             }
         }
@@ -1981,7 +2179,7 @@ export class Crawl4AIRuntime {
                 config.apiToken,
                 CRAWL4AI_JSON_MAX_BYTES,
                 cancellable,
-                { label: 'GET /health', maxAttempts: 2 },
+                { label: 'GET /health', maxAttempts: 2, bypassSlot: true },
             );
             const text = this._decodeBytes(bytes);
             let version = '';
@@ -2140,7 +2338,7 @@ export class Crawl4AIRuntime {
             if (cancellable) {
                 cancelHandlerId = cancellable.connect(() => {
                     try {
-                        message.cancel();
+                        message.cancel?.();
                     } catch (_e) {
                         /* ignore */
                     }
@@ -2198,11 +2396,21 @@ export class Crawl4AIRuntime {
                                 settle(reject, readError);
                                 return;
                             }
+                            if (String(readError?.message || '').includes('safety limit')) {
+                                settle(
+                                    reject,
+                                    new Crawl4AIError(
+                                        `Crawl4AI response was too large to read safely: ${readError.message}`,
+                                        { code: 'response-too-large', detail: readError?.message },
+                                    ),
+                                );
+                                return;
+                            }
                             settle(
                                 reject,
                                 new Crawl4AIError(
-                                    `Crawl4AI response was too large to read safely: ${readError.message}`,
-                                    { code: 'response-too-large', detail: readError?.message },
+                                    `Network error reading Crawl4AI response: ${readError.message}`,
+                                    { code: 'network-error', detail: readError?.message },
                                 ),
                             );
                             return;
@@ -2282,8 +2490,7 @@ export class Crawl4AIRuntime {
 
     _decodeBytes(bytes) {
         if (!bytes || bytes.length === 0) return '';
-        const decoder = new TextDecoder('utf-8', { fatal: false });
-        return decoder.decode(bytes);
+        return this._decoder.decode(bytes);
     }
 
     /**
@@ -2300,7 +2507,7 @@ export class Crawl4AIRuntime {
      * @param {string} apiToken
      * @param {number} maxBytes
      * @param {Gio.Cancellable|null} cancellable
-     * @param {{maxAttempts?: number, label?: string, shouldRetry?: (error: Error) => boolean}} [options]
+     * @param {{maxAttempts?: number, label?: string, shouldRetry?: (error: Error) => boolean, bypassSlot?: boolean}} [options]
      * @returns {Promise<Uint8Array>}
      */
     async _requestRawWithRetry(
@@ -2314,6 +2521,7 @@ export class Crawl4AIRuntime {
             maxAttempts = CRAWL4AI_RETRY_MAX_ATTEMPTS,
             label = 'request',
             shouldRetry = isRetryableCrawlError,
+            bypassSlot = false,
         } = {},
     ) {
         const attempts = Math.max(1, Math.trunc(maxAttempts) || 1);
@@ -2321,10 +2529,11 @@ export class Crawl4AIRuntime {
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
             try {
-                return await this._withRequestSlot(
-                    () => this._requestRaw(method, url, bodyJson, apiToken, maxBytes, cancellable),
-                    cancellable,
-                );
+                const runRequest = () =>
+                    this._requestRaw(method, url, bodyJson, apiToken, maxBytes, cancellable);
+                return bypassSlot
+                    ? await runRequest()
+                    : await this._withRequestSlot(runRequest, cancellable);
             } catch (error) {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
@@ -2363,12 +2572,15 @@ export class Crawl4AIRuntime {
 
     // Promise-based mutex with a concurrency cap (CRAWL4AI_MAX_CONCURRENT_REQUESTS).
     async _withRequestSlot(task, cancellable = null) {
-        if (cancellable && cancellable.is_cancelled()) {
+        if (this._destroyed || (cancellable && cancellable.is_cancelled())) {
             throw new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' });
         }
 
         while (this._requestSlotsInUse >= CRAWL4AI_MAX_CONCURRENT_REQUESTS) {
             await this._waitForRequestSlot(cancellable);
+            if (this._destroyed || (cancellable && cancellable.is_cancelled())) {
+                throw new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' });
+            }
         }
 
         this._requestSlotsInUse++;
@@ -2377,16 +2589,20 @@ export class Crawl4AIRuntime {
         } finally {
             this._requestSlotsInUse--;
             const next = this._requestWaiters.shift();
-            if (next) next();
+            if (next) next.resolve();
         }
     }
 
     // FIFO wait for a free request slot; aborts immediately on cancellation.
     _waitForRequestSlot(cancellable = null) {
         return new Promise((resolve, reject) => {
+            if (this._destroyed || (cancellable && cancellable.is_cancelled())) {
+                reject(new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' }));
+                return;
+            }
             let cancelHandlerId = 0;
 
-            const waiter = () => {
+            const cleanup = () => {
                 if (cancelHandlerId && cancellable) {
                     try {
                         cancellable.disconnect(cancelHandlerId);
@@ -2395,20 +2611,24 @@ export class Crawl4AIRuntime {
                     }
                     cancelHandlerId = 0;
                 }
-                resolve();
+            };
+
+            const waiter = {
+                resolve: () => {
+                    cleanup();
+                    resolve();
+                },
+                reject: (err) => {
+                    cleanup();
+                    reject(err);
+                },
             };
 
             if (cancellable) {
                 cancelHandlerId = cancellable.connect(() => {
                     const index = this._requestWaiters.indexOf(waiter);
                     if (index >= 0) this._requestWaiters.splice(index, 1);
-                    try {
-                        cancellable.disconnect(cancelHandlerId);
-                    } catch (_e) {
-                        /* ignore */
-                    }
-                    cancelHandlerId = 0;
-                    reject(new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' }));
+                    waiter.reject(new Crawl4AIError('Scrape cancelled.', { code: 'cancelled' }));
                 });
             }
 

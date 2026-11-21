@@ -71,12 +71,12 @@ window.katab-prefs-window .navigation-sidebar,
     background-color: rgba(36, 36, 36, 0.65);
 }
 
-.katab-prefs-expander title {
+.katab-prefs-expander .title {
     color: @katab_text;
     font-weight: 600;
 }
 
-.katab-prefs-expander subtitle {
+.katab-prefs-expander .subtitle {
     color: rgba(255, 255, 255, 0.62);
 }
 
@@ -222,13 +222,44 @@ window.katab-prefs-window searchentry,
 .katab-prefs-textarea textview,
 .katab-prefs-textarea text,
 .katab-prefs-spin-row spinbutton,
-.katab-prefs-button {
+.katab-prefs-button:not(.suggested-action):not(.destructive-action) {
     background-image: none;
     background-color: rgba(26, 26, 26, 0.92);
     color: @katab_text;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 6px;
     box-shadow: none;
+}
+
+.katab-prefs-button.suggested-action {
+    background-image: none;
+    background-color: #3584e4;
+    color: #ffffff;
+    border: 1px solid rgba(53, 132, 228, 0.85);
+    border-radius: 6px;
+    box-shadow: none;
+}
+
+.katab-prefs-button.suggested-action:hover {
+    background-color: #4a93eb;
+}
+
+.katab-prefs-button.suggested-action label,
+.katab-prefs-button.destructive-action label {
+    color: #ffffff;
+}
+
+.katab-prefs-button.destructive-action {
+    background-image: none;
+    background-color: #c01c28;
+    color: #ffffff;
+    border: 1px solid rgba(224, 27, 36, 0.85);
+    border-radius: 6px;
+    box-shadow: none;
+}
+
+.katab-prefs-button.destructive-action:hover {
+    background-color: #e01b24;
 }
 
 .katab-prefs-spin-row spinbutton entry,
@@ -258,8 +289,8 @@ window.katab-prefs-window searchentry:focus,
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
 }
 
-.katab-prefs-button:hover,
-window.katab-prefs-window button:hover {
+.katab-prefs-button:not(.suggested-action):not(.destructive-action):hover,
+window.katab-prefs-window button:not(.suggested-action):not(.destructive-action):hover {
     background-color: rgba(56, 56, 56, 0.80);
 }
 
@@ -319,14 +350,19 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row label {
     color: rgba(0, 0, 0, 0.82);
 }
 
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button.suggested-action label,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button.destructive-action label {
+    color: #ffffff;
+}
+
 window.katab-prefs-window.katab-prefs-theme-light .dim-label,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row .subtitle,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row .caption {
-    color: rgba(0, 0, 0, 0.52);
+    color: rgba(0, 0, 0, 0.56);
 }
 
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row {
-    background-color: rgba(255, 255, 255, 0.75);
+    background-color: rgba(255, 255, 255, 0.78);
     border-color: rgba(0, 0, 0, 0.08);
     color: rgba(0, 0, 0, 0.82);
 }
@@ -336,15 +372,31 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-row:hover {
 }
 
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-provider-row,
-window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander {
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-tool-row,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-tool-back-row {
     background-color: rgba(255, 255, 255, 0.85);
 }
 
-window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander title {
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-tool-row:hover {
+    background-color: rgba(255, 255, 255, 0.96);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-tool-icon {
+    color: #1c71d8;
+    background-color: rgba(28, 113, 216, 0.10);
+    border-color: rgba(28, 113, 216, 0.22);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-tool-chevron {
+    color: rgba(0, 0, 0, 0.45);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander .title {
     color: rgba(0, 0, 0, 0.88);
 }
 
-window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander subtitle {
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-expander .subtitle {
     color: rgba(0, 0, 0, 0.58);
 }
 
@@ -400,10 +452,36 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea textview,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-textarea text,
 window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-spin-row spinbutton,
-window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button {
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button:not(.suggested-action):not(.destructive-action) {
     background-color: rgba(255, 255, 255, 0.92);
     color: rgba(0, 0, 0, 0.82);
     border-color: rgba(0, 0, 0, 0.12);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-spin-row spinbutton entry,
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-spin-row spinbutton button {
+    background-color: transparent;
+    color: rgba(0, 0, 0, 0.82);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button.suggested-action {
+    background-color: #1c71d8;
+    color: #ffffff;
+    border-color: rgba(28, 113, 216, 0.90);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button.suggested-action:hover {
+    background-color: #3584e4;
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button.destructive-action {
+    background-color: #c01c28;
+    color: #ffffff;
+    border-color: rgba(192, 28, 40, 0.90);
+}
+
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button.destructive-action:hover {
+    background-color: #e01b24;
 }
 
 window.katab-prefs-window.katab-prefs-theme-light entry:focus,
@@ -418,8 +496,8 @@ window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button:focus {
     box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
 }
 
-window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button:hover,
-window.katab-prefs-window.katab-prefs-theme-light button:hover {
+window.katab-prefs-window.katab-prefs-theme-light .katab-prefs-button:not(.suggested-action):not(.destructive-action):hover,
+window.katab-prefs-window.katab-prefs-theme-light button:not(.suggested-action):not(.destructive-action):hover {
     background-color: rgba(0, 0, 0, 0.07);
 }
 
@@ -441,7 +519,7 @@ window.katab-prefs-window.katab-prefs-theme-light separator {
 }
 
 /* ── Preset rows in prefs window ────────────────────────────────────────── */
-window.katab-prefs-window .katab-prefs-preset-row-active>box>label.title {
+window.katab-prefs-window .katab-prefs-preset-row-active label.title {
     font-weight: bold;
 }
 

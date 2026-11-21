@@ -37,8 +37,26 @@ export function readCappedBytes(
     } = {},
 ) {
     return new Promise((resolve, reject) => {
+        if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+            try {
+                inputStream?.close?.(null);
+            } catch (_e) {
+                /* ignore */
+            }
+            reject(new Error('Invalid maxBytes limit for capped HTTP body read.'));
+            return;
+        }
+
         const chunks = [];
         let total = 0;
+
+        const closeQuietly = () => {
+            try {
+                inputStream?.close?.(null);
+            } catch (_e) {
+                /* ignore */
+            }
+        };
 
         const combineAndResolve = () => {
             const combined = new Uint8Array(total);
@@ -47,11 +65,7 @@ export function readCappedBytes(
                 combined.set(chunk, offset);
                 offset += chunk.length;
             }
-            try {
-                inputStream.close(null);
-            } catch (_e) {
-                /* ignore */
-            }
+            closeQuietly();
             resolve(asBytes ? new GLib.Bytes(combined) : combined);
         };
 
@@ -70,11 +84,7 @@ export function readCappedBytes(
                         }
                         total += data.length;
                         if (total > maxBytes) {
-                            try {
-                                inputStream.close(null);
-                            } catch (_e) {
-                                /* ignore */
-                            }
+                            closeQuietly();
                             reject(
                                 makeError
                                     ? makeError(maxBytes)
@@ -87,6 +97,7 @@ export function readCappedBytes(
                         chunks.push(new Uint8Array(data));
                         readNext();
                     } catch (error) {
+                        closeQuietly();
                         reject(error);
                     }
                 },

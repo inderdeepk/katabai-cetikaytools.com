@@ -72,6 +72,20 @@ export class UsagePanel {
 
     destroy() {
         this.closeRangeDropdown();
+        this._companionSprite = null;
+    }
+
+    /** Handle Escape inside the Usage panel: close range dropdown or step back from pet detail. */
+    handleEscape() {
+        if (this._rangeDropdownOpen) {
+            this.closeRangeDropdown();
+            return true;
+        }
+        if (this._tab === 'collection' && this._view === 'detail') {
+            this._showCollection();
+            return true;
+        }
+        return false;
     }
 
     toggle() {
@@ -120,6 +134,7 @@ export class UsagePanel {
     refresh() {
         if (!this._listBox) return;
         this.closeRangeDropdown();
+        this._companionSprite = null;
         this._listBox.destroy_all_children();
 
         // ── Tab bar (always visible) ──────────────────────────────────
@@ -200,7 +215,10 @@ export class UsagePanel {
         if (summary.providers.length > 0 && summary.models.length > 0) {
             box.add_child(this._buildProviderModelCard(summary));
         }
-        box.add_child(this._buildTipRow(summary));
+        const tipRow = this._buildTipRow(summary);
+        if (tipRow) {
+            box.add_child(tipRow);
+        }
         box.add_child(this._buildPrivacyNote());
     }
 
@@ -315,16 +333,23 @@ export class UsagePanel {
     _renderCollection() {
         this._setTitle('Your Companions');
         const box = this._listBox;
-        const collection = TokenUsageManager.getCollectionState();
+        let collection;
+        let allSummary;
+        try {
+            collection = TokenUsageManager.getCollectionState();
+            allSummary = TokenUsageManager.getSummary('all');
+        } catch (e) {
+            box.add_child(
+                new St.Label({
+                    text: `Could not load companion data: ${e.message || e}`,
+                    style_class: 'katab-usage-privacy-note',
+                }),
+            );
+            return;
+        }
         const selection = this._host.getPetSelection();
 
         // Companion hero card (moved from Overview tab)
-        let allSummary;
-        try {
-            allSummary = TokenUsageManager.getSummary('all');
-        } catch (_e) {
-            allSummary = TokenUsageManager.getSummary('all');
-        }
         box.add_child(this._buildCompanionCard(allSummary, allSummary, true));
 
         const followButton = new St.Button({
@@ -371,7 +396,6 @@ export class UsagePanel {
         box.add_child(grid);
 
         // Milestones (moved from Overview to Collection)
-        allSummary = TokenUsageManager.getSummary('all');
         box.add_child(this._buildMilestoneCard(allSummary));
     }
 
@@ -626,12 +650,16 @@ export class UsagePanel {
             this._listBox.insert_child_above(dropdown, anchor);
         }
 
-        // Close when clicking outside
+        // Close when clicking outside both the dropdown and its toggle chip
         const captureId = global.stage.connect('captured-event', (_actor, event) => {
             if (!this._rangeDropdownOpen) return Clutter.EVENT_PROPAGATE;
             if (event.type() === Clutter.EventType.BUTTON_PRESS) {
                 const target = event.get_source();
-                if (target && !this._isDescendantOf(target, this._rangeDropdown)) {
+                if (
+                    target &&
+                    !this._isDescendantOf(target, this._rangeDropdown) &&
+                    !this._isDescendantOf(target, anchor)
+                ) {
                     this.closeRangeDropdown();
                 }
             }
@@ -1243,7 +1271,7 @@ export class UsagePanel {
             const warningPct = this._settings.get_int('token-budget-warning-pct') / 100;
             const monthSummary =
                 this._rangeKey === 'month' ? summary : TokenUsageManager.getSummary('month');
-            if (monthSummary.totalTokens > 0) {
+            if (budgetUsd > 0 && monthSummary.totalTokens > 0) {
                 try {
                     const costData = estimateSummaryCost(monthSummary);
                     const budgetUsed = costData.total / budgetUsd;
@@ -1258,8 +1286,12 @@ export class UsagePanel {
             }
         }
 
-        if (summary.localShare >= 0.75) {
+        if (summary.localShare >= 0.995) {
             tips.push('🏠 100% self-hosted champion — your data never leaves your machine.');
+        } else if (summary.localShare >= 0.75) {
+            tips.push(
+                `🏠 ${Math.round(summary.localShare * 100)}% local — most of your tokens stay on your machine.`,
+            );
         } else if (summary.localShare >= 0.4) {
             tips.push('⚖️ Great balance! Each local token is one you fully own.');
         } else if (summary.localShare > 0) {
@@ -1285,13 +1317,14 @@ export class UsagePanel {
             x_expand: true,
             style_class: 'katab-usage-tip-row',
         });
-        row.add_child(
-            new St.Label({
-                text: tip,
-                style_class: 'katab-usage-tip-text',
-                x_expand: true,
-            }),
-        );
+        const tipLabel = new St.Label({
+            text: tip,
+            style_class: 'katab-usage-tip-text',
+            x_expand: true,
+        });
+        tipLabel.clutter_text.line_wrap = true;
+        tipLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        row.add_child(tipLabel);
         return row;
     }
 
@@ -1370,10 +1403,10 @@ export class UsagePanel {
         );
         box.add_child(heroCard);
 
-        // Budget progress (if enabled)
+        // Budget progress (if enabled with a positive monthly budget)
         const budgetEnabled = this._settings.get_boolean('token-budget-enabled');
-        if (budgetEnabled) {
-            const budgetUsd = this._settings.get_double('token-budget-monthly-usd');
+        const budgetUsd = budgetEnabled ? this._settings.get_double('token-budget-monthly-usd') : 0;
+        if (budgetEnabled && budgetUsd > 0) {
             const warningPct = this._settings.get_int('token-budget-warning-pct') / 100;
             const monthSummary =
                 this._rangeKey === 'month' ? summary : TokenUsageManager.getSummary('month');
@@ -1385,8 +1418,8 @@ export class UsagePanel {
                     /* ok */
                 }
             }
-            const budgetUsed = budgetUsd > 0 ? monthCost / budgetUsd : 0;
-            const budgetPct = Math.round(Math.min(budgetUsed, 1) * 100);
+            const budgetUsed = monthCost / budgetUsd;
+            const budgetPct = Math.round(budgetUsed * 100);
 
             const budgetCard = this._createCard('Monthly Budget');
             // We'll use nested widgets
@@ -1395,16 +1428,16 @@ export class UsagePanel {
                 x_expand: true,
             });
             const fillWidth = Math.round(Math.min(budgetUsed, 1) * 320);
-            const fillClass =
+            const fillVariant =
                 budgetUsed >= 0.9
-                    ? 'katab-usage-budget-fill-danger'
+                    ? ' katab-usage-budget-fill-danger'
                     : budgetUsed >= warningPct
-                      ? 'katab-usage-budget-fill-warn'
-                      : 'katab-usage-budget-fill';
+                      ? ' katab-usage-budget-fill-warn'
+                      : '';
             if (fillWidth > 0) {
                 budgetTrack.add_child(
                     new St.Widget({
-                        style_class: `katab-usage-budget-fill ${fillClass}`,
+                        style_class: `katab-usage-budget-fill${fillVariant}`,
                         width: fillWidth,
                         height: 12,
                     }),
@@ -1531,7 +1564,10 @@ export class UsagePanel {
             box.add_child(savingsCard);
         }
 
-        box.add_child(this._buildTipRow(summary));
+        const tipRow = this._buildTipRow(summary);
+        if (tipRow) {
+            box.add_child(tipRow);
+        }
         box.add_child(this._buildPrivacyNote());
     }
 

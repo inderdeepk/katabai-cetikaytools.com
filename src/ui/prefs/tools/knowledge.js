@@ -12,6 +12,8 @@ export function buildKnowledgeSection(ctx) {
     const {
         settings,
         watch,
+        isDisposed,
+        onDestroy,
         window,
         extensionPath,
         createToolSubpage,
@@ -28,6 +30,51 @@ export function buildKnowledgeSection(ctx) {
         createButtonRow,
         addCssClasses,
     } = ctx;
+
+    const activeSessions = new Set();
+    const activeSources = new Set();
+    onDestroy(() => {
+        for (const s of activeSessions) {
+            try {
+                s.abort();
+            } catch (_e) {
+                /* already aborted */
+            }
+        }
+        activeSessions.clear();
+        for (const id of activeSources) {
+            try {
+                GLib.source_remove(id);
+            } catch (_e) {
+                /* already removed */
+            }
+        }
+        activeSources.clear();
+    });
+
+    const scheduleTrackedTimeout = (delayMs, callback) => {
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+            activeSources.delete(id);
+            if (!isDisposed()) callback();
+            return GLib.SOURCE_REMOVE;
+        });
+        activeSources.add(id);
+        return id;
+    };
+
+    const scheduleTrackedIdle = (callback) => {
+        const id = GLib.idle_add(GLib.PRIORITY_LOW, () => {
+            activeSources.delete(id);
+            if (!isDisposed()) callback();
+            return GLib.SOURCE_REMOVE;
+        });
+        activeSources.add(id);
+        return id;
+    };
+
+    const setSafeSubtitle = (row, text) => {
+        row.subtitle = GLib.markup_escape_text(String(text || ''), -1);
+    };
 
     const subpage = createToolSubpage(_('Knowledge Base'));
     const detailPage = subpage.detailPage;
@@ -188,7 +235,7 @@ export function buildKnowledgeSection(ctx) {
     createBooleanRow(
         _('Enable Knowledge Base'),
         _(
-            'Allow the /kb command, Knowledge footer button, and autonomous knowledge searching by supported models.',
+            'Allow the /kb command, the Knowledge option in the Tools menu, and autonomous knowledge searching by supported models.',
         ),
         'rag-enabled',
         connectionGroup,
@@ -235,13 +282,15 @@ export function buildKnowledgeSection(ctx) {
     );
     setStatusBadge(ragConnBadge, _('Untested'), null);
 
-    createButtonRow(
+    const testRagRow = createButtonRow(
         _('Test Connection'),
         _('Send a health check to verify the RAG service responds.'),
         _('Test'),
         () => {
+            const btn = testRagRow.activatable_widget;
+            if (btn) btn.sensitive = false;
             setStatusBadge(ragConnBadge, _('Testing'), null);
-            ragConnStatusRow.subtitle = _('Contacting the RAG service\u2026');
+            setSafeSubtitle(ragConnStatusRow, _('Contacting the RAG service\u2026'));
 
             const config = {
                 serviceUrl: settings.get_string('rag-service-url'),
@@ -251,16 +300,23 @@ export function buildKnowledgeSection(ctx) {
             try {
                 const session = new Soup.Session();
                 session.timeout = 8;
+                activeSessions.add(session);
                 const url = `${config.serviceUrl.replace(/\/+$/, '')}/health`;
                 const message = Soup.Message.new('GET', url);
                 message.request_headers.append('Accept', 'application/json');
 
                 session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                    activeSessions.delete(session);
+                    if (isDisposed()) return;
+                    if (btn) btn.sensitive = true;
                     try {
                         const bytes = s.send_and_read_finish(result);
+                        if (message.status_code < 200 || message.status_code >= 300) {
+                            throw new Error(`HTTP ${message.status_code}`);
+                        }
                         const decoder = new TextDecoder('utf-8');
                         const body = JSON.parse(
-                            decoder.decode(bytes.get_data() || new Uint8Array()),
+                            decoder.decode(bytes?.get_data() || new Uint8Array()),
                         );
                         if (body?.ok) {
                             const colCount = Object.keys(body.collections || {}).length;
@@ -280,25 +336,34 @@ export function buildKnowledgeSection(ctx) {
                                 _('Connected'),
                                 'katab-prefs-status-detected',
                             );
-                            ragConnStatusRow.subtitle = body.version
-                                ? format(_('Reachable. v{version}, {collections}.{features}'), {
-                                    version: body.version,
-                                    collections: collectionsText,
-                                    features: featuresSuffix,
-                                })
-                                : format(_('Reachable.{features}'), { features: featuresSuffix });
+                            setSafeSubtitle(
+                                ragConnStatusRow,
+                                body.version
+                                    ? format(_('Reachable. v{version}, {collections}.{features}'), {
+                                          version: body.version,
+                                          collections: collectionsText,
+                                          features: featuresSuffix,
+                                      })
+                                    : format(_('Reachable.{features}'), {
+                                          features: featuresSuffix,
+                                      }),
+                            );
                         } else {
                             setStatusBadge(ragConnBadge, _('Failed'), 'katab-prefs-status-install');
-                            ragConnStatusRow.subtitle = _('Service returned an error.');
+                            setSafeSubtitle(ragConnStatusRow, _('Service returned an error.'));
                         }
                     } catch (e) {
                         setStatusBadge(ragConnBadge, _('Failed'), 'katab-prefs-status-install');
-                        ragConnStatusRow.subtitle = e?.message || _('Connection test failed.');
+                        setSafeSubtitle(
+                            ragConnStatusRow,
+                            e?.message || _('Connection test failed.'),
+                        );
                     }
                 });
             } catch (e) {
+                if (btn) btn.sensitive = true;
                 setStatusBadge(ragConnBadge, _('Failed'), 'katab-prefs-status-install');
-                ragConnStatusRow.subtitle = e?.message || _('Connection test failed.');
+                setSafeSubtitle(ragConnStatusRow, e?.message || _('Connection test failed.'));
             }
         },
         connectionGroup,
@@ -321,10 +386,13 @@ export function buildKnowledgeSection(ctx) {
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             );
         } catch (e) {
-            onDone({ success: false, stdout: '', stderr: e?.message || String(e) });
+            if (!isDisposed()) {
+                onDone({ success: false, stdout: '', stderr: e?.message || String(e) });
+            }
             return;
         }
         proc.communicate_utf8_async(null, null, (source, result) => {
+            if (isDisposed()) return;
             try {
                 const [, stdout, stderr] = source.communicate_utf8_finish(result);
                 // IMPORTANT: the first tuple element of communicate_utf8_finish
@@ -371,11 +439,6 @@ export function buildKnowledgeSection(ctx) {
     );
     setStatusBadge(ragServiceBadge, _('Checking'), null);
 
-    const showServiceError = (msg) => {
-        setStatusBadge(ragServiceBadge, _('Failed'), 'katab-prefs-status-install');
-        ragServiceStatusRow.subtitle = msg;
-    };
-
     const serviceButtons = new Gtk.Box({
         orientation: Gtk.Orientation.HORIZONTAL,
         spacing: 6,
@@ -412,9 +475,16 @@ export function buildKnowledgeSection(ctx) {
         'destructive-action',
     );
 
-    for (const btn of [setupBtn, startBtn, restartBtn, stopBtn]) {
+    const allServiceBtns = [setupBtn, startBtn, restartBtn, stopBtn];
+    for (const btn of allServiceBtns) {
         serviceButtons.append(btn);
     }
+
+    const setServiceButtonsBusy = () => {
+        for (const btn of allServiceBtns) {
+            btn.sensitive = false;
+        }
+    };
 
     const updateServiceButtons = (installed, active) => {
         setupBtn.visible = !installed;
@@ -427,9 +497,21 @@ export function buildKnowledgeSection(ctx) {
         stopBtn.sensitive = installed && active;
     };
 
+    const showServiceError = (msg) => {
+        setStatusBadge(ragServiceBadge, _('Failed'), 'katab-prefs-status-install');
+        setSafeSubtitle(ragServiceStatusRow, msg);
+        // Re-enable controls based on actual unit state after an error
+        runSystemctl('cat', (catResult) => {
+            const installed = catResult.success;
+            runSystemctl('is-active', ({ success: active }) => {
+                updateServiceButtons(installed, active);
+            });
+        });
+    };
+
     const refreshServiceStatus = () => {
         setStatusBadge(ragServiceBadge, _('Checking'), null);
-        ragServiceStatusRow.subtitle = _('Checking the systemd unit\u2026');
+        setSafeSubtitle(ragServiceStatusRow, _('Checking the systemd unit\u2026'));
         const venvReady = Gio.File.new_for_path(venvPython).query_exists(null);
         // `cat` succeeds only when the unit is installed anywhere in the
         // user's systemd search paths; `is-active` succeeds only while it runs.
@@ -444,20 +526,24 @@ export function buildKnowledgeSection(ctx) {
                     );
                     ragServiceStatusRow.subtitle = venvReady
                         ? _(
-                            'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up &amp; Start" to create it and launch the service.',
-                        )
+                              'The Python environment is ready, but no katabai-rag.service unit file was found. Use "Set Up &amp; Start" to create it and launch the service.',
+                          )
                         : _(
-                            'No service is set up yet. Use "Set Up &amp; Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).',
-                        );
+                              'No service is set up yet. Use "Set Up &amp; Start" to create the Python environment, install dependencies, write the unit file, and start the service (or follow the Setup section below for a manual install).',
+                          );
                     updateServiceButtons(false, false);
                 } else if (active) {
                     setStatusBadge(ragServiceBadge, _('Running'), 'katab-prefs-status-detected');
-                    ragServiceStatusRow.subtitle = _('The katabai-rag.service unit is running.');
+                    setSafeSubtitle(
+                        ragServiceStatusRow,
+                        _('The katabai-rag.service unit is running.'),
+                    );
                     updateServiceButtons(true, true);
                 } else {
                     setStatusBadge(ragServiceBadge, _('Stopped'), 'katab-prefs-status-install');
-                    ragServiceStatusRow.subtitle = _(
-                        'The service is installed but stopped. Use Start to launch it.',
+                    setSafeSubtitle(
+                        ragServiceStatusRow,
+                        _('The service is installed but stopped. Use Start to launch it.'),
                     );
                     updateServiceButtons(true, false);
                 }
@@ -466,14 +552,14 @@ export function buildKnowledgeSection(ctx) {
     };
 
     const runServiceAction = (verb, label) => {
+        setServiceButtonsBusy();
         setStatusBadge(ragServiceBadge, _('Working'), null);
-        ragServiceStatusRow.subtitle = label;
+        setSafeSubtitle(ragServiceStatusRow, label);
         runSystemctl(verb, (result) => {
             if (result.success) {
                 // Give systemd a moment to settle, then re-check status.
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+                scheduleTrackedTimeout(600, () => {
                     refreshServiceStatus();
-                    return GLib.SOURCE_REMOVE;
                 });
             } else {
                 showServiceError(
@@ -523,8 +609,9 @@ export function buildKnowledgeSection(ctx) {
     // Adaptive default setup: only run the missing steps, and never
     // touch an existing unit file (which may be a custom install).
     const autoSetupService = () => {
+        setServiceButtonsBusy();
         setStatusBadge(ragServiceBadge, _('Setting up'), null);
-        ragServiceStatusRow.subtitle = _('Preparing the RAG service\u2026');
+        setSafeSubtitle(ragServiceStatusRow, _('Preparing the RAG service\u2026'));
 
         const venvReady = Gio.File.new_for_path(venvPython).query_exists(null);
 
@@ -533,7 +620,10 @@ export function buildKnowledgeSection(ctx) {
                 done();
                 return;
             }
-            ragServiceStatusRow.subtitle = _('Creating the Python virtual environment\u2026');
+            setSafeSubtitle(
+                ragServiceStatusRow,
+                _('Creating the Python virtual environment\u2026'),
+            );
             runCommand([python3Path, '-m', 'venv', venvDir], (res) => {
                 if (!res.success) {
                     showServiceError(
@@ -548,7 +638,7 @@ export function buildKnowledgeSection(ctx) {
         };
 
         const ensureDeps = (done) => {
-            ragServiceStatusRow.subtitle = _('Checking Python dependencies\u2026');
+            setSafeSubtitle(ragServiceStatusRow, _('Checking Python dependencies\u2026'));
             runCommand(
                 [
                     venvPython,
@@ -560,8 +650,9 @@ export function buildKnowledgeSection(ctx) {
                         done();
                         return;
                     }
-                    ragServiceStatusRow.subtitle = _(
-                        'Installing Python dependencies (this can take a minute)\u2026',
+                    setSafeSubtitle(
+                        ragServiceStatusRow,
+                        _('Installing Python dependencies (this can take a minute)\u2026'),
                     );
                     runCommand(
                         [
@@ -579,9 +670,9 @@ export function buildKnowledgeSection(ctx) {
                             if (!install.success) {
                                 showServiceError(
                                     install.stderr?.trim() ||
-                                    _(
-                                        'Dependency installation failed \u2014 install them manually from the Setup section below.',
-                                    ),
+                                        _(
+                                            'Dependency installation failed \u2014 install them manually from the Setup section below.',
+                                        ),
                                 );
                                 return;
                             }
@@ -599,7 +690,7 @@ export function buildKnowledgeSection(ctx) {
                     done();
                     return;
                 }
-                ragServiceStatusRow.subtitle = _('Writing the systemd unit file\u2026');
+                setSafeSubtitle(ragServiceStatusRow, _('Writing the systemd unit file\u2026'));
                 try {
                     writeDefaultUnitFile();
                     done();
@@ -610,7 +701,7 @@ export function buildKnowledgeSection(ctx) {
         };
 
         const enableAndStart = (done) => {
-            ragServiceStatusRow.subtitle = _('Enabling and starting the service\u2026');
+            setSafeSubtitle(ragServiceStatusRow, _('Enabling and starting the service\u2026'));
             runSystemctlRaw(['daemon-reload'], (reload) => {
                 if (!reload.success) {
                     showServiceError(reload.stderr?.trim() || _('systemctl daemon-reload failed.'));
@@ -636,9 +727,8 @@ export function buildKnowledgeSection(ctx) {
             ensureDeps(() =>
                 ensureUnit(() =>
                     enableAndStart(() => {
-                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+                        scheduleTrackedTimeout(600, () => {
                             refreshServiceStatus();
-                            return GLib.SOURCE_REMOVE;
                         });
                     }),
                 ),
@@ -662,9 +752,8 @@ export function buildKnowledgeSection(ctx) {
         serviceButtons,
     );
 
-    GLib.idle_add(GLib.PRIORITY_LOW, () => {
+    scheduleTrackedIdle(() => {
         refreshServiceStatus();
-        return GLib.SOURCE_REMOVE;
     });
 
     // ---- Indexing ----
@@ -735,7 +824,7 @@ export function buildKnowledgeSection(ctx) {
         50,
     );
 
-    createBooleanRow(
+    const autoPruneRow = createBooleanRow(
         _('Auto-Prune Oldest Chunks'),
         _(
             'When a collection hits its size cap, automatically remove the oldest chunks to make room. When disabled, new indexing is rejected at the cap.',
@@ -743,8 +832,13 @@ export function buildKnowledgeSection(ctx) {
         'rag-auto-prune',
         limitsGroup,
     );
+    const syncAutoPruneSensitivity = () => {
+        autoPruneRow.sensitive = settings.get_int('rag-max-chunks-per-collection') > 0;
+    };
+    syncAutoPruneSensitivity();
+    watch('changed::rag-max-chunks-per-collection', syncAutoPruneSensitivity);
 
-    createBooleanRow(
+    const indexDocsRow = createBooleanRow(
         _('Index Document Attachments'),
         _(
             'Automatically add attached documents (text, PDF, Word, Excel, PowerPoint, OpenDocument, CSV, email) to the knowledge base.',
@@ -753,7 +847,7 @@ export function buildKnowledgeSection(ctx) {
         indexingGroup,
     );
 
-    createBooleanRow(
+    const indexConvRow = createBooleanRow(
         _('Index Conversations'),
         _(
             'Automatically add past conversation turns to the knowledge base for cross-session retrieval.',
@@ -762,12 +856,21 @@ export function buildKnowledgeSection(ctx) {
         indexingGroup,
     );
 
-    createBooleanRow(
+    const indexResearchRow = createBooleanRow(
         _('Index Research Cache'),
         _('Automatically add web search and scraping results to the knowledge base.'),
         'rag-index-research-cache',
         indexingGroup,
     );
+
+    const syncMemoryIndexingSensitivity = () => {
+        const memoryOn = settings.get_boolean('rag-memory-enabled');
+        indexDocsRow.sensitive = memoryOn;
+        indexConvRow.sensitive = memoryOn;
+        indexResearchRow.sensitive = memoryOn;
+    };
+    syncMemoryIndexingSensitivity();
+    watch('changed::rag-memory-enabled', syncMemoryIndexingSensitivity);
 
     // ---- Autonomous ----
     const autonomousGroup = createPreferencesGroup({
@@ -820,7 +923,7 @@ export function buildKnowledgeSection(ctx) {
         [0.6, _('Moderate (recommended)')],
         [0.8, _('Aggressive (fallback frequently)')],
     ];
-    const { row: fallbackThreshRow } = createDoubleRow(
+    const fallbackThreshRow = createDoubleRow(
         _('Fallback Threshold'),
         _('Minimum best-result score (0.0–1.0) before auto-triggering web search.'),
         'rag-fallback-threshold',
@@ -843,16 +946,25 @@ export function buildKnowledgeSection(ctx) {
                 }
             }
             if (!desc) desc = fallbackThresholds[fallbackThresholds.length - 1][1];
-            fallbackThreshRow.subtitle = format(_('Current: {value} — {desc}'), {
-                value: val.toFixed(2),
-                desc,
-            });
+            setSafeSubtitle(
+                fallbackThreshRow,
+                format(_('Current: {value} — {desc}'), {
+                    value: val.toFixed(2),
+                    desc,
+                }),
+            );
         } catch (_) {
             /* settings may not be ready */
         }
     };
     updateFallbackSubtitle();
     watch('changed::rag-fallback-threshold', updateFallbackSubtitle);
+
+    const syncFallbackVisibility = () => {
+        fallbackThreshRow.visible = settings.get_boolean('rag-fallback-enabled');
+    };
+    syncFallbackVisibility();
+    watch('changed::rag-fallback-enabled', syncFallbackVisibility);
 
     // -- Reranking --
     createBooleanRow(
@@ -864,14 +976,14 @@ export function buildKnowledgeSection(ctx) {
         advancedGroup,
     );
 
-    createStringRow(
+    const rerankModelRow = createStringRow(
         _('Reranker Model'),
         _('Ollama model used for cross-encoder reranking. Must be pulled first.'),
         'rag-rerank-model',
         advancedGroup,
     );
 
-    createIntRow(
+    const rerankMultiplierRow = createIntRow(
         _('Candidate Pool Multiplier'),
         _(
             'How many times more candidates to fetch before reranking (rerank_k = k × this). Higher values improve recall at the cost of latency. (1–10)',
@@ -882,6 +994,14 @@ export function buildKnowledgeSection(ctx) {
         10,
         1,
     );
+
+    const syncRerankVisibility = () => {
+        const enabled = settings.get_boolean('rag-rerank-enabled');
+        rerankModelRow.visible = enabled;
+        rerankMultiplierRow.visible = enabled;
+    };
+    syncRerankVisibility();
+    watch('changed::rag-rerank-enabled', syncRerankVisibility);
 
     // -- Hybrid BM25 --
     createBooleanRow(
@@ -908,22 +1028,31 @@ export function buildKnowledgeSection(ctx) {
     );
     setStatusBadge(ragUsageBadge, _('Unknown'), null);
 
+    let refreshUsageBtn = null;
     const refreshUsage = () => {
+        if (refreshUsageBtn) refreshUsageBtn.sensitive = false;
         setStatusBadge(ragUsageBadge, _('Checking'), null);
-        ragUsageRow.subtitle = _('Querying the RAG service\u2026');
+        setSafeSubtitle(ragUsageRow, _('Querying the RAG service\u2026'));
 
         const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/health`;
         try {
             const session = new Soup.Session();
             session.timeout = 8;
+            activeSessions.add(session);
             const message = Soup.Message.new('GET', url);
             message.request_headers.append('Accept', 'application/json');
 
             session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                activeSessions.delete(session);
+                if (isDisposed()) return;
+                if (refreshUsageBtn) refreshUsageBtn.sensitive = true;
                 try {
                     const bytes = s.send_and_read_finish(result);
+                    if (message.status_code < 200 || message.status_code >= 300) {
+                        throw new Error(`HTTP ${message.status_code}`);
+                    }
                     const decoder = new TextDecoder('utf-8');
-                    const body = JSON.parse(decoder.decode(bytes.get_data() || new Uint8Array()));
+                    const body = JSON.parse(decoder.decode(bytes?.get_data() || new Uint8Array()));
                     const limits = body?.limits || {};
                     const totalChunks = limits.total_chunks || 0;
                     const estMb = limits.estimated_size_mb || 0;
@@ -957,43 +1086,47 @@ export function buildKnowledgeSection(ctx) {
 
                     if (totalChunks === 0) {
                         setStatusBadge(ragUsageBadge, _('Empty'), null);
-                        ragUsageRow.subtitle = format(_('Knowledge base is empty.{features}'), {
-                            features: featureStr,
-                        });
+                        setSafeSubtitle(
+                            ragUsageRow,
+                            format(_('Knowledge base is empty.{features}'), {
+                                features: featureStr,
+                            }),
+                        );
                     } else if (maxMb > 0 && estMb >= maxMb * 0.9) {
                         setStatusBadge(
                             ragUsageBadge,
                             _('Near Limit'),
                             'katab-prefs-status-install',
                         );
-                        ragUsageRow.subtitle = usageLine;
+                        setSafeSubtitle(ragUsageRow, usageLine);
                     } else {
                         setStatusBadge(ragUsageBadge, _('Healthy'), 'katab-prefs-status-detected');
-                        ragUsageRow.subtitle = usageLine;
+                        setSafeSubtitle(ragUsageRow, usageLine);
                     }
-                } catch (e) {
+                } catch (_e) {
                     setStatusBadge(ragUsageBadge, _('Unavailable'), 'katab-prefs-status-install');
-                    ragUsageRow.subtitle = _('Cannot reach RAG service.');
+                    setSafeSubtitle(ragUsageRow, _('Cannot reach RAG service.'));
                 }
             });
-        } catch (e) {
+        } catch (_e) {
+            if (refreshUsageBtn) refreshUsageBtn.sensitive = true;
             setStatusBadge(ragUsageBadge, _('Unavailable'), 'katab-prefs-status-install');
-            ragUsageRow.subtitle = _('Cannot reach RAG service.');
+            setSafeSubtitle(ragUsageRow, _('Cannot reach RAG service.'));
         }
     };
 
-    createButtonRow(
+    const refreshUsageRow = createButtonRow(
         _('Refresh Usage'),
         _('Query the RAG service for current chunk counts and estimated disk usage.'),
         _('Refresh'),
         refreshUsage,
         maintenanceGroup,
     );
+    refreshUsageBtn = refreshUsageRow.activatable_widget;
 
     // Auto-refresh on first open
-    GLib.idle_add(GLib.PRIORITY_LOW, () => {
+    scheduleTrackedIdle(() => {
         if (settings.get_boolean('rag-enabled')) refreshUsage();
-        return GLib.SOURCE_REMOVE;
     });
 
     // Status row shared by Clear and Export operations
@@ -1004,27 +1137,36 @@ export function buildKnowledgeSection(ctx) {
     );
     setStatusBadge(ragMaintBadge, _('Idle'), null);
 
-    createButtonRow(
+    const exportKbRow = createButtonRow(
         _('Export Knowledge Base'),
         _('Download all indexed data as a JSON file for backup or inspection.'),
         _('Export'),
         () => {
+            const btn = exportKbRow.activatable_widget;
+            if (btn) btn.sensitive = false;
             setStatusBadge(ragMaintBadge, _('Running'), null);
-            ragMaintStatusRow.subtitle = _('Fetching data from the RAG service\u2026');
+            setSafeSubtitle(ragMaintStatusRow, _('Fetching data from the RAG service\u2026'));
 
             const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/export`;
             try {
                 const session = new Soup.Session();
                 session.timeout = 30;
+                activeSessions.add(session);
                 const message = Soup.Message.new('GET', url);
                 message.request_headers.append('Accept', 'application/json');
 
                 session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                    activeSessions.delete(session);
+                    if (isDisposed()) return;
+                    if (btn) btn.sensitive = true;
                     try {
                         const bytes = s.send_and_read_finish(result);
+                        if (message.status_code < 200 || message.status_code >= 300) {
+                            throw new Error(`HTTP ${message.status_code}`);
+                        }
                         const decoder = new TextDecoder('utf-8');
                         const body = JSON.parse(
-                            decoder.decode(bytes.get_data() || new Uint8Array()),
+                            decoder.decode(bytes?.get_data() || new Uint8Array()),
                         );
                         const collections = body?.collections || {};
 
@@ -1035,46 +1177,66 @@ export function buildKnowledgeSection(ctx) {
 
                         if (totalEntries === 0) {
                             setStatusBadge(ragMaintBadge, _('Empty'), null);
-                            ragMaintStatusRow.subtitle = _(
-                                'Knowledge base is empty — nothing to export.',
+                            setSafeSubtitle(
+                                ragMaintStatusRow,
+                                _('Knowledge base is empty — nothing to export.'),
                             );
                             return;
                         }
 
-                        // Save to ~/Documents/katabai-rag-export-<date>.json
+                        // Save to ~/Documents/katabai-rag-export-<date>.json (fall back to $HOME)
                         const now = GLib.DateTime.new_now_local();
                         const dateStr = now ? now.format('%Y-%m-%d') : 'unknown';
                         const filename = `katabai-rag-export-${dateStr}.json`;
-                        const docsDir = GLib.get_user_special_dir(
-                            GLib.UserDirectory.DIRECTORY_DOCUMENTS,
-                        );
+                        const docsDir =
+                            GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) ||
+                            GLib.get_home_dir();
                         const filePath = GLib.build_filenamev([docsDir, filename]);
 
                         const file = Gio.File.new_for_path(filePath);
-                        const outStream = file.replace(null, false, Gio.FileCreateFlags.NONE, null);
-                        const jsonStr = JSON.stringify(collections, null, 2);
-                        outStream.write(jsonStr, null);
-                        outStream.close(null);
+                        const jsonBytes = new TextEncoder().encode(
+                            JSON.stringify(collections, null, 2),
+                        );
+                        file.replace_contents(
+                            jsonBytes,
+                            null,
+                            false,
+                            Gio.FileCreateFlags.REPLACE_DESTINATION,
+                            null,
+                        );
 
                         const colNames = Object.keys(collections).join(', ');
                         setStatusBadge(ragMaintBadge, _('Done'), 'katab-prefs-status-detected');
-                        ragMaintStatusRow.subtitle = format(
-                            _('Exported {count} entries ({collections}) to {path}'),
-                            { count: totalEntries, collections: colNames, path: filePath },
+                        setSafeSubtitle(
+                            ragMaintStatusRow,
+                            format(_('Exported {count} entries ({collections}) to {path}'), {
+                                count: totalEntries,
+                                collections: colNames,
+                                path: filePath,
+                            }),
                         );
                     } catch (e) {
                         setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
-                        ragMaintStatusRow.subtitle =
-                            e?.message || _('Export failed — is the RAG service running?');
+                        setSafeSubtitle(
+                            ragMaintStatusRow,
+                            e?.message || _('Export failed — is the RAG service running?'),
+                        );
                     }
                 });
             } catch (e) {
+                if (btn) btn.sensitive = true;
                 setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
-                ragMaintStatusRow.subtitle = e?.message || _('Export failed.');
+                setSafeSubtitle(ragMaintStatusRow, e?.message || _('Export failed.'));
             }
         },
         maintenanceGroup,
     );
+
+    const sentinelPath = GLib.build_filenamev([
+        GLib.get_user_data_dir(),
+        'katabai',
+        'rag-index-state.json',
+    ]);
 
     createButtonRow(
         _('Re-index Knowledge Base'),
@@ -1096,15 +1258,8 @@ export function buildKnowledgeSection(ctx) {
             dialog.connect('response', (dlg, responseId) => {
                 if (responseId === Gtk.ResponseType.OK) {
                     // Delete the sentinel file to force re-indexing
-                    const path = GLib.build_filenamev([
-                        GLib.get_home_dir(),
-                        '.local',
-                        'share',
-                        'katabai',
-                        'rag-index-state.json',
-                    ]);
                     try {
-                        const file = Gio.File.new_for_path(path);
+                        const file = Gio.File.new_for_path(sentinelPath);
                         if (file.query_exists(null)) file.delete(null);
                     } catch (_) {
                         /* best effort */
@@ -1124,8 +1279,9 @@ export function buildKnowledgeSection(ctx) {
                     }
 
                     setStatusBadge(ragMaintBadge, _('Done'), 'katab-prefs-status-detected');
-                    ragMaintStatusRow.subtitle = _(
-                        'Index state cleared — re-indexing will start now.',
+                    setSafeSubtitle(
+                        ragMaintStatusRow,
+                        _('Index state cleared — re-indexing will start now.'),
                     );
                 }
                 dlg.destroy();
@@ -1146,6 +1302,7 @@ export function buildKnowledgeSection(ctx) {
                 'katabai',
                 'rag-import-queue.json',
             ]);
+            GLib.mkdir_with_parents(GLib.path_get_dirname(queuePath), 0o700);
             GLib.file_set_contents(queuePath, JSON.stringify({ paths, ts: Date.now() }));
             // Action first so the extension sees the right intent when
             // the generation change arrives.
@@ -1155,13 +1312,15 @@ export function buildKnowledgeSection(ctx) {
                 settings.get_int('rag-maintenance-generation') + 1,
             );
             setStatusBadge(ragMaintBadge, _('Queued'), 'katab-prefs-status-detected');
-            ragMaintStatusRow.subtitle = format(
-                _('Queued {count} path(s) — the running extension will import them now.'),
-                { count: paths.length },
+            setSafeSubtitle(
+                ragMaintStatusRow,
+                format(_('Queued {count} path(s) — the running extension will import them now.'), {
+                    count: paths.length,
+                }),
             );
         } catch (e) {
             setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
-            ragMaintStatusRow.subtitle = e?.message || _('Could not queue the import.');
+            setSafeSubtitle(ragMaintStatusRow, e?.message || _('Could not queue the import.'));
         }
     };
 
@@ -1176,6 +1335,7 @@ export function buildKnowledgeSection(ctx) {
                 title: _('Import files into the knowledge base'),
             });
             dialog.open_multiple(window, null, (dlg, result) => {
+                if (isDisposed()) return;
                 try {
                     const model = dlg.open_multiple_finish(result);
                     const paths = [];
@@ -1203,6 +1363,7 @@ export function buildKnowledgeSection(ctx) {
                 title: _('Import a folder into the knowledge base'),
             });
             dialog.select_folder(window, null, (dlg, result) => {
+                if (isDisposed()) return;
                 try {
                     const f = dlg.select_folder_finish(result);
                     const p = f?.get_path?.();
@@ -1215,7 +1376,7 @@ export function buildKnowledgeSection(ctx) {
         maintenanceGroup,
     );
 
-    createButtonRow(
+    const clearKbRow = createButtonRow(
         _('Clear Knowledge Base'),
         _('Permanently delete ALL indexed data from the vector database. This cannot be undone.'),
         _('Clear'),
@@ -1232,13 +1393,16 @@ export function buildKnowledgeSection(ctx) {
             });
             dialog.connect('response', (dlg, responseId) => {
                 if (responseId === Gtk.ResponseType.OK) {
+                    const btn = clearKbRow.activatable_widget;
+                    if (btn) btn.sensitive = false;
                     setStatusBadge(ragMaintBadge, _('Running'), null);
-                    ragMaintStatusRow.subtitle = _('Clearing all collections\u2026');
+                    setSafeSubtitle(ragMaintStatusRow, _('Clearing all collections\u2026'));
 
                     const url = `${settings.get_string('rag-service-url').replace(/\/+$/, '')}/clear`;
                     try {
                         const session = new Soup.Session();
                         session.timeout = 15;
+                        activeSessions.add(session);
                         const message = Soup.Message.new('POST', url);
                         message.request_headers.append('Accept', 'application/json');
 
@@ -1247,22 +1411,21 @@ export function buildKnowledgeSection(ctx) {
                             GLib.PRIORITY_DEFAULT,
                             null,
                             (s, result) => {
+                                activeSessions.delete(session);
+                                if (isDisposed()) return;
+                                if (btn) btn.sensitive = true;
                                 try {
                                     const bytes = s.send_and_read_finish(result);
+                                    if (message.status_code < 200 || message.status_code >= 300) {
+                                        throw new Error(`HTTP ${message.status_code}`);
+                                    }
                                     const decoder = new TextDecoder('utf-8');
                                     const body = JSON.parse(
-                                        decoder.decode(bytes.get_data() || new Uint8Array()),
+                                        decoder.decode(bytes?.get_data() || new Uint8Array()),
                                     );
                                     const dropped = body?.dropped || [];
 
                                     // Also clear the sentinel file
-                                    const sentinelPath = GLib.build_filenamev([
-                                        GLib.get_home_dir(),
-                                        '.local',
-                                        'share',
-                                        'katabai',
-                                        'rag-index-state.json',
-                                    ]);
                                     try {
                                         const f = Gio.File.new_for_path(sentinelPath);
                                         if (f.query_exists(null)) f.delete(null);
@@ -1288,18 +1451,25 @@ export function buildKnowledgeSection(ctx) {
                                             _('Done'),
                                             'katab-prefs-status-detected',
                                         );
-                                        ragMaintStatusRow.subtitle = format(
-                                            ngettext(
-                                                'Cleared {count} collection: {names}.',
-                                                'Cleared {count} collections: {names}.',
-                                                dropped.length,
+                                        setSafeSubtitle(
+                                            ragMaintStatusRow,
+                                            format(
+                                                ngettext(
+                                                    'Cleared {count} collection: {names}.',
+                                                    'Cleared {count} collections: {names}.',
+                                                    dropped.length,
+                                                ),
+                                                {
+                                                    count: dropped.length,
+                                                    names: dropped.join(', '),
+                                                },
                                             ),
-                                            { count: dropped.length, names: dropped.join(', ') },
                                         );
                                     } else {
                                         setStatusBadge(ragMaintBadge, _('Empty'), null);
-                                        ragMaintStatusRow.subtitle = _(
-                                            'Knowledge base was already empty.',
+                                        setSafeSubtitle(
+                                            ragMaintStatusRow,
+                                            _('Knowledge base was already empty.'),
                                         );
                                     }
                                 } catch (e) {
@@ -1308,15 +1478,18 @@ export function buildKnowledgeSection(ctx) {
                                         _('Failed'),
                                         'katab-prefs-status-install',
                                     );
-                                    ragMaintStatusRow.subtitle =
+                                    setSafeSubtitle(
+                                        ragMaintStatusRow,
                                         e?.message ||
-                                        _('Clear failed — is the RAG service running?');
+                                            _('Clear failed — is the RAG service running?'),
+                                    );
                                 }
                             },
                         );
                     } catch (e) {
+                        if (btn) btn.sensitive = true;
                         setStatusBadge(ragMaintBadge, _('Failed'), 'katab-prefs-status-install');
-                        ragMaintStatusRow.subtitle = e?.message || _('Clear failed.');
+                        setSafeSubtitle(ragMaintStatusRow, e?.message || _('Clear failed.'));
                     }
                 }
                 dlg.destroy();
@@ -1325,6 +1498,7 @@ export function buildKnowledgeSection(ctx) {
         },
         maintenanceGroup,
     );
+    clearKbRow.activatable_widget?.add_css_class('destructive-action');
 
     return subpage;
 }

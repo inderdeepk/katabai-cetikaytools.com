@@ -85,10 +85,55 @@ export function isInternalMessage(msg) {
     return INTERNAL_MESSAGE_FLAGS.some((flag) => msg?.[flag]);
 }
 
+function isAnthropicToolResultTurn(msg) {
+    return (
+        msg?.role === 'user' &&
+        Array.isArray(msg.content) &&
+        msg.content.length > 0 &&
+        msg.content.every((b) => b?.type === 'tool_result')
+    );
+}
+
+/**
+ * Extract the first balanced JSON object substring `{...}` from `text`,
+ * avoiding false spans when trailing prose also contains braces.
+ */
+function extractFirstBalancedJsonObject(text) {
+    const start = text.indexOf('{');
+    if (start < 0) return null;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (ch === '\\' && inString) {
+            escape = true;
+            continue;
+        }
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                return text.slice(start, i + 1);
+            }
+        }
+    }
+    return null;
+}
+
 /**
  * Build a bounded "User: …/Assistant: …" transcript excerpt from the start of
  * the conversation (first exchanges carry the topic best).  Skips tool/system/
- * internal messages.  Returns '' when nothing displayable exists.
+ * internal/Anthropic tool_result messages.  Returns '' when nothing displayable exists.
  */
 export function buildTranscriptExcerpt(
     messages,
@@ -105,18 +150,20 @@ export function buildTranscriptExcerpt(
     for (const msg of messages) {
         if (!msg || isInternalMessage(msg)) continue;
         if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+        if (isAnthropicToolResultTurn(msg)) continue;
 
         let text = messageText(msg).replace(/\s+/g, ' ').trim();
         if (!text) continue;
-        if (text.length > maxMessageChars) {
-            text = `${text.slice(0, maxMessageChars)}\u2026`;
+        const cappedText = truncateCodePoints(text, maxMessageChars);
+        if (cappedText.length < text.length) {
+            text = `${cappedText}\u2026`;
         }
 
         const line = `${msg.role === 'user' ? 'User' : 'Assistant'}: ${text}`;
         if (total + line.length + 1 > maxChars) {
             // Always keep at least a fragment of the first eligible message so
             // a single huge opening message still yields a usable excerpt.
-            if (lines.length === 0) lines.push(line.slice(0, Math.max(1, maxChars)));
+            if (lines.length === 0) lines.push(truncateCodePoints(line, Math.max(1, maxChars)));
             truncated = true;
             break;
         }
@@ -149,18 +196,26 @@ export function buildTitleGenerationMessages(messages, options = {}) {
 function sanitizeField(value, maxChars) {
     if (typeof value !== 'string') return '';
     let text = value
-        .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, '')
+        .replace(/^[*_\s"'“”‘’]+|[*_\s"'“”‘’]+$/g, '')
         .replace(/\s+/g, ' ')
         .trim();
-    if (text.length > maxChars) text = text.slice(0, maxChars).trim();
+    if (text.length > maxChars) text = truncateCodePoints(text, maxChars).trim();
     return text;
 }
 
+const LABELED_FIELD_RE = {
+    title: /(?:^|\n)\s*(?:#+\s*)?(?:\*\*)?title(?:\*\*)?\s*[:\-\u2013]\s*(?:\*\*)?\s*(.+)/i,
+    description:
+        /(?:^|\n)\s*(?:#+\s*)?(?:\*\*)?description(?:\*\*)?\s*[:\-\u2013]\s*(?:\*\*)?\s*(.+)/i,
+};
+
 function extractLabeledField(text, label) {
-    const re = new RegExp(
-        `(?:^|\\n)\\s*(?:#+\\s*)?(?:\\*\\*)?${label}(?:\\*\\*)?\\s*[:\\-\u2013]\\s*(.+)`,
-        'i',
-    );
+    const re =
+        LABELED_FIELD_RE[label] ||
+        new RegExp(
+            `(?:^|\\n)\\s*(?:#+\\s*)?(?:\\*\\*)?${label}(?:\\*\\*)?\\s*[:\\-\u2013]\\s*(?:\\*\\*)?\\s*(.+)`,
+            'i',
+        );
     const match = text.match(re);
     return match ? match[1] : '';
 }
@@ -183,11 +238,10 @@ export function parseTitleDescriptionResponse(text) {
     let title = '';
     let description = '';
 
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start !== -1 && end > start) {
+    const jsonStr = extractFirstBalancedJsonObject(cleaned);
+    if (jsonStr) {
         try {
-            const parsed = JSON.parse(cleaned.slice(start, end + 1));
+            const parsed = JSON.parse(jsonStr);
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 title = sanitizeField(parsed.title, TITLE_GEN_TITLE_MAX_CHARS);
                 description = sanitizeField(parsed.description, TITLE_GEN_DESCRIPTION_MAX_CHARS);
@@ -251,14 +305,47 @@ export function buildAutoTitleMessages(
     ];
 }
 
+function stripOuterPairs(text) {
+    const pairs = [
+        ['"', '"'],
+        ["'", "'"],
+        ['\u201C', '\u201D'],
+        ['\u2018', '\u2019'],
+        ['`', '`'],
+        ['**', '**'],
+        ['*', '*'],
+        ['_', '_'],
+    ];
+    let out = text.trim();
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const [open, close] of pairs) {
+            if (
+                out.length > open.length + close.length &&
+                out.startsWith(open) &&
+                out.endsWith(close)
+            ) {
+                out = out.slice(open.length, out.length - close.length).trim();
+                changed = true;
+            }
+        }
+    }
+    return out;
+}
+
 function sanitizeAutoTitleLine(line, maxChars) {
     let cleaned = String(line ?? '')
         .trim()
         // "Title: …", "**Title**: …", "Sure — here is your title: …"
-        .replace(/^.{0,40}?\btitle\b[*_`]*\s*(?::|\s[-\u2013]\s)\s*/i, '')
+        .replace(
+            /^(?:(?:[*_`#]+\s*)?|(?:(?:sure|here(?:'s|\s+is)|suggested|short|chat|conversation|your|the|a)\b.{0,32}?))\btitle\b[*_`]*\s*(?::|\s[-\u2013]\s)\s*[*_`]*/i,
+            '',
+        )
         .replace(/^\s*(?:[-\u2022]|\d+[.)])\s+/, '')
-        .replace(/^\s*#+\s+/, '')
-        .replace(/^[*_`\s"'“”‘’]+|[*_`\s"'“”‘’]+$/g, '')
+        .replace(/^\s*#+\s+/, '');
+
+    cleaned = stripOuterPairs(cleaned)
         .replace(/\s+#+\s*$/, '')
         .replace(/[.!?;:,\u2026]+$/g, '')
         .replace(/\s+/g, ' ')
@@ -316,11 +403,10 @@ export function parseAutoTitleResponse(text, { maxChars = AUTO_TITLE_MAX_CHARS }
     }
 
     // Some models answer structured even when asked for plain text.
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start !== -1 && end > start) {
+    const jsonStr = extractFirstBalancedJsonObject(cleaned);
+    if (jsonStr) {
         try {
-            const parsed = JSON.parse(cleaned.slice(start, end + 1));
+            const parsed = JSON.parse(jsonStr);
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 if (typeof parsed.title === 'string') cleaned = parsed.title;
             }

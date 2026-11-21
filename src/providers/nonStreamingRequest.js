@@ -38,16 +38,44 @@ export function buildNonStreamingChatRequest({
     let payload;
 
     if (provider === 'anthropic') {
-        if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
+        if (endpoint.endsWith('/v1/messages') || endpoint.endsWith('/messages')) {
+            // already suffixed
+        } else if (endpoint.endsWith('/v1')) {
+            endpoint += '/messages';
+        } else {
             endpoint += '/v1/messages';
         }
         headers['x-api-key'] = apiKey;
         headers['anthropic-version'] = '2023-06-01';
+        const systemParts = [];
+        const nonSystem = [];
+        for (const message of Array.isArray(messages) ? messages : []) {
+            if (!message) continue;
+            if (message.role === 'system') {
+                const text = typeof message.content === 'string' ? message.content.trim() : '';
+                if (text) systemParts.push(text);
+            } else {
+                const prev = nonSystem.length > 0 ? nonSystem[nonSystem.length - 1] : null;
+                if (
+                    prev &&
+                    prev.role === message.role &&
+                    typeof prev.content === 'string' &&
+                    typeof message.content === 'string'
+                ) {
+                    prev.content = `${prev.content}\n\n${message.content}`;
+                } else {
+                    nonSystem.push({ ...message });
+                }
+            }
+        }
         payload = {
             model,
             max_tokens: maxTokens,
-            messages: messages.filter((message) => message.role !== 'system'),
+            messages: nonSystem,
         };
+        if (systemParts.length > 0) {
+            payload.system = systemParts.join('\n\n');
+        }
     } else if (provider === 'ollama') {
         if (!endpoint.endsWith('api/chat')) {
             endpoint += '/api/chat';

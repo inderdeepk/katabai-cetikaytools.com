@@ -9,17 +9,30 @@
 // ("< invoke", "< calls>"), or Unicode lookalike brackets/quotes.  All of it
 // is routed through normalizeToolCallMarkup() before matching.
 
+const KNOWN_TOOL_NAMES_PATTERN =
+    'web_search|read_url|crawl_url|explore_docs|knowledge_search|update_knowledge|forget_knowledge|python|terminal';
+
+const DEFAULT_POSITIONAL_PARAM_BY_TOOL = Object.freeze({
+    web_search: 'query',
+    knowledge_search: 'query',
+    read_url: 'url',
+    crawl_url: 'url',
+    explore_docs: 'url',
+    forget_knowledge: 'about',
+    update_knowledge: 'fact',
+});
+
 /**
  * Normalize obfuscated tool-call markup to plain ASCII so the tag regexes see
  * consistent input.  Handles invisible/control characters, Unicode lookalike
  * angle brackets and quotes, fullwidth pipe fences, the invented "|DSML|"
  * namespace, a pipe directly before a tag name, and a space after the angle
- * bracket.
+ * bracket — without stripping legitimate pipes in Markdown tables, TypeScript
+ * unions, regexes, or shell commands.
  *
  * `light: true` runs only the subset used by residue detection (control and
  * format characters + pipe normalization + tag spacing — no Unicode-tags-block
- * strip, no bracket/quote lookalikes), preserving the exact behavior of the
- * former `_stillLooksLikeToolMarkup` chain.
+ * strip, no bracket/quote lookalikes).
  *
  * @param {string} text
  * @param {{light?: boolean}} [options]
@@ -44,8 +57,9 @@ export function normalizeToolCallMarkup(text, { light = false } = {}) {
     }
     return out
         .replace(/\uFF5C+/g, '|')
-        .replace(/\|DSML\|/gi, '')
-        .replace(/\|(?=[a-zA-Z_])/g, '')
+        .replace(/\|+\s*DSML\s*\|+/gi, '')
+        .replace(/(<\/?)\s*\|+\s*(?=[a-zA-Z_])/g, '$1')
+        .replace(/\|+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '')
         .replace(/<\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi, '<')
         .replace(
             /<\/\s+(?=(?:tool_calls?|function_calls?|invoke|parameter|function|calls)\b)/gi,
@@ -53,23 +67,43 @@ export function normalizeToolCallMarkup(text, { light = false } = {}) {
         );
 }
 
-// Fallback parser: when a model (e.g. DeepSeek V4 Pro) outputs tool calls as
-// text in the content field instead of using structured delta.tool_calls, try
-// to recover them so tools still execute. Handles:
-//   JSON  : {"name":"read_url","arguments":{"url":"https://..."}}
+/**
+ * Strip fenced code blocks when they sit inside normal prose so code examples
+ * illustrating `web_search({...})` or JSON tool calls aren't mistaken for live
+ * tool invocations. If the entire message IS a single fenced tool-call block
+ * (common with small local models), unwrap it instead of discarding it.
+ */
+function maskProseCodeFences(text) {
+    if (!text.includes('```')) {
+        return text;
+    }
+    const trimmed = text.trim();
+    const singleFence = trimmed.match(/^```(?:json|xml|tool_call)?\s*\n([\s\S]*?)\n?```$/i);
+    if (singleFence && !singleFence[1].includes('```')) {
+        return singleFence[1];
+    }
+    // Replace multi-line fenced code blocks with whitespace of matching length
+    // so prose outside fences is scanned cleanly while code examples are ignored.
+    return text.replace(/```[^\n]*\n[\s\S]*?```/g, (match) => ' '.repeat(match.length));
+}
+
+// Fallback parser: when a model (e.g. DeepSeek V4 Pro, Qwen, Llama) outputs
+// tool calls as text in the content field instead of using structured
+// delta.tool_calls, try to recover them so tools still execute. Handles:
+//   JSON  : {"name":"read_url","arguments":{"url":"https://..."}} (or "parameters")
 //   func  : read_url({"url":"https://..."})
-//   XML   : <function>read_url</function> followed by key:value pairs
+//   XML   : <invoke name="..."><parameter name="...">...</parameter></invoke>,
+//           <function>tool</function>, <function=tool>...</function>
 export function parseTextToolCalls(text, knownToolNames) {
     if (!text || typeof text !== 'string' || !knownToolNames || knownToolNames.length === 0) {
         return null;
     }
 
+    const scannable = normalizeToolCallMarkup(maskProseCodeFences(text));
     const results = [];
 
     // ----- JSON-object format: {"name":"tool","arguments":{...}} -----
-    // Use a character-by-character scan to find balanced JSON objects that
-    // contain "name" and "arguments" keys referencing a known tool.
-    const jsonResults = extractJsonToolCalls(text, knownToolNames);
+    const jsonResults = extractJsonToolCalls(scannable, knownToolNames);
     for (const tc of jsonResults) {
         results.push(tc);
     }
@@ -77,21 +111,25 @@ export function parseTextToolCalls(text, knownToolNames) {
     // ----- Function-call format: tool_name({...}) -----
     if (results.length === 0) {
         for (const toolName of knownToolNames) {
-            // Find tool_name followed by parenthesised JSON arguments
             const escaped = toolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const re = new RegExp(
-                escaped + '\\s*\\(\\s*(\\{(?:[^{}]|\\{[^{}]*\\})*\\})\\s*\\)',
-                'g',
-            );
+            const re = new RegExp(`\\b${escaped}\\s*\\(\\s*(?=\\{)`, 'g');
             let match;
-            while ((match = re.exec(text)) !== null) {
+            while ((match = re.exec(scannable)) !== null) {
+                const braceStart = match.index + match[0].length;
+                const balanced = extractBalancedJson(scannable, braceStart);
+                if (!balanced) continue;
+                const afterBrace = scannable.slice(balanced.end).match(/^\s*\)/);
+                if (!afterBrace) continue;
                 try {
-                    const args = JSON.parse(match[1]);
-                    results.push({
-                        id: `txt_${results.length}_${Date.now()}`,
-                        type: 'function',
-                        function: { name: toolName, arguments: JSON.stringify(args) },
-                    });
+                    const args = JSON.parse(balanced.json);
+                    if (args && typeof args === 'object' && !Array.isArray(args)) {
+                        results.push({
+                            id: `txt_${results.length}_${Date.now()}`,
+                            type: 'function',
+                            function: { name: toolName, arguments: JSON.stringify(args) },
+                        });
+                        re.lastIndex = balanced.end + afterBrace[0].length;
+                    }
                 } catch (_) {
                     // Not valid JSON – skip this match
                 }
@@ -100,68 +138,70 @@ export function parseTextToolCalls(text, knownToolNames) {
     }
 
     // ----- XML-ish / tagged format -----
-    // Some models wrap tool calls in <function> or <tool_call> tags with
-    // key:value parameter pairs on subsequent lines.
     if (results.length === 0) {
-        results.push(...extractXmlStyleToolCalls(text, knownToolNames));
+        results.push(...extractXmlStyleToolCalls(scannable, knownToolNames));
     }
 
     return results.length > 0 ? results : null;
 }
 
-// Scan for balanced JSON objects that look like tool calls: must have "name"
-// and "arguments" keys where name is a known tool.
+// Linear scan for balanced JSON objects that look like tool calls: must have
+// "name" and "arguments" (or "parameters") keys where name is a known tool.
 function extractJsonToolCalls(text, knownToolNames) {
     const results = [];
-    // Find every `{` that could start a JSON tool-call object
+    const knownSet = new Set(knownToolNames);
+
     for (let i = 0; i < text.length; i++) {
         if (text[i] !== '{') continue;
-        const slice = text.slice(i);
-        // Quick sanity: the object must mention a known tool name within the
-        // first ~200 chars (avoids deeply scanning every brace).
-        const head = slice.slice(0, 200);
-        const hasKnownName = knownToolNames.some((n) => head.includes(`"${n}"`));
-        if (!hasKnownName) continue;
 
-        const extracted = extractBalancedJson(slice);
-        if (!extracted) continue;
+        const balanced = extractBalancedJson(text, i);
+        if (!balanced) continue;
+
+        const raw = balanced.json;
+        const hasKnownName = knownToolNames.some((n) => raw.includes(`"${n}"`));
+        if (!hasKnownName) {
+            // Skip past non-matching outer objects only if they don't contain
+            // any known tool name anywhere inside.
+            i = balanced.end - 1;
+            continue;
+        }
 
         try {
-            const obj = JSON.parse(extracted);
+            const obj = JSON.parse(raw);
+            const rawArgs = obj?.arguments !== undefined ? obj.arguments : obj?.parameters;
             if (
                 obj &&
                 typeof obj === 'object' &&
+                !Array.isArray(obj) &&
                 typeof obj.name === 'string' &&
-                knownToolNames.includes(obj.name) &&
-                obj.arguments !== undefined
+                knownSet.has(obj.name) &&
+                rawArgs !== undefined
             ) {
                 results.push({
                     id: `txt_${results.length}_${Date.now()}`,
                     type: 'function',
                     function: {
                         name: obj.name,
-                        arguments:
-                            typeof obj.arguments === 'string'
-                                ? obj.arguments
-                                : JSON.stringify(obj.arguments),
+                        arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs),
                     },
                 });
+                i = balanced.end - 1;
             }
         } catch (_) {
-            // Not parseable JSON – skip
+            // Not parseable JSON – continue scanning for inner objects
         }
     }
     return results;
 }
 
-// Extract a balanced JSON object string starting at position 0 of `slice`.
-function extractBalancedJson(slice) {
-    if (!slice || slice[0] !== '{') return null;
+// Extract a balanced JSON object string starting at offset `start` in `text`.
+function extractBalancedJson(text, start = 0) {
+    if (!text || text[start] !== '{') return null;
     let depth = 0;
     let inString = false;
     let escape = false;
-    for (let j = 0; j < slice.length; j++) {
-        const ch = slice[j];
+    for (let j = start; j < text.length; j++) {
+        const ch = text[j];
         if (escape) {
             escape = false;
             continue;
@@ -178,21 +218,22 @@ function extractBalancedJson(slice) {
         if (ch === '{') depth++;
         else if (ch === '}') {
             depth--;
-            if (depth === 0) return slice.slice(0, j + 1);
+            if (depth === 0) {
+                return { json: text.slice(start, j + 1), end: j + 1 };
+            }
         }
     }
     return null;
 }
 
-// Parse XML-style tool call blocks (e.g. <function>read_url</function>
-// followed by <parameter>key</parameter><parameter>value</parameter> pairs).
-// Also handles <invoke name="tool">, <tool_call name="tool">, and
-// named-parameter styles: <parameter name="url">value</parameter>.
-function extractXmlStyleToolCalls(text, knownToolNames) {
-    // Strip invisible/control characters and normalize lookalikes BEFORE
-    // matching — see normalizeToolCallMarkup for the full rationale.
-    const cleanText = normalizeToolCallMarkup(text);
-
+// Parse XML-style tool call blocks:
+//   Pattern 1: <function>TOOL</function> + <parameter> pairs
+//   Pattern 2: <invoke name="TOOL"> or <tool_call name="TOOL"> (supports
+//              extra attributes such as DeepSeek DSML `string="true"` and
+//              single quotes)
+//   Pattern 3: <function=TOOL>...</function> (Qwen3 / Llama 3.x style)
+function extractXmlStyleToolCalls(cleanText, knownToolNames) {
+    const knownSet = new Set(knownToolNames);
     const results = [];
 
     // ── Pattern 1: <function>TOOL</function> + <parameter> pairs ──
@@ -200,13 +241,13 @@ function extractXmlStyleToolCalls(text, knownToolNames) {
     let match;
     while ((match = funcRe.exec(cleanText)) !== null) {
         const name = match[1];
-        if (!knownToolNames.includes(name)) continue;
+        if (!knownSet.has(name)) continue;
 
         const after = cleanText.slice(match.index + match[0].length);
-        const nextFunc = after.search(/<function>/i);
+        const nextFunc = after.search(/<function[=>]/i);
         const scope = nextFunc >= 0 ? after.slice(0, nextFunc) : after;
 
-        const args = parseXmlParameters(scope);
+        const args = parseXmlParameters(scope, name);
         if (!args) continue;
 
         results.push({
@@ -217,23 +258,59 @@ function extractXmlStyleToolCalls(text, knownToolNames) {
     }
 
     // ── Pattern 2: <invoke name="TOOL"> or <tool_call name="TOOL"> ──
-    // These may contain nested <parameter name="key">value</parameter> tags.
-    const invokeRe = /<(?:invoke|tool_call)\s+name\s*=\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*>/g;
+    const invokeRe =
+        /<(invoke|tool_call)\b[^>]*?\bname\s*=\s*["']([a-zA-Z_][a-zA-Z0-9_]*)["'][^>]*>/gi;
     while ((match = invokeRe.exec(cleanText)) !== null) {
-        const name = match[1];
-        if (!knownToolNames.includes(name)) continue;
+        const tagName = match[1].toLowerCase();
+        const name = match[2];
+        if (!knownSet.has(name)) continue;
 
-        // Find matching closing tag in the CLEAN text.
-        const tagName = match[0].startsWith('<invoke') ? 'invoke' : 'tool_call';
         const closeTag = `</${tagName}>`;
         const startIdx = match.index + match[0].length;
-        const closeIdx = cleanText.indexOf(closeTag, startIdx);
+        const closeIdx = cleanText.toLowerCase().indexOf(closeTag, startIdx);
         const scope =
             closeIdx >= 0
                 ? cleanText.slice(startIdx, closeIdx)
-                : cleanText.slice(startIdx, startIdx + 500);
+                : cleanText.slice(startIdx, startIdx + 1000);
 
-        const args = parseXmlParameters(scope);
+        const args = parseXmlParameters(scope, name);
+        if (!args) continue;
+
+        results.push({
+            id: `txt_${results.length}_${Date.now()}`,
+            type: 'function',
+            function: { name, arguments: JSON.stringify(args) },
+        });
+    }
+
+    // ── Pattern 3: <function=TOOL>...</function> (Qwen3 / Llama 3.x) ──
+    const eqFuncRe = /<function\s*=\s*["']?([a-zA-Z_][a-zA-Z0-9_]*)["']?\s*>/gi;
+    while ((match = eqFuncRe.exec(cleanText)) !== null) {
+        const name = match[1];
+        if (!knownSet.has(name)) continue;
+
+        const startIdx = match.index + match[0].length;
+        const closeIdx = cleanText.toLowerCase().indexOf('</function>', startIdx);
+        const scope =
+            closeIdx >= 0
+                ? cleanText.slice(startIdx, closeIdx)
+                : cleanText.slice(startIdx, startIdx + 1000);
+
+        let args = null;
+        const trimmedScope = scope.trim();
+        if (trimmedScope.startsWith('{')) {
+            try {
+                const parsed = JSON.parse(trimmedScope);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    args = parsed;
+                }
+            } catch (_e) {
+                /* fall through to parameter-tag parser */
+            }
+        }
+        if (!args) {
+            args = parseXmlParameters(scope, name);
+        }
         if (!args) continue;
 
         results.push({
@@ -247,11 +324,13 @@ function extractXmlStyleToolCalls(text, knownToolNames) {
 }
 
 // Parse parameter key:value pairs from an XML scope string. Handles:
-//   <parameter>key</parameter><parameter>value</parameter>  (positional)
-//   <parameter name="key">value</parameter>                  (named)
-function parseXmlParameters(scope) {
-    // Try named-parameter style first: <parameter name="key">value</parameter>
-    const namedRe = /<parameter\s+name\s*=\s*"([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
+//   <parameter name="key" ...>value</parameter>  (named, incl. DSML string="true")
+//   <parameter=key>value</parameter>             (Qwen3 style)
+//   <parameter>key</parameter><parameter>value</parameter> (positional)
+function parseXmlParameters(scope, toolName = '') {
+    // 1. Named-parameter style (allows extra attributes like string="true" and single quotes)
+    const namedRe =
+        /<parameter\b[^>]*?\bname\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/parameter>/gi;
     let nm;
     const named = {};
     while ((nm = namedRe.exec(scope)) !== null) {
@@ -259,8 +338,16 @@ function parseXmlParameters(scope) {
     }
     if (Object.keys(named).length > 0) return named;
 
-    // Fall back to positional: <parameter>val1</parameter><parameter>val2</parameter>
-    const paramRe = /<parameter>\s*([\s\S]*?)\s*<\/parameter>/g;
+    // 2. Qwen3 `<parameter=key>value</parameter>` style
+    const eqParamRe =
+        /<parameter\s*=\s*["']?([a-zA-Z_][a-zA-Z0-9_]*)["']?\s*>([\s\S]*?)<\/parameter>/gi;
+    while ((nm = eqParamRe.exec(scope)) !== null) {
+        named[nm[1].trim()] = nm[2].trim();
+    }
+    if (Object.keys(named).length > 0) return named;
+
+    // 3. Fall back to positional: <parameter>val1</parameter><parameter>val2</parameter>
+    const paramRe = /<parameter>\s*([\s\S]*?)\s*<\/parameter>/gi;
     const params = [];
     let pm;
     while ((pm = paramRe.exec(scope)) !== null) {
@@ -276,217 +363,229 @@ function parseXmlParameters(scope) {
         return args;
     }
 
-    // Single param — treat as the first required arg
-    const schema = getToolParamSchemaForScope();
-    const firstKey = schema.length > 0 ? schema[0] : 'url';
+    // Single param — infer required argument key from tool name
+    const firstKey = DEFAULT_POSITIONAL_PARAM_BY_TOOL[toolName] || 'url';
     return { [firstKey]: params[0] };
-}
-
-// Lightweight: get param schema without needing tool name (used by XML parser).
-function getToolParamSchemaForScope() {
-    return ['url']; // conservative default for XML parameter recovery
 }
 
 // Detect whether content looks like raw tool-call markup that wasn't
 // successfully parsed into structured calls.
-//
-// IMPORTANT: This must ONLY match explicit tool-call XML syntax, NOT
-// casual mentions of tool names in prose.  A legitimate response about
-// "web_search architecture" contains angle brackets from markdown and
-// mentions tool names — that is NOT a malformed tool call.
-//
-// Specific patterns matched:
-//   <function_calls> / <tool_calls> wrapper tags
-//   <invoke name="web_search"> (with known tool name)
-//   <parameter name="..."> inside an invoke context
-//   Raw tool_name({...}) at the START of content (not in prose)
 export function contentLooksLikeToolCalls(content) {
     if (!content || typeof content !== 'string') return false;
 
     // Guard: if the content is large (>5000 chars) and has substantial
     // prose (newlines/paragraphs), it's likely a legitimate response
     // that happens to mention tool names — not raw tool-call markup.
-    // Raw tool-call XML from a degraded model is dense tags with no
-    // natural paragraph structure.
     if (content.length > 5000) {
         const paragraphCount = (content.match(/\n\n/g) || []).length;
         const sentenceCount = (content.match(/[.!?]\s/g) || []).length;
-        // A legitimate response has paragraphs and sentences.
-        // Raw tool-call XML has neither.
         if (paragraphCount >= 2 || sentenceCount >= 5) {
-            log(
-                `[Katab:detect] Skipping — large prose response (${content.length} chars, ${paragraphCount} paras, ${sentenceCount} sentences)`,
-            );
             return false;
         }
     }
 
-    // Strip ALL invisible/control characters, normalize Unicode lookalikes of
-    // <, >, " to ASCII, and repair obfuscated tag spellings.
-    const cleaned = normalizeToolCallMarkup(content);
+    const cleaned = normalizeToolCallMarkup(maskProseCodeFences(content));
 
     // 1. Explicit wrapper tags — definitive signal of tool-call XML.
-    // ("calls" covers the mangled "< calls>" variant, normalized above.)
-    if (/<(function_calls|tool_calls|calls)>/i.test(cleaned)) {
+    if (/<(?:function_calls?|tool_calls?|calls)\b[^>]*>/i.test(cleaned)) {
         log(
             `[Katab:detect] Found wrapper tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`,
         );
         return true;
     }
 
-    // 2. Invoke tags with known tool names — model is trying to invoke a tool.
-    if (/<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(cleaned)) {
+    // 2. Invoke / function= tags with known tool names.
+    const invokeNameRe = new RegExp(
+        `<(?:invoke|tool_call)\\b[^>]*?\\bname\\s*=\\s*["'](?:${KNOWN_TOOL_NAMES_PATTERN})["']`,
+        'i',
+    );
+    if (invokeNameRe.test(cleaned)) {
         log(
             `[Katab:detect] Found invoke tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`,
         );
         return true;
     }
+    const eqFuncRe = new RegExp(
+        `<function\\s*=\\s*["']?(?:${KNOWN_TOOL_NAMES_PATTERN})["']?\\s*>`,
+        'i',
+    );
+    if (eqFuncRe.test(cleaned)) {
+        log(
+            `[Katab:detect] Found function= tag in ${content.length}-char response: ${cleaned.slice(0, 120)}`,
+        );
+        return true;
+    }
 
     // 3. Parameter tags in an invoke context — supplementary signal.
-    if (/<parameter\s/i.test(cleaned) && /<\/invoke>/i.test(cleaned)) {
+    if (/<parameter[\s=>]/i.test(cleaned) && /<\/(?:invoke|function|tool_call)>/i.test(cleaned)) {
         log(`[Katab:detect] Found parameter+invoke in ${content.length}-char response`);
         return true;
     }
 
     // 4. Raw function-call at the very START of content (not in prose).
     const trimmedStart = cleaned.trimStart();
-    if (/^(?:web_search|read_url|crawl_url)\s*\(\s*\{/i.test(trimmedStart)) {
+    const rawStartRe = new RegExp(`^(?:${KNOWN_TOOL_NAMES_PATTERN})\\s*\\(\\s*\\{`, 'i');
+    if (rawStartRe.test(trimmedStart)) {
         log(`[Katab:detect] Found raw function-call at start of response`);
         return true;
     }
 
-    // Debug: log what the cleaned content looks like when detection fails
-    // for short responses (potential false negatives).
-    if (content.length < 2000) {
-        const head = cleaned.slice(0, 120);
-        const m1 = /<(function_calls|tool_calls|calls)>/i.test(cleaned);
-        const m2 = /<invoke\s+name\s*=\s*"(?:web_search|read_url|crawl_url|python|terminal)"/i.test(
-            cleaned,
-        );
-        const m3 = /<parameter\s/i.test(cleaned) && /<\/invoke>/i.test(cleaned);
-        log(
-            `[Katab:detect] No tool-call patterns found in ${content.length}-char response. Match1=${m1} Match2=${m2} Match3=${m3} Cleaned start: ${head}`,
-        );
-    }
     return false;
 }
 
 // True if `text` still contains tool-call markup after an attempted strip.
-// Degraded models emit obfuscated variants the tag regexes miss (fullwidth
-// pipe fences, an invented "|DSML|" namespace prefix, invisible chars
-// between tag letters, a space after the angle bracket, a dropped
-// "tool_"/"function_" prefix), so normalize first, then look for known
-// tool-call tag names inside angle brackets.
+// Matches ONLY explicit tool-call tag structures (never arbitrary HTML/generic
+// angle brackets like `<div>` or `Vec<String>` alongside prose words).
 export function stillLooksLikeToolMarkup(text) {
     if (!text || typeof text !== 'string') return false;
     const t = normalizeToolCallMarkup(text, { light: true });
-    return (
-        /<\/?\s*[a-zA-Z_][a-zA-Z0-9_]*\b[^>]*>/.test(t) &&
-        /(?:tool_calls?|function_calls?|invoke|parameter|function|\bcalls\b|read_url|web_search|crawl_url|python|terminal)/i.test(
-            t,
-        )
+    if (/<\/?\s*(?:tool_calls?|function_calls?|invoke|parameter|calls)\b[^>]*>/i.test(t)) {
+        return true;
+    }
+    const funcTagRe = new RegExp(
+        `<function(?:\\s*=\\s*["']?(?:${KNOWN_TOOL_NAMES_PATTERN})["']?\\s*>|>\\s*(?:${KNOWN_TOOL_NAMES_PATTERN})\\s*</function>)`,
+        'i',
     );
+    if (funcTagRe.test(t)) {
+        return true;
+    }
+    return false;
+}
+
+// Remove balanced JSON tool-call objects referencing known tool names without
+// breaking on nested `{...}` arguments.
+function stripJsonToolObjects(text) {
+    const knownList = KNOWN_TOOL_NAMES_PATTERN.split('|');
+    const knownSet = new Set(knownList);
+    let out = '';
+    let i = 0;
+
+    while (i < text.length) {
+        if (text[i] === '{') {
+            const balanced = extractBalancedJson(text, i);
+            if (balanced) {
+                let isToolObj = false;
+                try {
+                    const obj = JSON.parse(balanced.json);
+                    if (
+                        obj &&
+                        typeof obj === 'object' &&
+                        !Array.isArray(obj) &&
+                        typeof obj.name === 'string' &&
+                        knownSet.has(obj.name) &&
+                        (obj.arguments !== undefined || obj.parameters !== undefined)
+                    ) {
+                        isToolObj = true;
+                    }
+                } catch (_e) {
+                    /* not valid JSON */
+                }
+                if (isToolObj) {
+                    i = balanced.end;
+                    continue;
+                }
+            }
+        }
+        out += text[i];
+        i++;
+    }
+    return out;
 }
 
 // ── Aggressive tool-call markup stripping (handles truncated XML) ─────────
-// DeepSeek V4 Pro under context pressure often emits tool-call XML that is
-// TRUNCATED (no closing </invoke> tag) because the stream ends mid-output.
-// This variant handles both balanced and truncated XML by stripping opening
-// tags and their content up to end-of-string when no closing tag is found.
-// (A previous balanced-tag-only variant, _stripToolCallMarkup, was removed as
-// dead code — the live recovery paths always used this function.)
+// Strips balanced and truncated tool-call XML/JSON blocks while preserving
+// legitimate HTML, generic types (`Vec<String>`), Markdown tables, and code
+// indentation.
 export function stripTruncatedToolCallMarkup(text) {
     if (!text || typeof text !== 'string') return text;
 
     let cleaned = normalizeToolCallMarkup(text);
 
-    // Remove balanced XML blocks: <function_calls>...</function_calls>,
-    // <tool_calls>...</tool_calls>, <invoke>...</invoke>.
-    cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/gi, '');
-    cleaned = cleaned.replace(/<tool_calls>[\s\S]*?<\/tool_calls>/gi, '');
+    // Remove balanced XML blocks: <function_calls?>...</function_calls?>,
+    // <tool_calls?>...</tool_calls?>, <invoke>...</invoke>, <function=...>...</function>.
+    cleaned = cleaned.replace(/<function_calls?\b[^>]*>[\s\S]*?<\/function_calls?>/gi, '');
+    cleaned = cleaned.replace(/<tool_calls?\b[^>]*>[\s\S]*?<\/tool_calls?>/gi, '');
     cleaned = cleaned.replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, '');
-    cleaned = cleaned.replace(/<function>\s*\w+\s*<\/function>/gi, '');
+    cleaned = cleaned.replace(
+        new RegExp(
+            `<function\\s*=\\s*["']?(?:${KNOWN_TOOL_NAMES_PATTERN})["']?\\s*>[\\s\\S]*?<\\/function>`,
+            'gi',
+        ),
+        '',
+    );
+    cleaned = cleaned.replace(
+        new RegExp(`<function>\\s*(?:${KNOWN_TOOL_NAMES_PATTERN})\\s*<\\/function>`, 'gi'),
+        '',
+    );
     cleaned = cleaned.replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, '');
+    cleaned = cleaned.replace(/<parameter\s*=[^>]*>[\s\S]*?<\/parameter>/gi, '');
     cleaned = cleaned.replace(/<parameter\b[^>]*\/>/gi, '');
 
     // ── Handle TRUNCATED XML (no closing tag) ─────────────────────────
-    // Remove any remaining opening tags that have no matching close tag.
-    // These are fragments like "<invoke name="crawl_url">\n<parameter ..."
-    // 1. Remove orphaned <invoke ...> through end of string or next <tag
     cleaned = cleaned.replace(/<invoke\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi, '');
-    // 2. Remove orphaned <function_calls> / <tool_calls> without close
     cleaned = cleaned.replace(
-        /<(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi,
+        /<(?:function_calls?|tool_calls?)\b[^>]*>[\s\S]*?(?=<\/?[a-zA-Z_]|$)/gi,
         '',
     );
-    // 3. Remove any remaining <parameter ...> lines
-    cleaned = cleaned.replace(/<parameter\b[^>]*>[\s\S]*?(?=\n|$)/gi, '');
-    // 4. Remove any remaining <function>tool_name</function> fragments
-    cleaned = cleaned.replace(/<function>\s*\w+\s*<\/function>/gi, '');
+    cleaned = cleaned.replace(/<parameter[\s=>][^>]*>[\s\S]*?(?=\n|$)/gi, '');
 
-    // Remove JSON tool-call objects
+    // Remove stray closing or opening tool-call-only tags (NEVER strip
+    // arbitrary HTML tags or generic types like <div> or Vec<String>).
     cleaned = cleaned.replace(
-        /\{[^{}]*"name"\s*:\s*"(?:web_search|read_url|crawl_url|python|terminal)"[^{}]*\}/gi,
-        '',
-    );
-    // Remove function-call syntax
-    cleaned = cleaned.replace(
-        /(?:web_search|read_url|crawl_url|python|terminal)\s*\(\s*\{[^{}]*\}\s*\)/gi,
+        /<\/?(?:tool_calls?|function_calls?|invoke|parameter|calls)\b[^>]*\/?>/gi,
         '',
     );
 
-    // Remove stray angle-bracket fragments
-    cleaned = cleaned.replace(/<\/?[a-zA-Z_][a-zA-Z0-9_]*(?:\s[^>]*)?\/?>/g, '');
+    // Remove balanced JSON tool-call objects (including nested arguments)
+    if (cleaned.includes('{') && cleaned.includes('"name"')) {
+        cleaned = stripJsonToolObjects(cleaned);
+    }
 
-    // Compact whitespace
-    cleaned = cleaned.replace(/[ \t\f\v]+/g, ' ');
+    // Remove raw function-call syntax for known tools
+    const fnCallRe = new RegExp(
+        `\\b(?:${KNOWN_TOOL_NAMES_PATTERN})\\s*\\(\\s*\\{(?:[^{}]|\\{[^{}]*\\})*\\}\\s*\\)`,
+        'gi',
+    );
+    cleaned = cleaned.replace(fnCallRe, '');
+
+    // Collapse excessive blank lines while preserving code indentation
     cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-
     cleaned = cleaned.trim();
 
     // ── String-based fallback (regex-resistant Unicode) ────────────────
-    // If the content still contains tool-call XML fragments (the regex
-    // engine may fail to match due to Unicode whitespace that survives
-    // all cleaning steps), use line-by-line string operations as a last
-    // resort.  This is O(n) but only runs when regex stripping was
-    // ineffective.
     if (
         cleaned &&
         (cleaned.includes('<invoke') ||
             cleaned.includes('<tool_call') ||
             cleaned.includes('<function_call') ||
-            cleaned.includes('<parameter') ||
-            cleaned.includes('web_search(') ||
-            cleaned.includes('read_url(') ||
-            cleaned.includes('crawl_url('))
+            cleaned.includes('<parameter'))
     ) {
         const lines = cleaned.split('\n');
         const kept = [];
         let skipUntilClose = false;
+        const jsonLineRe = new RegExp(`^\\s*\\{[^}]*"(?:${KNOWN_TOOL_NAMES_PATTERN})"`);
+        const fnLineRe = new RegExp(`^\\s*(?:${KNOWN_TOOL_NAMES_PATTERN})\\s*\\(`);
 
         for (const line of lines) {
             const trimmed = line.trim();
 
-            // Detect tool-call opening lines (any tag-like fragment)
-            if (/< *(?:invoke|tool_call|function_call|parameter|function)[ >]/i.test(trimmed)) {
-                skipUntilClose = true;
+            if (/< *(?:invoke|tool_calls?|function_calls?)[ >]/i.test(trimmed)) {
+                if (!/<\/ *(?:invoke|tool_calls?|function_calls?)>/i.test(trimmed)) {
+                    skipUntilClose = true;
+                }
                 continue;
             }
-            // Detect closing tag while skipping
-            if (skipUntilClose && /<\/ *(?:invoke|tool_call|function_call)>/i.test(trimmed)) {
+            if (/< *parameter[\s=>]/i.test(trimmed)) {
+                continue;
+            }
+            if (skipUntilClose && /<\/ *(?:invoke|tool_calls?|function_calls?)>/i.test(trimmed)) {
                 skipUntilClose = false;
                 continue;
             }
-            // Skip standalone closing tags
-            if (/<\/ *(?:invoke|tool_call|function_call)>/i.test(trimmed)) {
+            if (/<\/ *(?:invoke|tool_calls?|function_calls?|parameter)>/i.test(trimmed)) {
                 continue;
             }
-            // Skip lines that are purely tool-call arguments (JSON objects with tool names)
-            if (/^\s*\{[^}]*"(?:web_search|read_url|crawl_url|python|terminal)"/.test(trimmed)) {
-                continue;
-            }
-            // Skip function-call syntax lines
-            if (/^\s*(?:web_search|read_url|crawl_url|python|terminal)\s*\(/.test(trimmed)) {
+            if (jsonLineRe.test(trimmed) || fnLineRe.test(trimmed)) {
                 continue;
             }
 

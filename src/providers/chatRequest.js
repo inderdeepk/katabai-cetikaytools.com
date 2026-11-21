@@ -28,28 +28,89 @@ function buildBaseHeaders(apiKey) {
     return headers;
 }
 
-// Shared openai-dialect tool assembly: each family gates independently and is
-// appended in webSearch → crawl → exploreDocs → rag order (openai + anthropic
-// branches of the original inline builder).
-function appendDialectToolGroups(payload, advertise, toolNames, dialect) {
-    if (advertise.webSearch) {
-        payload.tools = buildToolSchemasFor(toolNames.webSearch, dialect);
+// Shared dialect tool assembly: each family gates independently and is
+// appended in webSearch → crawl → exploreDocs → rag order. Guards against
+// missing tool-name lists and never leaves an empty `payload.tools = []`
+// (which OpenAI, DeepSeek, and Anthropic reject with HTTP 400).
+function appendDialectToolGroups(payload, advertise = {}, toolNames = {}, dialect = 'openai') {
+    const collected = [];
+    if (advertise.webSearch && Array.isArray(toolNames.webSearch)) {
+        collected.push(...buildToolSchemasFor(toolNames.webSearch, dialect));
     }
-    if (advertise.crawl) {
-        payload.tools = [
-            ...(payload.tools || []),
-            ...buildToolSchemasFor(toolNames.crawl, dialect),
-        ];
+    if (advertise.crawl && Array.isArray(toolNames.crawl)) {
+        collected.push(...buildToolSchemasFor(toolNames.crawl, dialect));
     }
-    if (advertise.exploreDocs) {
-        payload.tools = [
-            ...(payload.tools || []),
-            ...buildToolSchemasFor(toolNames.exploreDocs, dialect),
-        ];
+    if (advertise.exploreDocs && Array.isArray(toolNames.exploreDocs)) {
+        collected.push(...buildToolSchemasFor(toolNames.exploreDocs, dialect));
     }
-    if (advertise.rag) {
-        payload.tools = [...(payload.tools || []), ...buildToolSchemasFor(toolNames.rag, dialect)];
+    if (advertise.rag && Array.isArray(toolNames.rag)) {
+        collected.push(...buildToolSchemasFor(toolNames.rag, dialect));
     }
+    if (collected.length > 0) {
+        payload.tools = collected;
+    }
+}
+
+function hasAdvertisedTool(payload, toolName) {
+    if (!toolName || !Array.isArray(payload.tools) || payload.tools.length === 0) {
+        return false;
+    }
+    return payload.tools.some((t) => (t?.function?.name ?? t?.name) === toolName);
+}
+
+function toAnthropicBlocks(content) {
+    if (Array.isArray(content)) {
+        return content.filter(Boolean);
+    }
+    const text = String(content ?? '');
+    return text ? [{ type: 'text', text }] : [];
+}
+
+/**
+ * Coalesce consecutive same-role messages for Anthropic (e.g. multiple
+ * `role: 'tool'` results converted to `role: 'user'` `tool_result` blocks) so
+ * Anthropic's strict alternating user/assistant rule is never violated.
+ */
+export function normalizeAnthropicMessages(messages) {
+    const filtered = (Array.isArray(messages) ? messages : []).filter(
+        (m) => m && m.role !== 'system',
+    );
+    const merged = [];
+
+    for (const msg of filtered) {
+        const role = msg.role === 'assistant' ? 'assistant' : 'user';
+        const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+        if (prev && prev.role === role) {
+            const prevBlocks = toAnthropicBlocks(prev.content);
+            const nextBlocks = toAnthropicBlocks(msg.content);
+            prev.content = [...prevBlocks, ...nextBlocks];
+        } else {
+            // Preserve single-message content shape when there is no merge,
+            // replacing empty strings with a safe placeholder only when needed.
+            merged.push({
+                role,
+                content:
+                    Array.isArray(msg.content) || (typeof msg.content === 'string' && msg.content)
+                        ? msg.content
+                        : typeof msg.content === 'string'
+                          ? '(empty)'
+                          : msg.content,
+            });
+        }
+    }
+
+    return merged;
+}
+
+function resolveAnthropicEndpoint(baseUrl) {
+    let endpoint = normalizeBaseUrl(baseUrl);
+    if (endpoint.endsWith('/v1/messages') || endpoint.endsWith('/messages')) {
+        return endpoint;
+    }
+    if (endpoint.endsWith('/v1')) {
+        return `${endpoint}/messages`;
+    }
+    return `${endpoint}/v1/messages`;
 }
 
 /**
@@ -88,10 +149,6 @@ export function buildOpenAiCompatStreamRequest({
         payload.stream_options = { include_usage: true };
     }
 
-    if (forcedTool) {
-        payload.tool_choice = { type: 'function', function: { name: forcedTool } };
-    }
-
     if (provider === 'unsloth') {
         payload.enable_tools = true;
         payload.enabled_tools = ['python', 'terminal'];
@@ -102,6 +159,19 @@ export function buildOpenAiCompatStreamRequest({
     }
 
     appendDialectToolGroups(payload, advertise, toolNames, 'openai');
+
+    // Only emit forced `tool_choice` when the tool is actually advertised in
+    // `payload.tools` (or enabled as a server-side tool on Unsloth); otherwise
+    // OpenAI rejects `tool_choice` without matching `tools` with HTTP 400.
+    if (forcedTool) {
+        const isUnslothServerTool =
+            provider === 'unsloth' &&
+            Array.isArray(payload.enabled_tools) &&
+            payload.enabled_tools.includes(forcedTool);
+        if (hasAdvertisedTool(payload, forcedTool) || isUnslothServerTool) {
+            payload.tool_choice = { type: 'function', function: { name: forcedTool } };
+        }
+    }
 
     return { endpoint, headers, payload };
 }
@@ -134,7 +204,9 @@ export function buildOllamaPreloadRequest({ baseUrl, model, keepAlive = '5m', op
 
 /**
  * Build the streaming request for Anthropic (system prompt hoisted to the
- * top-level `system` field, system-role messages filtered from the array).
+ * top-level `system` field, system-role messages filtered, consecutive
+ * same-role messages coalesced so multi-tool batches satisfy Anthropic's
+ * strict alternation rule).
  */
 export function buildAnthropicStreamRequest({
     baseUrl,
@@ -142,13 +214,11 @@ export function buildAnthropicStreamRequest({
     model,
     messages,
     systemPrompt = '',
+    forcedTool = null,
     advertise = {},
     toolNames = {},
 }) {
-    let endpoint = normalizeBaseUrl(baseUrl);
-    if (!endpoint.endsWith('messages') && !endpoint.includes('v1/messages')) {
-        endpoint += '/v1/messages';
-    }
+    const endpoint = resolveAnthropicEndpoint(baseUrl);
 
     // Anthropic specific headers
     const headers = buildBaseHeaders(apiKey);
@@ -156,8 +226,10 @@ export function buildAnthropicStreamRequest({
     headers['anthropic-version'] = '2023-06-01';
     headers['Content-Type'] = 'application/json';
 
-    // Format Anthropic messages (remove system prompts from history or map them)
-    const anthropicMessages = messages.filter((m) => m.role !== 'system');
+    // Format Anthropic messages: strip system prompts and merge consecutive
+    // same-role messages (critical when parallel tool calls produce multiple
+    // `role: 'tool'` → `role: 'user'` tool_result entries).
+    const anthropicMessages = normalizeAnthropicMessages(messages);
 
     const payload = {
         model: model,
@@ -170,6 +242,10 @@ export function buildAnthropicStreamRequest({
     }
 
     appendDialectToolGroups(payload, advertise, toolNames, 'anthropic');
+
+    if (forcedTool && hasAdvertisedTool(payload, forcedTool)) {
+        payload.tool_choice = { type: 'tool', name: forcedTool };
+    }
 
     return { endpoint, headers, payload };
 }
@@ -234,6 +310,7 @@ export function buildDeepSeekStreamRequest({
     thinking = false,
     reasoningEffort = 'high',
     jsonMode = false,
+    forcedTool = null,
     maxTokens,
     userId = '',
     advertise = {},
@@ -248,21 +325,25 @@ export function buildDeepSeekStreamRequest({
     headers['Content-Type'] = 'application/json';
 
     // When thinking is enabled the API requires reasoning_content on every
-    // assistant message. _sanitizeHistoryMessage already ensures every
-    // assistant message carries at least an empty string when thinking is
-    // on. This loop is a defense-in-depth pass for any messages that may
-    // have slipped through (e.g. from old conversation files).
-    if (thinking) {
-        for (const msg of messages) {
-            if (msg.role === 'assistant' && msg.reasoning_content === undefined) {
-                msg.reasoning_content = '';
-            }
-        }
+    // assistant message. Clone affected entries instead of mutating caller
+    // message objects in place.
+    let requestMessages = Array.isArray(messages) ? messages : [];
+    if (
+        thinking &&
+        requestMessages.some(
+            (msg) => msg && msg.role === 'assistant' && msg.reasoning_content === undefined,
+        )
+    ) {
+        requestMessages = requestMessages.map((msg) =>
+            msg && msg.role === 'assistant' && msg.reasoning_content === undefined
+                ? { ...msg, reasoning_content: '' }
+                : msg,
+        );
     }
 
     const payload = {
         model: model,
-        messages: messages,
+        messages: requestMessages,
         stream: true,
         max_tokens: maxTokens,
         stream_options: { include_usage: true },
@@ -295,6 +376,7 @@ export function buildDeepSeekStreamRequest({
             payload.messages = [
                 {
                     role: 'system',
+                    type: 'system',
                     content: 'Ensure the output is formatted as a valid JSON object.',
                 },
                 ...payload.messages,
@@ -304,11 +386,18 @@ export function buildDeepSeekStreamRequest({
 
     // Tools and JSON mode are mutually exclusive on DeepSeek.  Each tool
     // family gates independently — web search may be off (or suppressed by a
-    // strong KB hit) while crawl/RAG tools are still active.
-    const hasTools = (advertise.webSearch || advertise.crawl || advertise.rag) && !jsonMode;
+    // strong KB hit) while crawl/exploreDocs/RAG tools are still active.
+    const hasTools =
+        (advertise.webSearch || advertise.crawl || advertise.exploreDocs || advertise.rag) &&
+        !jsonMode;
     if (hasTools) {
         appendDialectToolGroups(payload, advertise, toolNames, 'openai');
-        payload.tool_choice = 'auto';
+        if (Array.isArray(payload.tools) && payload.tools.length > 0) {
+            payload.tool_choice =
+                forcedTool && hasAdvertisedTool(payload, forcedTool)
+                    ? { type: 'function', function: { name: forcedTool } }
+                    : 'auto';
+        }
     }
 
     return { endpoint, headers, payload };
@@ -367,13 +456,21 @@ export function buildOllamaOptions(getOpt) {
 /**
  * Normalize the Ollama keep_alive setting to a duration string with a unit.
  * The API rejects a bare "-1"; convert it to the indefinite equivalent.
+ * Numeric 0 / "0" (unload immediately) is preserved explicitly.
  *
- * @param {string} keepAlive raw `ollama-keep-alive` value
- * @returns {string} e.g. '5m' or '999999h'
+ * @param {string|number|null} keepAlive raw `ollama-keep-alive` value
+ * @returns {string|number} e.g. '5m', 0, or '999999h'
  */
 export function normalizeOllamaKeepAlive(keepAlive) {
-    if (!keepAlive || keepAlive === '-1') {
+    if (keepAlive === 0 || keepAlive === '0') {
+        return keepAlive;
+    }
+    if (keepAlive === null || keepAlive === undefined) {
         return '999999h';
     }
-    return keepAlive;
+    const trimmed = String(keepAlive).trim();
+    if (!trimmed || trimmed === '-1') {
+        return '999999h';
+    }
+    return trimmed;
 }

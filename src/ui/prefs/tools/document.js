@@ -1,3 +1,4 @@
+import GLib from 'gi://GLib';
 import { gettext as _, format } from '../../../shared/i18n.js';
 import {
     getDocumentToolCapabilities,
@@ -24,7 +25,7 @@ export function buildDocumentSection(ctx) {
     const documentToolGroup = createPreferencesGroup({
         title: _('Document Tool'),
         description: _(
-            'Optional local file support for chat. Documents are parsed locally, and images can be sent to Ollama vision models.',
+            'Optional local file support for chat. Documents are parsed locally, and images can be sent to vision-capable models.',
         ),
     });
     detailPage.add(documentToolGroup);
@@ -40,11 +41,11 @@ export function buildDocumentSection(ctx) {
     const syncDocumentUsageRow = () => {
         documentUsageRow.subtitle = settings.get_boolean('document-tool-enabled')
             ? _(
-                'Use the attachment button in chat or type /doc with a quoted path. Word, Excel, PowerPoint, OpenDocument, PDF, CSV, email, and image files are parsed locally before anything is sent to a provider.',
-            )
+                  'Use the attachment button in chat or type /doc with a quoted path. Word, Excel, PowerPoint, OpenDocument, PDF, CSV, email, and image files are parsed locally before anything is sent to a provider.',
+              )
             : _(
-                'Turn this on only if you want local file parsing. Normal chat does not depend on this tool.',
-            );
+                  'Turn this on only if you want local file parsing. Normal chat does not depend on this tool.',
+              );
     };
     watch('changed::document-tool-enabled', syncDocumentUsageRow);
     syncDocumentUsageRow();
@@ -65,7 +66,7 @@ export function buildDocumentSection(ctx) {
     const imageStatusRow = createStatusRow(
         _('Images (PNG/JPG)'),
         _(
-            'PNG and JPG attachments are base64-encoded locally and sent only to Ollama vision-capable models.',
+            'PNG and JPG attachments are base64-encoded locally and sent to vision-capable models (or routed via your DeepSeek Vision Model).',
         ),
         capabilityGroup,
     );
@@ -104,9 +105,7 @@ export function buildDocumentSection(ctx) {
     );
     const legacyStatusRow = createStatusRow(
         _('Legacy Office (.doc, .xls, .ppt)'),
-        _(
-            'Install LibreOffice to convert legacy binary Office files before Katab reads them.',
-        ),
+        _('Install LibreOffice to convert legacy binary Office files before Katab reads them.'),
         capabilityGroup,
     );
     const emlStatusRow = createStatusRow(
@@ -133,9 +132,12 @@ export function buildDocumentSection(ctx) {
 
         const applyHelperStatus = (statusRow, capability, detectedLabel, missingLabel) => {
             if (capability?.available) {
-                statusRow.row.subtitle = format(detectedLabel, {
-                    path: capability.commandPath || '',
-                });
+                statusRow.row.subtitle = GLib.markup_escape_text(
+                    format(detectedLabel, {
+                        path: capability.commandPath || '',
+                    }),
+                    -1,
+                );
                 setStatusBadge(statusRow.badge, _('Detected'), 'katab-prefs-status-detected');
             } else {
                 statusRow.row.subtitle = missingLabel;
@@ -154,9 +156,7 @@ export function buildDocumentSection(ctx) {
             legacyStatusRow,
             capabilities.legacy,
             _('Detected LibreOffice at {path}. Legacy .doc/.xls/.ppt attachments are ready.'),
-            _(
-                'Install LibreOffice to convert legacy binary Office files before Katab reads them.',
-            ),
+            _('Install LibreOffice to convert legacy binary Office files before Katab reads them.'),
         );
     };
 

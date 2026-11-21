@@ -17,7 +17,7 @@ export function buildDeepResearchSection(ctx) {
     const drIntroGroup = createPreferencesGroup({
         title: _('Deep Research'),
         description: _(
-            'Deep Research runs a multi-phase pipeline (plan → branches → gap analysis → refinement → two-pass synthesis). Enable Web Search or Web Scraper to use it, then start a run from the chat footer Research button or the /research command.',
+            'Deep Research runs a multi-phase pipeline (plan → branches → gap analysis → refinement → two-pass synthesis). Enable Web Search or Web Scraper to use it, then start a run from the Tools menu or the /research command.',
         ),
     });
 

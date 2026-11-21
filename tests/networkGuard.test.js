@@ -457,6 +457,19 @@ const tests = [
             assert(error, 'resolution failure rejects');
         },
     ],
+
+    [
+        'isBlockedHost: blocks octal, hex, decimal integer, and trailing-dot loopback encodings',
+        () => {
+            assert(isBlockedHost('0177.0.0.1', false), 'octal loopback blocked');
+            assert(isBlockedHost('0x7f000001', false), 'hex integer loopback blocked');
+            assert(isBlockedHost('2130706433', false), 'decimal integer loopback blocked');
+            assert(isBlockedHost('127.1', false), 'shorthand loopback blocked');
+            assert(isBlockedHost('localhost.', false), 'trailing-dot localhost blocked');
+            assert(isBlockedHost('[::ffff:7f00:1]', false), 'hex IPv4-mapped loopback blocked');
+            assert(!isBlockedHost('0x08080808', false), 'public hex IPv4 allowed');
+        },
+    ],
 ];
 
 await runTests(tests);

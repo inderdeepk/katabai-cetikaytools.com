@@ -1,5 +1,6 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import { decodeHtmlEntities } from '../shared/pageLinks.js';
 import {
     LEGACY_OFFICE_TARGETS,
     extractOfficeText,
@@ -12,6 +13,10 @@ export const DOCUMENT_TOOL_COMMAND = '/doc';
 export const DOCUMENT_TOOL_NAME = 'document';
 export const DOCUMENT_TOOL_ICON = 'text-x-generic-symbolic';
 export const DOCUMENT_TOOL_MAX_CHARS = 24000;
+
+const DOCUMENT_MAX_BYTES = 50 * 1024 * 1024; // 50 MB hard cap before reading into GNOME Shell RAM
+const IMAGE_MAX_BYTES = 20 * 1024 * 1024; // 20 MB (~27 MB base64) hard cap for images
+const MIME_MAX_DEPTH = 16;
 
 const TEXT_EXTENSIONS = new Set(['md', 'markdown', 'txt']);
 const IMAGE_MIME_TYPES = new Map([
@@ -267,6 +272,7 @@ export function parseDocumentCommand(promptText) {
 
     let filePath = '';
     let escaped = false;
+    let closed = false;
     let index = 1;
 
     while (index < remainder.length) {
@@ -285,6 +291,7 @@ export function parseDocumentCommand(promptText) {
         }
 
         if (ch === '"') {
+            closed = true;
             index++;
             break;
         }
@@ -293,7 +300,7 @@ export function parseDocumentCommand(promptText) {
         index++;
     }
 
-    if (index > remainder.length || remainder[index - 1] !== '"') {
+    if (!closed) {
         throw new DocumentToolError(
             'Use /doc "path/to/file" so Katab can tell the document path apart from your prompt.',
             {
@@ -325,7 +332,8 @@ export function resolveDocumentPath(rawPath) {
     }
 
     if (trimmed.startsWith('~/')) {
-        return GLib.build_filenamev([GLib.get_home_dir(), trimmed.slice(2)]);
+        const expanded = GLib.build_filenamev([GLib.get_home_dir(), trimmed.slice(2)]);
+        return GLib.canonicalize_filename(expanded, null);
     }
 
     if (!GLib.path_is_absolute(trimmed)) {
@@ -809,28 +817,15 @@ function decodeHeaderFilename(value) {
 
 function htmlToText(html) {
     let text = String(html ?? '');
+    text = text.replace(/<!--[\s\S]*?-->/g, '');
+    text = text.replace(/<(script|style|head|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
     text = text.replace(
         /<\/(p|div|h[1-6]|li|tr|table|thead|tbody|ul|ol|blockquote|section|article|header|footer)[^>]*>/gi,
         '\n',
     );
     text = text.replace(/<(br|hr)[^>]*\/?>/gi, '\n');
     text = text.replace(/<[^>]+>/g, '');
-    return text
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/&amp;/gi, '&')
-        .replace(/&lt;/gi, '<')
-        .replace(/&gt;/gi, '>')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, "'")
-        .replace(/&apos;/gi, "'")
-        .replace(/&#(\d+);/g, (_, n) => {
-            try {
-                return String.fromCodePoint(parseInt(n, 10));
-            } catch (_e) {
-                return '';
-            }
-        })
-        .replace(/&[a-zA-Z]+;/g, '');
+    return decodeHtmlEntities(text).replace(/\u00a0/g, ' ');
 }
 
 function splitByBoundary(body, boundary) {
@@ -870,8 +865,11 @@ function splitByBoundary(body, boundary) {
 function parseMimePart(
     raw,
     fallbackContentType,
-    { hasOwnHeaders = false, inheritedHeaders = {} } = {},
+    { hasOwnHeaders = false, inheritedHeaders = {}, depth = 0 } = {},
 ) {
+    if (depth > MIME_MAX_DEPTH) {
+        return [];
+    }
     const partHeaders = { ...inheritedHeaders };
     let partBody;
     if (hasOwnHeaders) {
@@ -895,7 +893,7 @@ function parseMimePart(
         if (!boundary) return [];
         const children = [];
         for (const sub of splitByBoundary(partBody, boundary)) {
-            children.push(...parseMimePart(sub, null, { hasOwnHeaders: true }));
+            children.push(...parseMimePart(sub, null, { hasOwnHeaders: true, depth: depth + 1 }));
         }
         if (type === 'multipart/alternative') {
             return [{ type: 'alternative', children }];
@@ -1128,14 +1126,24 @@ export class DocumentToolRuntime {
         try {
             info = await queryFileInfoAsync(file, cancellable);
         } catch (e) {
-            if (e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND)) {
+            if (
+                cancellable?.is_cancelled?.() ||
+                (typeof e?.matches === 'function' &&
+                    e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED))
+            ) {
+                throw e;
+            }
+            if (
+                typeof e?.matches === 'function' &&
+                e.matches(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND)
+            ) {
                 throw new DocumentToolError(
                     `The file "${resolvedPath}" no longer exists. It may have been moved, deleted, or the clipboard image could not be saved. Try pasting the image again.`,
                     { code: 'file-not-found' },
                 );
             }
             throw new DocumentToolError(
-                `Could not read "${resolvedPath}": ${e.message || 'unknown error'}`,
+                `Could not read "${resolvedPath}": ${e?.message || 'unknown error'}`,
                 { code: 'file-read-error' },
             );
         }
@@ -1167,6 +1175,17 @@ export class DocumentToolRuntime {
                     code: 'missing-tool',
                     installLabel: capability.installLabel,
                 },
+            );
+        }
+
+        const fileSize = Number(info.get_size?.() || 0);
+        const maxAllowedBytes = kind === 'image' ? IMAGE_MAX_BYTES : DOCUMENT_MAX_BYTES;
+        if (fileSize > maxAllowedBytes) {
+            const sizeMb = (fileSize / (1024 * 1024)).toFixed(1);
+            const limitMb = Math.round(maxAllowedBytes / (1024 * 1024));
+            throw new DocumentToolError(
+                `${displayName} is too large (${sizeMb} MB). Katab supports ${kind === 'image' ? 'images' : 'documents'} up to ${limitMb} MB.`,
+                { code: 'file-too-large' },
             );
         }
 
@@ -1216,6 +1235,7 @@ export class DocumentToolRuntime {
                 [capability.command, '-layout', resolvedPath, '-'],
                 cancellable,
                 capability.installLabel,
+                { timeoutSeconds: 60 },
             );
         } else if (extension === EML_EXTENSION) {
             // EML parsing is pure JS — no external helper needed.

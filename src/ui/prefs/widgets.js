@@ -22,10 +22,23 @@ import { gettext as _, format } from '../../shared/i18n.js';
 export function createPrefsContext({ settings, window, extensionPath }) {
     const providerDetails = PROVIDER_DETAILS;
 
+    let disposed = false;
     const disposers = [];
+    const isDisposed = () => disposed;
+    const onDestroy = (fn) => {
+        if (disposed) {
+            try {
+                fn();
+            } catch (_e) {
+                /* already gone */
+            }
+            return;
+        }
+        disposers.push(fn);
+    };
     const watch = (key, callback) => {
         const id = settings.connect(key, callback);
-        disposers.push(() => {
+        onDestroy(() => {
             try {
                 settings.disconnect(id);
             } catch (_e) {
@@ -35,7 +48,14 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         return id;
     };
     const dispose = () => {
-        for (const fn of disposers) fn();
+        disposed = true;
+        for (const fn of disposers) {
+            try {
+                fn();
+            } catch (_e) {
+                /* already gone */
+            }
+        }
         disposers.length = 0;
     };
 
@@ -184,6 +204,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
     const shortcutCaptureState = {
         active: false,
         button: null,
+        key: null,
     };
 
     const stopShortcutCapture = () => {
@@ -191,12 +212,15 @@ export function createPrefsContext({ settings, window, extensionPath }) {
             return;
         }
 
+        const activeKey = shortcutCaptureState.key || 'toggle-current-chat';
         shortcutCaptureState.active = false;
         if (shortcutCaptureState.button) {
             shortcutCaptureState.button.set_label(
-                formatShortcutValue(settings.get_strv('toggle-current-chat')),
+                formatShortcutValue(settings.get_strv(activeKey)),
             );
         }
+        shortcutCaptureState.button = null;
+        shortcutCaptureState.key = null;
     };
 
     const shortcutKeyController = new Gtk.EventControllerKey();
@@ -206,13 +230,14 @@ export function createPrefsContext({ settings, window, extensionPath }) {
             return Gdk.EVENT_PROPAGATE;
         }
 
+        const activeKey = shortcutCaptureState.key || 'toggle-current-chat';
         let mask = state & Gtk.accelerator_get_default_mod_mask();
         mask &= ~Gdk.ModifierType.LOCK_MASK;
 
         if (mask === 0) {
             switch (keyval) {
                 case Gdk.KEY_BackSpace:
-                    settings.set_strv('toggle-current-chat', []);
+                    settings.set_strv(activeKey, []);
                     stopShortcutCapture();
                     return Gdk.EVENT_STOP;
                 case Gdk.KEY_Escape:
@@ -229,7 +254,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         }
 
         const shortcut = Gtk.accelerator_name_with_keycode(null, keyval, keycode, mask);
-        settings.set_strv('toggle-current-chat', [shortcut]);
+        settings.set_strv(activeKey, [shortcut]);
         stopShortcutCapture();
         return Gdk.EVENT_STOP;
     });
@@ -544,9 +569,26 @@ export function createPrefsContext({ settings, window, extensionPath }) {
                 visibility: !isPassword,
                 input_purpose: isPassword ? Gtk.InputPurpose.PASSWORD : Gtk.InputPurpose.FREE_FORM,
                 width_chars: 24,
+                ...(isPassword
+                    ? {
+                          secondary_icon_name: 'view-reveal-symbolic',
+                          secondary_icon_tooltip_text: _('Show value'),
+                      }
+                    : {}),
             }),
             'katab-prefs-entry',
         );
+        if (isPassword) {
+            entry.connect('icon-release', (_e, pos) => {
+                if (pos !== Gtk.EntryIconPosition.SECONDARY) return;
+                const nextVisible = !entry.visibility;
+                entry.visibility = nextVisible;
+                entry.secondary_icon_name = nextVisible
+                    ? 'view-conceal-symbolic'
+                    : 'view-reveal-symbolic';
+                entry.secondary_icon_tooltip_text = nextVisible ? _('Hide value') : _('Show value');
+            });
+        }
 
         row.add_suffix(entry);
         row.activatable_widget = entry;
@@ -628,7 +670,7 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         const textView = addCssClasses(
             new Gtk.TextView({
                 wrap_mode: Gtk.WrapMode.WORD_CHAR,
-                accepts_tab: true,
+                accepts_tab: false,
                 monospace: false,
                 top_margin: 10,
                 bottom_margin: 10,
@@ -781,9 +823,13 @@ export function createPrefsContext({ settings, window, extensionPath }) {
             'katab-prefs-shortcut-button',
         );
         shortcutButton.connect('clicked', () => {
+            if (shortcutCaptureState.active && shortcutCaptureState.button !== shortcutButton) {
+                stopShortcutCapture();
+            }
             shortcutCaptureState.active = true;
             shortcutCaptureState.button = shortcutButton;
-            shortcutButton.set_label(_('Press shortcut...'));
+            shortcutCaptureState.key = key;
+            shortcutButton.set_label(_('Press shortcut…'));
         });
         buttonBox.append(shortcutButton);
 
@@ -912,6 +958,8 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         window,
         extensionPath,
         watch,
+        isDisposed,
+        onDestroy,
         dispose,
         addCssClasses,
         createPreferencesPage,
@@ -921,21 +969,10 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         ollamaSettingTypes,
         addPreferenceRow,
         setStringList,
-        syncRowWithSetting,
-        formatShortcutValue,
-        isShortcutKeyvalForbidden,
-        isShortcutBindingValid,
-        shortcutCaptureState,
-        stopShortcutCapture,
         getOllamaValue,
         setOllamaValue,
         valuesEqual,
-        toolStatusClasses,
         createChoiceRow,
-        createProviderImage,
-        getProviderThemeIconName,
-        createProviderActiveBadge,
-        createStatusBadge,
         setStatusBadge,
         createInfoRow,
         createInstructionRow,
@@ -945,7 +982,6 @@ export function createPrefsContext({ settings, window, extensionPath }) {
         createProviderPage,
         bindChoiceRow,
         createStringRow,
-        getTextBufferContents,
         createMultilineStringRow,
         createIntRow,
         createDoubleRow,

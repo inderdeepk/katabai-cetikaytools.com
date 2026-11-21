@@ -6,7 +6,6 @@
 // every request.  Pure ES module — no GJS/Clutter imports — so it can be unit
 // tested with `gjs -m` like the other src/ modules.
 
-export const SESSION_MEMORY_MARKER = '__katab_session_memory__';
 // Non-streaming summarization call output cap (tokens ≈ chars / 4).
 export const SESSION_MEMORY_MAX_TOKENS = 1024;
 // Hard cap on the persisted memory text so it can never balloon the payload.
@@ -48,28 +47,46 @@ const IMAGE_CHAR_EQUIVALENT = Math.round(IMAGE_TOKEN_ESTIMATE * CHARS_PER_TOKEN)
 const DEEPSEEK_INPUT_TOKEN_BUDGET = 616000;
 
 // Context-window sizes (tokens) for providers that don't expose a configurable
-// context in GSettings.  Unknown models fall back to a conservative default.
-const OPENAI_CONTEXT_TOKENS = {
-    'gpt-4o': 128000,
-    'gpt-4o-mini': 128000,
-    o1: 200000,
-    'o1-mini': 128000,
-    o3: 200000,
-    'o3-mini': 200000,
-    'o4-mini': 200000,
-    'gpt-4.1': 1047576,
-    'gpt-4.1-mini': 1047576,
-    'gpt-4.1-nano': 1047576,
-};
-const ANTHROPIC_CONTEXT_TOKENS = {
-    'claude-3-5-sonnet-20241022': 200000,
-    'claude-3-5-haiku-20241022': 200000,
-    'claude-3-7-sonnet-20250219': 200000,
-    'claude-sonnet-4-20250514': 200000,
-    'claude-opus-4-20250514': 200000,
-    'claude-3-opus-20240229': 200000,
-    'claude-3-haiku-20240307': 200000,
-};
+// context in GSettings.  Matched by exact key first, then longest prefix so
+// dated snapshots (e.g. gpt-4o-2024-08-06, claude-sonnet-4-5-...) resolve
+// accurately instead of falling back to 32K.
+const OPENAI_CONTEXT_TOKENS = [
+    ['gpt-4.1-nano', 1047576],
+    ['gpt-4.1-mini', 1047576],
+    ['gpt-4.1', 1047576],
+    ['gpt-4o-mini', 128000],
+    ['gpt-4o', 128000],
+    ['o4-mini', 200000],
+    ['o3-mini', 200000],
+    ['o3', 200000],
+    ['o1-mini', 128000],
+    ['o1', 200000],
+];
+const ANTHROPIC_CONTEXT_TOKENS = [
+    ['claude-opus-4', 200000],
+    ['claude-sonnet-4', 200000],
+    ['claude-haiku-4', 200000],
+    ['claude-3-7-', 200000],
+    ['claude-3-5-', 200000],
+    ['claude-3-opus', 200000],
+    ['claude-3-sonnet', 200000],
+    ['claude-3-haiku', 200000],
+];
+
+function lookupContextTokens(table, rawModel, fallback) {
+    const model = String(rawModel || '')
+        .trim()
+        .toLowerCase();
+    if (!model) {
+        return fallback;
+    }
+    for (const [prefix, tokens] of table) {
+        if (model === prefix || model.startsWith(`${prefix}-`) || model.startsWith(prefix)) {
+            return tokens;
+        }
+    }
+    return fallback;
+}
 
 function safeGetInt(settings, key, fallback) {
     if (!settings) return fallback;
@@ -118,15 +135,13 @@ export function estimateProviderCharBudget(provider, settings) {
             return Math.floor(DEEPSEEK_INPUT_TOKEN_BUDGET * CHARS_PER_TOKEN);
         }
         if (provider === 'openai') {
-            const model = String(
-                safeGetString(settings, 'openai-model', 'gpt-4o') || '',
-            ).toLowerCase();
-            const tokens = OPENAI_CONTEXT_TOKENS[model] || 32000;
+            const model = safeGetString(settings, 'openai-model', 'gpt-4o');
+            const tokens = lookupContextTokens(OPENAI_CONTEXT_TOKENS, model, 32000);
             return Math.max(0, Math.floor(tokens * OUTPUT_RESERVE_RATIO * CHARS_PER_TOKEN));
         }
         if (provider === 'anthropic') {
-            const model = String(safeGetString(settings, 'anthropic-model', '') || '');
-            const tokens = ANTHROPIC_CONTEXT_TOKENS[model] || 100000;
+            const model = safeGetString(settings, 'anthropic-model', '');
+            const tokens = lookupContextTokens(ANTHROPIC_CONTEXT_TOKENS, model, 100000);
             return Math.max(0, Math.floor(tokens * OUTPUT_RESERVE_RATIO * CHARS_PER_TOKEN));
         }
     } catch (_e) {
@@ -183,15 +198,29 @@ function messageContextSize(message) {
     }
 }
 
+function isToolResultMsg(m) {
+    if (!m) return false;
+    if (m.role === 'tool') return true;
+    return (
+        m.role === 'user' &&
+        Array.isArray(m.content) &&
+        m.content.length > 0 &&
+        m.content.some((b) => b?.type === 'tool_result')
+    );
+}
+
+function isSyntheticUserInjection(m) {
+    return Boolean(m && (m._healingInjection || m._synthesisRetry || m._planInjection));
+}
+
 /**
  * Split sanitized API messages into a memory system message + a verbatim tail
  * that fits within `budget` chars.  Drops from the FRONT (oldest messages)
- * only, and never drops the newest user message.
+ * only, never splits an `assistant(tool_calls)` + `tool` / `tool_result` pair,
+ * and never drops the newest real user message.
  *
  * Per-message sizes are computed ONCE and combined with prefix sums, so the
- * search for the oldest message that still fits is O(n) instead of
- * re-serializing the tail on every step (the old version was O(n²) on the
- * shell thread for long conversations).
+ * search for the oldest message that still fits is O(n).
  *
  * @returns {{ memoryMsg: object|null, tail: object[], foldedCount: number }}
  */
@@ -222,21 +251,23 @@ export function splitHistoryForBudget(messages, budget = 200000, memoryText = ''
         return { memoryMsg, tail: list, foldedCount: 0 };
     }
 
-    // Locate the newest real user message (skip Anthropic-style tool_result
-    // array content, which is not a real user turn).
+    // Locate the newest real user message (skip Anthropic tool_result blocks
+    // and internal synthetic healing/synthesis/plan injections).
     let newestUserIdx = -1;
     for (let i = list.length - 1; i >= 0; i--) {
         const m = list[i];
-        if (
-            m?.role === 'user' &&
-            !(
-                Array.isArray(m?.content) &&
-                m.content.length > 0 &&
-                m.content.every((b) => b?.type === 'tool_result')
-            )
-        ) {
+        if (m?.role === 'user' && !isToolResultMsg(m) && !isSyntheticUserInjection(m)) {
             newestUserIdx = i;
             break;
+        }
+    }
+    if (newestUserIdx < 0) {
+        // Fallback: accept any non-tool-result user message.
+        for (let i = list.length - 1; i >= 0; i--) {
+            if (list[i]?.role === 'user' && !isToolResultMsg(list[i])) {
+                newestUserIdx = i;
+                break;
+            }
         }
     }
     if (newestUserIdx < 0) {
@@ -245,6 +276,11 @@ export function splitHistoryForBudget(messages, budget = 200000, memoryText = ''
     }
 
     for (let start = 0; start <= newestUserIdx; start++) {
+        // Never start the retained tail on an orphaned tool result — doing so
+        // causes HTTP 400 on OpenAI, DeepSeek, Anthropic, and Ollama.
+        if (isToolResultMsg(list[start])) {
+            continue;
+        }
         if (fits(start)) {
             return { memoryMsg, tail: list.slice(start), foldedCount: start };
         }
@@ -275,6 +311,33 @@ export const SESSION_MEMORY_UPDATE_INSTRUCTION =
     'decisions) from the current memory; add all important new information; drop ' +
     'only what is now irrelevant. Keep the whole memory under ~800 words.';
 
+function formatFoldMessageContent(message) {
+    const parts = [];
+    if (typeof message?.content === 'string') {
+        if (message.content) {
+            parts.push(message.content);
+        }
+    } else if (message?.content !== undefined && message?.content !== null) {
+        // Use stringifyContextValue (not raw JSON.stringify) so attached
+        // base64 images don't dump megabytes into the fold transcript and
+        // crowd out all real conversation text.
+        try {
+            parts.push(stringifyContextValue(message.content));
+        } catch (_e) {
+            parts.push(String(message.content));
+        }
+    }
+    if (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
+        const names = message.tool_calls
+            .map((tc) => tc?.function?.name || tc?.name || 'tool')
+            .filter(Boolean);
+        if (names.length > 0) {
+            parts.push(`[called tools: ${names.join(', ')}]`);
+        }
+    }
+    return parts.join(' ').trim();
+}
+
 /**
  * Build the single user message sent to the model to update the memory.
  * A single user role works uniformly across all providers (including Anthropic,
@@ -296,22 +359,18 @@ export function buildMemoryUpdateMessages(
     let transcript = (Array.isArray(toFold) ? toFold : [])
         .map((message) => {
             const role = message?.role || 'unknown';
-            const content =
-                typeof message?.content === 'string'
-                    ? message.content
-                    : JSON.stringify(message?.content ?? '');
+            const content = formatFoldMessageContent(message);
             return `[${role}] ${content}`;
         })
-        .filter(Boolean)
         .join('\n\n');
 
-    const fixedOverhead = SESSION_MEMORY_UPDATE_INSTRUCTION.length + existing.length + 200;
-    const transcriptCap = Math.max(
-        1000,
-        Math.floor((maxTotalChars || SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS) - fixedOverhead),
-    );
+    const trimPrefix = '[...older messages trimmed...]\n\n';
+    const budget = maxTotalChars || SESSION_MEMORY_FOLD_TOTAL_MAX_CHARS;
+    const fixedOverhead =
+        SESSION_MEMORY_UPDATE_INSTRUCTION.length + existing.length + trimPrefix.length + 200;
+    const transcriptCap = Math.max(400, Math.floor(budget - fixedOverhead));
     if (transcript.length > transcriptCap) {
-        transcript = `[...older messages trimmed...]\n\n${transcript.slice(transcript.length - transcriptCap)}`;
+        transcript = `${trimPrefix}${transcript.slice(transcript.length - transcriptCap)}`;
     }
 
     const parts = [];

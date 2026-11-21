@@ -1,3 +1,4 @@
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import { WebSearchRuntime, readWebSearchConfig } from '../../../tools/webSearchTools.js';
 import { gettext as _, format } from '../../../shared/i18n.js';
@@ -6,6 +7,9 @@ import { gettext as _, format } from '../../../shared/i18n.js';
 export function buildWebSearchSection(ctx) {
     const {
         settings,
+        watch,
+        isDisposed,
+        onDestroy,
         createToolSubpage,
         createPreferencesGroup,
         createBooleanRow,
@@ -20,6 +24,10 @@ export function buildWebSearchSection(ctx) {
         createInstructionRow,
         addCssClasses,
     } = ctx;
+
+    const setSafeSubtitle = (row, text) => {
+        row.subtitle = GLib.markup_escape_text(String(text || ''), -1);
+    };
 
     const subpage = createToolSubpage(_('Web Search'));
     const detailPage = subpage.detailPage;
@@ -73,31 +81,44 @@ export function buildWebSearchSection(ctx) {
     setStatusBadge(connBadge, _('Untested'), null);
 
     const webSearchTestRuntime = new WebSearchRuntime({ timeoutSeconds: 12 });
-    createButtonRow(
+    onDestroy(() => webSearchTestRuntime.destroy?.());
+    const testSearchRow = createButtonRow(
         _('Test Connection'),
         _('Send a sample query to verify the SearxNG endpoint responds with JSON results.'),
         _('Test'),
         () => {
+            const btn = testSearchRow.activatable_widget;
+            if (btn) btn.sensitive = false;
             setStatusBadge(connBadge, _('Testing'), null);
-            connStatusRow.subtitle = _('Contacting the SearxNG instance\u2026');
+            setSafeSubtitle(connStatusRow, _('Contacting the SearxNG instance\u2026'));
             const config = readWebSearchConfig(settings);
             webSearchTestRuntime
                 .testConnection(config)
                 .then((result) => {
+                    if (isDisposed()) return;
                     if (result.ok) {
                         setStatusBadge(connBadge, _('Connected'), 'katab-prefs-status-detected');
-                        connStatusRow.subtitle = format(
-                            _('Reachable. Sample query returned {count} result(s).'),
-                            { count: result.resultCount },
+                        setSafeSubtitle(
+                            connStatusRow,
+                            format(_('Reachable. Sample query returned {count} result(s).'), {
+                                count: result.resultCount,
+                            }),
                         );
                     } else {
                         setStatusBadge(connBadge, _('Failed'), 'katab-prefs-status-install');
-                        connStatusRow.subtitle = result.message;
+                        setSafeSubtitle(
+                            connStatusRow,
+                            result.message || _('Connection test failed.'),
+                        );
                     }
                 })
                 .catch((error) => {
+                    if (isDisposed()) return;
                     setStatusBadge(connBadge, _('Failed'), 'katab-prefs-status-install');
-                    connStatusRow.subtitle = error?.message || _('Connection test failed.');
+                    setSafeSubtitle(connStatusRow, error?.message || _('Connection test failed.'));
+                })
+                .finally(() => {
+                    if (!isDisposed() && btn) btn.sensitive = true;
                 });
         },
         connectionGroup,
@@ -253,7 +274,7 @@ export function buildWebSearchSection(ctx) {
         advancedGroup,
     );
 
-    createBooleanRow(
+    const allowLocalRow = createBooleanRow(
         _('Allow Local Addresses'),
         _(
             'Permit fetching localhost and private LAN addresses when reading page content. Leave off unless you fully trust your network.',
@@ -261,6 +282,11 @@ export function buildWebSearchSection(ctx) {
         'web-search-allow-local-addresses',
         advancedGroup,
     );
+    const syncAllowLocalSensitivity = () => {
+        allowLocalRow.sensitive = settings.get_boolean('web-search-fetch-page-enabled');
+    };
+    syncAllowLocalSensitivity();
+    watch('changed::web-search-fetch-page-enabled', syncAllowLocalSensitivity);
 
     createIntRow(
         _('Max Tool Iterations'),

@@ -25,6 +25,25 @@
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
+ * Normalize a citation URL for deduplication: strip trailing slashes on the
+ * path and lowercase for deduplication matching. Original-case URLs are
+ * preserved separately in `tracker.numberToUrl` so rendered bibliography links
+ * (Wikipedia/YouTube case-sensitive paths/queries) never 404.
+ * @param {string} url
+ * @returns {string}
+ */
+export function normalizeCitationUrl(url) {
+    const trimmed = String(url || '').trim();
+    if (!trimmed) return '';
+    const qOrH = trimmed.search(/[?#]/);
+    if (qOrH >= 0) {
+        const base = trimmed.slice(0, qOrH).replace(/\/+$/, '');
+        return `${base}${trimmed.slice(qOrH)}`.toLowerCase();
+    }
+    return trimmed.replace(/\/+$/, '').toLowerCase();
+}
+
+/**
  * Create a new citation tracker for a research session.
  * @returns {CitationMap}
  */
@@ -32,6 +51,7 @@ export function createCitationTracker() {
     return {
         entries: [],
         urlToNumber: new Map(),
+        numberToUrl: new Map(),
     };
 }
 
@@ -49,19 +69,24 @@ export function registerFacts(tracker, facts) {
     for (const fact of facts) {
         if (!fact.claim || !fact.url) continue;
 
-        // Normalize URL for deduplication
-        const normalizedUrl = String(fact.url).trim().replace(/\/+$/, '').toLowerCase();
+        const originalUrl = String(fact.url).trim();
+        const normalizedUrl = normalizeCitationUrl(originalUrl);
+        if (!normalizedUrl) continue;
 
         // Assign citation number if new URL
         if (!tracker.urlToNumber.has(normalizedUrl)) {
-            tracker.urlToNumber.set(normalizedUrl, tracker.urlToNumber.size + 1);
+            const nextNum = tracker.urlToNumber.size + 1;
+            tracker.urlToNumber.set(normalizedUrl, nextNum);
+            if (tracker.numberToUrl instanceof Map) {
+                tracker.numberToUrl.set(nextNum, originalUrl);
+            }
         }
 
         const num = tracker.urlToNumber.get(normalizedUrl);
         tracker.entries.push({
             id: `c${tracker.entries.length + 1}`,
             claim: String(fact.claim).trim(),
-            urls: [String(fact.url).trim()],
+            urls: [originalUrl],
             citationNum: num,
         });
     }
@@ -72,14 +97,20 @@ export function registerFacts(tracker, facts) {
  *
  * @param {CitationMap} tracker
  * @param {string} url
- * @param {string} [label] - Optional label/description for the bibliography entry
+ * @param {string} [_label] - Optional label/description for the bibliography entry
  */
-export function registerSource(tracker, url, label = '') {
+export function registerSource(tracker, url, _label = '') {
     if (!tracker || !url) return;
 
-    const normalizedUrl = String(url).trim().replace(/\/+$/, '').toLowerCase();
+    const originalUrl = String(url).trim();
+    const normalizedUrl = normalizeCitationUrl(originalUrl);
+    if (!normalizedUrl) return;
     if (!tracker.urlToNumber.has(normalizedUrl)) {
-        tracker.urlToNumber.set(normalizedUrl, tracker.urlToNumber.size + 1);
+        const nextNum = tracker.urlToNumber.size + 1;
+        tracker.urlToNumber.set(normalizedUrl, nextNum);
+        if (tracker.numberToUrl instanceof Map) {
+            tracker.numberToUrl.set(nextNum, originalUrl);
+        }
     }
 }
 
@@ -104,10 +135,12 @@ export function getUniqueSources(tracker) {
         }
     }
 
-    // Fall back to the normalized URL for citation numbers with no entry.
+    // Fall back to preserved original URL (from registerSource) or normalized key.
     for (const [normalized, num] of tracker.urlToNumber.entries()) {
         if (!numToUrl.has(num)) {
-            numToUrl.set(num, normalized);
+            const preserved =
+                tracker.numberToUrl instanceof Map ? tracker.numberToUrl.get(num) : null;
+            numToUrl.set(num, preserved || normalized);
         }
     }
 
@@ -160,8 +193,13 @@ export function annotateCitations(tracker, text) {
                 ...new Set(
                     entry.urls
                         .map((u) => {
-                            const normalized = String(u).trim().replace(/\/+$/, '').toLowerCase();
-                            return tracker.urlToNumber.get(normalized);
+                            const normalized = normalizeCitationUrl(u);
+                            return (
+                                tracker.urlToNumber.get(normalized) ||
+                                tracker.urlToNumber.get(
+                                    String(u).trim().replace(/\/+$/, '').toLowerCase(),
+                                )
+                            );
                         })
                         .filter(Boolean),
                 ),
@@ -188,9 +226,11 @@ export function annotateCitations(tracker, text) {
  * @returns {string} Summary text
  */
 export function buildCitationSummary(tracker) {
-    if (!tracker || !tracker.entries.length) return '';
+    if (!tracker) return '';
 
     const sources = getUniqueSources(tracker);
+    if (sources.length === 0) return '';
+
     let summary = 'SOURCES COLLECTED (cite these in your report using [N] notation):\n';
     for (const { num, url } of sources) {
         summary += `  [${num}] ${url}\n`;

@@ -113,6 +113,8 @@ export function savePresets(presets) {
     }
 }
 
+let _presetSeq = 0;
+
 /**
  * Capture all current Ollama GSettings values into a new preset object.
  * The preset is NOT saved to disk — call addPreset() for that.
@@ -122,9 +124,10 @@ export function savePresets(presets) {
  * @returns {Object}  preset object ready to be saved
  */
 export function capturePresetFromSettings(settings, name) {
+    const trimmedName = String(name ?? '').trim();
     const preset = {
-        id: `preset_${Date.now()}`,
-        name: (name || 'Unnamed Preset').trim(),
+        id: `preset_${Date.now()}_${++_presetSeq}`,
+        name: trimmedName || 'Unnamed Preset',
         createdAt: Math.floor(Date.now() / 1000),
     };
     for (const { key, type, settingKey } of PRESET_SETTINGS) {
@@ -140,17 +143,36 @@ export function capturePresetFromSettings(settings, name) {
 /**
  * Write all values stored in a preset back into GSettings.
  * Only keys present in the preset object are touched.
+ * Uses settings.delay()/apply() when available so 26 keys apply atomically.
  *
  * @param {Gio.Settings} settings
  * @param {Object}       preset
  */
 export function applyPresetToSettings(settings, preset) {
-    for (const { key, type, settingKey } of PRESET_SETTINGS) {
-        if (preset[key] !== undefined && preset[key] !== null) {
+    const canDelay = typeof settings?.delay === 'function' && typeof settings?.apply === 'function';
+    if (canDelay) {
+        try {
+            settings.delay();
+        } catch (_e) {
+            /* ignore */
+        }
+    }
+    try {
+        for (const { key, type, settingKey } of PRESET_SETTINGS) {
+            if (preset[key] !== undefined && preset[key] !== null) {
+                try {
+                    settings[`set_${type}`](settingKey, preset[key]);
+                } catch (_e) {
+                    /* skip */
+                }
+            }
+        }
+    } finally {
+        if (canDelay) {
             try {
-                settings[`set_${type}`](settingKey, preset[key]);
+                settings.apply();
             } catch (_e) {
-                /* skip */
+                /* ignore */
             }
         }
     }
@@ -248,7 +270,13 @@ export function settingsMatchPreset(settings, preset) {
         try {
             const current = settings[`get_${type}`](settingKey);
             if (type === 'double') {
-                if (Math.abs(current - preset[key]) >= 0.000001) return false;
+                if (
+                    !Number.isFinite(current) ||
+                    !Number.isFinite(preset[key]) ||
+                    Math.abs(current - preset[key]) >= 0.000001
+                ) {
+                    return false;
+                }
             } else {
                 if (current !== preset[key]) return false;
             }
@@ -267,12 +295,21 @@ export function settingsMatchPreset(settings, preset) {
  * @returns {Object|null} the matching active preset, or null if cleared/missing
  */
 export function reconcileActivePreset(settings) {
-    const presetId = settings.get_string('ollama-active-preset');
+    let presetId = '';
+    try {
+        presetId = settings.get_string('ollama-active-preset');
+    } catch (_e) {
+        return null;
+    }
     if (!presetId) return null;
 
     const preset = getPresetById(presetId);
     if (!preset || !settingsMatchPreset(settings, preset)) {
-        settings.set_string('ollama-active-preset', '');
+        try {
+            settings.set_string('ollama-active-preset', '');
+        } catch (_e) {
+            /* ignore */
+        }
         return null;
     }
 

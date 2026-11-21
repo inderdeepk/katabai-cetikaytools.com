@@ -364,7 +364,6 @@ export class SessionInfoPopup {
             style_class: 'katab-session-info-section-title',
         });
         sysSection.add_child(sysTitle);
-        this._siSysSection = sysSection;
 
         const sysInstrRow = new St.BoxLayout({
             vertical: false,

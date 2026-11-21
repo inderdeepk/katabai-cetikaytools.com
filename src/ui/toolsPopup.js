@@ -47,6 +47,8 @@ export class ToolsPopup {
         this._repositionId = 0;
         this._rows = null;
         this._modeLabels = {};
+        this._rowRefs = {};
+        this._lastToolSignature = '';
     }
 
     get popup() {
@@ -211,31 +213,26 @@ export class ToolsPopup {
         const primaryTools = tools.filter((t) => t.toolName !== RAG_TOOL_NAME);
         const moreTools = tools.filter((t) => t.toolName === RAG_TOOL_NAME);
         const hasSeparator = moreTools.length > 0;
-        const totalRows = primaryTools.length + (hasSeparator ? 1 : 0) + moreTools.length;
+        const signature = `${primaryTools.map((t) => t.toolName).join(',')}|${moreTools.map((t) => t.toolName).join(',')}`;
 
-        const existingChildren = this._rows.get_n_children();
-
-        // Full rebuild only when the tool list changes (row count differs)
-        // or on first render.  Otherwise patch mode labels in-place.
-        if (existingChildren !== totalRows) {
+        // Full rebuild only when the actual set/order of tools changes
+        // (e.g. switching provider) or on first render. Otherwise patch mode
+        // pills, disabled classes, and accessible labels in-place.
+        if (signature !== this._lastToolSignature) {
+            this._lastToolSignature = signature;
             this._rows.destroy_all_children();
             this._modeLabels = {};
+            this._rowRefs = {};
 
             // ── Build a single tool row ──────────────────────────────
             const buildRow = (tool) => {
                 const isModeControlled = this._host.isModeControlledTool(tool.toolName);
                 const mode = this._host.getToolMode(tool.toolName);
-                const documentToolDisabled =
-                    tool.toolName === DOCUMENT_TOOL_NAME && !this._host.isDocumentToolEnabled();
                 const isDeepResearch = tool.toolName === DEEP_RESEARCH_TOOL_NAME;
                 const modeLabels = isDeepResearch ? DEEP_RESEARCH_MODE_LABELS : TOOL_MODE_LABELS;
                 const defaultModeLabel = isDeepResearch
                     ? DEEP_RESEARCH_MODE_LABELS[TOOL_MODE_OFF]
                     : TOOL_MODE_LABELS[TOOL_MODE_AUTO];
-                const modeToolDisabled =
-                    isModeControlled &&
-                    mode === (isDeepResearch ? TOOL_MODE_OFF : TOOL_MODE_AUTO) &&
-                    !this._host.toolModeAvailable(tool, mode);
 
                 const row = new St.Button({
                     style_class: 'katab-tools-popup-row',
@@ -277,6 +274,7 @@ export class ToolsPopup {
                 modeWrap.add_child(modeLabel);
 
                 // Store references for in-place updates
+                this._rowRefs[tool.toolName] = { row, tool, nameLabel };
                 if (isModeControlled) {
                     this._modeLabels[tool.toolName] = {
                         wrap: modeWrap,
@@ -294,19 +292,11 @@ export class ToolsPopup {
                 rowContent.add_child(nameLabel);
                 rowContent.add_child(modeWrap);
 
-                if (documentToolDisabled || modeToolDisabled) {
-                    row.add_style_class_name('katab-tools-popup-row-disabled');
-                }
-
                 row.set_child(rowContent);
+                this._syncRowState(tool);
 
                 row.connect('clicked', async () => {
                     if (isModeControlled) {
-                        // Deep Research needs at least one research-capable
-                        // tool underneath.  When neither Web Search nor Web
-                        // Scraper is available the row renders disabled and
-                        // must not silently flip a mode that cannot run —
-                        // explain how to make it usable instead.
                         if (isDeepResearch && !this._host.toolModeAvailable(tool, TOOL_MODE_ON)) {
                             this._host.addSystemMessage(
                                 'Deep Research needs Web Search or Web Scraper. Enable one in Settings → Tools, or switch its mode to On from this popup.',
@@ -314,7 +304,9 @@ export class ToolsPopup {
                             return;
                         }
                         this._host.cycleToolMode(tool.toolName);
-                        this._patchMode(tool.toolName);
+                        // Refresh all rows so dependent tools (e.g. Deep Research
+                        // depending on Search/Scrape) update their state in sync.
+                        this.refresh();
                         this._host.updateToolsBadge();
                         return;
                     }
@@ -380,12 +372,46 @@ export class ToolsPopup {
                 });
             }
         } else {
-            // In-place patch: update mode labels without destroying rows
+            // In-place patch: update mode pills, disabled state, and accessible names
             for (const tool of tools) {
-                if (this._host.isModeControlledTool(tool.toolName)) {
-                    this._patchMode(tool.toolName);
-                }
+                this._syncRowState(tool);
             }
+        }
+    }
+
+    // Sync a single tool row's mode pill, disabled class, and accessible label in-place.
+    _syncRowState(tool) {
+        const ref = this._rowRefs?.[tool.toolName];
+        if (!ref) return;
+        const isModeControlled = this._host.isModeControlledTool(tool.toolName);
+        const mode = this._host.getToolMode(tool.toolName);
+        const isDeepResearch = tool.toolName === DEEP_RESEARCH_TOOL_NAME;
+        const documentToolDisabled =
+            tool.toolName === DOCUMENT_TOOL_NAME && !this._host.isDocumentToolEnabled();
+        const modeToolDisabled =
+            isModeControlled &&
+            mode === (isDeepResearch ? TOOL_MODE_OFF : TOOL_MODE_AUTO) &&
+            !this._host.toolModeAvailable(tool, mode);
+
+        if (documentToolDisabled || modeToolDisabled) {
+            ref.row.add_style_class_name('katab-tools-popup-row-disabled');
+        } else {
+            ref.row.remove_style_class_name('katab-tools-popup-row-disabled');
+        }
+
+        const labelText = this._host.getToolButtonLabel(tool);
+        ref.nameLabel.set_text(labelText);
+
+        if (isModeControlled) {
+            this._patchMode(tool.toolName);
+            const labels = isDeepResearch ? DEEP_RESEARCH_MODE_LABELS : TOOL_MODE_LABELS;
+            const defaultLabel = isDeepResearch
+                ? DEEP_RESEARCH_MODE_LABELS[TOOL_MODE_OFF]
+                : TOOL_MODE_LABELS[TOOL_MODE_AUTO];
+            const modeText = labels[mode] || defaultLabel;
+            ref.row.accessible_name = `${labelText}: ${modeText}`;
+        } else {
+            ref.row.accessible_name = documentToolDisabled ? `${labelText} (disabled)` : labelText;
         }
     }
 

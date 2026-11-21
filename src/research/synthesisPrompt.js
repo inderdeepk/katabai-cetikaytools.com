@@ -15,12 +15,52 @@
 //     documentContext,          // attached-document context ('' = none)
 //     contextBudgetChars,       // depth-scaled findings budget
 //   }
-import { buildCitationSummary } from './citationTracker.js';
+import { buildCitationSummary, normalizeCitationUrl } from './citationTracker.js';
 
 // ── Source contradiction detection ───────────────────────────────────────────
 // Heuristic clustering parameters — no embedding model available in GJS.
 export const CONTRADICTION_TOPIC_SIMILARITY_THRESHOLD = 3; // min shared words for same topic
 export const CONTRADICTION_NUMERIC_TOLERANCE = 0.15; // 15% difference flags a conflict
+
+const NUMERIC_UNIT_MULTIPLIERS = {
+    k: 1e3,
+    thousand: 1e3,
+    m: 1e6,
+    million: 1e6,
+    b: 1e9,
+    billion: 1e9,
+    t: 1e12,
+    trillion: 1e12,
+};
+
+function _extractNumericMentions(claim) {
+    const mentions = [];
+    const regex =
+        /(?:(\$|€|£)\s*)?(\d+(?:,\d{3})*(?:\.\d+)?)(?:\s*(%|percent|thousand|million|billion|trillion|[kmbt](?![a-z])))?/gi;
+    let match;
+    while ((match = regex.exec(claim)) !== null) {
+        const currency = match[1] || '';
+        const rawNum = Number(match[2].replace(/,/g, ''));
+        const suffix = (match[3] || '').toLowerCase();
+        if (!Number.isFinite(rawNum) || rawNum <= 0) continue;
+
+        let kind = 'number';
+        let scaled = rawNum;
+        if (suffix === '%' || suffix === 'percent') {
+            kind = 'percent';
+        } else if (NUMERIC_UNIT_MULTIPLIERS[suffix]) {
+            scaled = rawNum * NUMERIC_UNIT_MULTIPLIERS[suffix];
+            kind = currency ? 'currency' : 'magnitude';
+        } else if (currency) {
+            kind = 'currency';
+        } else if (Number.isInteger(rawNum) && rawNum >= 1900 && rawNum <= 2099) {
+            kind = 'year';
+        }
+
+        mentions.push({ numericValue: scaled, numericStr: match[0].trim(), kind });
+    }
+    return mentions;
+}
 
 // ── Shared stopwords for relevance scoring and contradiction detection ───────
 const COMMON_STOPWORDS = new Set([
@@ -145,28 +185,24 @@ export function detectContradictions(branchResults) {
 
     // ── Within each cluster, check for numeric divergence ───────────
     const contradictions = [];
+    const seenPairs = new Set();
     for (const cluster of clusters) {
         const numericClaims = [];
         for (const c of cluster) {
-            const nums = c.claim.match(
-                /\b\d+(?:\.\d+)?(?:\s*(?:%|million|billion|trillion|k|m|b|t))?\b/gi,
-            );
-            if (nums && nums.length > 0) {
-                for (const n of nums) {
-                    const val = parseFloat(n.replace(/[^\d.]/g, ''));
-                    if (!isNaN(val) && val > 0) {
-                        numericClaims.push({ ...c, numericValue: val, numericStr: n });
-                    }
-                }
+            for (const mention of _extractNumericMentions(c.claim)) {
+                numericClaims.push({ ...c, ...mention });
             }
         }
 
-        // Flag if two claims in same cluster have diverging numeric values
+        // Flag if two claims in same cluster have diverging numeric values of compatible kind
         for (let i = 0; i < numericClaims.length; i++) {
             for (let j = i + 1; j < numericClaims.length; j++) {
                 const a = numericClaims[i];
                 const b = numericClaims[j];
                 if (a.url === b.url) continue; // Same source — not a contradiction
+                // Avoid comparing a year (e.g. 2025) against a dollar/percent/count metric
+                if (a.kind === 'year' || b.kind === 'year') continue;
+                if ((a.kind === 'percent') !== (b.kind === 'percent')) continue;
 
                 const maxVal = Math.max(a.numericValue, b.numericValue);
                 const minVal = Math.min(a.numericValue, b.numericValue);
@@ -174,6 +210,10 @@ export function detectContradictions(branchResults) {
                 const divergence = (maxVal - minVal) / maxVal;
 
                 if (divergence > CONTRADICTION_NUMERIC_TOLERANCE) {
+                    const pairKey = [a.claim, b.claim].sort().join('\u0001');
+                    if (seenPairs.has(pairKey)) continue;
+                    seenPairs.add(pairKey);
+
                     // Build a topic label from shared words
                     const sharedWords = [];
                     const aWords = tokenize(a.claim);
@@ -230,6 +270,10 @@ export function sourceRecencyHint(url) {
     return m ? m[0] : '';
 }
 
+function _matchesDomain(host, domain) {
+    return host === domain || host.endsWith(`.${domain}`);
+}
+
 /**
  * Heuristic reliability tier for a source domain. Government/education/
  * established journals rank high; general news/company sites rank medium;
@@ -240,23 +284,32 @@ export function sourceRecencyHint(url) {
 export function sourceReliabilityHint(url) {
     try {
         const host = String(url || '')
+            .trim()
             .replace(/^https?:\/\//i, '')
-            .split('/')[0]
+            .split(/[/?#]/)[0]
+            .replace(/:\d+$/, '')
             .toLowerCase();
+        if (!host) return 'medium';
         if (
             /(\.gov|\.edu|\.mil)$/.test(host) ||
-            host.includes('arxiv.') ||
-            host.includes('acm.org') ||
-            host.includes('ieee.') ||
-            host.includes('nature.com') ||
-            host.includes('science.org')
+            _matchesDomain(host, 'arxiv.org') ||
+            _matchesDomain(host, 'acm.org') ||
+            _matchesDomain(host, 'ieee.org') ||
+            _matchesDomain(host, 'nature.com') ||
+            _matchesDomain(host, 'science.org')
         ) {
             return 'high';
         }
         if (
-            /(wikipedia|medium|wordpress|blogspot|reddit|quora|stackoverflow|github|substack|forum)/.test(
-                host,
-            )
+            _matchesDomain(host, 'wikipedia.org') ||
+            _matchesDomain(host, 'medium.com') ||
+            _matchesDomain(host, 'wordpress.com') ||
+            _matchesDomain(host, 'blogspot.com') ||
+            _matchesDomain(host, 'reddit.com') ||
+            _matchesDomain(host, 'quora.com') ||
+            _matchesDomain(host, 'stackoverflow.com') ||
+            _matchesDomain(host, 'substack.com') ||
+            /(^|\.)forum\./.test(host)
         ) {
             return 'low';
         }
@@ -301,8 +354,10 @@ export function buildSynthesisPrompt(context) {
         if (!urls || !urls.length) return '';
         return urls
             .map((u) => {
-                const normalized = String(u).trim().replace(/\/+$/, '').toLowerCase();
-                const num = urlToNum.get(normalized);
+                const normalized = normalizeCitationUrl(u);
+                const num =
+                    urlToNum.get(normalized) ||
+                    urlToNum.get(String(u).trim().replace(/\/+$/, '').toLowerCase());
                 return num ? `[${num}](${u})` : `[?](${u})`;
             })
             .join(', ');
@@ -372,7 +427,7 @@ export function buildSynthesisPrompt(context) {
     // deduplication and summarization — preserve as much as possible.
     // The budget is depth-aware (Phase 5 scales it with the depth knob).
     const FINDINGS_BUDGET_CHARS = contextBudgetChars;
-    const validResults = branchResults.filter((r) => r.findings && r.findings.length > 100);
+    const validResults = branchResults.filter((r) => r.findings && r.findings.length > 50);
 
     // Compute total chars including both merged summaries and raw facts
     let totalRawChars = 0;
@@ -436,8 +491,11 @@ export function buildSynthesisPrompt(context) {
     // Per-branch rendering helper
     const renderBranch = (result, maxChars = Infinity) => {
         let text = '';
-        // Merged narrative summary (primary)
-        const summaryChars = Math.min(result.findings.length, Math.floor(maxChars * 0.6));
+        const hasFacts = Array.isArray(result.facts) && result.facts.length > 0;
+        // When a branch has no separate granular facts (e.g. code-heavy pages or raw
+        // excerpts), grant the full per-branch budget to findings instead of capping at 60%.
+        const summaryBudget = hasFacts ? Math.floor(maxChars * 0.6) : maxChars;
+        const summaryChars = Math.min(result.findings.length, summaryBudget);
         const condensedSummary =
             result.findings.length > summaryChars
                 ? result.findings.slice(0, summaryChars) + '\n[...summary trimmed...]'
@@ -445,7 +503,7 @@ export function buildSynthesisPrompt(context) {
         text += `${condensedSummary}\n`;
 
         // Granular facts (complementary data points the merge may have generalized)
-        if (result.facts && result.facts.length > 0) {
+        if (hasFacts) {
             const remainingBudget = maxChars - summaryChars;
             text += '\n**Key data points:**\n';
             let factChars = 0;
@@ -496,8 +554,11 @@ export function buildSynthesisPrompt(context) {
     );
 
     // ── Layer 3: Citation map ───────────────────────────────────────
-    if (citationTracker && citationTracker.entries.length > 0) {
-        prompt += buildCitationSummary(citationTracker) + '\n\n';
+    if (citationTracker) {
+        const citationSummary = buildCitationSummary(citationTracker);
+        if (citationSummary) {
+            prompt += citationSummary + '\n\n';
+        }
     }
 
     // ── Contradictions to resolve (if any) ──────────────────────────

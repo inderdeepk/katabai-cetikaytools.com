@@ -259,39 +259,71 @@ export function parsePlannerResponse(text) {
         evidence_needed: String(item.evidence_needed || item.evidenceNeeded || '').trim(),
     });
 
+    const mapArray = (parsed) => {
+        if (!Array.isArray(parsed)) return null;
+        if (parsed.length === 0) return [];
+        const mapped = parsed
+            .filter((item) => item && typeof item === 'object')
+            .map(mapItem)
+            .filter((item) => item.search_query);
+        return mapped.length > 0 ? mapped : null;
+    };
+
     // Try direct JSON parse
     try {
         const parsed = JSON.parse(clean);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.map(mapItem).filter((item) => item.search_query);
-        }
+        const mapped = mapArray(parsed);
+        if (mapped !== null) return mapped;
     } catch (_) {
         /* not pure JSON */
     }
 
     // Try to find JSON array inside markdown code blocks
-    const jsonBlock = clean.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    const jsonBlock = clean.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
     if (jsonBlock) {
         try {
             const parsed = JSON.parse(jsonBlock[1].trim());
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed.map(mapItem).filter((item) => item.search_query);
-            }
+            const mapped = mapArray(parsed);
+            if (mapped !== null) return mapped;
         } catch (_) {
             /* not valid JSON in code block */
         }
     }
 
-    // Try to find a JSON array anywhere in the response (non-greedy)
-    const arrayMatch = clean.match(/\[\s*\{[\s\S]*?\}\s*\]/);
-    if (arrayMatch) {
-        try {
-            const parsed = JSON.parse(arrayMatch[0]);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed.map(mapItem).filter((item) => item.search_query);
+    // Try to find a balanced JSON array anywhere in the response
+    {
+        let start = -1;
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let i = 0; i < clean.length; i++) {
+            const ch = clean[i];
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (ch === '\\') escaped = true;
+                else if (ch === '"') inString = false;
+                continue;
             }
-        } catch (_) {
-            /* not valid JSON */
+            if (ch === '"') {
+                inString = true;
+                continue;
+            }
+            if (ch === '[') {
+                if (depth === 0) start = i;
+                depth++;
+            } else if (ch === ']' && depth > 0) {
+                depth--;
+                if (depth === 0 && start >= 0) {
+                    try {
+                        const parsed = JSON.parse(clean.slice(start, i + 1));
+                        const mapped = mapArray(parsed);
+                        if (mapped !== null) return mapped;
+                    } catch (_) {
+                        /* continue scanning */
+                    }
+                    start = -1;
+                }
+            }
         }
     }
 
@@ -306,6 +338,7 @@ export function parsePlannerResponse(text) {
             plan.push({
                 sub_task: match[1].trim(),
                 search_query: match[2].trim(),
+                rationale: match[1].trim(),
             });
         }
     }
@@ -355,7 +388,7 @@ export function buildResearchPlanPrompt(plan) {
  *   3. Response starts with a number/bullet followed by a query fragment
  *   4. No citations, URLs, or source references
  *   5. No paragraph/sentence structure (sentences < 3)
- *   6. Echoes search query keywords (Gemini, deep research, architecture, etc.)
+ *   6. Echoes raw search query / tool jargon fragments across short lines
  *   7. Contains raw tool-call XML fragments (truncated <invoke>, <tool_call>, etc.)
  *   8. Very low lexical diversity (< 30 unique words in < 500 chars)
  */
@@ -413,23 +446,21 @@ export function isSynthesisRegurgitation(content, provider) {
     if (/^\d+\s*\n/i.test(trimmed)) signals++;
     if (/^\d+\s+\w/i.test(trimmed)) signals++;
 
-    // Signal 6: Echoes search query keywords — the model is regurgitating
-    // fragments of its own search queries rather than synthesizing.
-    // Common patterns from Gemini/deep research queries.
+    // Signal 6: Echoes raw search query / tool-name fragments without prose
+    // (generalized across topics + tool names like web_search/crawl_url/searxng).
     const queryEchoPatterns = [
-        /\bGemini\s+deep\s+research\b/i,
+        /\b(?:web_search|read_url|crawl_url|explore_docs|knowledge_search)\b/i,
+        /\b(?:searxng|crawl4ai)\b/i,
+        /\b(?:search_query|sub_task|evidence_needed)\b/i,
         /\bdeep\s+research\s+(?:agent|architecture|system|tool)\b/i,
         /\bcontext\s+(?:management|window|compression)\b/i,
-        /\b(?:RAG|million\s+token)\b/i,
-        /\b(?:crawl4ai|searxng|SearXNG)\b/i,
-        /\b(?:reinforcement\s+learning|RL\s+training)\b/i,
     ];
     let echoMatches = 0;
     for (const pat of queryEchoPatterns) {
         if (pat.test(trimmed)) echoMatches++;
     }
-    if (echoMatches >= 3) signals++;
-    if (echoMatches >= 5) signals++;
+    if (echoMatches >= 2) signals++;
+    if (echoMatches >= 4) signals++;
 
     // Signal 7: Contains raw tool-call XML fragments — truncated <invoke>,
     // <tool_call>, <parameter> tags that survived stripping.

@@ -367,7 +367,6 @@
     font-size: 16pt;
     font-weight: 700;
     color: #ffffff;
-    letter-spacing: -0.5px;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.40);
 }
 
@@ -1356,12 +1355,11 @@
 
 .katab-think-wrapper {
     margin: 8px 0 12px;
-    /* border-radius removed — combined with background-color + overflow:hidden
-       on potentially tall thinking content triggers Clutter offscreen
-       framebuffer errors on large responses */
+    /* border-radius removed — combined with background-color on potentially
+       tall thinking content triggers Clutter offscreen framebuffer errors
+       on large responses */
     border: 1px solid rgba(251, 191, 36, 0.20);
     background-color: rgba(28, 28, 28, 0.72);
-    overflow: hidden;
 }
 
 .katab-think-wrapper-expanded {
@@ -1386,7 +1384,6 @@
     font-size: 0.91em;
     font-weight: 700;
     color: #fde68a;
-    letter-spacing: 0;
 }
 
 .katab-think-toggle-btn {
@@ -1522,10 +1519,6 @@
     icon-size: 14px;
 }
 
-.katab-tool-call-icon-pending {
-    color: rgba(148, 226, 213, 0.85);
-}
-
 .katab-tool-call-icon-success {
     color: #94e2d5;
 }
@@ -1546,7 +1539,6 @@
     font-size: 0.91em;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.88);
-    letter-spacing: -0.2px;
 }
 
 .katab-tool-call-detail {
@@ -1634,10 +1626,6 @@
 .katab-theme-light .katab-tool-call-header:hover .katab-tool-call-chevron,
 .katab-theme-light .katab-tool-call-entry-expanded .katab-tool-call-chevron {
     color: rgba(20, 130, 115, 0.9);
-}
-
-.katab-theme-light .katab-tool-call-icon-pending {
-    color: rgba(20, 130, 115, 0.85);
 }
 
 .katab-theme-light .katab-tool-call-icon-success {
@@ -1899,7 +1887,6 @@
        code windows when tables contain many rows */
     border: 1px solid rgba(255, 255, 255, 0.10);
     background-color: rgba(26, 26, 26, 0.28);
-    overflow: hidden;
 }
 
 .katab-markdown-table-header {
@@ -2581,7 +2568,6 @@
     font-weight: 600;
     color: rgba(255, 255, 255, 0.60);
     padding: 8px 8px 4px 8px;
-    letter-spacing: 0.5px;
 }
 
 .katab-tools-popup-row {
@@ -2595,8 +2581,30 @@
     background-color: rgba(255, 255, 255, 0.06);
 }
 
-.katab-tools-popup-row-disabled {
-    opacity: 0.30;
+.katab-tools-popup-row-disabled .katab-tools-popup-row-label {
+    color: rgba(255, 255, 255, 0.34);
+}
+
+.katab-tools-popup-row-disabled .katab-tools-popup-row-icon {
+    color: rgba(255, 255, 255, 0.24);
+}
+
+.katab-tools-popup-row-disabled .katab-tools-popup-row-mode {
+    background-color: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.28);
+}
+
+.katab-theme-light .katab-tools-popup-row-disabled .katab-tools-popup-row-label {
+    color: rgba(0, 0, 0, 0.34);
+}
+
+.katab-theme-light .katab-tools-popup-row-disabled .katab-tools-popup-row-icon {
+    color: rgba(0, 0, 0, 0.24);
+}
+
+.katab-theme-light .katab-tools-popup-row-disabled .katab-tools-popup-row-mode {
+    background-color: rgba(0, 0, 0, 0.04);
+    color: rgba(0, 0, 0, 0.28);
 }
 
 .katab-tools-popup-row-disabled:hover {
@@ -4107,14 +4115,12 @@
     font-size: 0.82em;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.62);
-    letter-spacing: 0.3px;
 }
 
 .katab-usage-hero-value {
     font-size: 22pt;
     font-weight: 800;
     color: #ffffff;
-    letter-spacing: -0.5px;
 }
 
 .katab-usage-hero-range {
@@ -4300,7 +4306,6 @@
 .katab-usage-companion-secondary-icon {
     icon-size: 18px;
     padding: 3px;
-    opacity: 0.82;
 }
 
 .katab-usage-companion-home-icon {
@@ -4428,7 +4433,13 @@
 }
 
 .katab-pet-collection-item-locked {
-    opacity: 0.62;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.05);
+}
+
+.katab-pet-collection-item-locked .katab-pet-collection-name,
+.katab-pet-collection-item-locked .katab-pet-collection-status {
+    color: rgba(255, 255, 255, 0.42);
 }
 
 .katab-pet-collection-item-content {
@@ -4499,7 +4510,6 @@
 }
 
 /* Accuracy pills, milestones, and local action */
-.katab-usage-action-row,
 .katab-usage-milestone-row {
     spacing: 6px;
 }
@@ -4548,13 +4558,11 @@
     font-size: 8.5pt;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.44);
-    y-align: center;
 }
 
 /* The bar itself — clean rounded pill */
 .katab-usage-ratio-bar {
     border-radius: 5px;
-    overflow: hidden;
     margin: 6px 0 4px 0;
 }
 
@@ -4772,7 +4780,6 @@
     font-size: 0.86em;
     font-weight: 700;
     color: rgba(255, 255, 255, 0.55);
-    x-align: center;
 }
 
 .katab-usage-activity-label-today {
@@ -4831,7 +4838,6 @@
     font-size: 24pt;
     font-weight: 800;
     color: #ffffff;
-    letter-spacing: -0.5px;
 }
 
 .katab-usage-cost-value {
@@ -5361,7 +5367,8 @@
 /* ── Approved state (kept visible, subtly dimmed) ────────── */
 
 .katab-research-plan-approved {
-    opacity: 0.78;
+    background-color: rgba(20, 28, 36, 0.45);
+    border-color: rgba(148, 226, 213, 0.14);
 }
 
 /* ── Edit mode: St.Entry widgets ────────────────────────── */
@@ -5553,7 +5560,6 @@
     font-size: 0.82em;
     font-weight: 700;
     color: rgba(148, 226, 213, 0.75);
-    letter-spacing: 0.5px;
 }
 
 /* ── Timeline entry (icon + content row) ─── */
@@ -5656,7 +5662,16 @@
 /* ── Timeline complete (dimmed) ──────────── */
 
 .katab-research-timeline-complete {
-    opacity: 0.62;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.06);
+}
+
+.katab-research-timeline-complete .katab-research-timeline-title {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.katab-research-timeline-complete .katab-research-timeline-desc {
+    color: rgba(255, 255, 255, 0.42);
 }
 
 /* ════════════════════════════════════════════
@@ -5796,7 +5811,16 @@
 }
 
 .katab-theme-light .katab-research-timeline-complete {
-    opacity: 0.60;
+    background-color: rgba(0, 0, 0, 0.02);
+    border-color: rgba(0, 0, 0, 0.07);
+}
+
+.katab-theme-light .katab-research-timeline-complete .katab-research-timeline-title {
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.katab-theme-light .katab-research-timeline-complete .katab-research-timeline-desc {
+    color: rgba(0, 0, 0, 0.42);
 }
 
 /* ── Light theme: Search Result Cards ────── */
@@ -5904,6 +5928,105 @@
 
 .katab-theme-light .katab-quality-notice-btn:active {
     background-color: rgba(180, 140, 30, 0.26);
+}
+
+/* ════════════════════════════════════════════
+   INLINE CONFIRMATION PROMPT (e.g. Ollama Model Download)
+   ════════════════════════════════════════════ */
+
+.katab-prompt-box {
+    spacing: 8px;
+    margin-top: 8px;
+}
+
+.katab-prompt-btn-yes {
+    padding: 7px 14px;
+    border-radius: 7px;
+    background-color: rgba(148, 226, 213, 0.18);
+    border: 1px solid rgba(148, 226, 213, 0.38);
+    color: #94e2d5;
+    font-size: 0.91em;
+    font-weight: 700;
+}
+
+.katab-prompt-btn-yes:hover,
+.katab-prompt-btn-yes:focus {
+    background-color: rgba(148, 226, 213, 0.28);
+    border-color: rgba(148, 226, 213, 0.62);
+}
+
+.katab-prompt-btn-no {
+    padding: 7px 14px;
+    border-radius: 7px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 0.91em;
+    font-weight: 600;
+}
+
+.katab-prompt-btn-no:hover,
+.katab-prompt-btn-no:focus {
+    background-color: rgba(243, 139, 168, 0.16);
+    border-color: rgba(243, 139, 168, 0.36);
+    color: #f38ba8;
+}
+
+.katab-theme-light .katab-prompt-btn-yes {
+    background-color: rgba(15, 118, 110, 0.12);
+    border-color: rgba(15, 118, 110, 0.34);
+    color: #0f766e;
+}
+
+.katab-theme-light .katab-prompt-btn-yes:hover,
+.katab-theme-light .katab-prompt-btn-yes:focus {
+    background-color: rgba(15, 118, 110, 0.20);
+    border-color: rgba(15, 118, 110, 0.55);
+}
+
+.katab-theme-light .katab-prompt-btn-no {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.14);
+    color: rgba(0, 0, 0, 0.78);
+}
+
+.katab-theme-light .katab-prompt-btn-no:hover,
+.katab-theme-light .katab-prompt-btn-no:focus {
+    background-color: rgba(192, 64, 64, 0.12);
+    border-color: rgba(192, 64, 64, 0.32);
+    color: #b02a2a;
+}
+
+.katab-research-progress-status {
+    icon-size: 13px;
+}
+
+/* ════════════════════════════════════════════
+   KEYBOARD FOCUS ACCESSIBILITY
+   ════════════════════════════════════════════ */
+
+.katab-header-chip:focus,
+.katab-token-box:focus,
+.katab-kb-pill:focus,
+.katab-tool-call-header:focus,
+.katab-tool-call-group-header:focus,
+.katab-tools-popup-row:focus,
+.katab-recent-chats-row:focus,
+.katab-kb-result-row:focus {
+    border-color: rgba(148, 226, 213, 0.62);
+    background-color: rgba(148, 226, 213, 0.12);
+}
+
+.katab-theme-light .katab-header-chip:focus,
+.katab-theme-light .katab-token-box:focus,
+.katab-theme-light .katab-kb-pill:focus,
+.katab-theme-light .katab-tool-call-header:focus,
+.katab-theme-light .katab-tool-call-group-header:focus,
+.katab-theme-light .katab-tools-popup-row:focus,
+.katab-theme-light .katab-recent-chats-row:focus,
+.katab-theme-light .katab-kb-result-row:focus {
+    border-color: rgba(15, 118, 110, 0.58);
+    background-color: rgba(15, 118, 110, 0.10);
 }
 
 /* ════════════════════════════════════════════

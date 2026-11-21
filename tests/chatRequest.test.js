@@ -287,9 +287,14 @@ const tests = [
             assertEqual(built.payload.user_id, 'katab-tester', 'user id');
             assertEqual(built.payload.stream_options.include_usage, true, 'usage chunk');
             assertEqual(
-                messages[0].reasoning_content,
+                built.payload.messages[0].reasoning_content,
                 '',
-                'assistant reasoning_content backfilled',
+                'assistant reasoning_content backfilled in payload',
+            );
+            assertEqual(
+                messages[0].reasoning_content,
+                undefined,
+                'caller messages array not mutated in place',
             );
 
             const off = buildDeepSeekStreamRequest({

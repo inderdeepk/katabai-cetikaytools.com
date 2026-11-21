@@ -82,7 +82,7 @@ export const LEGACY_OFFICE_TARGETS = new Map([
     ['pot', 'pptx'],
 ]);
 
-export const OFFICE_EXTENSIONS = [...FAMILY_BY_EXTENSION.keys()];
+const UTF8_DECODER = new TextDecoder('utf-8');
 
 export function isOfficeExtension(extension) {
     return FAMILY_BY_EXTENSION.has(String(extension || '').toLowerCase());
@@ -243,8 +243,11 @@ export class OfficeZipArchive {
         const scanFloor = Math.max(0, length - 22 - 0xffff);
         for (let i = length - 22; i >= scanFloor; i--) {
             if (view.getUint32(i, true) === ZIP_EOCD_SIGNATURE) {
-                eocd = i;
-                break;
+                const commentLen = view.getUint16(i + 20, true);
+                if (i + 22 + commentLen === length) {
+                    eocd = i;
+                    break;
+                }
             }
         }
         if (eocd < 0) {
@@ -264,6 +267,7 @@ export class OfficeZipArchive {
             ) {
                 const zip64Offset = readUint64(view, locatorOffset + 8);
                 if (
+                    zip64Offset >= 0 &&
                     zip64Offset + 56 <= length &&
                     view.getUint32(zip64Offset, true) === ZIP64_EOCD_SIGNATURE
                 ) {
@@ -271,6 +275,12 @@ export class OfficeZipArchive {
                     directoryOffset = readUint64(view, zip64Offset + 48);
                 }
             }
+        }
+
+        if (!Number.isFinite(directoryOffset) || directoryOffset < 0 || directoryOffset > length) {
+            throw new OfficeParseError('This Office file is truncated or damaged.', {
+                code: 'truncated-container',
+            });
         }
 
         let offset = directoryOffset;
@@ -288,11 +298,12 @@ export class OfficeZipArchive {
             let localOffset = view.getUint32(offset + 42, true);
 
             const nameStart = offset + 46;
-            const name = new TextDecoder('utf-8').decode(
-                this._bytes.subarray(nameStart, nameStart + nameLength),
-            );
-
             const extraStart = nameStart + nameLength;
+            const nextOffset = extraStart + extraLength + commentLength;
+            if (extraStart > length || nextOffset > length) break;
+
+            const name = UTF8_DECODER.decode(this._bytes.subarray(nameStart, extraStart));
+
             if (
                 compressedSize === 0xffffffff ||
                 uncompressedSize === 0xffffffff ||
@@ -319,7 +330,7 @@ export class OfficeZipArchive {
                 });
             }
 
-            offset = extraStart + extraLength + commentLength;
+            offset = nextOffset;
         }
 
         if (this._entries.size === 0) {
@@ -332,11 +343,12 @@ export class OfficeZipArchive {
     _readZip64Extra(extraStart, extraLength, needs) {
         const result = { uncompressedSize: null, compressedSize: null, localOffset: null };
         let cursor = extraStart;
-        const end = extraStart + extraLength;
+        const end = Math.min(this._bytes.length, extraStart + extraLength);
         while (cursor + 4 <= end) {
             const id = this._view.getUint16(cursor, true);
             const size = this._view.getUint16(cursor + 2, true);
             const dataStart = cursor + 4;
+            if (dataStart + size > end) break;
             if (id === 0x0001) {
                 let field = dataStart;
                 const fieldEnd = dataStart + size;
@@ -368,7 +380,11 @@ export class OfficeZipArchive {
 
         const view = this._view;
         const localOffset = entry.localOffset;
-        if (localOffset + 30 > this._bytes.length) {
+        if (
+            !Number.isFinite(localOffset) ||
+            localOffset < 0 ||
+            localOffset + 30 > this._bytes.length
+        ) {
             throw new OfficeParseError('This Office file is truncated or damaged.', {
                 code: 'truncated-container',
             });
@@ -383,7 +399,7 @@ export class OfficeZipArchive {
         const extraLength = view.getUint16(localOffset + 28, true);
         const dataStart = localOffset + 30 + nameLength + extraLength;
         const dataEnd = dataStart + entry.compressedSize;
-        if (dataEnd > this._bytes.length) {
+        if (dataStart > this._bytes.length || dataEnd > this._bytes.length) {
             throw new OfficeParseError('This Office file is truncated or damaged.', {
                 code: 'truncated-container',
             });
@@ -391,7 +407,15 @@ export class OfficeZipArchive {
 
         const raw = this._bytes.subarray(dataStart, dataEnd);
         if (entry.compressedSize === 0) return new Uint8Array(0);
-        if (entry.method === COMPRESSION_STORED) return raw;
+        if (entry.method === COMPRESSION_STORED) {
+            if (raw.length > ZIP_MAX_ENTRY_BYTES) {
+                throw new OfficeParseError(
+                    'An entry inside this Office file is too large to read.',
+                    { code: 'entry-too-large' },
+                );
+            }
+            return raw;
+        }
         if (entry.method === COMPRESSION_DEFLATE) return inflateRaw(raw);
 
         throw new OfficeParseError(
@@ -609,7 +633,13 @@ export function decodeTextBytes(bytes) {
             return new TextDecoder('utf-16be').decode(bytes.subarray(2));
         }
     }
-    return new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+    return UTF8_DECODER.decode(bytes).replace(/^\uFEFF/, '');
+}
+
+function xmlLocalName(name) {
+    const raw = String(name || '');
+    const colon = raw.indexOf(':');
+    return colon >= 0 ? raw.slice(colon + 1) : raw;
 }
 
 function byNumericSuffix(a, b) {
@@ -621,7 +651,7 @@ function byNumericSuffix(a, b) {
 function readRelationships(xml) {
     const relationships = new Map();
     for (const token of tokenizeXml(xml)) {
-        if (token.type !== 'open' || token.name !== 'Relationship') continue;
+        if (token.type !== 'open' || xmlLocalName(token.name) !== 'Relationship') continue;
         const id = token.attrs.Id || token.attrs.id;
         const target = token.attrs.Target || token.attrs.target;
         if (id && target) relationships.set(id, target);
@@ -702,22 +732,26 @@ function wordXmlToText(xml) {
         if (token.type === 'open') {
             switch (token.name) {
                 case 'w:tbl':
-                    tableDepth += 1;
-                    if (tableDepth === 1) {
-                        // Emit a preceding list before the table starts so the
-                        // document order is preserved.
-                        flushList();
-                        table = { rows: [], row: null, cell: null, truncated: false };
+                    if (!token.selfClosing) {
+                        tableDepth += 1;
+                        if (tableDepth === 1) {
+                            // Emit a preceding list before the table starts so the
+                            // document order is preserved.
+                            flushList();
+                            table = { rows: [], row: null, cell: null, truncated: false };
+                        }
                     }
                     break;
                 case 'w:tr':
-                    if (tableDepth === 1 && table) table.row = [];
+                    if (!token.selfClosing && tableDepth === 1 && table) table.row = [];
                     break;
                 case 'w:tc':
-                    if (tableDepth === 1 && table) table.cell = [];
+                    if (!token.selfClosing && tableDepth === 1 && table) table.cell = [];
                     break;
                 case 'w:p':
-                    paragraphs.push({ parts: [], heading: 0, list: false });
+                    if (!token.selfClosing) {
+                        paragraphs.push({ parts: [], heading: 0, list: false });
+                    }
                     break;
                 case 'w:pStyle': {
                     const paragraph = currentParagraph();
@@ -730,7 +764,9 @@ function wordXmlToText(xml) {
                 case 'w:outlineLvl': {
                     const paragraph = currentParagraph();
                     const level = Number(token.attrs['w:val']);
-                    if (paragraph && Number.isFinite(level)) {
+                    // In OOXML, outlineLvl 0-8 map to heading levels 1-9, while 9
+                    // is the explicit sentinel for normal body text.
+                    if (paragraph && Number.isFinite(level) && level >= 0 && level < 9) {
                         paragraph.heading = Math.max(paragraph.heading, level + 1);
                     }
                     break;
@@ -854,22 +890,26 @@ function parseWorkbookStyles(xml) {
     let insideCellXfs = false;
 
     for (const token of tokenizeXml(xml)) {
+        const local = xmlLocalName(token.name);
         if (token.type === 'open') {
-            if (token.name === 'numFmt') {
+            if (local === 'numFmt') {
                 const id = Number(token.attrs.numFmtId);
                 if (Number.isFinite(id)) customFormats.set(id, token.attrs.formatCode || '');
-            } else if (token.name === 'cellXfs') {
-                insideCellXfs = true;
-            } else if (token.name === 'xf' && insideCellXfs) {
+            } else if (local === 'cellXfs') {
+                insideCellXfs = !token.selfClosing;
+            } else if (local === 'xf' && insideCellXfs) {
                 const formatId = Number(token.attrs.numFmtId) || 0;
                 isDateStyle.push(isDateFormatCode(customFormats.get(formatId), formatId));
             }
-        } else if (token.type === 'close' && token.name === 'cellXfs') {
+        } else if (token.type === 'close' && local === 'cellXfs') {
             insideCellXfs = false;
         }
     }
     return isDateStyle;
 }
+
+const SHARED_STRINGS_MAX_ENTRIES = 250_000;
+const SHARED_STRINGS_MAX_CHARS = 8_000_000;
 
 function parseSharedStrings(xml) {
     const strings = [];
@@ -881,20 +921,34 @@ function parseSharedStrings(xml) {
     let characters = 0;
 
     for (const token of tokenizeXml(xml)) {
-        if (characters >= MAX_EXTRACTED_CHARS || strings.length >= TABLE_MAX_CELLS) break;
+        if (
+            characters >= SHARED_STRINGS_MAX_CHARS ||
+            strings.length >= SHARED_STRINGS_MAX_ENTRIES
+        ) {
+            break;
+        }
+        const local = xmlLocalName(token.name);
         if (token.type === 'open') {
-            if (token.name === 'si') current = [];
-            else if (token.name === 'rPh') phoneticDepth += 1;
-            else if (token.name === 't') capturing = !token.selfClosing && phoneticDepth === 0;
+            if (local === 'si') {
+                if (token.selfClosing) {
+                    strings.push('');
+                } else {
+                    current = [];
+                }
+            } else if (local === 'rPh') {
+                if (!token.selfClosing) phoneticDepth += 1;
+            } else if (local === 't') {
+                capturing = !token.selfClosing && phoneticDepth === 0;
+            }
         } else if (token.type === 'close') {
-            if (token.name === 'si') {
+            if (local === 'si') {
                 const value = (current || []).join('');
                 characters += value.length;
                 strings.push(value);
                 current = null;
-            } else if (token.name === 'rPh') {
+            } else if (local === 'rPh') {
                 phoneticDepth = Math.max(0, phoneticDepth - 1);
-            } else if (token.name === 't') {
+            } else if (local === 't') {
                 capturing = false;
             }
         } else if (token.type === 'text' && capturing && current) {
@@ -910,7 +964,7 @@ function listWorksheets(zip) {
     const sheets = [];
 
     for (const token of tokenizeXml(workbookXml)) {
-        if (token.type !== 'open' || token.name !== 'sheet') continue;
+        if (token.type !== 'open' || xmlLocalName(token.name) !== 'sheet') continue;
         const name = token.attrs.name || `Sheet ${sheets.length + 1}`;
         const relId = token.attrs['r:id'] || token.attrs['relationships:id'] || '';
         let path = resolvePartPath(relationships.get(relId), 'xl/');
@@ -1030,31 +1084,36 @@ function sheetXmlToRows(xml, options) {
 
     for (const token of tokenizeXml(xml)) {
         if (truncated) break;
+        const local = xmlLocalName(token.name);
         if (token.type === 'open') {
-            if (token.name === 'row') {
-                row = { cells: [] };
-            } else if (token.name === 'c') {
-                cell = {
-                    column: columnIndexFromReference(token.attrs.r),
-                    type: token.attrs.t || 'n',
-                    style: Number(token.attrs.s) || 0,
-                    value: [],
-                    inline: [],
-                };
-            } else if (token.name === 'v') {
+            if (local === 'row') {
+                if (!token.selfClosing) {
+                    row = { cells: [] };
+                }
+            } else if (local === 'c') {
+                if (!token.selfClosing) {
+                    cell = {
+                        column: columnIndexFromReference(token.attrs.r),
+                        type: token.attrs.t || 'n',
+                        style: Number(token.attrs.s) || 0,
+                        value: [],
+                        inline: [],
+                    };
+                }
+            } else if (local === 'v') {
                 capture = token.selfClosing ? null : 'value';
-            } else if (token.name === 't') {
+            } else if (local === 't') {
                 capture = token.selfClosing ? null : 'inline';
             }
             continue;
         }
 
         if (token.type === 'close') {
-            if (token.name === 'v' || token.name === 't') {
+            if (local === 'v' || local === 't') {
                 capture = null;
-            } else if (token.name === 'c') {
+            } else if (local === 'c') {
                 finishCell();
-            } else if (token.name === 'row') {
+            } else if (local === 'row') {
                 finishCell();
                 if (row) rows.push(row);
                 row = null;
@@ -1147,7 +1206,7 @@ function listSlides(zip) {
     const slides = [];
 
     for (const token of tokenizeXml(presentationXml)) {
-        if (token.type !== 'open' || token.name !== 'sldId') continue;
+        if (token.type !== 'open' || xmlLocalName(token.name) !== 'sldId') continue;
         const relId = token.attrs['r:id'] || token.attrs['relationships:id'] || '';
         const path = resolvePartPath(relationships.get(relId), 'ppt/');
         if (path && zip.has(path)) slides.push(path);
@@ -1199,7 +1258,7 @@ function slideXmlToText(xml) {
                     capturing = !token.selfClosing;
                     break;
                 case 'a:fld':
-                    fieldDepth += 1;
+                    if (!token.selfClosing) fieldDepth += 1;
                     break;
                 case 'a:br':
                     paragraph.push('\n');
@@ -1208,16 +1267,18 @@ function slideXmlToText(xml) {
                     paragraph.push('\t');
                     break;
                 case 'a:tbl':
-                    tableDepth += 1;
-                    if (tableDepth === 1) {
-                        table = { rows: [], row: null, cell: null, truncated: false };
+                    if (!token.selfClosing) {
+                        tableDepth += 1;
+                        if (tableDepth === 1) {
+                            table = { rows: [], row: null, cell: null, truncated: false };
+                        }
                     }
                     break;
                 case 'a:tr':
-                    if (tableDepth === 1 && table) table.row = [];
+                    if (!token.selfClosing && tableDepth === 1 && table) table.row = [];
                     break;
                 case 'a:tc':
-                    if (tableDepth === 1 && table) table.cell = [];
+                    if (!token.selfClosing && tableDepth === 1 && table) table.cell = [];
                     break;
                 default:
                     break;
@@ -1778,13 +1839,24 @@ export function rtfToText(source) {
             byteQueue.length = 0;
             return;
         }
-        out.push(decodeAnsiBytes(byteQueue, codepage));
+        const decoded = decodeAnsiBytes(byteQueue, codepage);
         byteQueue.length = 0;
+        const remaining = MAX_EXTRACTED_CHARS - characters;
+        if (decoded.length > remaining) {
+            if (remaining > 0) out.push(decoded.slice(0, remaining));
+            characters = MAX_EXTRACTED_CHARS;
+            exhausted = true;
+            out.push('\n[...document truncated by Katab...]');
+            return;
+        }
+        characters += decoded.length;
+        out.push(decoded);
     };
 
     const write = (value) => {
         if (ignorable || exhausted) return;
         flushBytes();
+        if (exhausted) return;
         characters += value.length;
         if (characters > MAX_EXTRACTED_CHARS) {
             exhausted = true;
@@ -1851,7 +1923,10 @@ export function rtfToText(source) {
             if (next === "'") {
                 const hex = text.slice(index + 2, index + 4);
                 const byte = parseInt(hex, 16);
-                if (Number.isFinite(byte) && !ignorable) byteQueue.push(byte & 0xff);
+                if (Number.isFinite(byte) && !ignorable) {
+                    byteQueue.push(byte & 0xff);
+                    if (byteQueue.length >= 4096) flushBytes();
+                }
                 index += 4;
                 continue;
             }
@@ -1916,7 +1991,9 @@ export function rtfToText(source) {
                 case 'u': {
                     if (!Number.isFinite(value)) break;
                     const codePoint = value < 0 ? value + 65536 : value;
-                    write(String.fromCodePoint(codePoint));
+                    if (codePoint >= 0 && codePoint <= 0x10ffff) {
+                        write(String.fromCodePoint(codePoint));
+                    }
                     pendingSkip = ucSkip;
                     break;
                 }

@@ -227,6 +227,36 @@ const tests = [
             }
         },
     ],
+
+    [
+        'inline: preserves comparisons like x < 5 && y > 3 without stripping as HTML',
+        () => {
+            const markup = formatInlineMarkdown('Check if x < 5 && y > 3 holds.');
+            assert(
+                markup.includes('x &lt; 5 &amp;&amp; y &gt; 3'),
+                `comparison preserved: ${markup}`,
+            );
+        },
+    ],
+
+    [
+        'inline: preserves HTML tags inside inline code spans',
+        () => {
+            const markup = formatInlineMarkdown('Use `<div>` and `<span>` elements.');
+            assert(markup.includes('&lt;div&gt;'), `<div> kept inside code span: ${markup}`);
+            assert(markup.includes('&lt;span&gt;'), `<span> kept inside code span: ${markup}`);
+        },
+    ],
+
+    [
+        'inline: preserves $& / $$ / $1 sequences inside inline code spans',
+        () => {
+            const markup = formatInlineMarkdown('Run `sed s/foo/$&/g` with `$$PATH` and `$1`.');
+            assert(markup.includes('$&amp;'), `$& preserved: ${markup}`);
+            assert(markup.includes('$$PATH'), `$$ preserved: ${markup}`);
+            assert(markup.includes('$1'), `$1 preserved: ${markup}`);
+        },
+    ],
 ];
 
 await runTests(tests);

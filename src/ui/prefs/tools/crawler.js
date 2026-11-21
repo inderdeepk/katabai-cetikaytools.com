@@ -1,3 +1,4 @@
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import { Crawl4AIRuntime, readCrawl4AIConfig } from '../../../tools/crawl4aiTools.js';
 import { gettext as _, format } from '../../../shared/i18n.js';
@@ -10,6 +11,8 @@ export function buildCrawlerSection(ctx) {
     const {
         settings,
         watch,
+        isDisposed,
+        onDestroy,
         createToolSubpage,
         createPreferencesGroup,
         createInfoRow,
@@ -27,6 +30,10 @@ export function buildCrawlerSection(ctx) {
         createButtonRow,
         addCssClasses,
     } = ctx;
+
+    const setSafeSubtitle = (row, text) => {
+        row.subtitle = GLib.markup_escape_text(String(text || ''), -1);
+    };
 
     const subpage = createToolSubpage(_('Web Scraper'));
     const detailPage = subpage.detailPage;
@@ -274,35 +281,53 @@ export function buildCrawlerSection(ctx) {
     setStatusBadge(crawlConnBadge, _('Untested'), null);
 
     const crawlTestRuntime = new Crawl4AIRuntime({ timeoutSeconds: 12 });
-    createButtonRow(
+    onDestroy(() => crawlTestRuntime.destroy?.());
+    const testCrawlRow = createButtonRow(
         _('Test Connection'),
         _('Send a health check to verify the Crawl4AI endpoint responds.'),
         _('Test'),
         () => {
+            const btn = testCrawlRow.activatable_widget;
+            if (btn) btn.sensitive = false;
             setStatusBadge(crawlConnBadge, _('Testing'), null);
-            crawlConnStatusRow.subtitle = _('Contacting the Crawl4AI instance\u2026');
+            setSafeSubtitle(crawlConnStatusRow, _('Contacting the Crawl4AI instance\u2026'));
             const config = readCrawl4AIConfig(settings);
             crawlTestRuntime
                 .testConnection(config)
                 .then((result) => {
+                    if (isDisposed()) return;
                     if (result.ok) {
                         setStatusBadge(
                             crawlConnBadge,
                             _('Connected'),
                             'katab-prefs-status-detected',
                         );
-                        crawlConnStatusRow.subtitle = result.version
-                            ? format(_('Reachable. Server: {version}'), { version: result.version })
-                            : _('Reachable.');
+                        setSafeSubtitle(
+                            crawlConnStatusRow,
+                            result.version
+                                ? format(_('Reachable. Server: {version}'), {
+                                      version: result.version,
+                                  })
+                                : _('Reachable.'),
+                        );
                     } else {
                         setStatusBadge(crawlConnBadge, _('Failed'), 'katab-prefs-status-install');
-                        crawlConnStatusRow.subtitle =
-                            result.message || _('Connection test failed.');
+                        setSafeSubtitle(
+                            crawlConnStatusRow,
+                            result.message || _('Connection test failed.'),
+                        );
                     }
                 })
                 .catch((error) => {
+                    if (isDisposed()) return;
                     setStatusBadge(crawlConnBadge, _('Failed'), 'katab-prefs-status-install');
-                    crawlConnStatusRow.subtitle = error?.message || _('Connection test failed.');
+                    setSafeSubtitle(
+                        crawlConnStatusRow,
+                        error?.message || _('Connection test failed.'),
+                    );
+                })
+                .finally(() => {
+                    if (!isDisposed() && btn) btn.sensitive = true;
                 });
         },
         connectionGroup,
@@ -332,6 +357,24 @@ export function buildCrawlerSection(ctx) {
         settings.get_string.bind(settings),
         settings.set_string.bind(settings),
     );
+
+    const bm25ThresholdRow = createDoubleRow(
+        _('BM25 Relevance Threshold'),
+        _(
+            'Minimum BM25 score (0.3\u20130.8) for content blocks to be kept. Higher values filter more aggressively.',
+        ),
+        'crawl4ai-bm25-threshold',
+        extractionGroup,
+        0.3,
+        0.8,
+        0.05,
+        2,
+    );
+    const syncBm25Visibility = () => {
+        bm25ThresholdRow.visible = settings.get_string('crawl4ai-fit-markdown-mode') === 'bm25';
+    };
+    syncBm25Visibility();
+    watch('changed::crawl4ai-fit-markdown-mode', syncBm25Visibility);
 
     const cacheRow = createChoiceRow(
         _('Cache Mode'),
@@ -393,13 +436,13 @@ export function buildCrawlerSection(ctx) {
         _('How to enable AI extraction'),
         _(
             'Models request extraction per crawl (mode="extract"); the Extraction Mode below decides its shape ' +
-            '(Schema for structured JSON, Block for a freeform answer). ' +
-            'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
-            'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
-            'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
-            'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
-            '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
-            'different fields. Katab never sees or stores your API key.',
+                '(Schema for structured JSON, Block for a freeform answer). ' +
+                'The LLM Provider defaults to DeepSeek V4.1 Flash, and both modes ship with a sensible default ' +
+                'output setup. Extraction runs through Crawl4AI\u2019s /llm endpoint (server-side), so the ' +
+                'provider must be allowed on the container: set LLM_PROVIDER=<the same provider value> and the ' +
+                'provider\u2019s API key (e.g. DEEPSEEK_API_KEY) in your .llm.env, then restart the container ' +
+                '(docker compose down && docker compose up -d). Tweak the schema or instruction below for ' +
+                'different fields. Katab never sees or stores your API key.',
         ),
         llmGroup,
     );
@@ -460,17 +503,20 @@ export function buildCrawlerSection(ctx) {
             const raw = settings.get_string('crawl4ai-llm-schema-json') || '';
             try {
                 JSON.parse(raw);
-                validateSchemaRow.subtitle = _('Schema is valid JSON.');
+                setSafeSubtitle(validateSchemaRow, _('Schema is valid JSON.'));
             } catch (error) {
-                validateSchemaRow.subtitle = format(_('Invalid JSON: {error}'), {
-                    error: error?.message || _('parse error'),
-                });
+                setSafeSubtitle(
+                    validateSchemaRow,
+                    format(_('Invalid JSON: {error}'), {
+                        error: error?.message || _('parse error'),
+                    }),
+                );
             }
         },
         llmGroup,
     );
 
-    createIntRow(
+    const llmChunkTokensRow = createIntRow(
         _('Chunk Token Threshold'),
         _(
             'Maximum tokens per chunk when Crawl4AI splits large pages for LLM extraction (500\u201316000).',
@@ -482,7 +528,7 @@ export function buildCrawlerSection(ctx) {
         500,
     );
 
-    createDoubleRow(
+    const llmOverlapRow = createDoubleRow(
         _('Chunk Overlap Rate'),
         _(
             'Overlap between consecutive chunks (0.0\u20130.5) to preserve context across boundaries.',
@@ -503,6 +549,8 @@ export function buildCrawlerSection(ctx) {
         llmInstructionRow.visible = mode === 'llm-block';
         llmSchemaRow.visible = mode === 'llm-schema';
         validateSchemaRow.visible = mode === 'llm-schema';
+        llmChunkTokensRow.visible = llmActive;
+        llmOverlapRow.visible = llmActive;
     };
     syncLLMVisibility();
     watch('changed::crawl4ai-extraction-mode', syncLLMVisibility);
@@ -524,6 +572,15 @@ export function buildCrawlerSection(ctx) {
     );
 
     createBooleanRow(
+        _('Capture Background API Calls'),
+        _(
+            'Record XHR/Fetch network responses made by the page and include them alongside scraped content. Useful for apps that load data via background APIs.',
+        ),
+        'crawl4ai-capture-network',
+        advancedGroup,
+    );
+
+    createBooleanRow(
         _('Autonomous Tool Use'),
         _(
             'Advertise the crawl_url tool to supported models so they can decide when to deep-scrape a page. With this off, only the manual /crawl command runs.',
@@ -541,7 +598,7 @@ export function buildCrawlerSection(ctx) {
         advancedGroup,
     );
 
-    createIntRow(
+    const maxFollowLinksRow = createIntRow(
         _('Max Followed Links per Branch'),
         _(
             'How many relevance-scored subpage links a research branch may follow after its initial crawl (0\u201310).',
@@ -552,6 +609,11 @@ export function buildCrawlerSection(ctx) {
         10,
         1,
     );
+    const syncFollowLinksVisibility = () => {
+        maxFollowLinksRow.visible = settings.get_boolean('crawl4ai-follow-links-enabled');
+    };
+    syncFollowLinksVisibility();
+    watch('changed::crawl4ai-follow-links-enabled', syncFollowLinksVisibility);
 
     createBooleanRow(
         _('Allow Local Addresses'),

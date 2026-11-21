@@ -40,7 +40,7 @@ export function buildToolsPage(ctx) {
     // Tool index rows (order defines display order on the Tools page).
     createToolIndexRow(toolsIndexGroup, {
         title: _('Document Tool'),
-        subtitle: _('Attach and parse local files, and send images to Ollama vision models.'),
+        subtitle: _('Attach and parse local files, and send images to vision-capable models.'),
         iconName: 'text-x-generic-symbolic',
         enabledKey: 'document-tool-enabled',
         navPage: documentSubpage.navPage,

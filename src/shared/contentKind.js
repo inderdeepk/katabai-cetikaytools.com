@@ -16,7 +16,7 @@ const FENCE_LINE_REGEX = /^\s*```/;
 const HEADING_LINE_REGEX = /^#{1,6}\s/;
 
 const CODE_KEYWORD_REGEX =
-    /\b(function|class|import|export|const|let|var|def|return|async|await|public|private|protected|static|void|struct|enum|interface|typedef|#include|#define|npm|yarn|pnpm|pip|docker|cargo|curl|SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b/g;
+    /(?:(?:#include|#define)\b|\b(?:function|class|import|export|const|let|var|def|return|async|await|public|private|protected|static|void|struct|enum|interface|typedef|npm|yarn|pnpm|pip|docker|cargo|curl|SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b)/g;
 
 // Symbol shapes that are common in code and rare in prose.
 const CODE_SYMBOL_REGEX = /=>|[{}();]|<\/|\/>/g;
@@ -75,8 +75,9 @@ export function analyzeCodeHeaviness(text) {
 
 /**
  * Build a bounded verbatim excerpt that preserves headings and fenced code
- * blocks (the parts a code page exists for).  Non-code prose is dropped.
- * Falls back to a plain bounded slice when no code structure is found.
+ * blocks (the parts a code page exists for).  Non-code prose is dropped only
+ * when fenced code blocks exist — inline-code pages with headings keep a
+ * bounded slice instead of collapsing to bare headings.
  *
  * @param {string} text - Page markdown.
  * @param {{maxChars?: number}} [options]
@@ -88,9 +89,11 @@ export function buildRawCodeExcerpt(text, { maxChars = RAW_CODE_EXCERPT_MAX_CHAR
 
     const kept = [];
     let inFence = false;
+    let sawFencedCode = false;
     for (const line of value.split('\n')) {
         if (FENCE_LINE_REGEX.test(line)) {
             inFence = !inFence;
+            sawFencedCode = true;
             kept.push(line);
             continue;
         }
@@ -99,13 +102,24 @@ export function buildRawCodeExcerpt(text, { maxChars = RAW_CODE_EXCERPT_MAX_CHAR
         }
     }
 
-    let excerpt = kept.join('\n').trim();
+    let excerpt = sawFencedCode ? kept.join('\n').trim() : '';
     if (!excerpt) {
-        // No fenced structure (inline-code-heavy page) — keep a bounded slice.
+        // No fenced code blocks (inline-code-heavy page) — keep a bounded slice.
         excerpt = value.slice(0, maxChars).trimEnd();
     }
     if (excerpt.length > maxChars) {
-        excerpt = `${excerpt.slice(0, maxChars).trimEnd()}\n[...raw excerpt trimmed]`;
+        let sliced = excerpt.slice(0, maxChars).trimEnd();
+        // Close an unclosed fenced code block if slicing landed inside one.
+        let openFence = false;
+        for (const line of sliced.split('\n')) {
+            if (FENCE_LINE_REGEX.test(line)) {
+                openFence = !openFence;
+            }
+        }
+        if (openFence) {
+            sliced += '\n```';
+        }
+        excerpt = `${sliced}\n[...raw excerpt trimmed]`;
     }
     return excerpt;
 }

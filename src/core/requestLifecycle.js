@@ -40,13 +40,6 @@ const PHASE_STATES = new Set([
     REQUEST_STATES.SYNTHESIS,
 ]);
 
-const STOPPABLE_STATES = new Set([
-    REQUEST_STATES.ENRICHING,
-    REQUEST_STATES.AWAITING_MODEL,
-    REQUEST_STATES.TOOL_LOOP,
-    REQUEST_STATES.SYNTHESIS,
-]);
-
 // Post-enrichment working states — exactly the window where the dialog's
 // legacy `_isStreaming` boolean was true (a response is streaming / stopping).
 const RESPONDING_STATES = new Set([
@@ -95,6 +88,7 @@ export function createRequestLifecycle() {
             return { ok: false, previous, reason: 'not-active' };
         }
         state = outcome;
+        responseKey = null;
         return { ok: true, previous, reason: null };
     };
 
@@ -122,7 +116,7 @@ export function createRequestLifecycle() {
         },
 
         canStop() {
-            return STOPPABLE_STATES.has(state);
+            return PHASE_STATES.has(state);
         },
 
         begin(phase, key = null) {
@@ -141,16 +135,14 @@ export function createRequestLifecycle() {
             let reason = null;
             if (stopping) {
                 reason = 'illegal-transition';
+                if (key !== null && key !== responseKey) {
+                    responseKey = key;
+                    generation += 1;
+                }
             } else if (settled) {
                 generation += 1;
-                // Reset the identity even when the new request starts
-                // anonymously — a leftover key from the previous response
-                // would otherwise escalate the later naming (research-arm →
-                // synthesis stream, /kb enrichment → stream) into a FALSE
-                // 'response-overlap' flag.
                 responseKey = key;
             } else if (key !== null && !sameResponse) {
-                // Active with a different response identity: overlapping request.
                 if (responseKey === null) {
                     // First naming of an anonymous run (research → synthesis).
                     responseKey = key;
@@ -159,8 +151,11 @@ export function createRequestLifecycle() {
                     responseKey = key;
                     generation += 1;
                 }
-            } else if (key !== null && sameResponse) {
-                // Re-arm within the same response (tool iterations) — normal.
+            } else if (key === null && responseKey !== null) {
+                // Anonymous begin while a named response is still active.
+                reason = 'response-overlap';
+                responseKey = null;
+                generation += 1;
             }
             return { ok: reason === null, previous, reason };
         },
@@ -183,7 +178,7 @@ export function createRequestLifecycle() {
             if (previous === REQUEST_STATES.STOPPING) {
                 return { ok: false, previous, reason: 'already-stopping' };
             }
-            if (!STOPPABLE_STATES.has(previous)) {
+            if (!PHASE_STATES.has(previous)) {
                 return { ok: false, previous, reason: 'not-stoppable' };
             }
             state = REQUEST_STATES.STOPPING;

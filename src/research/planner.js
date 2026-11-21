@@ -60,12 +60,12 @@ export async function runPlannerAgent(host, query) {
         { role: 'user', content: `Research query: ${query}` },
     ];
 
-    // Retry on unparseable output.  A single transient malformed model
-    // response shouldn't silently discard the planning phase and fall
-    // straight into tool use / direct answering.
+    // Retry on unparseable output or transient error. Only send the JSON format
+    // nudge when the previous attempt actually returned unparseable text.
+    let hadUnparseableResponse = false;
     for (let attempt = 1; attempt <= PLANNER_MAX_ATTEMPTS; attempt++) {
         const messages = [...baseMessages];
-        if (attempt > 1) {
+        if (hadUnparseableResponse) {
             messages.push({
                 role: 'user',
                 content:
@@ -82,12 +82,14 @@ export async function runPlannerAgent(host, query) {
             if (plan && plan.length > 0) {
                 return plan;
             }
+            hadUnparseableResponse = true;
             // Log a truncated sample of the raw response for diagnosis.
             log(
                 `[Katab:planner] Planner returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`,
             );
         } catch (e) {
             if (isCancelled(e)) throw e;
+            hadUnparseableResponse = false;
             log(
                 `[Katab:planner] Planner agent failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`,
             );
@@ -131,11 +133,12 @@ export async function reviseResearchPlan(host, originalQuery, currentPlan, feedb
         },
     ];
 
-    // Retry once on unparseable output so a transient malformed response
-    // doesn't force the user to repeat their change request.
+    // Retry once on unparseable output or transient error; only send the JSON
+    // format nudge after an unparseable response.
+    let hadUnparseableResponse = false;
     for (let attempt = 1; attempt <= PLANNER_MAX_ATTEMPTS; attempt++) {
         const messages = [...baseMessages];
-        if (attempt > 1) {
+        if (hadUnparseableResponse) {
             messages.push({
                 role: 'user',
                 content:
@@ -152,11 +155,13 @@ export async function reviseResearchPlan(host, originalQuery, currentPlan, feedb
             if (plan && plan.length > 0) {
                 return plan;
             }
+            hadUnparseableResponse = true;
             log(
                 `[Katab:planner] Plan revision returned unparseable response (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${String(response || '').slice(0, 300)}`,
             );
         } catch (e) {
             if (isCancelled(e)) throw e;
+            hadUnparseableResponse = false;
             log(
                 `[Katab:planner] Plan revision failed (attempt ${attempt}/${PLANNER_MAX_ATTEMPTS}): ${e.message}`,
             );

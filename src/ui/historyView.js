@@ -10,6 +10,7 @@
 // Shell-only module: imports gi://St + Clutter (excluded from the plain-gjs
 // import smoke test, like src/pets/petSpriteActor.js).
 import { gettext as _ } from '../shared/i18n.js';
+import Atk from 'gi://Atk';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
@@ -53,6 +54,8 @@ export class HistoryView {
         this._titleGenInFlight = false;
         this._editorCancellable = null;
         this._kbSearchViewActive = false;
+        this._kbSearchSeq = 0;
+        this._kbSearchCancellable = null;
 
         this.editor = null;
         this._buildView();
@@ -99,6 +102,7 @@ export class HistoryView {
             }
             this._searchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
                 this._searchTimeoutId = 0;
+                if (this._host.isActorDisposed(this._container)) return GLib.SOURCE_REMOVE;
                 let q = this._searchEntry.get_text();
                 this._searchQuery = q;
                 this.renderList(q || null);
@@ -106,11 +110,13 @@ export class HistoryView {
             });
         });
 
-        // Escape closes the dialog (consistent with other ESC handling)
-        this._searchEntry.clutter_text.connect('key-press-event', (entry, event) => {
+        // Escape steps back from KB results or returns to chat view
+        this._searchEntry.clutter_text.connect('key-press-event', (_entry, event) => {
             let keyval = event.get_key_symbol();
             if (keyval === Clutter.KEY_Escape) {
-                this._host.closeDialog();
+                if (!this.handleEscape()) {
+                    this._host.showChatView();
+                }
                 return Clutter.EVENT_STOP;
             }
             return Clutter.EVENT_PROPAGATE;
@@ -188,12 +194,9 @@ export class HistoryView {
                 return Clutter.EVENT_STOP;
             }
             if (keyval === Clutter.KEY_Escape) {
-                // If KB results are showing, return to history list
-                if (this._kbSearchViewActive) {
-                    this.renderList(this._searchQuery || null);
-                    return Clutter.EVENT_STOP;
+                if (!this.handleEscape()) {
+                    this._host.showChatView();
                 }
-                this._host.closeDialog();
                 return Clutter.EVENT_STOP;
             }
             return Clutter.EVENT_PROPAGATE;
@@ -456,9 +459,29 @@ export class HistoryView {
 
     // ── History tabs (Active / Archived) ─────────────────────────────────
 
+    /** Handle Escape when the History view is visible: exit KB results back to list. */
+    handleEscape() {
+        if (!this._kbSearchViewActive) return false;
+        this._cancelKbSearch();
+        this.renderList(this._searchQuery || null);
+        return true;
+    }
+
+    _cancelKbSearch() {
+        this._kbSearchSeq += 1;
+        if (this._kbSearchCancellable) {
+            try {
+                this._kbSearchCancellable.cancel();
+            } catch (_e) {
+                /* already cancelled */
+            }
+            this._kbSearchCancellable = null;
+        }
+    }
+
     _setTab(tab) {
         const next = tab === 'archived' ? 'archived' : 'active';
-        if (this._tab === next) return;
+        if (this._tab === next && !this._kbSearchViewActive) return;
         this._tab = next;
         this._syncTabButtons();
         this.renderList(this._searchQuery || null);
@@ -498,10 +521,15 @@ export class HistoryView {
     }
 
     renderList(filterQuery = null) {
+        this._cancelKbSearch();
         let allEntries = HistoryManager.getCached();
         const tab = this._tab === 'archived' ? 'archived' : 'active';
         this._updateTabLabels(allEntries);
-        // The normal conversation list replaces any KB search results view.
+        // The normal conversation list replaces any KB search results view;
+        // always invalidate the list cache when leaving KB results so we rebuild.
+        if (this._kbSearchViewActive) {
+            this._listCacheKey = null;
+        }
         this._kbSearchViewActive = false;
 
         // Filter by tab first, then by search query (case-insensitive match
@@ -535,7 +563,7 @@ export class HistoryView {
                 if ((entry.description || '').toLowerCase().includes(q)) {
                     return true;
                 }
-                return entry.messages.some((msg) =>
+                return (entry.messages || []).some((msg) =>
                     extractMessageText(msg).toLowerCase().includes(q),
                 );
             });
@@ -583,8 +611,9 @@ export class HistoryView {
                 style_class: 'katab-history-text-col',
             });
 
+            const displayTitle = entry.title || 'Untitled';
             let titleLabel = new St.Label({
-                text: entry.title || 'Untitled',
+                text: displayTitle,
                 style_class: 'katab-history-title',
                 x_expand: true,
             });
@@ -626,6 +655,7 @@ export class HistoryView {
                 style_class: 'katab-history-load-btn',
                 can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
+                accessible_name: `Load ${displayTitle}`,
             });
             loadBtn.connect('clicked', () => this._host.loadConversation(entry));
             row.add_child(loadBtn);
@@ -635,6 +665,7 @@ export class HistoryView {
                 style_class: 'katab-history-archive-btn',
                 can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
+                accessible_name: `${tab === 'archived' ? 'Unarchive' : 'Archive'} ${displayTitle}`,
             });
             archiveBtn.connect('clicked', () => this._setArchived(entry.id, tab !== 'archived'));
             row.add_child(archiveBtn);
@@ -647,7 +678,7 @@ export class HistoryView {
                 style_class: 'katab-history-edit-btn',
                 can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
-                accessible_name: 'Edit title and description',
+                accessible_name: `Edit title and description for ${displayTitle}`,
             });
             editBtn.connect('clicked', () => this._openEditor(entry));
             row.add_child(editBtn);
@@ -660,7 +691,7 @@ export class HistoryView {
                 style_class: 'katab-history-delete-btn',
                 can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
-                accessible_name: 'Delete conversation',
+                accessible_name: `Delete ${displayTitle}`,
             });
             deleteBtn.connect('clicked', () => {
                 this._host.deleteConversation(entry.id);
@@ -674,77 +705,7 @@ export class HistoryView {
 
     // ── Knowledge Base search (Phase 2: cross-session retrieval) ──────────
 
-    /** Execute a KB search query and render the results in the history view. */
-    async _executeKbSearch(query) {
-        const ragConfig = readRagConfig(this._settings);
-        if (!ragConfig.enabled) {
-            this._host.addSystemMessage(
-                'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base.',
-                { variant: 'warning' },
-            );
-            return;
-        }
-
-        // Show loading state in the history container
-        this._container.destroy_all_children();
-        let loadingLabel = new St.Label({
-            text: `Searching knowledge base for "${query}"…`,
-            style_class: 'katab-history-empty',
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-            x_expand: true,
-        });
-        this._container.add_child(loadingLabel);
-
-        try {
-            const searchOutcome = await this._host.withTimeout(
-                this._host.getRagRuntime().search(query, ragConfig, null),
-                this._host.ragManualSearchTimeoutMs,
-            );
-            // The dialog or the history view may have been torn down while the
-            // local RAG service was thinking — never touch disposed widgets.
-            if (this._host.isActorDisposed(this._container)) return;
-            if (searchOutcome.kind === 'timeout') {
-                log(
-                    `[Katab:rag] KB search timed out after ${this._host.ragManualSearchTimeoutMs}ms`,
-                );
-                this._container.destroy_all_children();
-                let timeoutLabel = new St.Label({
-                    text: `Knowledge Base search timed out — the RAG service is unresponsive.`,
-                    style_class: 'katab-history-empty',
-                    x_align: Clutter.ActorAlign.CENTER,
-                    y_align: Clutter.ActorAlign.CENTER,
-                    x_expand: true,
-                });
-                this._container.add_child(timeoutLabel);
-            } else {
-                this._renderKbSearchResults(query, searchOutcome.value);
-            }
-        } catch (e) {
-            if (this._host.isActorDisposed(this._container)) return;
-            log(`[Katab:rag] KB search failed: ${e.message}`);
-            this._container.destroy_all_children();
-            let errorLabel = new St.Label({
-                text: `Search failed: ${e.message}`,
-                style_class: 'katab-history-empty',
-                x_align: Clutter.ActorAlign.CENTER,
-                y_align: Clutter.ActorAlign.CENTER,
-                x_expand: true,
-            });
-            this._container.add_child(errorLabel);
-        }
-    }
-
-    /** Render KB search results as clickable rows in the history container.
-     *  Each row shows: score badge, source collection, snippet, timestamp. */
-    _renderKbSearchResults(query, searchResult) {
-        if (this._host.isActorDisposed(this._container)) return;
-        this._kbSearchViewActive = true;
-        this._container.destroy_all_children();
-
-        const results = Array.isArray(searchResult?.results) ? searchResult.results : [];
-
-        // Back button to return to normal history view
+    _buildKbBackRow() {
         let backRow = new St.BoxLayout({
             vertical: false,
             style_class: 'katab-kb-back-row',
@@ -759,7 +720,122 @@ export class HistoryView {
             this.renderList(this._searchQuery || null);
         });
         backRow.add_child(backBtn);
-        this._container.add_child(backRow);
+        return backRow;
+    }
+
+    /** Execute a KB search query and render the results in the history view. */
+    async _executeKbSearch(query) {
+        const ragConfig = readRagConfig(this._settings);
+        if (!ragConfig.enabled) {
+            this._host.addSystemMessage(
+                'Knowledge Base is disabled. Enable it in Settings > Tools > Knowledge Base.',
+                { variant: 'warning' },
+            );
+            return;
+        }
+
+        // Cancel any previous in-flight KB search and mark the container dirty
+        // so returning to the conversation list always rebuilds cleanly.
+        this._cancelKbSearch();
+        const seq = this._kbSearchSeq;
+        const cancellable = new Gio.Cancellable();
+        this._kbSearchCancellable = cancellable;
+        this._kbSearchViewActive = true;
+        this._listCacheKey = null;
+
+        // Show loading state in the history container with a Back button
+        this._container.destroy_all_children();
+        this._container.add_child(this._buildKbBackRow());
+        let loadingLabel = new St.Label({
+            text: `Searching knowledge base for "${query}"…`,
+            style_class: 'katab-history-empty',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+        });
+        this._container.add_child(loadingLabel);
+
+        try {
+            const searchOutcome = await this._host.withTimeout(
+                this._host.getRagRuntime().search(query, ragConfig, cancellable),
+                this._host.ragManualSearchTimeoutMs,
+            );
+            // Ignore stale or cancelled results, and never touch disposed actors.
+            if (
+                seq !== this._kbSearchSeq ||
+                cancellable.is_cancelled() ||
+                this._host.isActorDisposed(this._container)
+            ) {
+                return;
+            }
+            if (searchOutcome.kind === 'timeout') {
+                try {
+                    cancellable.cancel();
+                } catch (_e) {
+                    /* already cancelled */
+                }
+                log(
+                    `[Katab:rag] KB search timed out after ${this._host.ragManualSearchTimeoutMs}ms`,
+                );
+                this._kbSearchViewActive = true;
+                this._listCacheKey = null;
+                this._container.destroy_all_children();
+                this._container.add_child(this._buildKbBackRow());
+                let timeoutLabel = new St.Label({
+                    text: 'Knowledge Base search timed out — the RAG service is unresponsive.',
+                    style_class: 'katab-history-empty',
+                    x_align: Clutter.ActorAlign.CENTER,
+                    y_align: Clutter.ActorAlign.CENTER,
+                    x_expand: true,
+                });
+                timeoutLabel.clutter_text.line_wrap = true;
+                timeoutLabel.clutter_text.single_line_mode = false;
+                this._container.add_child(timeoutLabel);
+            } else {
+                this._renderKbSearchResults(query, searchOutcome.value);
+            }
+        } catch (e) {
+            if (
+                seq !== this._kbSearchSeq ||
+                cancellable.is_cancelled() ||
+                this._host.isActorDisposed(this._container)
+            ) {
+                return;
+            }
+            log(`[Katab:rag] KB search failed: ${e.message}`);
+            this._kbSearchViewActive = true;
+            this._listCacheKey = null;
+            this._container.destroy_all_children();
+            this._container.add_child(this._buildKbBackRow());
+            let errorLabel = new St.Label({
+                text: `Search failed: ${e.message}`,
+                style_class: 'katab-history-empty',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
+                x_expand: true,
+            });
+            errorLabel.clutter_text.line_wrap = true;
+            errorLabel.clutter_text.single_line_mode = false;
+            this._container.add_child(errorLabel);
+        } finally {
+            if (this._kbSearchCancellable === cancellable) {
+                this._kbSearchCancellable = null;
+            }
+        }
+    }
+
+    /** Render KB search results as clickable rows in the history container.
+     *  Each row shows: score badge, source collection, snippet, timestamp. */
+    _renderKbSearchResults(query, searchResult) {
+        if (this._host.isActorDisposed(this._container)) return;
+        this._kbSearchViewActive = true;
+        this._listCacheKey = null;
+        this._container.destroy_all_children();
+
+        const results = Array.isArray(searchResult?.results) ? searchResult.results : [];
+
+        // Back button to return to normal history view
+        this._container.add_child(this._buildKbBackRow());
 
         if (results.length === 0) {
             let emptyLabel = new St.Label({
@@ -780,20 +856,39 @@ export class HistoryView {
         });
         this._container.add_child(resultCountLabel);
 
+        const cachedConversations = HistoryManager.getCached();
         for (const result of results) {
             const meta = result.metadata || {};
             const sourceLabel = meta.source || 'document';
             const scorePct = Math.round((result.score || 0) * 100);
-            const snippet = (result.content || '').substring(0, 200);
+            const fullContent = String(result.content || '');
+            const isTruncated = fullContent.length > 200;
+            const collapsedSnippet = isTruncated
+                ? `${fullContent.substring(0, 200)}…`
+                : fullContent;
             const title = meta.title || '';
             const ts = meta.timestamp || '';
+            const targetEntry =
+                sourceLabel === 'conversation' && meta.sessionId
+                    ? cachedConversations.find((e) => e.id === meta.sessionId) || null
+                    : null;
+            const isInteractive = Boolean(targetEntry || isTruncated);
 
             let row = new St.BoxLayout({
                 vertical: false,
                 style_class: 'katab-kb-result-row',
                 x_expand: true,
-                reactive: true,
-                track_hover: true,
+                reactive: isInteractive,
+                track_hover: isInteractive,
+                can_focus: isInteractive,
+                ...(isInteractive
+                    ? {
+                          accessible_role: Atk.Role.PUSH_BUTTON,
+                          accessible_name: targetEntry
+                              ? `Open conversation ${targetEntry.title || title || 'Untitled'}`
+                              : `Expand snippet ${title || sourceLabel}`,
+                      }
+                    : {}),
             });
 
             // Score badge
@@ -801,8 +896,8 @@ export class HistoryView {
                 scorePct >= 80
                     ? 'katab-kb-score-high'
                     : scorePct >= 60
-                        ? 'katab-kb-score-mid'
-                        : 'katab-kb-score-low';
+                      ? 'katab-kb-score-mid'
+                      : 'katab-kb-score-low';
             let scoreBadge = new St.Label({
                 text: `${scorePct}%`,
                 style_class: `katab-kb-score-badge ${scoreClass}`,
@@ -844,7 +939,7 @@ export class HistoryView {
             textCol.add_child(sourceLabelWidget);
 
             let snippetLabel = new St.Label({
-                text: snippet + (result.content && result.content.length > 200 ? '…' : ''),
+                text: collapsedSnippet,
                 style_class: 'katab-kb-result-snippet',
                 x_expand: true,
             });
@@ -855,19 +950,40 @@ export class HistoryView {
 
             row.add_child(textCol);
 
-            // Click: navigate to source conversation or expand snippet
-            row.connect('button-press-event', () => {
-                if (sourceLabel === 'conversation' && meta.sessionId) {
-                    // Find and load the conversation
-                    const allEntries = HistoryManager.getCached();
-                    const entry = allEntries.find((e) => e.id === meta.sessionId);
-                    if (entry) {
-                        this._host.loadConversation(entry);
+            // Click or Enter/Space: navigate to source conversation or expand/collapse snippet
+            if (isInteractive) {
+                let expanded = false;
+                const activate = () => {
+                    if (targetEntry) {
+                        this._host.loadConversation(targetEntry);
                         this._host.showChatView();
+                        return;
                     }
-                }
-                return Clutter.EVENT_STOP;
-            });
+                    if (isTruncated) {
+                        expanded = !expanded;
+                        snippetLabel.set_text(expanded ? fullContent : collapsedSnippet);
+                        snippetLabel.clutter_text.ellipsize = expanded
+                            ? Pango.EllipsizeMode.NONE
+                            : Pango.EllipsizeMode.END;
+                    }
+                };
+                row.connect('button-press-event', () => {
+                    activate();
+                    return Clutter.EVENT_STOP;
+                });
+                row.connect('key-press-event', (_actor, event) => {
+                    const sym = event.get_key_symbol();
+                    if (
+                        sym === Clutter.KEY_Return ||
+                        sym === Clutter.KEY_KP_Enter ||
+                        sym === Clutter.KEY_space
+                    ) {
+                        activate();
+                        return Clutter.EVENT_STOP;
+                    }
+                    return Clutter.EVENT_PROPAGATE;
+                });
+            }
 
             this._container.add_child(row);
         }
@@ -879,6 +995,10 @@ export class HistoryView {
      *  auto-focus the search bar. */
     prepareForShow() {
         // Phase 2: show KB search box if RAG is enabled, reset KB search state
+        this._cancelKbSearch();
+        if (this._kbSearchViewActive) {
+            this._listCacheKey = null;
+        }
         this._kbSearchViewActive = false;
         try {
             const ragConfig = readRagConfig(this._settings);
@@ -900,6 +1020,7 @@ export class HistoryView {
 
     /** Clear search + KB state when the history panel is left. */
     resetViewState() {
+        this._cancelKbSearch();
         // Clear any active history search so the user gets a fresh list
         // next time they open the history panel.
         if (this._searchEntry) {
@@ -911,6 +1032,9 @@ export class HistoryView {
         }
         this._searchQuery = '';
         // Phase 2: reset KB search state
+        if (this._kbSearchViewActive) {
+            this._listCacheKey = null;
+        }
         this._kbSearchViewActive = false;
         if (this._kbSearchEntry) {
             this._kbSearchEntry.set_text('');
@@ -924,6 +1048,7 @@ export class HistoryView {
 
     /** Remove pending timers/cancellables so nothing fires post-destroy. */
     destroy() {
+        this._cancelKbSearch();
         if (this._searchTimeoutId) {
             GLib.source_remove(this._searchTimeoutId);
             this._searchTimeoutId = 0;

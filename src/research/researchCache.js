@@ -23,6 +23,15 @@ let _testCachePath = null;
 // Test-only override for the on-disk cache path, so unit tests never write to
 // the real ~/.local/share/katabai/research-cache.json. Pass null to restore.
 export function _setCachePathForTesting(path) {
+    if (_flushTimerId) {
+        try {
+            GLib.source_remove(_flushTimerId);
+        } catch (_e) {
+            /* ignore */
+        }
+        _flushTimerId = 0;
+    }
+    _dirty = false;
     _testCachePath = path || null;
     _cache = null; // force reload from the new path on next access
 }
@@ -42,9 +51,56 @@ function _cacheFilePath() {
 let _cache = null; // { entries: { keyHash: { query, results, crawledAt } }, order: [keyHash] }
 let _dirty = false;
 let _flushTimerId = 0;
+let _asyncFlushInFlight = false;
 const DEFAULT_MAX_ENTRIES = 500;
+const MAX_CACHE_JSON_BYTES = 10 * 1024 * 1024; // 10 MB cap to keep disk I/O fast
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const FLUSH_DEBOUNCE_MS = 500;
+
+const _textEncoder = new TextEncoder();
+const _textDecoder = new TextDecoder('utf-8');
+
+function _cloneValue(value) {
+    if (value === null || value === undefined || typeof value !== 'object') {
+        return value;
+    }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (_e) {
+        return value;
+    }
+}
+
+function _namespacedHash(type, rawKey) {
+    return _hashString(`${type}:${rawKey}`);
+}
+
+function _insertEntry(keyHash, entry) {
+    const existingIdx = _cache.order.indexOf(keyHash);
+    if (existingIdx >= 0) {
+        _cache.order.splice(existingIdx, 1);
+    }
+    _cache.entries[keyHash] = entry;
+    _cache.order.unshift(keyHash);
+
+    while (_cache.order.length > DEFAULT_MAX_ENTRIES) {
+        const oldest = _cache.order.pop();
+        delete _cache.entries[oldest];
+    }
+}
+
+function _serializeWithByteCap() {
+    let json = JSON.stringify(_cache);
+    while (json.length > MAX_CACHE_JSON_BYTES && _cache.order.length > 1) {
+        const dropCount = Math.max(1, Math.ceil(_cache.order.length * 0.1));
+        for (let i = 0; i < dropCount && _cache.order.length > 1; i++) {
+            const oldest = _cache.order.pop();
+            delete _cache.entries[oldest];
+        }
+        json = JSON.stringify(_cache);
+    }
+    return _textEncoder.encode(json);
+}
 
 // ── Load / save ──────────────────────────────────────────────────────────────
 
@@ -57,8 +113,7 @@ function _loadCache() {
             return;
         }
         const [, contents] = file.load_contents(null);
-        const decoder = new TextDecoder('utf-8');
-        _cache = JSON.parse(decoder.decode(contents));
+        _cache = JSON.parse(_textDecoder.decode(contents));
         if (!_cache.entries || !Array.isArray(_cache.order)) {
             _cache = { entries: {}, order: [] };
         }
@@ -72,9 +127,49 @@ function _scheduleFlush() {
     if (_flushTimerId) return;
     _flushTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FLUSH_DEBOUNCE_MS, () => {
         _flushTimerId = 0;
-        _flushNow();
+        _flushAsync();
         return GLib.SOURCE_REMOVE;
     });
+}
+
+function _flushAsync() {
+    if (!_dirty || !_cache) return;
+    if (_asyncFlushInFlight) {
+        // Another async write is in flight — keep _dirty true so its completion
+        // callback schedules one follow-up pass.
+        return;
+    }
+    try {
+        const bytes = _serializeWithByteCap();
+        const file = Gio.File.new_for_path(_cacheFilePath());
+        _asyncFlushInFlight = true;
+        _dirty = false;
+        file.replace_contents_async(
+            bytes,
+            null,
+            false,
+            Gio.FileCreateFlags.REPLACE_DESTINATION,
+            null,
+            (source, res) => {
+                _asyncFlushInFlight = false;
+                try {
+                    source.replace_contents_finish(res);
+                } catch (e) {
+                    _dirty = true;
+                    log(
+                        `[Katab:cache] Failed to async-flush research cache (will retry): ${e.message}`,
+                    );
+                }
+                if (_dirty) {
+                    _scheduleFlush();
+                }
+            },
+        );
+    } catch (e) {
+        _asyncFlushInFlight = false;
+        _dirty = true;
+        log(`[Katab:cache] Failed to queue research cache flush (will retry): ${e.message}`);
+    }
 }
 
 function _flushNow() {
@@ -85,16 +180,9 @@ function _flushNow() {
     }
     if (!_dirty || !_cache) return;
     try {
-        const encoder = new TextEncoder();
-        const data = JSON.stringify(_cache);
+        const bytes = _serializeWithByteCap();
         const file = Gio.File.new_for_path(_cacheFilePath());
-        file.replace_contents(
-            encoder.encode(data),
-            null,
-            false,
-            Gio.FileCreateFlags.REPLACE_DESTINATION,
-            null,
-        );
+        file.replace_contents(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         // Only mark clean AFTER a successful write — a failed flush keeps the
         // dirty flag set so the next schedule/flushSync retries instead of
         // silently losing the pending mutation.
@@ -118,7 +206,8 @@ export function flushCacheSync() {
  */
 export function cacheSearchResults(query, results) {
     _loadCache();
-    const keyHash = _hashString(
+    const keyHash = _namespacedHash(
+        'search',
         String(query || '')
             .toLowerCase()
             .trim(),
@@ -126,25 +215,11 @@ export function cacheSearchResults(query, results) {
     const entry = {
         type: 'search',
         query,
-        results,
+        results: _cloneValue(results),
         cachedAt: Date.now(),
     };
 
-    // Remove existing entry if present (move to front on re-cache)
-    const existingIdx = _cache.order.indexOf(keyHash);
-    if (existingIdx >= 0) {
-        _cache.order.splice(existingIdx, 1);
-    }
-
-    _cache.entries[keyHash] = entry;
-    _cache.order.unshift(keyHash);
-
-    // Prune if over limit
-    while (_cache.order.length > DEFAULT_MAX_ENTRIES) {
-        const oldest = _cache.order.pop();
-        delete _cache.entries[oldest];
-    }
-
+    _insertEntry(keyHash, entry);
     _scheduleFlush();
 }
 
@@ -156,11 +231,10 @@ export function cacheSearchResults(query, results) {
  */
 export function getCachedSearchResults(query, maxAgeMs = DEFAULT_TTL_MS) {
     _loadCache();
-    const keyHash = _hashString(
-        String(query || '')
-            .toLowerCase()
-            .trim(),
-    );
+    const normalized = String(query || '')
+        .toLowerCase()
+        .trim();
+    const keyHash = _namespacedHash('search', normalized);
     const entry = _cache.entries[keyHash];
     if (!entry || entry.type !== 'search') return null;
 
@@ -174,7 +248,7 @@ export function getCachedSearchResults(query, maxAgeMs = DEFAULT_TTL_MS) {
         return null;
     }
 
-    return entry.results;
+    return _cloneValue(entry.results);
 }
 
 /**
@@ -184,27 +258,15 @@ export function getCachedSearchResults(query, maxAgeMs = DEFAULT_TTL_MS) {
  */
 export function cacheCrawlResult(url, result) {
     _loadCache();
-    const keyHash = _hashString(String(url || '').trim());
+    const keyHash = _namespacedHash('crawl', String(url || '').trim());
     const entry = {
         type: 'crawl',
         url,
-        result,
+        result: _cloneValue(result),
         cachedAt: Date.now(),
     };
 
-    const existingIdx = _cache.order.indexOf(keyHash);
-    if (existingIdx >= 0) {
-        _cache.order.splice(existingIdx, 1);
-    }
-
-    _cache.entries[keyHash] = entry;
-    _cache.order.unshift(keyHash);
-
-    while (_cache.order.length > DEFAULT_MAX_ENTRIES) {
-        const oldest = _cache.order.pop();
-        delete _cache.entries[oldest];
-    }
-
+    _insertEntry(keyHash, entry);
     _scheduleFlush();
 }
 
@@ -216,7 +278,7 @@ export function cacheCrawlResult(url, result) {
  */
 export function getCachedCrawlResult(url, maxAgeMs = DEFAULT_TTL_MS) {
     _loadCache();
-    const keyHash = _hashString(String(url || '').trim());
+    const keyHash = _namespacedHash('crawl', String(url || '').trim());
     const entry = _cache.entries[keyHash];
     if (!entry || entry.type !== 'crawl') return null;
 
@@ -229,7 +291,7 @@ export function getCachedCrawlResult(url, maxAgeMs = DEFAULT_TTL_MS) {
         return null;
     }
 
-    return entry.result;
+    return _cloneValue(entry.result);
 }
 
 // ── LLM extraction cache ─────────────────────────────────────────────────────
@@ -241,6 +303,7 @@ export function getCachedCrawlResult(url, maxAgeMs = DEFAULT_TTL_MS) {
 
 function _llmCacheKey(url, config) {
     const parts = [
+        'llm-extraction',
         String(url || '').trim(),
         config?.extractionMode || 'markdown',
         config?.llmProvider || '',
@@ -266,23 +329,11 @@ export function cacheLLMExtractionResult(url, result, config) {
     const entry = {
         type: 'llm-extraction',
         url,
-        result,
+        result: _cloneValue(result),
         cachedAt: Date.now(),
     };
 
-    const existingIdx = _cache.order.indexOf(keyHash);
-    if (existingIdx >= 0) {
-        _cache.order.splice(existingIdx, 1);
-    }
-
-    _cache.entries[keyHash] = entry;
-    _cache.order.unshift(keyHash);
-
-    while (_cache.order.length > DEFAULT_MAX_ENTRIES) {
-        const oldest = _cache.order.pop();
-        delete _cache.entries[oldest];
-    }
-
+    _insertEntry(keyHash, entry);
     _scheduleFlush();
 }
 
@@ -308,7 +359,7 @@ export function getCachedLLMExtractionResult(url, config, maxAgeMs = DEFAULT_TTL
         return null;
     }
 
-    return entry.result;
+    return _cloneValue(entry.result);
 }
 
 /**
@@ -319,28 +370,16 @@ export function getCachedLLMExtractionResult(url, config, maxAgeMs = DEFAULT_TTL
  */
 export function cacheFetchResult(url, result, ttlCategory = 'static') {
     _loadCache();
-    const keyHash = _hashString(String(url || '').trim());
+    const keyHash = _namespacedHash('fetch', String(url || '').trim());
     const entry = {
         type: 'fetch',
         url,
-        result,
+        result: _cloneValue(result),
         cachedAt: Date.now(),
         ttlCategory: ttlCategory || 'static',
     };
 
-    const existingIdx = _cache.order.indexOf(keyHash);
-    if (existingIdx >= 0) {
-        _cache.order.splice(existingIdx, 1);
-    }
-
-    _cache.entries[keyHash] = entry;
-    _cache.order.unshift(keyHash);
-
-    while (_cache.order.length > DEFAULT_MAX_ENTRIES) {
-        const oldest = _cache.order.pop();
-        delete _cache.entries[oldest];
-    }
-
+    _insertEntry(keyHash, entry);
     _scheduleFlush();
 }
 
@@ -353,7 +392,7 @@ export function cacheFetchResult(url, result, ttlCategory = 'static') {
  */
 export function getCachedFetchResult(url, maxAgeMs) {
     _loadCache();
-    const keyHash = _hashString(String(url || '').trim());
+    const keyHash = _namespacedHash('fetch', String(url || '').trim());
     const entry = _cache.entries[keyHash];
     if (!entry || entry.type !== 'fetch') return null;
 
@@ -372,7 +411,7 @@ export function getCachedFetchResult(url, maxAgeMs) {
         return null;
     }
 
-    return entry.result;
+    return _cloneValue(entry.result);
 }
 
 /**
@@ -436,9 +475,6 @@ export function getCacheStats() {
 }
 
 /**
- * Clear all cached entries.
- */
-/**
  * Return a snapshot of every cache entry, newest first (matching `order`).
  * Used by knowledge-base maintenance to re-import research results.
  * @returns {Array<object>} copies of entries, each including its `key`
@@ -448,11 +484,14 @@ export function getAllCacheEntries() {
     const out = [];
     for (const key of _cache.order) {
         const entry = _cache.entries[key];
-        if (entry) out.push({ key, ...entry });
+        if (entry) out.push({ key, ..._cloneValue(entry) });
     }
     return out;
 }
 
+/**
+ * Clear all cached entries.
+ */
 export function clearCache() {
     _loadCache();
     _cache = { entries: {}, order: [] };
@@ -462,7 +501,7 @@ export function clearCache() {
 
 /**
  * Invalidate (remove) a specific cached entry by its lookup key.
- * @param {'search'|'crawl'} type
+ * @param {'search'|'crawl'|'fetch'} type
  * @param {string} key - The query or URL string
  */
 export function invalidateCacheEntry(type, key) {
@@ -473,7 +512,7 @@ export function invalidateCacheEntry(type, key) {
                   .toLowerCase()
                   .trim()
             : String(key || '').trim();
-    const keyHash = _hashString(input);
+    const keyHash = _namespacedHash(type || 'crawl', input);
     delete _cache.entries[keyHash];
     const idx = _cache.order.indexOf(keyHash);
     if (idx >= 0) _cache.order.splice(idx, 1);

@@ -38,6 +38,50 @@ import { createRagGicon } from '../tools/ragTools.js';
 export class MessageBubble {
     constructor(host) {
         this._host = host;
+        this._scrollIdleId = 0;
+        this._scrollPendingForce = false;
+    }
+
+    _wireKeyboardActivate(actor, callback) {
+        actor.connect('key-press-event', (_a, event) => {
+            const sym = event.get_key_symbol();
+            if (
+                sym === Clutter.KEY_Return ||
+                sym === Clutter.KEY_KP_Enter ||
+                sym === Clutter.KEY_space
+            ) {
+                callback();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+    }
+
+    _flashCopyLabel(button, originalLabel) {
+        if (!button) return;
+        if (button._katabCopyResetId) {
+            GLib.source_remove(button._katabCopyResetId);
+            button._katabCopyResetId = 0;
+        }
+        button.label = 'Copied';
+        if (!button._katabCopyDestroyWired) {
+            button._katabCopyDestroyWired = true;
+            button.connect('destroy', () => {
+                if (button._katabCopyResetId) {
+                    GLib.source_remove(button._katabCopyResetId);
+                    button._katabCopyResetId = 0;
+                }
+            });
+        }
+        button._katabCopyResetId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+            button._katabCopyResetId = 0;
+            try {
+                button.label = originalLabel;
+            } catch (_e) {
+                /* disposed */
+            }
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     applyAssistantMetrics(label, messageMeta, footerRow = null) {
@@ -79,10 +123,12 @@ export class MessageBubble {
         });
         bubbleBox.add_child(senderLabel);
 
-        const { thinkWrapper, thinkLabel } = this._buildThinkingSection();
-        bubbleBox.add_child(thinkWrapper);
+        const { thinkWrapper, thinkLabel } = isUser
+            ? { thinkWrapper: null, thinkLabel: null }
+            : this._buildThinkingSection();
+        if (thinkWrapper) bubbleBox.add_child(thinkWrapper);
 
-        const { toolLogWrapper, toolCallLogBox, toolLogCountLabel } =
+        const { toolLogWrapper, toolLogHeader, toolLogChevron, toolCallLogBox, toolLogCountLabel } =
             this._buildToolLogSection(isUser);
         if (toolLogWrapper) bubbleBox.add_child(toolLogWrapper);
 
@@ -93,17 +139,18 @@ export class MessageBubble {
         });
         bubbleBox.add_child(contentBox);
 
-        let contentLabel = new St.Label({
-            text: '',
-            style_class: 'katab-chat-content-label',
-            x_expand: true,
-        });
-        contentLabel.clutter_text.line_wrap = true;
-        contentLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-        contentLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        contentLabel.clutter_text.single_line_mode = false;
-        contentLabel.clutter_text.can_focus = false;
+        let contentLabel = null;
         if (isUser) {
+            contentLabel = new St.Label({
+                text: '',
+                style_class: 'katab-chat-content-label',
+                x_expand: true,
+            });
+            contentLabel.clutter_text.line_wrap = true;
+            contentLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            contentLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            contentLabel.clutter_text.single_line_mode = false;
+            contentLabel.clutter_text.can_focus = false;
             this._host.makeTextSelectable(contentLabel);
             contentBox.add_child(contentLabel);
         }
@@ -122,24 +169,28 @@ export class MessageBubble {
             let copyBtn = new St.Button({
                 label: 'Copy message',
                 style_class: 'katab-copy-btn katab-copy-btn-text',
+                can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
                 accessible_name: 'Copy message to clipboard',
             });
             copyBtn.connect('clicked', () => {
                 let txt = contentLabel.get_text();
                 St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, txt);
+                this._flashCopyLabel(copyBtn, 'Copy message');
             });
             copyBtnRow.add_child(copyBtn);
         } else {
             let replyCopyBtn = new St.Button({
                 label: 'Copy message',
                 style_class: 'katab-copy-btn katab-copy-btn-text',
+                can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
                 accessible_name: 'Copy message to clipboard',
             });
             replyCopyBtn.connect('clicked', () => {
                 let txt = copyBtnRow._katabCopyText ?? '';
                 St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, txt);
+                this._flashCopyLabel(replyCopyBtn, 'Copy message');
             });
             copyBtnRow._katabHasReplyCopy = true;
             copyBtnRow.visible = true;
@@ -148,6 +199,7 @@ export class MessageBubble {
             let regenerateBtn = new St.Button({
                 label: 'Regenerate',
                 style_class: 'katab-copy-btn katab-copy-btn-text',
+                can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER,
                 accessible_name: 'Regenerate response',
             });
@@ -349,7 +401,7 @@ export class MessageBubble {
             );
         }
 
-        this.scrollToBottom();
+        this.scrollToBottom({ force: true });
 
         const uiElements = {
             contentBox,
@@ -358,6 +410,8 @@ export class MessageBubble {
             thinkWrapper,
             toolCallLogBox,
             toolLogWrapper,
+            toolLogHeader,
+            toolLogChevron,
             toolLogCountLabel,
             linkBox,
             sourcesBox,
@@ -386,9 +440,6 @@ export class MessageBubble {
 
     _buildAssistantPills(isUser, copyBtnRow) {
         // ── DeepSeek prompt-cache savings pill (assistant only) ──────────────
-        // Sits quietly at the end of the footer row and only appears when a reply
-        // actually reused cached tokens. Clicking it reveals the explanation
-        // drawer built just below the footer row (see further down).
         let cacheSavingsPill = null;
         let cacheSavingsPillLabel = null;
         let cacheSavingsChevron = null;
@@ -426,8 +477,6 @@ export class MessageBubble {
         }
 
         // ── Knowledge Base usage pill (assistant only) ───────────────────
-        // Small glowing teal pill that replaces the KB rows in the tool-call
-        // log. Clicking it reveals the KB drawer built below the footer row.
         let kbPill = null;
         let kbPillIcon = null;
         let kbPillLabel = null;
@@ -478,7 +527,7 @@ export class MessageBubble {
             });
             kbDrawer.add_child(kbDrawerBody);
 
-            kbPill.connect('button-press-event', () => {
+            const toggleKbDrawer = () => {
                 const show = !kbDrawer.visible;
                 kbDrawer.visible = show;
                 kbChevron.icon_name = show ? 'pan-down-symbolic' : 'pan-end-symbolic';
@@ -488,8 +537,12 @@ export class MessageBubble {
                     kbPill.remove_style_class_name('katab-kb-pill-expanded');
                 }
                 this.scrollToBottom();
+            };
+            kbPill.connect('button-press-event', () => {
+                toggleKbDrawer();
                 return Clutter.EVENT_STOP;
             });
+            this._wireKeyboardActivate(kbPill, toggleKbDrawer);
         }
 
         return {
@@ -510,8 +563,6 @@ export class MessageBubble {
         messageMeta,
         { cacheSavingsPill, cacheSavingsPillLabel, cacheSavingsChevron },
     ) {
-        // Explanation drawer for the cache-savings pill (assistant only). Hidden
-        // until the pill is clicked; contents are (re)built by _applyCacheSavings.
         let cacheSavingsDrawer = null;
         let cacheSavingsDrawerBody = null;
         if (!isUser) {
@@ -528,7 +579,7 @@ export class MessageBubble {
             });
             cacheSavingsDrawer.add_child(cacheSavingsDrawerBody);
 
-            cacheSavingsPill.connect('button-press-event', () => {
+            const toggleCacheDrawer = () => {
                 let show = !cacheSavingsDrawer.visible;
                 cacheSavingsDrawer.visible = show;
                 cacheSavingsChevron.icon_name = show ? 'pan-down-symbolic' : 'pan-end-symbolic';
@@ -538,8 +589,12 @@ export class MessageBubble {
                     cacheSavingsPill.remove_style_class_name('katab-cache-pill-expanded');
                 }
                 this.scrollToBottom();
+            };
+            cacheSavingsPill.connect('button-press-event', () => {
+                toggleCacheDrawer();
                 return Clutter.EVENT_STOP;
             });
+            this._wireKeyboardActivate(cacheSavingsPill, toggleCacheDrawer);
 
             // Populate immediately for messages restored from history (metrics
             // are present up front); live replies fill this in during streaming.
@@ -561,6 +616,8 @@ export class MessageBubble {
     _buildToolLogSection(isUser) {
         let toolCallLogBox = null;
         let toolLogWrapper = null;
+        let toolLogHeader = null;
+        let toolLogChevron = null;
         let toolLogCountLabel = null;
         if (!isUser) {
             toolLogWrapper = new St.BoxLayout({
@@ -570,13 +627,14 @@ export class MessageBubble {
                 x_expand: true,
             });
 
-            // Summary header — always visible when tool log is shown, click to expand/collapse
-            let toolLogHeader = new St.BoxLayout({
+            // Summary header — always visible when tool log is shown, click/Enter/Space to expand/collapse
+            toolLogHeader = new St.BoxLayout({
                 style_class: 'katab-tool-call-group-header',
                 reactive: true,
                 can_focus: true,
                 track_hover: true,
                 x_expand: true,
+                accessible_role: Atk.Role.PUSH_BUTTON,
                 accessible_name: 'Show tool details',
             });
             toolLogHeader.add_child(
@@ -593,7 +651,7 @@ export class MessageBubble {
                 y_align: Clutter.ActorAlign.CENTER,
             });
             toolLogHeader.add_child(toolLogCountLabel);
-            let toolLogChevron = new St.Icon({
+            toolLogChevron = new St.Icon({
                 icon_name: 'pan-end-symbolic',
                 style_class: 'katab-tool-call-group-chevron',
                 y_align: Clutter.ActorAlign.CENTER,
@@ -610,7 +668,7 @@ export class MessageBubble {
             });
             toolLogWrapper.add_child(toolCallLogBox);
 
-            toolLogHeader.connect('button-press-event', () => {
+            const toggleToolLog = () => {
                 let expanded = toolCallLogBox.visible;
                 toolCallLogBox.visible = !expanded;
                 toolLogChevron.icon_name = expanded ? 'pan-end-symbolic' : 'pan-down-symbolic';
@@ -622,10 +680,14 @@ export class MessageBubble {
                 } else {
                     toolLogWrapper.remove_style_class_name('katab-tool-call-group-collapsed');
                 }
+            };
+            toolLogHeader.connect('button-press-event', () => {
+                toggleToolLog();
                 return Clutter.EVENT_STOP;
             });
+            this._wireKeyboardActivate(toolLogHeader, toggleToolLog);
         }
-        return { toolLogWrapper, toolCallLogBox, toolLogCountLabel };
+        return { toolLogWrapper, toolLogHeader, toolLogChevron, toolCallLogBox, toolLogCountLabel };
     }
 
     _buildThinkingSection() {
@@ -706,14 +768,38 @@ export class MessageBubble {
         return { thinkWrapper, thinkLabel };
     }
 
-    scrollToBottom() {
-        GLib.idle_add(GLib.PRIORITY_LOW, () => {
+    scrollToBottom({ force = false } = {}) {
+        if (force) {
+            this._scrollPendingForce = true;
+        }
+        if (this._scrollIdleId) {
+            return;
+        }
+        this._scrollIdleId = GLib.idle_add(GLib.PRIORITY_LOW, () => {
+            this._scrollIdleId = 0;
+            const shouldForce = this._scrollPendingForce;
+            this._scrollPendingForce = false;
             if (!this._host.isOpen() || !this._host.getChatScroll()) {
                 return GLib.SOURCE_REMOVE;
             }
-            let adj = this._host.getChatScroll().get_vscroll_bar().get_adjustment();
-            adj.value = adj.upper - adj.page_size;
+            const adj = this._host.getChatScroll().get_vscroll_bar()?.get_adjustment();
+            if (!adj) {
+                return GLib.SOURCE_REMOVE;
+            }
+            const maxScroll = Math.max(0, adj.upper - adj.page_size);
+            // Respect user scrolling up during streaming — only auto-follow
+            // when forced (new message) or already near the bottom.
+            if (shouldForce || maxScroll - adj.value <= 96) {
+                adj.value = maxScroll;
+            }
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    destroy() {
+        if (this._scrollIdleId) {
+            GLib.source_remove(this._scrollIdleId);
+            this._scrollIdleId = 0;
+        }
     }
 }

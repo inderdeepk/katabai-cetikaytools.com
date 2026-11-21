@@ -14,6 +14,7 @@ import {
     extractMessageText,
     buildApiAttachmentPayload,
     sanitizeHistoryMessage,
+    sanitizeHistoryMessages,
 } from '../src/providers/historyPayload.js';
 import { IMAGE_TOKEN_ESTIMATE } from '../src/core/sessionMemory.js';
 import { formatLinksSection } from '../src/shared/pageLinks.js';
@@ -838,6 +839,83 @@ const tests = [
                 { query: 'y' },
                 'ollama arguments are objects again',
             );
+        },
+    ],
+
+    [
+        'sanitizeHistoryMessages: expands Anthropic multi-tool_result to OpenAI/DeepSeek tool turns',
+        () => {
+            const history = [
+                { role: 'user', content: 'search two things' },
+                {
+                    role: 'assistant',
+                    content: [
+                        { type: 'text', text: 'Checking both.' },
+                        { type: 'tool_use', id: 'tu_1', name: 'web_search', input: { query: 'a' } },
+                        { type: 'tool_use', id: 'tu_2', name: 'web_search', input: { query: 'b' } },
+                    ],
+                },
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'tool_result', tool_use_id: 'tu_1', content: 'result A' },
+                        { type: 'tool_result', tool_use_id: 'tu_2', content: 'result B' },
+                    ],
+                },
+            ];
+            const out = sanitizeHistoryMessages(history, { provider: 'openai' });
+            assertEqual(out.length, 4, 'user + assistant + 2 tool messages');
+            assertEqual(out[1].tool_calls.length, 2, '2 tool_calls preserved');
+            assertEqual(out[2].role, 'tool', 'first tool result');
+            assertEqual(out[2].tool_call_id, 'tu_1', 'first tool_call_id');
+            assertEqual(out[3].role, 'tool', 'second tool result');
+            assertEqual(out[3].tool_call_id, 'tu_2', 'second tool_call_id');
+        },
+    ],
+
+    [
+        'sanitizeHistoryMessages: merges consecutive OpenAI tool turns into one Anthropic user turn',
+        () => {
+            const history = [
+                { role: 'user', content: 'hi' },
+                {
+                    role: 'assistant',
+                    content: '',
+                    tool_calls: [
+                        {
+                            id: 'c1',
+                            type: 'function',
+                            function: { name: 'web_search', arguments: '{"query":"a"}' },
+                        },
+                        {
+                            id: 'c2',
+                            type: 'function',
+                            function: { name: 'read_url', arguments: '{"url":"https://ex.com"}' },
+                        },
+                    ],
+                },
+                { role: 'tool', tool_call_id: 'c1', content: 'res 1' },
+                { role: 'tool', tool_call_id: 'c2', content: 'res 2' },
+            ];
+            const out = sanitizeHistoryMessages(history, { provider: 'anthropic' });
+            assertEqual(out.length, 3, 'user + assistant + merged user tool_results');
+            assertEqual(out[2].role, 'user', 'merged user role');
+            assertEqual(out[2].content.length, 2, '2 tool_result blocks in single user message');
+            assertEqual(out[2].content[0].tool_use_id, 'c1', 'first block matches c1');
+            assertEqual(out[2].content[1].tool_use_id, 'c2', 'second block matches c2');
+        },
+    ],
+
+    [
+        'sanitizeHistoryMessages: strips orphaned tool results without a preceding assistant tool_calls',
+        () => {
+            const history = [
+                { role: 'tool', tool_call_id: 'orphan_1', content: 'stale' },
+                { role: 'user', content: 'hello' },
+            ];
+            const out = sanitizeHistoryMessages(history, { provider: 'deepseek' });
+            assertEqual(out.length, 1, 'orphan dropped');
+            assertEqual(out[0].role, 'user', 'user turn kept');
         },
     ],
 ];

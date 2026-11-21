@@ -100,6 +100,9 @@ const STATUS_KEYS = ['completed', 'stopped', 'tool-call-turn'];
 
 const MODEL_PRICING = {
     // OpenAI
+    'gpt-4.1-nano': { input: 0.1, output: 0.4 },
+    'gpt-4.1-mini': { input: 0.4, output: 1.6 },
+    'gpt-4.1': { input: 2.0, output: 8.0 },
     'gpt-4o': { input: 2.5, output: 10.0 },
     'gpt-4o-mini': { input: 0.15, output: 0.6 },
     'gpt-4-turbo': { input: 10.0, output: 30.0 },
@@ -107,10 +110,18 @@ const MODEL_PRICING = {
     'gpt-3.5-turbo': { input: 0.5, output: 1.5 },
     o1: { input: 15.0, output: 60.0 },
     'o1-mini': { input: 1.1, output: 4.4 },
+    o3: { input: 2.0, output: 8.0 },
     'o3-mini': { input: 1.1, output: 4.4 },
+    'o4-mini': { input: 1.1, output: 4.4 },
     // Anthropic
+    'claude-opus-4': { input: 15.0, output: 75.0 },
+    'claude-sonnet-4': { input: 3.0, output: 15.0 },
+    'claude-haiku-4': { input: 0.8, output: 4.0 },
+    'claude-3-7-sonnet': { input: 3.0, output: 15.0 },
     'claude-3-5-sonnet-20241022': { input: 3.0, output: 15.0 },
+    'claude-3-5-sonnet': { input: 3.0, output: 15.0 },
     'claude-3-5-haiku-20241022': { input: 0.8, output: 4.0 },
+    'claude-3-5-haiku': { input: 0.8, output: 4.0 },
     'claude-3-opus-20240229': { input: 15.0, output: 75.0 },
     'claude-3-sonnet-20240229': { input: 3.0, output: 15.0 },
     'claude-3-haiku-20240307': { input: 0.25, output: 1.25 },
@@ -131,29 +142,40 @@ const DEFAULT_CLOUD_PRICING = { input: 1.0, output: 4.0 };
 
 // Longest keys first so a specific model always wins over a shorter prefix:
 // 'gpt-4o-mini' must match its own entry, not the 'gpt-4o' prefix, and
-// 'o1-mini' must not inherit 'o1' rates. (Both were billed at the parent
-// model's 10-16x rate when MODEL_PRICING insertion order won.)
+// 'o1-mini' must not inherit 'o1' rates.
 const PRICING_KEYS_BY_SPECIFICITY = Object.entries(MODEL_PRICING).sort(
     (a, b) => b[0].length - a[0].length,
 );
 
 function pricingForModel(model, provider) {
+    // Local providers (Ollama / Unsloth) are ALWAYS zero-cost regardless of
+    // model name (e.g. a local `marco-o1` or `deepseek-r1` must never inherit
+    // cloud pricing via substring matching).
+    if (provider === 'ollama' || provider === 'unsloth') {
+        return MODEL_PRICING.__local__;
+    }
     const key = String(model || '').trim();
-    if (!key)
-        return provider === 'ollama' || provider === 'unsloth'
-            ? MODEL_PRICING.__local__
-            : DEFAULT_CLOUD_PRICING;
+    if (!key) {
+        if (provider === 'openai') return MODEL_PRICING['gpt-4o-mini'];
+        if (provider === 'anthropic') return MODEL_PRICING['claude-3-5-haiku-20241022'];
+        if (provider === 'deepseek') return MODEL_PRICING['deepseek-flash'];
+        return DEFAULT_CLOUD_PRICING;
+    }
     const lower = key.toLowerCase();
     for (const [pricingKey, pricing] of PRICING_KEYS_BY_SPECIFICITY) {
-        if (
-            lower === pricingKey.toLowerCase() ||
-            lower.startsWith(pricingKey.toLowerCase() + '-') ||
-            lower.includes(pricingKey.toLowerCase())
-        ) {
+        const pk = pricingKey.toLowerCase();
+        if (pk === '__local__') continue;
+        if (lower === pk || lower.startsWith(`${pk}-`) || lower.startsWith(`${pk}.`)) {
             return pricing;
         }
     }
-    if (provider === 'ollama' || provider === 'unsloth') return MODEL_PRICING.__local__;
+    for (const [pricingKey, pricing] of PRICING_KEYS_BY_SPECIFICITY) {
+        const pk = pricingKey.toLowerCase();
+        if (pk === '__local__' || pk.length <= 3) continue;
+        if (lower.includes(pk)) {
+            return pricing;
+        }
+    }
     if (provider === 'openai') return MODEL_PRICING['gpt-4o-mini'];
     if (provider === 'anthropic') return MODEL_PRICING['claude-3-5-haiku-20241022'];
     if (provider === 'deepseek') return MODEL_PRICING['deepseek-flash'];
@@ -207,33 +229,77 @@ export function estimateSummaryCost(summary) {
                 provider.offPeakCompletion ||
                 provider.offPeakHit);
 
-        let providerCost;
+        let providerCost = 0;
         if (isDeepseekTiered) {
-            // Accurate DeepSeek cost: cache-aware (hit vs miss) and tier-aware
-            // (peak vs off-peak), using the first model name for rate lookup.
-            const modelName = providerModels[0]?.model || 'deepseek-flash';
-            providerCost = estimateDeepSeekCostFromTiers(modelName, {
-                peak: {
-                    prompt: provider.peakPrompt,
-                    completion: provider.peakCompletion,
-                    hit: provider.peakHit,
-                },
-                offPeak: {
-                    prompt: provider.offPeakPrompt,
-                    completion: provider.offPeakCompletion,
-                    hit: provider.offPeakHit,
-                },
-            });
+            const hasPerModelTiers =
+                providerModels.length > 0 &&
+                providerModels.some(
+                    (m) =>
+                        m.peakPrompt || m.peakCompletion || m.offPeakPrompt || m.offPeakCompletion,
+                );
+            if (hasPerModelTiers) {
+                for (const model of providerModels) {
+                    const cost = estimateDeepSeekCostFromTiers(model.model, {
+                        peak: {
+                            prompt: model.peakPrompt || 0,
+                            completion: model.peakCompletion || 0,
+                            hit: model.peakHit || 0,
+                        },
+                        offPeak: {
+                            prompt: model.offPeakPrompt || 0,
+                            completion: model.offPeakCompletion || 0,
+                            hit: model.offPeakHit || 0,
+                        },
+                    });
+                    providerCost += cost;
+                    perModel.push({ ...model, cost });
+                }
+            } else {
+                // Legacy buckets lacking per-model tier splits: compute
+                // weighted rate across the provider's models.
+                const modelName = providerModels[0]?.model || 'deepseek-flash';
+                providerCost = estimateDeepSeekCostFromTiers(modelName, {
+                    peak: {
+                        prompt: provider.peakPrompt,
+                        completion: provider.peakCompletion,
+                        hit: provider.peakHit,
+                    },
+                    offPeak: {
+                        prompt: provider.offPeakPrompt,
+                        completion: provider.offPeakCompletion,
+                        hit: provider.offPeakHit,
+                    },
+                });
+                for (const model of providerModels) {
+                    const cost =
+                        provider.total > 0 ? providerCost * (model.total / provider.total) : 0;
+                    perModel.push({ ...model, cost });
+                }
+            }
         } else {
-            providerCost = 0;
-        }
-
-        if (!isDeepseekTiered) {
+            const providerHasSplit =
+                Number.isFinite(provider.prompt) &&
+                Number.isFinite(provider.completion) &&
+                provider.prompt + provider.completion > 0;
             for (const model of providerModels) {
-                // Distribute prompt/completion proportionally
-                const share = summary.totalTokens > 0 ? model.total / summary.totalTokens : 0;
-                const approxPrompt = Math.round((summary.promptTokens || 0) * share);
-                const approxCompletion = Math.round((summary.completionTokens || 0) * share);
+                let approxPrompt;
+                let approxCompletion;
+                if (
+                    Number.isFinite(model.prompt) &&
+                    Number.isFinite(model.completion) &&
+                    model.prompt + model.completion > 0
+                ) {
+                    approxPrompt = model.prompt;
+                    approxCompletion = model.completion;
+                } else if (providerHasSplit && provider.total > 0) {
+                    const share = model.total / provider.total;
+                    approxPrompt = Math.round(provider.prompt * share);
+                    approxCompletion = Math.round(provider.completion * share);
+                } else {
+                    const share = summary.totalTokens > 0 ? model.total / summary.totalTokens : 0;
+                    approxPrompt = Math.round((summary.promptTokens || 0) * share);
+                    approxCompletion = Math.round((summary.completionTokens || 0) * share);
+                }
                 const cost = estimateCost(
                     model.model,
                     model.provider,
@@ -244,15 +310,18 @@ export function estimateSummaryCost(summary) {
                 perModel.push({ ...model, cost });
             }
             if (providerModels.length === 0) {
-                const share2 = summary.totalTokens > 0 ? provider.total / summary.totalTokens : 0;
-                const approxP = Math.round((summary.promptTokens || 0) * share2);
-                const approxC = Math.round((summary.completionTokens || 0) * share2);
+                let approxP;
+                let approxC;
+                if (providerHasSplit) {
+                    approxP = provider.prompt;
+                    approxC = provider.completion;
+                } else {
+                    const share2 =
+                        summary.totalTokens > 0 ? provider.total / summary.totalTokens : 0;
+                    approxP = Math.round((summary.promptTokens || 0) * share2);
+                    approxC = Math.round((summary.completionTokens || 0) * share2);
+                }
                 providerCost = estimateCost('', provider.provider, approxP, approxC);
-            }
-        } else {
-            for (const model of providerModels) {
-                const cost = provider.total > 0 ? providerCost * (model.total / provider.total) : 0;
-                perModel.push({ ...model, cost });
             }
         }
 
@@ -293,7 +362,9 @@ export function isLocalModelEndpoint(provider, rawUrl) {
     }
     if (!host) return provider === 'ollama' || provider === 'unsloth';
     if (isBlockedHost(host, false)) return true;
-    if (!host.includes('.')) return true;
+    // Bare single-label hostname (e.g. `ollama`, `workstation`) without dots
+    // or IPv6 colons is a local/LAN host; public IPv6 literals contain `:`.
+    if (!host.includes('.') && !host.includes(':')) return true;
     return false;
 }
 
@@ -519,9 +590,19 @@ export class TokenUsageManager {
         return store;
     }
 
-    static _readFromDisk() {
+    static _backupCorruptFile(file) {
         try {
-            const file = Gio.File.new_for_path(this.filePath);
+            const backupPath = `${this.filePath}.corrupt.${Date.now()}`;
+            file.copy(Gio.File.new_for_path(backupPath), Gio.FileCopyFlags.OVERWRITE, null, null);
+            log(`[Katab:usage] Backed up corrupt token-usage file to ${backupPath}`);
+        } catch (_e) {
+            /* best effort */
+        }
+    }
+
+    static _readFromDisk() {
+        const file = Gio.File.new_for_path(this.filePath);
+        try {
             const [, bytes] = file.load_contents(null);
             const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes));
             if (
@@ -532,10 +613,16 @@ export class TokenUsageManager {
             ) {
                 this._cache = this._migrateStore(parsed);
             } else {
+                log('[Katab:usage] Token usage ledger is malformed — starting fresh.');
+                this._backupCorruptFile(file);
                 this._cache = this._freshStore();
                 this._dirty = true;
             }
-        } catch (_e) {
+        } catch (e) {
+            if (!e?.matches?.(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND)) {
+                log(`[Katab:usage] Failed to read token usage ledger: ${e.message || e}`);
+                this._backupCorruptFile(file);
+            }
             this._cache = this._freshStore();
             this._dirty = true;
         }
@@ -559,12 +646,12 @@ export class TokenUsageManager {
 
     static _flushNow() {
         if (!this._dirty || this._cache === null) return;
-        this._dirty = false;
         try {
             this.ensureDir();
             const file = Gio.File.new_for_path(this.filePath);
             const data = new TextEncoder().encode(JSON.stringify(this._cache, null, 2));
             file.replace_contents(data, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            this._dirty = false;
         } catch (e) {
             log(`Katab: failed to save token usage: ${e.message}`);
         }
@@ -578,6 +665,11 @@ export class TokenUsageManager {
         this._flushNow();
     }
     static invalidateCache() {
+        if (this._flushSourceId) {
+            GLib.source_remove(this._flushSourceId);
+            this._flushSourceId = 0;
+        }
+        this._dirty = false;
         this._cache = null;
     }
 
@@ -624,11 +716,11 @@ export class TokenUsageManager {
     }
 
     static exportCopy() {
-        this.load();
-        this._dirty = true;
-        this.flushSync();
-        const source = Gio.File.new_for_path(this.filePath);
-        const [, bytes] = source.load_contents(null);
+        const store = this.load();
+        if (this._dirty) {
+            this.flushSync();
+        }
+        const bytes = new TextEncoder().encode(JSON.stringify(store, null, 2));
         const documentsDir =
             GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) ||
             GLib.get_home_dir();
@@ -670,14 +762,14 @@ export class TokenUsageManager {
 
     static recordUsageEvent(event) {
         const provider = String(event?.provider || '').trim();
-        if (!provider) return;
+        if (!provider) return { recorded: false };
 
         const prompt = clampCount(event.promptTokens);
         const completion = clampCount(event.completionTokens);
         const reasoning = clampCount(event.reasoningTokens);
         const cachedHit = clampCount(event.cachedHitTokens);
         const total = prompt + completion;
-        if (total <= 0) return;
+        if (total <= 0) return { recorded: false };
 
         const store = this.load();
         const eventId = String(event.eventId || '').trim();
@@ -721,6 +813,8 @@ export class TokenUsageManager {
         const status = normalizeStatus(event.status);
         const source =
             String(event.source || (event.exact ? 'exact' : 'estimate')).trim() || 'unknown';
+        const deepseekTier =
+            provider === 'deepseek' ? (isDeepSeekPeakHour(Date.now()) ? 'peak' : 'offPeak') : null;
 
         bucket.prompt += prompt;
         bucket.completion += completion;
@@ -728,12 +822,11 @@ export class TokenUsageManager {
         bucket.cachedHit += cachedHit;
         bucket.total += total;
         bucket.events += 1;
-        if (provider === 'deepseek') {
+        if (deepseekTier) {
             if (!bucket.tiers) bucket.tiers = emptyDeepSeekTiers();
-            const tier = isDeepSeekPeakHour(Date.now()) ? 'peak' : 'offPeak';
-            bucket.tiers[tier].prompt += prompt;
-            bucket.tiers[tier].completion += completion;
-            bucket.tiers[tier].hit += cachedHit;
+            bucket.tiers[deepseekTier].prompt += prompt;
+            bucket.tiers[deepseekTier].completion += completion;
+            bucket.tiers[deepseekTier].hit += cachedHit;
         }
         if (event.exact) {
             bucket.exact += total;
@@ -748,14 +841,31 @@ export class TokenUsageManager {
 
         const model = String(event.model || '').trim();
         if (model) {
-            if (!bucket.models[model])
-                bucket.models[model] = { total: 0, events: 0, exact: 0, estimated: 0 };
-            bucket.models[model].total += total;
-            bucket.models[model].events += 1;
+            if (!bucket.models[model]) {
+                bucket.models[model] = {
+                    total: 0,
+                    prompt: 0,
+                    completion: 0,
+                    events: 0,
+                    exact: 0,
+                    estimated: 0,
+                };
+            }
+            const mb = bucket.models[model];
+            mb.total += total;
+            mb.prompt = (mb.prompt || 0) + prompt;
+            mb.completion = (mb.completion || 0) + completion;
+            mb.events += 1;
             if (event.exact) {
-                bucket.models[model].exact += total;
+                mb.exact += total;
             } else {
-                bucket.models[model].estimated += total;
+                mb.estimated += total;
+            }
+            if (deepseekTier) {
+                if (!mb.tiers) mb.tiers = emptyDeepSeekTiers();
+                mb.tiers[deepseekTier].prompt += prompt;
+                mb.tiers[deepseekTier].completion += completion;
+                mb.tiers[deepseekTier].hit += cachedHit;
             }
         }
 
@@ -891,6 +1001,8 @@ export class TokenUsageManager {
                     providerAgg[provider] = {
                         provider,
                         total: 0,
+                        prompt: 0,
+                        completion: 0,
                         events: 0,
                         localTokens: 0,
                         exact: 0,
@@ -903,6 +1015,8 @@ export class TokenUsageManager {
                         offPeakHit: 0,
                     };
                 providerAgg[provider].total += bucket.total || 0;
+                providerAgg[provider].prompt += bucket.prompt || 0;
+                providerAgg[provider].completion += bucket.completion || 0;
                 providerAgg[provider].events += bucket.events || 0;
                 providerAgg[provider].localTokens += bucket.local || 0;
                 providerAgg[provider].exact += bucket.exact || 0;
@@ -924,14 +1038,32 @@ export class TokenUsageManager {
                             provider,
                             model,
                             total: 0,
+                            prompt: 0,
+                            completion: 0,
                             events: 0,
                             exact: 0,
                             estimated: 0,
+                            peakPrompt: 0,
+                            peakCompletion: 0,
+                            peakHit: 0,
+                            offPeakPrompt: 0,
+                            offPeakCompletion: 0,
+                            offPeakHit: 0,
                         };
                     modelAgg[mk].total += m.total || 0;
+                    modelAgg[mk].prompt += m.prompt || 0;
+                    modelAgg[mk].completion += m.completion || 0;
                     modelAgg[mk].events += m.events || 0;
                     modelAgg[mk].exact += m.exact || 0;
                     modelAgg[mk].estimated += m.estimated || 0;
+                    if (provider === 'deepseek' && m.tiers) {
+                        modelAgg[mk].peakPrompt += m.tiers.peak?.prompt || 0;
+                        modelAgg[mk].peakCompletion += m.tiers.peak?.completion || 0;
+                        modelAgg[mk].peakHit += m.tiers.peak?.hit || 0;
+                        modelAgg[mk].offPeakPrompt += m.tiers.offPeak?.prompt || 0;
+                        modelAgg[mk].offPeakCompletion += m.tiers.offPeak?.completion || 0;
+                        modelAgg[mk].offPeakHit += m.tiers.offPeak?.hit || 0;
+                    }
                 }
             }
         }
@@ -1010,14 +1142,21 @@ export class TokenUsageManager {
 
     static _computeLocalStreak(store) {
         const now = GLib.DateTime.new_now_local();
-        let streak = 0;
-        for (let o = 0; o < 3660; o++) {
-            const key = now.add_days(-o).format('%Y-%m-%d');
+        const dayHasLocal = (offset) => {
+            const key = now.add_days(-offset).format('%Y-%m-%d');
             const day = store.days[key];
-            if (!day) break;
+            if (!day) return false;
             let local = 0;
             for (const b of Object.values(day.providers || {})) local += b.local || 0;
-            if (local <= 0) break;
+            return local > 0;
+        };
+        // If today hasn't seen local tokens yet, allow the streak to count
+        // consecutive days ending yesterday so an active streak doesn't reset
+        // at midnight before the user's first message of the day.
+        let startOffset = dayHasLocal(0) ? 0 : 1;
+        let streak = 0;
+        for (let o = startOffset; o < 3660; o++) {
+            if (!dayHasLocal(o)) break;
             streak++;
         }
         return streak;

@@ -15,6 +15,26 @@
 import Gio from 'gi://Gio';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Atk from 'gi://Atk';
+
+function _wireButtonBoxActivate(actor, onActivate) {
+    actor.connect('button-press-event', () => {
+        onActivate();
+        return Clutter.EVENT_STOP;
+    });
+    actor.connect('key-press-event', (_a, event) => {
+        const sym = event.get_key_symbol();
+        if (
+            sym === Clutter.KEY_Return ||
+            sym === Clutter.KEY_KP_Enter ||
+            sym === Clutter.KEY_space
+        ) {
+            onActivate();
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    });
+}
 
 /**
  * @param {Object} host — dialog surface:
@@ -97,12 +117,10 @@ export function buildHeaderBar(host) {
         reactive: true,
         can_focus: true,
         track_hover: true,
+        accessible_role: Atk.Role.PUSH_BUTTON,
         accessible_name: 'Switch AI Provider',
     });
-    widgets.providerStatusBox.connect('button-press-event', () => {
-        host.toggleProviderPicker();
-        return Clutter.EVENT_STOP;
-    });
+    _wireButtonBoxActivate(widgets.providerStatusBox, () => host.toggleProviderPicker());
 
     widgets.providerStatusIcon = host.createProviderIcon(
         host.getCurrentProvider(),
@@ -163,12 +181,10 @@ export function buildHeaderBar(host) {
         track_hover: true,
         vertical: false,
         y_align: Clutter.ActorAlign.CENTER,
+        accessible_role: Atk.Role.PUSH_BUTTON,
         accessible_name: 'Load Preset',
     });
-    widgets.presetBtn.connect('button-press-event', () => {
-        host.togglePresetPicker();
-        return Clutter.EVENT_STOP;
-    });
+    _wireButtonBoxActivate(widgets.presetBtn, () => host.togglePresetPicker());
     widgets.presetBtnLabel = new St.Label({
         text: 'Presets',
         style_class: 'katab-preset-btn-label',
@@ -193,12 +209,10 @@ export function buildHeaderBar(host) {
         vertical: false,
         visible: false,
         y_align: Clutter.ActorAlign.CENTER,
+        accessible_role: Atk.Role.PUSH_BUTTON,
         accessible_name: 'Switch Model',
     });
-    widgets.deepseekModelBtn.connect('button-press-event', () => {
-        host.toggleDeepseekModelPicker();
-        return Clutter.EVENT_STOP;
-    });
+    _wireButtonBoxActivate(widgets.deepseekModelBtn, () => host.toggleDeepseekModelPicker());
     widgets.deepseekModelBtnLabel = new St.Label({
         text: 'Model',
         style_class: 'katab-preset-btn-label',
@@ -223,12 +237,10 @@ export function buildHeaderBar(host) {
         track_hover: true,
         vertical: false,
         y_align: Clutter.ActorAlign.CENTER,
+        accessible_role: Atk.Role.PUSH_BUTTON,
         accessible_name: 'Token Usage & Analytics',
     });
-    widgets.usageBtn.connect('button-press-event', () => {
-        host.toggleUsagePanel();
-        return Clutter.EVENT_STOP;
-    });
+    _wireButtonBoxActivate(widgets.usageBtn, () => host.toggleUsagePanel());
 
     // Circular pet avatar — pet sprite with fallback face
     widgets.headerPetBox = new St.Widget({
@@ -257,8 +269,7 @@ export function buildHeaderBar(host) {
     headerBox.add_child(widgets.usageBtn);
 
     // History button — hover shows last 5 conversations dropdown,
-    // click opens the full history view.  Single button replaces the
-    // old split history-icon + hidden dropdown toggle.
+    // click or keyboard Enter/Space opens the full history view.
     widgets.historyBtn = new St.BoxLayout({
         style_class: 'katab-history-dropdown-btn',
         reactive: true,
@@ -266,6 +277,8 @@ export function buildHeaderBar(host) {
         track_hover: true,
         vertical: false,
         y_align: Clutter.ActorAlign.CENTER,
+        accessible_role: Atk.Role.PUSH_BUTTON,
+        accessible_name: 'Chat History',
     });
     widgets.historyBtn.add_child(
         new St.Icon({
@@ -292,11 +305,10 @@ export function buildHeaderBar(host) {
         return Clutter.EVENT_PROPAGATE;
     });
 
-    // Click: open full history view
-    widgets.historyBtn.connect('button-press-event', () => {
+    // Click or Enter/Space: open full history view
+    _wireButtonBoxActivate(widgets.historyBtn, () => {
         host.hideRecentChatsPopup();
         host.toggleHistoryView();
-        return Clutter.EVENT_STOP;
     });
 
     headerBox.add_child(widgets.historyBtn);

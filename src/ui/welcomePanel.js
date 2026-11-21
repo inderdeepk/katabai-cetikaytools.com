@@ -24,8 +24,13 @@ export class WelcomePanel {
         this._dustActors = [];
         this._animationLoopId = 0;
         this._animationSourceIds = [];
+        this._destroyed = false;
 
         this.panel = this._build();
+        this.panel.connect('destroy', () => {
+            this._destroyed = true;
+            this.stopAnimation();
+        });
     }
 
     _build() {
@@ -255,8 +260,16 @@ export class WelcomePanel {
         return panel;
     }
 
+    _animationsEnabled() {
+        try {
+            return St.Settings.get().enable_animations;
+        } catch (_e) {
+            return true;
+        }
+    }
+
     setVisible(visible) {
-        if (!this.panel) {
+        if (!this.panel || this._destroyed) {
             return;
         }
 
@@ -273,7 +286,12 @@ export class WelcomePanel {
         let sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
             this._animationSourceIds = this._animationSourceIds.filter((id) => id !== sourceId);
 
-            if (this.panel?.visible && this._dialog.isOpen && this._dialog._chatScroll?.visible) {
+            if (
+                !this._destroyed &&
+                this.panel?.visible &&
+                this._dialog.isOpen &&
+                this._dialog._chatScroll?.visible
+            ) {
                 callback();
             }
 
@@ -284,6 +302,9 @@ export class WelcomePanel {
     }
 
     _reset() {
+        if (this._destroyed) {
+            return;
+        }
         if (this._aura) {
             this._aura.remove_all_transitions();
             this._aura.opacity = 120;
@@ -312,7 +333,13 @@ export class WelcomePanel {
     }
 
     _runCycle() {
-        if (!this.panel?.visible || !this._dialog.isOpen || !this._dialog._chatScroll?.visible) {
+        if (
+            this._destroyed ||
+            !this.panel?.visible ||
+            !this._dialog.isOpen ||
+            !this._dialog._chatScroll?.visible ||
+            !this._animationsEnabled()
+        ) {
             return;
         }
 
@@ -328,7 +355,7 @@ export class WelcomePanel {
             });
 
             this._scheduleCallback(980, () => {
-                if (!this._aura) {
+                if (!this._aura || this._destroyed) {
                     return;
                 }
 
@@ -393,7 +420,17 @@ export class WelcomePanel {
     }
 
     startAnimation() {
-        if (!this.panel?.visible || !this._dialog.isOpen || !this._dialog._chatScroll?.visible) {
+        if (
+            this._destroyed ||
+            !this.panel?.visible ||
+            !this._dialog.isOpen ||
+            !this._dialog._chatScroll?.visible
+        ) {
+            return;
+        }
+
+        if (!this._animationsEnabled()) {
+            this.stopAnimation();
             return;
         }
 
@@ -403,6 +440,11 @@ export class WelcomePanel {
 
         this._runCycle();
         this._animationLoopId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2600, () => {
+            if (this._destroyed || !this._animationsEnabled()) {
+                this._animationLoopId = 0;
+                this._reset();
+                return GLib.SOURCE_REMOVE;
+            }
             this._runCycle();
             return GLib.SOURCE_CONTINUE;
         });

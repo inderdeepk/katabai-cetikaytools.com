@@ -9,7 +9,12 @@ import {
     resolveRedirectUrl as _resolveRedirectUrlBase,
     lookupHostAddresses,
 } from '../shared/networkGuard.js';
-import { cacheSearchResults, getCachedSearchResults } from '../research/researchCache.js';
+import {
+    cacheFetchResult,
+    cacheSearchResults,
+    getCachedFetchResult,
+    getCachedSearchResults,
+} from '../research/researchCache.js';
 import { readCappedBytes } from '../shared/httpBody.js';
 import {
     decodeHtmlEntities,
@@ -17,6 +22,7 @@ import {
     formatLinksSection,
     READ_URL_MAX_LINKS,
 } from '../shared/pageLinks.js';
+import { createLinkedTimeoutCancellable } from './toolExecutor.js';
 
 export const WEB_SEARCH_TOOL_COMMAND = '/search';
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
@@ -111,25 +117,29 @@ export function classifyQueryIntent(query) {
     if (!text) return 'general';
 
     if (
-        /error|bug|crashed?|undefined|syntax|compile|import |function |class |async|await|npm |pip |cargo |rustc|go build|dockerfile|api endpoint|http status|rest api|graphql/i.test(
+        /\b(error|bug|crashed?|undefined|syntax|compile|import|function|class|async|await|npm|pip|cargo|rustc|go build|dockerfile|api endpoint|http status|rest api|graphql)\b/i.test(
             text,
         )
     )
         return 'code';
+    // Check factual/biographical queries before news so "when was X born"
+    // routes to encyclopedic sources rather than recent-week news.
     if (
-        /when|today|yesterday|this week|this month|202[456789]|breaking|announced|just released|latest news/i.test(
-            text,
-        )
-    )
-        return 'news';
-    if (/paper|doi|arxiv|study|research|journal|conference|proceedings|phd thesis/i.test(text))
-        return 'academic';
-    if (
-        /define|what is|who is|capital of|population|located in|how old|born|died|founded/i.test(
+        /\b(define|what is|who is|capital of|population|located in|how old|born|died|founded)\b/i.test(
             text,
         )
     )
         return 'facts';
+    if (
+        /\b(today|yesterday|this week|this month|202[456789]|breaking|announced|announcement|just released|latest news)\b/i.test(
+            text,
+        )
+    )
+        return 'news';
+    if (
+        /\b(paper|doi|arxiv|study|research|journal|conference|proceedings|phd thesis)\b/i.test(text)
+    )
+        return 'academic';
 
     return 'general';
 }
@@ -145,6 +155,7 @@ const WEB_SEARCH_READ_CHUNK_BYTES = 64 * 1024;
 const WEB_SEARCH_MAX_RESULT_LIMIT = 30;
 const WEB_SEARCH_DEFAULT_RESULT_LIMIT = 5;
 const WEB_SEARCH_MAX_ATTEMPTS = 3;
+const WEB_SEARCH_PDF_TIMEOUT_MS = 30000;
 // Exponential backoff delays (ms) for retries: transient → moderate → severe rate-limit.
 const WEB_SEARCH_BACKOFF_MS = [2000, 5000, 12000];
 // Cooldown window after a search returns zero results (ms). Prevents
@@ -172,42 +183,42 @@ export class WebSearchToolError extends Error {
 // ── Settings helpers ──────────────────────────────────────────────────────────
 
 export function readWebSearchConfig(settings) {
-    const getString = (key) => {
+    const getString = (key, fallback = '') => {
         try {
             return settings.get_string(key);
         } catch (_error) {
-            return '';
+            return fallback;
         }
     };
-    const getBoolean = (key) => {
+    const getBoolean = (key, fallback = false) => {
         try {
             return settings.get_boolean(key);
         } catch (_error) {
-            return false;
+            return fallback;
         }
     };
-    const getInt = (key) => {
+    const getInt = (key, fallback = 0) => {
         try {
             return settings.get_int(key);
         } catch (_error) {
-            return 0;
+            return fallback;
         }
     };
 
     return {
-        enabled: getBoolean('web-search-enabled'),
-        url: getString('web-search-url'),
-        resultLimit: getInt('web-search-result-limit'),
-        timeRange: getString('web-search-time-range'),
-        safesearch: getInt('web-search-safesearch'),
-        language: getString('web-search-language'),
-        categories: getString('web-search-categories'),
-        engines: getString('web-search-engines'),
-        apiKey: getString('web-search-api-key'),
-        fetchPageEnabled: getBoolean('web-search-fetch-page-enabled'),
-        multiQueryEnabled: getBoolean('web-search-multiquery-enabled'),
-        autonomousEnabled: getBoolean('web-search-autonomous-enabled'),
-        allowLocal: getBoolean('web-search-allow-local-addresses'),
+        enabled: getBoolean('web-search-enabled', false),
+        url: getString('web-search-url', 'http://localhost:8080'),
+        resultLimit: getInt('web-search-result-limit', WEB_SEARCH_DEFAULT_RESULT_LIMIT),
+        timeRange: getString('web-search-time-range', ''),
+        safesearch: getInt('web-search-safesearch', 0),
+        language: getString('web-search-language', 'en'),
+        categories: getString('web-search-categories', 'general'),
+        engines: getString('web-search-engines', ''),
+        apiKey: getString('web-search-api-key', ''),
+        fetchPageEnabled: getBoolean('web-search-fetch-page-enabled', true),
+        multiQueryEnabled: getBoolean('web-search-multiquery-enabled', false),
+        autonomousEnabled: getBoolean('web-search-autonomous-enabled', true),
+        allowLocal: getBoolean('web-search-allow-local-addresses', false),
     };
 }
 
@@ -254,6 +265,16 @@ function getLocalDateStamp() {
     return now ? now.format('%Y-%m-%d') : new Date().toISOString().slice(0, 10);
 }
 
+function formatOrdinal(n) {
+    const mod100 = n % 100;
+    if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+    const mod10 = n % 10;
+    if (mod10 === 1) return `${n}st`;
+    if (mod10 === 2) return `${n}nd`;
+    if (mod10 === 3) return `${n}rd`;
+    return `${n}th`;
+}
+
 export function buildWebSearchResultBlock(
     query,
     payload,
@@ -263,6 +284,8 @@ export function buildWebSearchResultBlock(
         totalSearchesThisTurn = 1,
         totalReadUrlFailuresThisTurn = 0,
         totalReadUrlAttemptsThisTurn = 0,
+        readUrlAvailable = true,
+        crawlUrlAvailable = true,
     } = {},
 ) {
     const results = Array.isArray(payload) ? payload : payload?.results || [];
@@ -280,6 +303,15 @@ export function buildWebSearchResultBlock(
         /docs\.|app\.|dashboard\.|react|vue|angular|nextjs|nuxt|svelte|vercel\.app|netlify\.app|pages\.dev/i;
     const hasJsHeavyResult = results.some((r) => jsHeavyPatterns.test(r.url || ''));
 
+    const pageToolsLabel =
+        readUrlAvailable && crawlUrlAvailable
+            ? 'read_url/crawl_url'
+            : readUrlAvailable
+              ? 'read_url'
+              : crawlUrlAvailable
+                ? 'crawl_url'
+                : '';
+
     if (results.length === 0 && answers.length === 0) {
         const allEnginesDown = unresponsiveEngines.length > 0;
 
@@ -289,12 +321,17 @@ export function buildWebSearchResultBlock(
         let stopHint;
         if (allEnginesDown) {
             const engineList = unresponsiveEngines.map((e) => `${e.name}: ${e.reason}`).join('; ');
-            stopHint = `\n\nWARNING: SearxNG is currently UNAVAILABLE — all upstream search engines returned errors (${engineList}). Another search is unlikely to succeed until engines recover. Use read_url on URLs from earlier results, or answer based on available information.`;
+            const readHint = pageToolsLabel
+                ? `Use ${pageToolsLabel} on URLs from earlier results, or answer based on available information.`
+                : 'Answer based on available information.';
+            stopHint = `\n\nWARNING: SearxNG is currently UNAVAILABLE — all upstream search engines returned errors (${engineList}). Another search is unlikely to succeed until engines recover. ${readHint}`;
         } else if (consecutiveEmptySearches >= 2) {
-            stopHint = `\n\nNOTE: This is your ${consecutiveEmptySearches + 1}th consecutive search that returned no results — upstream engines may be rate-limiting. Reading pages or following links from earlier results is often more productive; you can search again once you have a concrete gap to target.`;
+            const ord = formatOrdinal(consecutiveEmptySearches + 1);
+            stopHint = `\n\nNOTE: This is your ${ord} consecutive search that returned no results — upstream engines may be rate-limiting. Reading pages or following links from earlier results is often more productive; you can search again once you have a concrete gap to target.`;
         } else {
-            stopHint =
-                '\n\nNo results found. Consider using read_url on URLs from earlier searches (and following links those pages list) instead of searching again.';
+            stopHint = pageToolsLabel
+                ? `\n\nNo results found. Consider using ${pageToolsLabel} on URLs from earlier searches (and following links those pages list) instead of searching again.`
+                : '\n\nNo results found. Try rephrasing the query or answer based on available information.';
         }
         return `Web search run on ${searchDate} for "${query}" returned no results.${stopHint}`;
     }
@@ -355,40 +392,54 @@ export function buildWebSearchResultBlock(
         lines.push('(Some results were omitted to fit the chat context.)');
     }
 
-    // Prompt the model to read URLs for deeper context instead of searching again.
-    lines.push(
-        'To get full page content from any of these URLs, use read_url with the exact URL. ' +
-            'Page results also include a list of links found on the page — follow the promising ones with read_url when the answer is on a subpage.',
-    );
-    // Suggest crawl_url for JS-heavy sites that won't render well as plain HTML.
-    if (hasJsHeavyResult) {
+    // Prompt the model to read URLs using only tools that are actually available.
+    if (readUrlAvailable) {
         lines.push(
-            'Some of these URLs look like modern web apps (docs sites, dashboards, JS frameworks). For those, prefer crawl_url over read_url — it renders JavaScript for complete content.',
+            'To get full page content from any of these URLs, use read_url with the exact URL. ' +
+                'Page results also include a list of links found on the page — follow the promising ones with read_url when the answer is on a subpage.',
+        );
+    } else if (crawlUrlAvailable) {
+        lines.push(
+            'To get full page content from any of these URLs, use crawl_url with the exact URL.',
+        );
+    }
+    // Suggest crawl_url for JS-heavy sites only when Crawl4AI is enabled.
+    if (hasJsHeavyResult && crawlUrlAvailable) {
+        lines.push(
+            readUrlAvailable
+                ? 'Some of these URLs look like modern web apps (docs sites, dashboards, JS frameworks). For those, prefer crawl_url over read_url — it renders JavaScript for complete content.'
+                : 'Some of these URLs look like modern web apps (docs sites, dashboards, JS frameworks). Use crawl_url to render JavaScript for complete content.',
         );
     }
     if (totalSearchesThisTurn >= 5) {
+        const readAction = pageToolsLabel
+            ? `keep using ${pageToolsLabel} on specific pages and following links from pages you have opened`
+            : 'synthesize from the snippets you already gathered';
         lines.push(
-            `\nYou have run ${totalSearchesThisTurn} web searches this turn. If you are on a close trail to the information, keep using read_url/crawl_url on specific pages and following links from pages you have opened; run another search if it targets a concrete gap.`,
+            `\nYou have run ${totalSearchesThisTurn} web searches this turn. If you are on a close trail to the information, ${readAction}; run another search if it targets a concrete gap.`,
         );
     } else if (totalSearchesThisTurn >= 3) {
         lines.push(
             `\nYou have already run ${totalSearchesThisTurn} web searches this turn. Reading pages (and following links you find in them) often yields more than another search.`,
         );
-    } else if (totalSearchesThisTurn >= 2) {
+    } else if (totalSearchesThisTurn >= 2 && pageToolsLabel) {
         lines.push(
-            `You have already run ${totalSearchesThisTurn} web search(es) this turn. Consider reading pages with read_url before searching again.`,
+            `You have already run ${totalSearchesThisTurn} web search(es) this turn. Consider reading pages with ${pageToolsLabel} before searching again.`,
         );
     }
     // Read-before-you-search: if the model has searched 2+ times but never
     // read a page, nudge it to read before the next search.
-    if (totalSearchesThisTurn >= 2 && totalReadUrlAttemptsThisTurn === 0) {
+    if (totalSearchesThisTurn >= 2 && totalReadUrlAttemptsThisTurn === 0 && pageToolsLabel) {
         lines.push(
-            `\nYou have searched ${totalSearchesThisTurn} times without reading any pages yet. Reading at least one promising URL (with read_url or crawl_url) — and following the links it lists — often yields more than another search.`,
+            `\nYou have searched ${totalSearchesThisTurn} times without reading any pages yet. Reading at least one promising URL (with ${pageToolsLabel}) — and following the links it lists — often yields more than another search.`,
         );
     }
     if (totalReadUrlFailuresThisTurn >= 2) {
+        const altHint = crawlUrlAvailable
+            ? 'try crawl_url for JavaScript-heavy pages, different sources, or the information you already have.'
+            : 'try different sources or the information you already have.';
         lines.push(
-            `\nNOTE: ${totalReadUrlFailuresThisTurn} page-reading attempts have failed this turn. These sites may block scraping — try crawl_url for JavaScript-heavy pages, different sources, or the information you already have.`,
+            `\nNOTE: ${totalReadUrlFailuresThisTurn} page-reading attempts have failed this turn. These sites may block scraping — ${altHint}`,
         );
     }
 
@@ -435,7 +486,7 @@ export function htmlToText(html) {
 
     let text = String(html);
     text = text.replace(/<!--[\s\S]*?-->/g, ' ');
-    text = text.replace(/<(script|style|noscript|template|svg|head)[\s\S]*?<\/\1>/gi, ' ');
+    text = text.replace(/<(script|style|noscript|template|svg|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
     text = text.replace(/<li[^>]*>/gi, '\n- ');
     text = text.replace(/<br\s*\/?>/gi, '\n');
     text = text.replace(
@@ -460,10 +511,11 @@ function assertFetchableUrl(rawUrl, { allowLocal = false } = {}) {
 function resolveRedirectUrl(baseUrl, location) {
     try {
         return _resolveRedirectUrlBase(baseUrl, location);
-    } catch (_error) {
-        throw new WebSearchToolError('The page redirected without a Location header.', {
-            code: 'bad-redirect',
-        });
+    } catch (error) {
+        throw new WebSearchToolError(
+            error?.message || 'The page redirected without a Location header.',
+            { code: 'bad-redirect' },
+        );
     }
 }
 
@@ -494,11 +546,35 @@ function clampLimit(limit) {
     );
 }
 
+const TRACKING_QUERY_PARAMS = new Set([
+    'utm_source',
+    'utm_medium',
+    'utm_campaign',
+    'utm_term',
+    'utm_content',
+    'fbclid',
+    'gclid',
+    'mc_cid',
+    'mc_eid',
+]);
+
 function normalizeUrlKey(url) {
-    return String(url || '')
-        .replace(/[#?].*$/, '')
-        .replace(/\/+$/, '')
-        .toLowerCase();
+    const withoutFragment = String(url || '').split('#')[0];
+    const qIdx = withoutFragment.indexOf('?');
+    if (qIdx < 0) {
+        return withoutFragment.replace(/\/+$/, '').toLowerCase();
+    }
+    const base = withoutFragment.slice(0, qIdx).replace(/\/+$/, '').toLowerCase();
+    const rawQuery = withoutFragment.slice(qIdx + 1);
+    const keptParams = rawQuery
+        .split('&')
+        .filter((part) => {
+            if (!part) return false;
+            const k = part.split('=')[0].toLowerCase();
+            return !TRACKING_QUERY_PARAMS.has(k);
+        })
+        .sort();
+    return keptParams.length > 0 ? `${base}?${keptParams.join('&').toLowerCase()}` : base;
 }
 
 function normalizeResults(data) {
@@ -560,34 +636,133 @@ function decodeBytes(bytes) {
 
 // ── Runtime ───────────────────────────────────────────────────────────────────
 
+function isPdfMagicBytes(data) {
+    return (
+        data &&
+        data.length >= 5 &&
+        data[0] === 0x25 && // %
+        data[1] === 0x50 && // P
+        data[2] === 0x44 && // D
+        data[3] === 0x46 && // F
+        data[4] === 0x2d // -
+    );
+}
+
+function isOpaqueBinaryMime(contentType) {
+    const mime = String(contentType || '')
+        .split(';')[0]
+        .trim()
+        .toLowerCase();
+    if (!mime) return false;
+    return (
+        mime.startsWith('image/') ||
+        mime.startsWith('audio/') ||
+        mime.startsWith('video/') ||
+        mime.startsWith('font/') ||
+        mime === 'application/octet-stream' ||
+        mime === 'application/zip' ||
+        mime === 'application/gzip' ||
+        mime === 'application/x-tar' ||
+        mime === 'application/wasm'
+    );
+}
+
+function urlPathEndsWithPdf(url) {
+    try {
+        const path = GLib.Uri.parse(String(url || ''), GLib.UriFlags.NONE).get_path() || '';
+        return path.toLowerCase().endsWith('.pdf');
+    } catch (_e) {
+        return String(url || '')
+            .split(/[?#]/)[0]
+            .toLowerCase()
+            .endsWith('.pdf');
+    }
+}
+
 export class WebSearchRuntime {
     constructor({ session = null, timeoutSeconds = WEB_SEARCH_DEFAULT_TIMEOUT_SECONDS } = {}) {
         this._session = session || new Soup.Session();
         this._session.timeout = timeoutSeconds;
-        // Deduplication cache: maps lower-cased query → timestamp (ms).
-        // Prevents the model re-issuing the SAME query in a rapid tool loop
-        // (which would hammer rate-limited upstream engines). It must NOT
-        // suppress a user legitimately re-asking the same question a few
-        // seconds later, so the window is kept short (aligned with the
-        // empty-result cooldown below). The empty-result cooldown is the real
-        // upstream rate-limit guard.
+        // Short-window dedup cache: maps normalized (query + config) → { ts, result }.
+        // Returns the recent result on rapid repeats instead of an empty set,
+        // and only records entries after a search completes.
         this._recentQueries = new Map();
-        // Queries older than this (ms) are evicted from the dedup cache.
-        this._QUERY_DEDUP_WINDOW_MS = 8_000; // 8 seconds
-        // Cooldown tracker: when a search returns 0 results (likely
-        // upstream-engine rate limiting), record the timestamp so
-        // subsequent searches wait before hitting SearxNG again.
+        this._QUERY_DEDUP_WINDOW_MS = 8_000;
+        // Cooldown tracker: when a search returns 0 results across all engines,
+        // record the timestamp so subsequent searches pause briefly.
         this._lastEmptyResultTime = 0;
     }
 
-    // Promise-based sleep for backoff delays (uses GLib main loop).
-    _sleepMs(ms) {
-        return new Promise((resolve) => {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+    /** Abort in-flight HTTP requests and release in-memory caches. */
+    destroy() {
+        try {
+            this._session?.abort?.();
+        } catch (_e) {
+            /* ignore */
+        }
+        this._recentQueries.clear();
+    }
+
+    // Cancellable promise-based sleep for backoff delays (uses GLib main loop).
+    _sleepMs(ms, cancellable = null) {
+        if (!Number.isFinite(ms) || ms <= 0) {
+            return Promise.resolve();
+        }
+        if (cancellable?.is_cancelled?.()) {
+            return Promise.reject(
+                new WebSearchToolError('Search cancelled.', { code: 'cancelled' }),
+            );
+        }
+        return new Promise((resolve, reject) => {
+            let timeoutId = 0;
+            let cancelId = 0;
+            const cleanup = () => {
+                if (timeoutId) {
+                    GLib.source_remove(timeoutId);
+                    timeoutId = 0;
+                }
+                if (cancelId && cancellable) {
+                    try {
+                        cancellable.disconnect(cancelId);
+                    } catch (_e) {
+                        /* ignore */
+                    }
+                    cancelId = 0;
+                }
+            };
+            if (cancellable && typeof cancellable.connect === 'function') {
+                cancelId = cancellable.connect(() => {
+                    cleanup();
+                    reject(new WebSearchToolError('Search cancelled.', { code: 'cancelled' }));
+                });
+            }
+            timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.round(ms), () => {
+                timeoutId = 0;
+                cleanup();
                 resolve();
                 return GLib.SOURCE_REMOVE;
             });
         });
+    }
+
+    _buildSearchCacheKey(query, config = {}) {
+        const route = config.intentRoute;
+        const useRoute =
+            route && !config.engines && (!config.categories || config.categories === 'general');
+        const categories =
+            (useRoute && route.categories ? route.categories : config.categories) || '';
+        const engines = (useRoute && route.engines ? route.engines : config.engines) || '';
+        const timeRange = (useRoute && route.timeRange ? route.timeRange : config.timeRange) || '';
+        return [
+            String(query || '')
+                .trim()
+                .toLowerCase(),
+            String(categories).toLowerCase(),
+            String(engines).toLowerCase(),
+            String(timeRange).toLowerCase(),
+            String(config.language || '').toLowerCase(),
+            Number.isInteger(config.safesearch) ? config.safesearch : '',
+        ].join('|');
     }
 
     async search(queries, config, cancellable = null) {
@@ -605,73 +780,83 @@ export class WebSearchRuntime {
             throw new WebSearchToolError('Enter something to search for.', { code: 'empty-query' });
         }
 
-        // Deduplicate queries that were already sent recently, keeping
-        // the first occurrence of each unique (case-folded) query.
+        const bypassCache = Boolean(config.bypassCache);
         const now = Date.now();
-        const deduped = [];
-        for (const query of list) {
-            const key = query.toLowerCase();
-            const lastSent = this._recentQueries.get(key);
-            if (lastSent !== undefined && now - lastSent < this._QUERY_DEDUP_WINDOW_MS) {
-                log(
-                    `[Katab:webSearch] Skipping duplicate query: "${query}" (sent ${now - lastSent}ms ago)`,
-                );
-                continue;
-            }
-            this._recentQueries.set(key, now);
-            deduped.push(query);
-        }
-
-        // Evict stale entries from the cache.
-        for (const [key, ts] of this._recentQueries) {
-            if (now - ts > this._QUERY_DEDUP_WINDOW_MS) {
+        // Evict stale entries from the short-window dedup cache.
+        for (const [key, entry] of this._recentQueries) {
+            if (now - entry.ts > this._QUERY_DEDUP_WINDOW_MS) {
                 this._recentQueries.delete(key);
             }
         }
 
-        // Honour the zero-result cooldown: if the last search returned
-        // nothing, wait before hitting SearxNG again so upstream-engine
-        // rate limits have time to clear.  Checked AFTER the all-duplicates
-        // early return above so a duplicate re-ask never stalls the send.
-        if (deduped.length === 0) {
-            log('[Katab:webSearch] All queries were duplicates — returning empty result set.');
+        const limit = clampLimit(config.resultLimit);
+        const deduped = [];
+        const cachedBatches = [];
+        const seenInCall = new Set();
+
+        for (const query of list) {
+            const key = this._buildSearchCacheKey(query, config);
+            if (seenInCall.has(key)) {
+                continue;
+            }
+            seenInCall.add(key);
+
+            if (!bypassCache) {
+                const recent = this._recentQueries.get(key);
+                if (recent && now - recent.ts < this._QUERY_DEDUP_WINDOW_MS && recent.result) {
+                    log(
+                        `[Katab:webSearch] Reusing recent query result for "${query}" (${now - recent.ts}ms ago)`,
+                    );
+                    cachedBatches.push(recent.result);
+                    continue;
+                }
+            }
+            deduped.push(query);
+        }
+
+        // If every requested query was just executed moments ago, return the
+        // cached results directly rather than an empty set (which would falsely
+        // trip consecutiveEmptySearches).
+        if (deduped.length === 0 && cachedBatches.length > 0) {
+            const merged = mergeResults(cachedBatches.map((b) => b.results || []));
+            const answers = dedupeStrings(cachedBatches.flatMap((b) => b.answers || []));
+            const allUnresponsive = cachedBatches.flatMap((b) => b.unresponsiveEngines || []);
+            const allSuggestions = dedupeStrings(cachedBatches.flatMap((b) => b.suggestions || []));
             return {
                 query: list.join(' | '),
                 queries: list,
-                results: [],
-                answers: [],
-                truncated: false,
+                results: merged.slice(0, limit),
+                answers,
+                unresponsiveEngines: allUnresponsive,
+                suggestions: allSuggestions,
+                truncated: merged.length > limit,
             };
         }
 
-        const cooldownRemaining = this._lastEmptyResultTime
-            ? WEB_SEARCH_EMPTY_RESULT_COOLDOWN_MS - (now - this._lastEmptyResultTime)
-            : 0;
+        const cooldownRemaining =
+            !bypassCache && this._lastEmptyResultTime
+                ? WEB_SEARCH_EMPTY_RESULT_COOLDOWN_MS - (now - this._lastEmptyResultTime)
+                : 0;
         if (cooldownRemaining > 0) {
             log(
                 `[Katab:webSearch] Cooling off for ${cooldownRemaining}ms after previous empty result (upstream rate-limit guard).`,
             );
-            await this._sleepMs(cooldownRemaining);
+            await this._sleepMs(cooldownRemaining, cancellable);
         }
 
-        // Reassign list to deduped for the rest of the function.
-        // (list is const, so we use deduped directly in the branches below.)
-        const limit = clampLimit(config.resultLimit);
+        const recordRecent = (query, cfg, result) => {
+            if (bypassCache || !result) return;
+            const key = this._buildSearchCacheKey(query, cfg);
+            this._recentQueries.set(key, { ts: Date.now(), result });
+        };
 
         // Category-aware parallelism: when no explicit engines/categories are
         // configured by the user, issue the same query across multiple SearxNG
-        // categories in parallel and merge the results.  This improves coverage
-        // without the user needing to think about categories.  Explicit intent
-        // routes (code→StackOverflow/GitHub, news→news, …) take priority: they
-        // only apply when the fan-out is skipped, so a routed search must not
-        // be overridden by the generic category fan-out.
+        // categories in parallel and merge the results.
         const parallelCategories = config.parallelCategories;
-        // Only fan a SINGLE query out across categories. When query expansion
-        // produced multiple queries (deduped.length > 1), searching only
-        // deduped[0] would silently drop the expanded queries — fall through
-        // to the multi-query path below instead.
         if (
             deduped.length === 1 &&
+            cachedBatches.length === 0 &&
             parallelCategories &&
             Array.isArray(parallelCategories) &&
             parallelCategories.length > 1 &&
@@ -698,14 +883,18 @@ export class WebSearchRuntime {
             );
             const merged = mergeResults(batches.map((b) => b.results));
             const answers = dedupeStrings(batches.flatMap((b) => b.answers));
-            // If EVERY category failed (connection refused, json-disabled,
-            // http-error), surface the real error instead of reporting an
-            // empty result set.  Partial failures still return their results.
             if (merged.length === 0 && answers.length === 0 && failures.length === batches.length) {
                 throw failures[0];
             }
             const allUnresponsive = batches.flatMap((b) => b.unresponsiveEngines || []);
             const allSuggestions = dedupeStrings(batches.flatMap((b) => b.suggestions || []));
+            const combinedPayload = {
+                results: merged,
+                answers,
+                unresponsiveEngines: allUnresponsive,
+                suggestions: allSuggestions,
+            };
+            recordRecent(deduped[0], config, combinedPayload);
             return {
                 query: deduped[0],
                 queries: deduped,
@@ -717,13 +906,10 @@ export class WebSearchRuntime {
             };
         }
 
-        if (deduped.length === 1) {
-            const {
-                results,
-                answers,
-                unresponsiveEngines = [],
-                suggestions = [],
-            } = await this._searchSingle(deduped[0], config, cancellable);
+        if (deduped.length === 1 && cachedBatches.length === 0) {
+            const singleResult = await this._searchSingle(deduped[0], config, cancellable);
+            recordRecent(deduped[0], config, singleResult);
+            const { results, answers, unresponsiveEngines = [], suggestions = [] } = singleResult;
             return {
                 query: deduped[0],
                 queries: deduped,
@@ -736,30 +922,46 @@ export class WebSearchRuntime {
         }
 
         const failures = [];
-        const batches = await Promise.all(
+        const liveBatches = await Promise.all(
             deduped.map((query) =>
-                this._searchSingle(query, config, cancellable).catch((error) => {
-                    if (cancellable && cancellable.is_cancelled()) {
-                        throw error;
-                    }
-                    failures.push(error);
-                    return { results: [], answers: [], unresponsiveEngines: [], suggestions: [] };
-                }),
+                this._searchSingle(query, config, cancellable)
+                    .then((res) => {
+                        recordRecent(query, config, res);
+                        return res;
+                    })
+                    .catch((error) => {
+                        if (cancellable && cancellable.is_cancelled()) {
+                            throw error;
+                        }
+                        failures.push(error);
+                        return {
+                            results: [],
+                            answers: [],
+                            unresponsiveEngines: [],
+                            suggestions: [],
+                        };
+                    }),
             ),
         );
 
-        const merged = mergeResults(batches.map((batch) => batch.results));
-        const answers = dedupeStrings(batches.flatMap((batch) => batch.answers));
-        // Same total-failure rule as the category fan-out: surface the real
-        // error when nothing came back from any query.
-        if (merged.length === 0 && answers.length === 0 && failures.length === batches.length) {
+        const allBatches = [...cachedBatches, ...liveBatches];
+        const merged = mergeResults(allBatches.map((batch) => batch.results || []));
+        const answers = dedupeStrings(allBatches.flatMap((batch) => batch.answers || []));
+        if (
+            merged.length === 0 &&
+            answers.length === 0 &&
+            cachedBatches.length === 0 &&
+            failures.length === liveBatches.length
+        ) {
             throw failures[0];
         }
-        const allUnresponsive = batches.flatMap((batch) => batch.unresponsiveEngines || []);
-        const allSuggestions = dedupeStrings(batches.flatMap((batch) => batch.suggestions || []));
+        const allUnresponsive = allBatches.flatMap((batch) => batch.unresponsiveEngines || []);
+        const allSuggestions = dedupeStrings(
+            allBatches.flatMap((batch) => batch.suggestions || []),
+        );
         return {
-            query: deduped.join(' | '),
-            queries: deduped,
+            query: list.join(' | '),
+            queries: list,
             results: merged.slice(0, limit),
             answers,
             unresponsiveEngines: allUnresponsive,
@@ -770,7 +972,13 @@ export class WebSearchRuntime {
 
     async testConnection(config, cancellable = null) {
         try {
-            const { results } = await this.search('searxng connection check', config, cancellable);
+            // Bypass both disk cache and recent-query dedup so testConnection
+            // always probes the live SearxNG instance.
+            const { results } = await this.search(
+                'searxng connection check',
+                { ...config, bypassCache: true },
+                cancellable,
+            );
             return { ok: true, resultCount: results.length };
         } catch (error) {
             return {
@@ -783,6 +991,7 @@ export class WebSearchRuntime {
 
     async fetchPage(rawUrl, config = {}, cancellable = null) {
         const allowLocal = Boolean(config.allowLocal);
+        const bypassCache = Boolean(config.bypassCache);
         let url;
         try {
             url = await this._assertFetchableUrl(rawUrl, { allowLocal, cancellable });
@@ -797,6 +1006,15 @@ export class WebSearchRuntime {
             }
             throw error;
         }
+
+        if (!bypassCache) {
+            const cachedPage = getCachedFetchResult(url);
+            if (cachedPage && cachedPage.text) {
+                log(`[Katab:webSearch] read_url cache HIT: ${url}`);
+                return cachedPage;
+            }
+        }
+
         log(`[Katab:webSearch] read_url fetch start: ${url}`);
 
         let response;
@@ -807,11 +1025,20 @@ export class WebSearchRuntime {
                     accept: 'text/html,application/xhtml+xml,text/plain,application/pdf;q=0.8,*/*;q=0.5',
                     allowLocal,
                     maxBytes: WEB_SEARCH_PAGE_MAX_BYTES,
+                    skipInitialValidation: true, // hop 0 was already validated above
                 },
                 cancellable,
             );
         } catch (error) {
             if (cancellable && cancellable.is_cancelled()) {
+                throw error;
+            }
+            // Preserve specific WebSearchToolError codes (blocked-host on
+            // redirect, response-too-large, too-many-redirects, dns-failed).
+            if (error instanceof WebSearchToolError) {
+                log(
+                    `[Katab:webSearch] read_url FAILED ${url} → ${error.code}: ${error.message}${error.detail ? ` (${error.detail})` : ''}`,
+                );
                 throw error;
             }
             const werr = new WebSearchToolError(`Could not fetch ${url}.`, {
@@ -839,9 +1066,22 @@ export class WebSearchRuntime {
 
         const finalUrl = response.url || url;
         const contentType = (response.contentType || '').toLowerCase();
+        const isPdf =
+            contentType.includes('application/pdf') ||
+            urlPathEndsWithPdf(finalUrl) ||
+            isPdfMagicBytes(data);
+
+        if (!isPdf && isOpaqueBinaryMime(contentType)) {
+            log(`[Katab:webSearch] read_url FAILED ${url} → binary-content (${contentType})`);
+            throw new WebSearchToolError(
+                `The URL returned binary content (${contentType.split(';')[0]}) that cannot be read as text.`,
+                { code: 'binary-content' },
+            );
+        }
+
         let text;
         let links = [];
-        if (contentType.includes('application/pdf') || finalUrl.toLowerCase().endsWith('.pdf')) {
+        if (isPdf) {
             text = await this._extractPdfText(data, cancellable);
         } else {
             const html = decodeBytes(response.bytes);
@@ -869,41 +1109,73 @@ export class WebSearchRuntime {
         log(
             `[Katab:webSearch] read_url OK ${url} → ${text.length} chars (${truncated ? 'truncated' : 'full'}), ${links.length} link(s)`,
         );
-        return { url: finalUrl, text, truncated, contentType, links };
+        const page = { url: finalUrl, text, truncated, contentType, links };
+        if (!bypassCache) {
+            cacheFetchResult(url, page);
+            if (finalUrl !== url) {
+                cacheFetchResult(finalUrl, page);
+            }
+        }
+        return page;
     }
 
     async _searchSingle(query, config, cancellable) {
-        // ── Research cache: check for recent identical query ────────────
-        const cached = getCachedSearchResults(query);
-        if (cached) {
-            log(`[Katab:webSearch] Cache HIT for "${query}"`);
-            return cached;
+        const bypassCache = Boolean(config.bypassCache);
+        const cacheKey = this._buildSearchCacheKey(query, config);
+
+        // ── Research cache: check for recent identical query + config ───
+        if (!bypassCache) {
+            const cached = getCachedSearchResults(cacheKey);
+            if (cached) {
+                log(`[Katab:webSearch] Cache HIT for "${query}"`);
+                return cached;
+            }
         }
 
         // Try primary config + fallback engine chain
         let currentConfig = config;
         let fallbackIdx = 0;
+        let lastUnresponsiveEngines = [];
+        let lastSuggestions = [];
 
         while (true) {
             const isFallback = fallbackIdx > 0;
             const maxAttempts = isFallback ? 1 : WEB_SEARCH_MAX_ATTEMPTS;
+            const attemptMeta = { unresponsiveEngines: [], suggestions: [] };
             const result = await this._attemptSearch(
                 query,
                 currentConfig,
                 cancellable,
                 maxAttempts,
+                attemptMeta,
             );
-            if (result) return result; // got results — success
+            if (attemptMeta.unresponsiveEngines.length > 0) {
+                lastUnresponsiveEngines = attemptMeta.unresponsiveEngines;
+            }
+            if (attemptMeta.suggestions.length > 0) {
+                lastSuggestions = attemptMeta.suggestions;
+            }
+            if (result) {
+                if (!bypassCache) {
+                    cacheSearchResults(cacheKey, result);
+                }
+                return result;
+            }
 
             // No results — try next fallback engine if available
             if (
                 fallbackIdx >= ENGINE_FALLBACK_CHAIN.length ||
                 fallbackIdx >= MAX_FALLBACK_ATTEMPTS
             ) {
-                // All fallbacks exhausted — return empty
+                // All fallbacks exhausted — record cooldown and preserve engine diagnostics
                 this._lastEmptyResultTime = Date.now();
                 log(`[Katab:webSearch] Query "${query}" — all engines exhausted, returning empty.`);
-                return { results: [], answers: [], unresponsiveEngines: [], suggestions: [] };
+                return {
+                    results: [],
+                    answers: [],
+                    unresponsiveEngines: lastUnresponsiveEngines,
+                    suggestions: lastSuggestions,
+                };
             }
 
             const fallback = ENGINE_FALLBACK_CHAIN[fallbackIdx];
@@ -914,9 +1186,7 @@ export class WebSearchRuntime {
 
             // Build fallback config by merging fallback engine spec into current config
             currentConfig = { ...config };
-            if (fallback.engines) {
-                currentConfig.engines = fallback.engines;
-            }
+            currentConfig.engines = fallback.engines || '';
             if (fallback.categories) {
                 currentConfig.categories = fallback.categories;
             }
@@ -929,16 +1199,24 @@ export class WebSearchRuntime {
     /**
      * Execute a single search attempt with the given config, with exponential
      * backoff retries. Returns null if all retries exhausted with empty results
-     * or rate limiting — the caller should try fallback engines.
-     * @param {number} [maxAttempts=WEB_SEARCH_MAX_ATTEMPTS] - Max retries (fewer for fallback engines)
+     * so the caller can try fallback engines.
+     * @param {number} [maxAttempts=WEB_SEARCH_MAX_ATTEMPTS]
+     * @param {{ unresponsiveEngines: Array, suggestions: Array }|null} [meta]
      */
-    async _attemptSearch(query, config, cancellable, maxAttempts = WEB_SEARCH_MAX_ATTEMPTS) {
+    async _attemptSearch(
+        query,
+        config,
+        cancellable,
+        maxAttempts = WEB_SEARCH_MAX_ATTEMPTS,
+        meta = null,
+    ) {
         const url = this._buildSearchUrl(query, config);
         const attempts = Math.min(maxAttempts, WEB_SEARCH_MAX_ATTEMPTS);
         log(`[Katab:webSearch] Query: "${query}"`);
         log(`[Katab:webSearch] URL: ${url}`);
 
-        let rawBody = ''; // captured for zero-result diagnostics
+        let rawBody = '';
+        let lastUnresponsive = [];
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (cancellable && cancellable.is_cancelled()) {
@@ -960,12 +1238,6 @@ export class WebSearchRuntime {
                 if (cancellable && cancellable.is_cancelled()) {
                     throw error;
                 }
-                // Fail fast on connection errors: an unreachable SearxNG
-                // instance is a service-down condition, not a transient blip.
-                // Retrying here with backoff just burns seconds before the same
-                // failure; callers (research branch loop / tool loop) have their
-                // own service-down handling.  HTTP-level retries (429
-                // rate-limit, empty results) are still handled below.
                 log(
                     `[Katab:webSearch] Connection to SearxNG failed for "${query}": ${error.message}`,
                 );
@@ -988,7 +1260,7 @@ export class WebSearchRuntime {
                     log(
                         `[Katab:webSearch] Rate-limited (HTTP 429) for "${query}", retrying after ${backoffMs}ms…`,
                     );
-                    await this._sleepMs(backoffMs);
+                    await this._sleepMs(backoffMs, cancellable);
                     continue;
                 }
                 throw new WebSearchToolError(
@@ -1017,38 +1289,55 @@ export class WebSearchRuntime {
             const results = normalizeResults(data);
             const answers = Array.isArray(data?.answers) ? data.answers.filter(Boolean) : [];
             const unresponsiveEngines = Array.isArray(data?.unresponsive_engines)
-                ? data.unresponsive_engines.map(([name, reason]) => ({
-                      name,
-                      reason: String(reason || ''),
-                  }))
+                ? data.unresponsive_engines
+                      .map((entry) => {
+                          if (Array.isArray(entry)) {
+                              return {
+                                  name: String(entry[0] || 'unknown'),
+                                  reason: String(entry[1] || ''),
+                              };
+                          }
+                          if (entry && typeof entry === 'object') {
+                              return {
+                                  name: String(entry.name || 'unknown'),
+                                  reason: String(entry.reason || ''),
+                              };
+                          }
+                          return entry ? { name: String(entry), reason: '' } : null;
+                      })
+                      .filter(Boolean)
                 : [];
             const suggestions = Array.isArray(data?.suggestions)
                 ? data.suggestions.filter(Boolean)
                 : [];
 
-            // If we got 0 results, it may be a transient upstream-engine failure.
-            // Retry with exponential backoff to give upstream rate limits time to clear.
-            if (results.length === 0 && answers.length === 0 && attempt < attempts) {
-                const backoffMs = WEB_SEARCH_BACKOFF_MS[attempt - 1] || 2000;
-                log(
-                    `[Katab:webSearch] Query "${query}" returned 0 results on attempt ${attempt}, retrying after ${backoffMs}ms…`,
-                );
-                await this._sleepMs(backoffMs);
-                continue;
+            lastUnresponsive = unresponsiveEngines;
+            if (meta) {
+                meta.unresponsiveEngines = unresponsiveEngines;
+                meta.suggestions = suggestions;
+            }
+
+            // If we got 0 results, retry with exponential backoff before
+            // yielding null so the engine fallback chain can run.
+            if (results.length === 0 && answers.length === 0) {
+                if (attempt < attempts) {
+                    const backoffMs = WEB_SEARCH_BACKOFF_MS[attempt - 1] || 2000;
+                    log(
+                        `[Katab:webSearch] Query "${query}" returned 0 results on attempt ${attempt}, retrying after ${backoffMs}ms…`,
+                    );
+                    await this._sleepMs(backoffMs, cancellable);
+                    continue;
+                }
+                break;
             }
 
             this._logSearchResult(query, results, answers, rawBody, unresponsiveEngines);
-            const resultPayload = { results, answers, unresponsiveEngines, suggestions };
-            // Cache successful results
-            if (results.length > 0 || answers.length > 0) {
-                cacheSearchResults(query, resultPayload);
-            }
-            return resultPayload;
+            return { results, answers, unresponsiveEngines, suggestions };
         }
 
         // All attempts exhausted with zero results — return null so the
         // caller can try the engine fallback chain.
-        this._logSearchResult(query, [], [], rawBody, []);
+        this._logSearchResult(query, [], [], rawBody, lastUnresponsive);
         log(
             `[Katab:webSearch] Query "${query}" exhausted all ${attempts} attempts with current engine config — trying fallback if available.`,
         );
@@ -1095,13 +1384,10 @@ export class WebSearchRuntime {
 
         // Intent-routing overrides: if config has an intentRoute, those
         // values take priority over the global defaults.  If the user set
-        // explicit engines/categories/timeRange in GSettings, the intent
-        // route is NOT applied (the user knows what they want).
+        // explicit engines/categories in GSettings, the intent route is NOT applied.
         const route = config.intentRoute;
         const useRoute =
-            route &&
-            !config.engines && // user didn't set explicit engines
-            config.categories === 'general'; // user didn't override categories
+            route && !config.engines && (!config.categories || config.categories === 'general');
 
         const categories = useRoute && route.categories ? route.categories : config.categories;
         const engines = useRoute && route.engines ? route.engines : config.engines;
@@ -1166,10 +1452,12 @@ export class WebSearchRuntime {
     async _requestWithRedirects(url, options = {}, cancellable = null) {
         let currentUrl = url;
         for (let redirects = 0; redirects <= WEB_SEARCH_MAX_REDIRECTS; redirects++) {
-            currentUrl = await this._assertFetchableUrl(currentUrl, {
-                allowLocal: Boolean(options.allowLocal),
-                cancellable,
-            });
+            if (redirects > 0 || !options.skipInitialValidation) {
+                currentUrl = await this._assertFetchableUrl(currentUrl, {
+                    allowLocal: Boolean(options.allowLocal),
+                    cancellable,
+                });
+            }
 
             const response = await this._request(
                 currentUrl,
@@ -1312,6 +1600,8 @@ export class WebSearchRuntime {
             );
         }
 
+        const linked = createLinkedTimeoutCancellable(cancellable, WEB_SEARCH_PDF_TIMEOUT_MS);
+
         return new Promise((resolve, reject) => {
             let subprocess;
             try {
@@ -1322,6 +1612,7 @@ export class WebSearchRuntime {
                         Gio.SubprocessFlags.STDERR_PIPE,
                 );
             } catch (_error) {
+                linked.cleanup();
                 reject(
                     new WebSearchToolError('Katab could not start pdftotext to read the PDF.', {
                         code: 'spawn-failed',
@@ -1330,18 +1621,41 @@ export class WebSearchRuntime {
                 return;
             }
 
-            subprocess.communicate_async(new GLib.Bytes(data), cancellable, (source, result) => {
-                try {
-                    const [, stdout] = source.communicate_finish(result);
-                    resolve(decodeBytes(stdout));
-                } catch (error) {
-                    // Cancelling the request must not leave pdftotext running.
+            subprocess.communicate_async(
+                new GLib.Bytes(data),
+                linked.cancellable,
+                (source, result) => {
+                    const timedOut = linked.isTimedOut();
+                    linked.cleanup();
                     try {
-                        subprocess.force_exit();
-                    } catch (_e) {}
-                    reject(error);
-                }
-            });
+                        const [, stdout, stderr] = source.communicate_finish(result);
+                        if (!source.get_successful()) {
+                            const errMsg = decodeBytes(stderr).trim();
+                            reject(
+                                new WebSearchToolError(
+                                    'Could not extract text from this PDF (it may be encrypted or corrupted).',
+                                    { code: 'pdf-extract-failed', detail: errMsg },
+                                ),
+                            );
+                            return;
+                        }
+                        resolve(decodeBytes(stdout));
+                    } catch (error) {
+                        try {
+                            subprocess.force_exit();
+                        } catch (_e) {}
+                        if (timedOut) {
+                            reject(
+                                new WebSearchToolError('Timed out extracting text from the PDF.', {
+                                    code: 'pdf-timeout',
+                                }),
+                            );
+                            return;
+                        }
+                        reject(error);
+                    }
+                },
+            );
         });
     }
 }

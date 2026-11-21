@@ -70,7 +70,19 @@ export class ExploreDocsRuntime {
         // empty TOC.  The user's global extraction-mode preference still
         // applies to ordinary crawl_url calls.
         const markdownConfig = { ...config, extractionMode: 'markdown' };
-        const results = await this._crawl4ai.crawl([targetUrl], markdownConfig, cancellable);
+        let results;
+        try {
+            results = await this._crawl4ai.crawl([targetUrl], markdownConfig, cancellable);
+        } catch (error) {
+            if (cancellable?.is_cancelled?.()) {
+                throw error;
+            }
+            return {
+                url: targetUrl,
+                success: false,
+                errorMessage: error?.message || 'The landing page could not be explored.',
+            };
+        }
         const landing = results?.[0] || {};
 
         if (!landing.success) {
@@ -115,6 +127,25 @@ export class ExploreDocsRuntime {
 }
 
 // ── Result formatting ─────────────────────────────────────────────────────────
+
+const EXPLORE_DOCS_LINK_LABEL_MAX_CHARS = 90;
+const EXPLORE_DOCS_TOC_MAX_CHARS = 5000;
+
+function formatExploreLinkLine(link, index) {
+    const rawLabel = String(link?.text || link?.title || link?.href || '')
+        .replace(/\s+/g, ' ')
+        .replace(/\[/g, '(')
+        .replace(/\]/g, ')')
+        .trim();
+    const label =
+        rawLabel.length > EXPLORE_DOCS_LINK_LABEL_MAX_CHARS
+            ? `${rawLabel.slice(0, EXPLORE_DOCS_LINK_LABEL_MAX_CHARS - 1).trimEnd()}…`
+            : rawLabel;
+    const safeHref = String(link?.href || '')
+        .replace(/\)/g, '%29')
+        .replace(/\(/g, '%28');
+    return `${index + 1}. [${label}](${safeHref})`;
+}
 
 /**
  * Format an explore() result into the human-readable block the agent sees.
@@ -165,18 +196,23 @@ export function buildExploreDocsResultBlock(result, { query = '' } = {}) {
 
     lines.push('');
     lines.push(`--- Table of contents (${toc.length} links) ---`);
-    toc.forEach((link, index) => {
-        const label = link.text || link.title || link.href;
-        lines.push(`${index + 1}. [${label}](${link.href})`);
-    });
+    let tocChars = 0;
+    for (let index = 0; index < toc.length; index++) {
+        const line = formatExploreLinkLine(toc[index], index);
+        if (tocChars + line.length > EXPLORE_DOCS_TOC_MAX_CHARS) {
+            lines.push(`[...${toc.length - index} more links omitted]`);
+            break;
+        }
+        lines.push(line);
+        tocChars += line.length + 1;
+    }
 
     const suggested = Array.isArray(result.suggestedLinks) ? result.suggestedLinks : [];
     if (suggested.length > 0) {
         lines.push('');
         lines.push(`--- Most relevant for "${String(query || '').trim()}" ---`);
         suggested.forEach((link, index) => {
-            const label = link.text || link.title || link.href;
-            lines.push(`${index + 1}. [${label}](${link.href})`);
+            lines.push(formatExploreLinkLine(link, index));
         });
         lines.push('');
         lines.push(

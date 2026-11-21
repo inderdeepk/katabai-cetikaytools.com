@@ -172,15 +172,46 @@ export class AssistantRender {
             return Clutter.EVENT_STOP;
         });
 
-        ct.connect('button-release-event', (actor) => {
+        ct.connect('button-release-event', (actor, event) => {
             if (!actor._katabSelecting) {
                 return Clutter.EVENT_PROPAGATE;
             }
             actor._katabSelecting = false;
+            if (typeof actor._katabOnTextClick === 'function') {
+                const sel = actor.get_selection?.();
+                if (!sel || String(sel).length === 0) {
+                    actor._katabOnTextClick(actor, event);
+                }
+            }
             return Clutter.EVENT_STOP;
         });
 
         return label;
+    }
+
+    _flashCopyButtonFeedback(button, originalLabel, copiedLabel = 'Copied') {
+        if (!button) return;
+        if (button._katabCopyResetId) {
+            GLib.source_remove(button._katabCopyResetId);
+            button._katabCopyResetId = 0;
+        }
+        button.label = copiedLabel;
+        if (!button._katabCopyDestroyWired) {
+            button._katabCopyDestroyWired = true;
+            button.connect('destroy', () => {
+                if (button._katabCopyResetId) {
+                    GLib.source_remove(button._katabCopyResetId);
+                    button._katabCopyResetId = 0;
+                }
+            });
+        }
+        button._katabCopyResetId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+            button._katabCopyResetId = 0;
+            if (!this._host.isActorDisposed(button)) {
+                button.label = originalLabel;
+            }
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _createAssistantTextLabel(markup, fallbackText) {
@@ -279,6 +310,7 @@ export class AssistantRender {
                 St.ClipboardType.CLIPBOARD,
                 String(segment.fallbackText ?? ''),
             );
+            this._flashCopyButtonFeedback(copyBtn, 'Copy table', 'Copied');
         });
         headerRow.add_child(copyBtn);
         tableWindow.add_child(headerRow);
@@ -351,6 +383,7 @@ export class AssistantRender {
         });
         copyBtn.connect('clicked', () => {
             St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, codeText);
+            this._flashCopyButtonFeedback(copyBtn, 'Copy', 'Copied');
         });
         headerRow.add_child(copyBtn);
         codeWindow.add_child(headerRow);
@@ -380,11 +413,12 @@ export class AssistantRender {
         return codeWindow;
     }
 
-    _renderAssistantSegments(contentBox, segments) {
+    _renderAssistantSegments(contentBox, segments, citationMap = null) {
         if (!contentBox) {
             return;
         }
 
+        const resolvedCitationMap = citationMap || this._collectCitationMap();
         contentBox.destroy_all_children();
 
         for (let segment of segments) {
@@ -399,7 +433,11 @@ export class AssistantRender {
                     style_class: 'katab-markdown-blockquote',
                     x_expand: true,
                 });
-                this._renderAssistantSegments(quoteBox, segment.segments || []);
+                this._renderAssistantSegments(
+                    quoteBox,
+                    segment.segments || [],
+                    resolvedCitationMap,
+                );
                 contentBox.add_child(quoteBox);
                 continue;
             }
@@ -418,12 +456,13 @@ export class AssistantRender {
                 continue;
             }
 
-            // Render text with inline clickable citation buttons
+            // Render text with inline clickable citation markers
             contentBox.add_child(
                 this._createTextWithCitationButtons(
                     segment.fallbackText || '',
                     segment.markup || '',
                     segment.fallbackText || '',
+                    resolvedCitationMap,
                 ),
             );
         }
@@ -523,79 +562,110 @@ export class AssistantRender {
      */
     _collectCitationMap() {
         const map = new Map();
+        const seenUrls = new Set();
+
+        const addIfNewUrl = (url, explicitNum = null, title = '') => {
+            const cleanUrl = String(url || '')
+                .replace(/:$/, '')
+                .trim();
+            if (!cleanUrl) return;
+            const norm = cleanUrl.replace(/\/+$/, '').toLowerCase();
+            if (explicitNum !== null) {
+                if (!map.has(explicitNum)) {
+                    map.set(explicitNum, { url: cleanUrl, ...(title ? { title } : {}) });
+                    seenUrls.add(norm);
+                }
+                return;
+            }
+            if (seenUrls.has(norm)) return;
+            let num = map.size + 1;
+            while (map.has(num)) num++;
+            map.set(num, { url: cleanUrl, ...(title ? { title } : {}) });
+            seenUrls.add(norm);
+        };
 
         // Source 1: Active citation tracker (from parallel branch research)
-        if (this._host.getCitationTracker() && this._host.getCitationTracker().urlToNumber) {
-            for (const [normalizedUrl, num] of this._host
-                .getCitationTracker()
-                .urlToNumber.entries()) {
-                if (!map.has(num)) {
-                    const entry = this._host
-                        .getCitationTracker()
-                        .entries.find((e) => e.citationNum === num);
-                    const url = entry ? entry.urls[0] : normalizedUrl;
-                    map.set(num, { url });
-                }
+        const tracker = this._host.getCitationTracker();
+        if (tracker && tracker.urlToNumber) {
+            for (const [normalizedUrl, num] of tracker.urlToNumber.entries()) {
+                const exactUrl =
+                    tracker.numberToUrl?.get(num) ||
+                    tracker.entries?.find((e) => e.citationNum === num)?.urls?.[0] ||
+                    normalizedUrl;
+                addIfNewUrl(exactUrl, num);
             }
         }
 
-        // Source 2: Message history tool results (from model-driven research)
+        // Source 2: Message history tool results (OpenAI/Ollama/DeepSeek + Anthropic tool_result)
+        const urlPattern =
+            /\[?Full text (?:scraped|extracted|fetched) from\s+(https?:\/\/[^\]\s]+?)(?:\]|:|$)/gim;
         for (const msg of this._host.getMessageHistory()) {
-            if (msg.role !== 'tool') continue;
-            const content = typeof msg.content === 'string' ? msg.content : '';
-            if (!content) continue;
-            const urlMatches = content.matchAll(
-                /\[Full text (?:scraped|extracted|fetched) from\s+(https?:\/\/[^\]]+)\]/g,
-            );
-            for (const match of urlMatches) {
-                const url = match[1];
-                const norm = url.replace(/\/+$/, '').toLowerCase();
-                const num = map.size + 1;
-                if (
-                    ![...map.values()].some((v) => v.url.replace(/\/+$/, '').toLowerCase() === norm)
-                ) {
-                    map.set(num, { url });
+            const contents = [];
+            if (msg.role === 'tool' && typeof msg.content === 'string') {
+                contents.push(msg.content);
+            } else if (msg.role === 'user' && Array.isArray(msg.content)) {
+                for (const block of msg.content) {
+                    if (block?.type === 'tool_result') {
+                        if (typeof block.content === 'string') {
+                            contents.push(block.content);
+                        } else if (Array.isArray(block.content)) {
+                            for (const c of block.content) {
+                                if (c?.type === 'text' && c.text) contents.push(c.text);
+                            }
+                        }
+                    }
+                }
+            }
+            for (const content of contents) {
+                if (!content) continue;
+                for (const match of content.matchAll(urlPattern)) {
+                    addIfNewUrl(match[1]);
                 }
             }
         }
 
         // Source 3: Parsed bibliography from the current assistant message
-        if (this._host.getCurrentBibMap() && this._host.getCurrentBibMap().size > 0) {
-            for (const [num, entry] of this._host.getCurrentBibMap().entries()) {
-                if (!map.has(num)) {
-                    map.set(num, { url: entry.url, title: entry.title || '' });
-                }
+        const bibMap = this._host.getCurrentBibMap();
+        if (bibMap && bibMap.size > 0) {
+            for (const [num, entry] of bibMap.entries()) {
+                addIfNewUrl(entry.url, num, entry.title || '');
             }
         }
 
         return map;
     }
 
+    _citationLinkColor() {
+        const isDark =
+            typeof this._host.isDarkTheme === 'function' ? this._host.isDarkTheme() : true;
+        return isDark ? '#94e2d5' : '#0f766e';
+    }
+
     /**
      * Render text with clickable [N] citation markers.
      * Uses the standard Pango-markup label (preserving ALL formatting:
      * headings, bold, italic, code, tables) and styles [N] markers
-     * as teal underlined links.  Clicks on [N] markers open the
-     * referenced URL.  Drag-selection still works normally.
+     * as high-contrast underlined links. Clicks on [N] markers open the
+     * referenced URL while drag-selection continues to work normally.
      * @param {string} rawText - The original text with [N] markers
      * @param {string} markupText - Pango-markup text
      * @param {string} fallbackText - Plain text fallback
+     * @param {Map<number, {url: string}>|null} [cachedMap]
      * @returns {St.Widget}
      */
-    _createTextWithCitationButtons(rawText, markupText, fallbackText) {
-        const citationMap = this._collectCitationMap();
+    _createTextWithCitationButtons(rawText, markupText, fallbackText, cachedMap = null) {
+        const citationMap = cachedMap || this._collectCitationMap();
 
         // Quick check: does the text contain any [N] markers?
         if (!/\[\d{1,3}\]/.test(rawText) || citationMap.size === 0) {
             return this._createAssistantTextLabel(markupText, fallbackText);
         }
 
-        // Style [N] markers that have URL mappings as teal underlined links.
-        // Unmapped markers are left as plain text.
+        const linkColor = this._citationLinkColor();
         const styledMarkup = (markupText || rawText).replace(/\[(\d{1,3})\]/g, (full, numStr) => {
             const num = parseInt(numStr, 10);
             if (citationMap.has(num)) {
-                return `<span foreground="#94e2d5" underline="single" font_weight="bold">[${num}]</span>`;
+                return `<span foreground="${linkColor}" underline="single" font_weight="bold">[${num}]</span>`;
             }
             return full;
         });
@@ -603,27 +673,14 @@ export class AssistantRender {
         // Render as a normal label — all formatting is preserved
         const lbl = this._createAssistantTextLabel(styledMarkup, fallbackText);
 
-        // Attach click-to-open behaviour for [N] markers.
-        // We connect after makeTextSelectable so selection still works;
-        // we only open URLs on clicks (not drag-selections).
+        // Wire click-to-open directly into makeTextSelectable's click hook so
+        // selection's EVENT_STOP never swallows clicks on [N] citation markers.
         const ct = lbl.clutter_text;
         if (ct) {
-            const releaseId = ct.connect('button-release-event', (actor, event) => {
-                if (event.get_button() !== Clutter.BUTTON_PRIMARY) {
-                    return Clutter.EVENT_PROPAGATE;
-                }
-
-                // Only act on clicks, not drag-selections
-                const sel = actor.get_selection?.();
-                if (sel && String(sel).length > 0) {
-                    return Clutter.EVENT_PROPAGATE;
-                }
-
+            ct._katabOnTextClick = (actor, event) => {
                 const pos = this._positionFromTextEvent(actor, event);
-                if (pos < 0) return Clutter.EVENT_PROPAGATE;
+                if (pos < 0) return;
 
-                // Scan the visible text for [N] markers and check if
-                // the clicked position falls inside one
                 const text = actor.get_text();
                 const markerRe = /\[(\d{1,3})\]/g;
                 let m;
@@ -633,13 +690,11 @@ export class AssistantRender {
                         const entry = citationMap.get(num);
                         if (entry) {
                             this._openExternalLink(entry.url);
-                            return Clutter.EVENT_STOP;
+                            return;
                         }
                     }
                 }
-                return Clutter.EVENT_PROPAGATE;
-            });
-            lbl._katabCitReleaseId = releaseId;
+            };
         }
 
         return lbl;

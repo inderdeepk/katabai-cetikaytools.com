@@ -242,7 +242,7 @@ export function buildOllamaPage(ctx) {
         for (const row of _savedPresetRows) {
             try {
                 modelPresetsGroup.remove(row);
-            } catch (_e) { }
+            } catch (_e) {}
         }
         _savedPresetRows = [];
 
@@ -275,9 +275,12 @@ export function buildOllamaPage(ctx) {
         if (pendingPreset) {
             const pendingRow = stylePreferenceRow(
                 new Adw.ActionRow({
-                    title: format(_('{name} has unsaved changes'), {
-                        name: pendingPreset.name || _('Unnamed Preset'),
-                    }),
+                    title: GLib.markup_escape_text(
+                        format(_('{name} has unsaved changes'), {
+                            name: pendingPreset.name || _('Unnamed Preset'),
+                        }),
+                        -1,
+                    ),
                     subtitle: _(
                         'Save changes to update this preset, or discard changes to restore its saved values.',
                     ),
@@ -349,15 +352,15 @@ export function buildOllamaPage(ctx) {
             const temp =
                 preset['temperature'] !== undefined
                     ? format(_('temp {value}'), {
-                        value: Number(preset['temperature']).toFixed(2),
-                    })
+                          value: Number(preset['temperature']).toFixed(2),
+                      })
                     : '';
             const subtitleParts = [modelName, ctx, temp].filter(Boolean);
 
             const presetRow = stylePreferenceRow(
                 new Adw.ActionRow({
-                    title: preset.name || _('Unnamed Preset'),
-                    subtitle: subtitleParts.join('  ·  '),
+                    title: GLib.markup_escape_text(preset.name || _('Unnamed Preset'), -1),
+                    subtitle: GLib.markup_escape_text(subtitleParts.join('  ·  '), -1),
                     activatable: false,
                 }),
                 'katab-prefs-row',

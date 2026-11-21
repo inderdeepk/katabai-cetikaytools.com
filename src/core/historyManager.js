@@ -38,6 +38,7 @@ export class HistoryManager {
     static _cache = null;
     static _dirty = false;
     static _flushSourceId = 0;
+    static _idSeq = 0;
     static FLUSH_DELAY_MS = 200;
 
     static get filePath() {
@@ -53,15 +54,33 @@ export class HistoryManager {
         }
     }
 
-    static _readFromDisk() {
+    static _backupCorruptFile(file) {
         try {
-            let file = Gio.File.new_for_path(this.filePath);
+            const backupPath = `${this.filePath}.corrupt.${Date.now()}`;
+            file.copy(Gio.File.new_for_path(backupPath), Gio.FileCopyFlags.OVERWRITE, null, null);
+            log(`[Katab:history] Backed up corrupt history file to ${backupPath}`);
+        } catch (_e) {
+            /* best effort */
+        }
+    }
+
+    static _readFromDisk() {
+        const file = Gio.File.new_for_path(this.filePath);
+        try {
             let [, bytes] = file.load_contents(null);
             const parsed = JSON.parse(new TextDecoder('utf-8').decode(bytes));
-            // Guard against a syntactically-valid but non-array file (external
-            // corruption) — otherwise every save throws on .findIndex/.filter.
-            this._cache = Array.isArray(parsed) ? parsed : [];
-        } catch (_e) {
+            if (Array.isArray(parsed)) {
+                this._cache = parsed;
+            } else {
+                log('[Katab:history] History file is not a JSON array — starting fresh.');
+                this._backupCorruptFile(file);
+                this._cache = [];
+            }
+        } catch (e) {
+            if (!e?.matches?.(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND)) {
+                log(`[Katab:history] Failed to read history file: ${e.message || e}`);
+                this._backupCorruptFile(file);
+            }
             this._cache = [];
         }
         return this._cache;
@@ -75,12 +94,9 @@ export class HistoryManager {
         return this._cache;
     }
 
-    /** Returns the cached array without ever touching disk. */
+    /** Returns the cached array (loads once on first access). */
     static getCached() {
-        if (this._cache === null) {
-            this._readFromDisk();
-        }
-        return this._cache;
+        return this.load();
     }
 
     /** Marks cache dirty and schedules a debounced flush to disk. */
@@ -101,12 +117,12 @@ export class HistoryManager {
         if (!this._dirty || this._cache === null) {
             return;
         }
-        this._dirty = false;
         try {
             this.ensureDir();
             let file = Gio.File.new_for_path(this.filePath);
             let data = new TextEncoder().encode(JSON.stringify(this._cache, null, 2));
             file.replace_contents(data, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+            this._dirty = false;
         } catch (e) {
             log(`Katab: failed to save history: ${e.message}`);
         }
@@ -123,10 +139,15 @@ export class HistoryManager {
 
     /** Invalidate the in-memory cache so the next load() re-reads disk. */
     static invalidateCache() {
+        if (this._flushSourceId) {
+            GLib.source_remove(this._flushSourceId);
+            this._flushSourceId = 0;
+        }
+        this._dirty = false;
         this._cache = null;
     }
 
-    /** Default title = first 60 chars of the first user message. */
+    /** Default title = first 60 code points of the first user message. */
     static _computeDefaultTitle(messageHistory) {
         let userMsgs = messageHistory.filter((m) => m.role === 'user');
         if (userMsgs.length === 0) return '';
@@ -143,9 +164,11 @@ export class HistoryManager {
         )
             .replace(/\s*\n\s*/g, ' ')
             .trim();
-        let title = rawTitle.slice(0, 60);
-        if (rawTitle.length > 60) title += '\u2026';
-        return title;
+        const chars = Array.from(rawTitle);
+        if (chars.length <= 60) {
+            return rawTitle;
+        }
+        return `${chars.slice(0, 60).join('')}\u2026`;
     }
 
     /**
@@ -162,12 +185,12 @@ export class HistoryManager {
         let userMsgs = messageHistory.filter((m) => m.role === 'user');
         if (userMsgs.length === 0) return null;
 
-        let id = existingId || `conv_${Date.now()}`;
+        let arr = this.load();
+        let id = existingId || `conv_${Date.now()}_${++this._idSeq}`;
 
         // Use cache instead of re-reading disk — mutate in-place so that
         // _flushNow writes the updated array. Array.filter() returns a new
         // array, which would silently detach from this._cache.
-        let arr = this.load();
         let existing = null;
         if (existingId) {
             let idx = arr.findIndex((e) => e.id === existingId);
@@ -178,7 +201,7 @@ export class HistoryManager {
             id: id,
             title: this._computeDefaultTitle(messageHistory),
             timestamp: Math.floor(Date.now() / 1000),
-            messages: [...messageHistory],
+            messages: messageHistory.map((m) => (m && typeof m === 'object' ? { ...m } : m)),
         };
 
         // Carry over user-managed metadata: a manual/generated title must not
@@ -194,7 +217,22 @@ export class HistoryManager {
         }
 
         arr.unshift(entry);
-        if (arr.length > MAX_CONVERSATIONS) arr.length = MAX_CONVERSATIONS;
+        // Prefer evicting oldest non-archived entries first so explicitly
+        // archived chats aren't silently purged by active chatting.
+        while (arr.length > MAX_CONVERSATIONS) {
+            let evictIdx = -1;
+            for (let i = arr.length - 1; i >= 1; i--) {
+                if (!arr[i]?.archived) {
+                    evictIdx = i;
+                    break;
+                }
+            }
+            if (evictIdx >= 0) {
+                arr.splice(evictIdx, 1);
+            } else {
+                arr.pop();
+            }
+        }
         this._scheduleFlush();
         return id;
     }
@@ -226,7 +264,7 @@ export class HistoryManager {
         if (typeof title === 'string') {
             let nextTitle = title.replace(/\s*\n\s*/g, ' ').trim();
             if (nextTitle) {
-                entry.title = nextTitle.slice(0, HISTORY_TITLE_MAX_CHARS);
+                entry.title = Array.from(nextTitle).slice(0, HISTORY_TITLE_MAX_CHARS).join('');
                 entry.customTitle = true;
             } else {
                 delete entry.customTitle;
@@ -236,7 +274,9 @@ export class HistoryManager {
         if (typeof description === 'string') {
             let nextDesc = description.replace(/\s+/g, ' ').trim();
             if (nextDesc) {
-                entry.description = nextDesc.slice(0, HISTORY_DESCRIPTION_MAX_CHARS);
+                entry.description = Array.from(nextDesc)
+                    .slice(0, HISTORY_DESCRIPTION_MAX_CHARS)
+                    .join('');
             } else {
                 delete entry.description;
             }
@@ -257,7 +297,15 @@ export class HistoryManager {
 
     static deleteConversation(id) {
         let arr = this.load();
-        this._cache = arr.filter((e) => e.id !== id);
-        this._scheduleFlush();
+        let removed = false;
+        for (let i = arr.length - 1; i >= 0; i--) {
+            if (arr[i]?.id === id) {
+                arr.splice(i, 1);
+                removed = true;
+            }
+        }
+        if (removed) {
+            this._scheduleFlush();
+        }
     }
 }

@@ -11,47 +11,153 @@ function numberOrNull(value) {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+const THINK_OPEN_TAGS = ['<thinking>', '<think>'];
+const THINK_CLOSE_TAGS = ['</thinking>', '</think>'];
+
+/**
+ * Find the length of the longest suffix of `str` that is a strict prefix of
+ * any tag in `tags`. Used to carry partial `<think>` / `</think>` tags across
+ * SSE chunk boundaries without leaking them into visible text.
+ */
+function trailingPartialTagLength(str, tags) {
+    const maxCheck = Math.min(str.length, 11); // '</thinking>'.length === 11
+    for (let len = maxCheck; len >= 1; len--) {
+        const suffix = str.slice(str.length - len);
+        if (suffix[0] !== '<') {
+            continue;
+        }
+        for (const tag of tags) {
+            if (len < tag.length && tag.startsWith(suffix)) {
+                return len;
+            }
+        }
+    }
+    return 0;
+}
+
 /**
  * Split a streamed text delta into visible text and inline thinking content,
  * carrying the thinking state across deltas. Handles both `<thinking>…</thinking>`
  * and the shorter `<think>…</think>` tag pair. NOTE: the tag literals here were
  * once corrupted ('igid'/'igr') — keep them exact.
  *
+ * When a mutable `carryState` object (`{ carry: '', openTag: '' }`) is
+ * supplied, partial opening/closing tags split across two SSE deltas are
+ * buffered until the next delta completes or disproves them. Call
+ * `flushThinkingCarry(isThinking, carryState)` at stream EOF to emit any
+ * trailing unmatched `<...` fragment.
+ *
  * @param {string} deltaText
  * @param {boolean} isThinking state carried from the previous delta
+ * @param {{ carry?: string, openTag?: string }|null} [carryState]
  * @returns {{ text: string, think: string, isThinking: boolean, openedThinking: boolean }}
  */
-export function splitThinkingTags(deltaText, isThinking = false) {
-    let text = '';
-    let think = '';
+export function splitThinkingTags(deltaText, isThinking = false, carryState = null) {
+    const input = (carryState?.carry || '') + String(deltaText ?? '');
+    if (carryState) {
+        carryState.carry = '';
+    }
+
+    const textParts = [];
+    const thinkParts = [];
     let openedThinking = false;
     let i = 0;
-    let thinking = isThinking;
-    while (i < deltaText.length) {
-        if (!thinking) {
-            const thinkingOpen = deltaText.startsWith('<thinking>', i);
-            if (thinkingOpen || deltaText.startsWith('<think>', i)) {
-                thinking = true;
-                openedThinking = true;
-                i += thinkingOpen ? 10 : 7; // skip tag
-                continue;
-            }
-        } else {
-            const thinkingClose = deltaText.startsWith('</thinking>', i);
-            if (thinkingClose || deltaText.startsWith('</think>', i)) {
-                thinking = false;
-                i += thinkingClose ? 11 : 8; // skip tag
-                continue;
-            }
+    let segStart = 0;
+    let thinking = Boolean(isThinking);
+    let openTag = carryState?.openTag || '';
+
+    const flushSegment = (end) => {
+        if (end <= segStart) {
+            return;
         }
         if (thinking) {
-            think += deltaText[i];
+            thinkParts.push(input.slice(segStart, end));
         } else {
-            text += deltaText[i];
+            textParts.push(input.slice(segStart, end));
         }
-        i++;
+    };
+
+    while (i < input.length) {
+        const lt = input.indexOf('<', i);
+        if (lt < 0) {
+            break;
+        }
+        if (!thinking) {
+            const thinkingOpen = input.startsWith('<thinking>', lt);
+            const thinkOpen = !thinkingOpen && input.startsWith('<think>', lt);
+            if (thinkingOpen || thinkOpen) {
+                flushSegment(lt);
+                thinking = true;
+                openedThinking = true;
+                openTag = thinkingOpen ? 'thinking' : 'think';
+                i = lt + (thinkingOpen ? 10 : 7);
+                segStart = i;
+                continue;
+            }
+        } else {
+            const thinkingClose =
+                (!openTag || openTag === 'thinking') && input.startsWith('</thinking>', lt);
+            const thinkClose =
+                !thinkingClose &&
+                (!openTag || openTag === 'think') &&
+                input.startsWith('</think>', lt);
+            if (thinkingClose || thinkClose) {
+                flushSegment(lt);
+                thinking = false;
+                openTag = '';
+                i = lt + (thinkingClose ? 11 : 8);
+                segStart = i;
+                continue;
+            }
+        }
+        i = lt + 1;
     }
-    return { text, think, isThinking: thinking, openedThinking };
+
+    let endIdx = input.length;
+    if (carryState && endIdx > segStart) {
+        const expectedTags = !thinking
+            ? THINK_OPEN_TAGS
+            : openTag === 'thinking'
+              ? ['</thinking>']
+              : openTag === 'think'
+                ? ['</think>']
+                : THINK_CLOSE_TAGS;
+        const partialLen = trailingPartialTagLength(input.slice(segStart), expectedTags);
+        if (partialLen > 0) {
+            carryState.carry = input.slice(endIdx - partialLen);
+            endIdx -= partialLen;
+        }
+    }
+
+    flushSegment(endIdx);
+
+    if (carryState) {
+        carryState.openTag = openTag;
+    }
+
+    return {
+        text: textParts.join(''),
+        think: thinkParts.join(''),
+        isThinking: thinking,
+        openedThinking,
+    };
+}
+
+/**
+ * Flush any buffered partial `<...` fragment left in `carryState` at EOF.
+ * @param {boolean} isThinking
+ * @param {{ carry?: string, openTag?: string }|null} carryState
+ * @returns {{ text: string, think: string }}
+ */
+export function flushThinkingCarry(isThinking, carryState) {
+    const carry = carryState?.carry || '';
+    if (carryState) {
+        carryState.carry = '';
+    }
+    if (!carry) {
+        return { text: '', think: '' };
+    }
+    return isThinking ? { text: '', think: carry } : { text: carry, think: '' };
 }
 
 /**
@@ -72,6 +178,10 @@ export function parseOllamaChunk(parsed) {
         metrics: null,
     };
 
+    if (!parsed || typeof parsed !== 'object') {
+        return result;
+    }
+
     if (parsed.error) {
         result.error =
             typeof parsed.error === 'string'
@@ -80,17 +190,17 @@ export function parseOllamaChunk(parsed) {
         return result;
     }
 
-    if (parsed.message) {
-        if (parsed.message.content) {
+    if (parsed.message && typeof parsed.message === 'object') {
+        if (typeof parsed.message.content === 'string' && parsed.message.content) {
             result.text = parsed.message.content;
         }
         // Ollama returns the thinking trace in `message.thinking` (canonical
         // field name). Older or alternative model runners may use `message.reasoning`.
         const thinkText = parsed.message.thinking || parsed.message.reasoning;
-        if (thinkText) {
+        if (typeof thinkText === 'string' && thinkText) {
             result.think = thinkText;
         }
-        if (parsed.message.tool_calls) {
+        if (Array.isArray(parsed.message.tool_calls) && parsed.message.tool_calls.length > 0) {
             result.toolCalls = parsed.message.tool_calls;
         }
     }
@@ -108,11 +218,13 @@ export function parseOllamaChunk(parsed) {
  * DeepSeek). `think` is only meaningful for DeepSeek — callers for the other
  * providers ignore it (matching the original per-provider branches).
  *
- * @returns {{ serverToolResult: string|null, text: string, think: string,
- *             toolCallFragments: object[]|null, usage: object|null }}
+ * @returns {{ error: string|null, finishReason: string|null, serverToolResult: string|null,
+ *             text: string, think: string, toolCallFragments: object[]|null, usage: object|null }}
  */
 export function parseOpenAiCompatChunk(parsed) {
     const result = {
+        error: null,
+        finishReason: null,
         serverToolResult: null,
         text: '',
         think: '',
@@ -120,78 +232,198 @@ export function parseOpenAiCompatChunk(parsed) {
         usage: null,
     };
 
+    if (!parsed || typeof parsed !== 'object') {
+        return result;
+    }
+
+    if (parsed.error) {
+        result.error =
+            typeof parsed.error === 'string'
+                ? parsed.error
+                : parsed.error.message || 'Provider stream error';
+        return result;
+    }
+
     if (parsed.type === 'tool_result') {
-        const toolContent = parsed.content || 'No output.';
+        let toolContent = 'No output.';
+        if (typeof parsed.content === 'string' && parsed.content) {
+            toolContent = parsed.content;
+        } else if (parsed.content !== undefined && parsed.content !== null) {
+            try {
+                toolContent = JSON.stringify(parsed.content, null, 2);
+            } catch (_e) {
+                toolContent = String(parsed.content);
+            }
+        }
         const toolName = parsed.tool_use_id || 'Tool';
         result.serverToolResult = `\n\n> **Server-side tool executed (${toolName})**:\n> \`\`\`\n> ${toolContent.split('\n').join('\n> ')}\n> \`\`\`\n\n`;
-    } else if (parsed.choices && parsed.choices.length > 0) {
-        const delta = parsed.choices[0]?.delta;
-        if (delta) {
+    } else if (Array.isArray(parsed.choices) && parsed.choices.length > 0) {
+        const choice = parsed.choices[0];
+        if (typeof choice?.finish_reason === 'string' && choice.finish_reason) {
+            result.finishReason = choice.finish_reason;
+        }
+        const delta = choice?.delta;
+        if (delta && typeof delta === 'object') {
             // reasoning_content arrives before content during thinking
-            if (delta.reasoning_content) {
+            if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
                 result.think = delta.reasoning_content;
             }
-            if (delta.content) {
+            if (typeof delta.content === 'string' && delta.content) {
                 result.text = delta.content;
             }
             // OpenAI-compatible providers stream tool-call fragments by index.
-            if (delta.tool_calls) {
+            if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
                 result.toolCallFragments = delta.tool_calls;
             }
         }
     }
 
-    if (parsed.usage) {
+    if (parsed.usage && typeof parsed.usage === 'object') {
         result.usage = parsed.usage;
     }
 
     return result;
 }
 
+function finalizeAnthropicToolBlock(toolBlock) {
+    let toolInput = {};
+    let invalidJson = false;
+    const rawJson = toolBlock.argsJson || '';
+
+    if (rawJson.trim()) {
+        try {
+            const parsedInput = JSON.parse(rawJson);
+            if (parsedInput && typeof parsedInput === 'object' && !Array.isArray(parsedInput)) {
+                toolInput = parsedInput;
+            } else {
+                invalidJson = true;
+            }
+        } catch (_e) {
+            invalidJson = true;
+        }
+    } else if (
+        toolBlock.initialInput &&
+        typeof toolBlock.initialInput === 'object' &&
+        !Array.isArray(toolBlock.initialInput)
+    ) {
+        toolInput = toolBlock.initialInput;
+    }
+
+    const completed = {
+        id: toolBlock.id,
+        type: 'function',
+        function: { name: toolBlock.name, arguments: JSON.stringify(toolInput) },
+    };
+    if (invalidJson) {
+        Object.defineProperty(completed, '_invalidJson', {
+            value: true,
+            enumerable: false,
+            configurable: true,
+        });
+        Object.defineProperty(completed, '_rawArguments', {
+            value: rawJson,
+            enumerable: false,
+            configurable: true,
+        });
+    }
+    return completed;
+}
+
+/**
+ * Flush any unclosed Anthropic tool_use blocks remaining in `toolUseMap` if the
+ * stream reaches EOF before receiving `content_block_stop`.
+ * @param {Map<number, Object>} toolUseMap
+ * @returns {Object[]}
+ */
+export function flushPendingAnthropicToolCalls(toolUseMap) {
+    if (!(toolUseMap instanceof Map) || toolUseMap.size === 0) {
+        return [];
+    }
+    const entries = [...toolUseMap.entries()].sort((a, b) => a[0] - b[0]);
+    toolUseMap.clear();
+    return entries.map(([, block]) => finalizeAnthropicToolBlock(block));
+}
+
 /**
  * Interpret one parsed Anthropic SSE frame. Tool-use state is tracked in the
- * caller-supplied `toolUseMap` (index → { id, name, argsJson }).
+ * caller-supplied `toolUseMap` (index → { id, name, argsJson, initialInput }).
  *
- * @returns {{ text: string, promptTokens: number|null, outputTokens: number|null,
+ * @returns {{ error: string|null, text: string, think: string, stopReason: string|null,
+ *             promptTokens: number|null, outputTokens: number|null,
  *             completedToolCall: object|null }}
  */
 export function parseAnthropicChunk(parsed, toolUseMap) {
-    const result = { text: '', promptTokens: null, outputTokens: null, completedToolCall: null };
+    const result = {
+        error: null,
+        text: '',
+        think: '',
+        stopReason: null,
+        promptTokens: null,
+        outputTokens: null,
+        completedToolCall: null,
+    };
+
+    if (!parsed || typeof parsed !== 'object') {
+        return result;
+    }
+
+    if (parsed.type === 'error') {
+        result.error =
+            typeof parsed.error === 'string'
+                ? parsed.error
+                : parsed.error?.message || 'Anthropic stream error';
+        return result;
+    }
 
     if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'tool_use') {
+        const initialInput =
+            parsed.content_block.input &&
+            typeof parsed.content_block.input === 'object' &&
+            !Array.isArray(parsed.content_block.input) &&
+            Object.keys(parsed.content_block.input).length > 0
+                ? parsed.content_block.input
+                : null;
         toolUseMap.set(parsed.index, {
             id: parsed.content_block.id,
             name: parsed.content_block.name,
             argsJson: '',
+            initialInput,
         });
     } else if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'input_json_delta') {
         const toolBlock = toolUseMap.get(parsed.index);
         if (toolBlock) {
             toolBlock.argsJson += parsed.delta.partial_json || '';
         }
+    } else if (
+        parsed.type === 'content_block_delta' &&
+        parsed.delta?.type === 'thinking_delta' &&
+        typeof parsed.delta.thinking === 'string'
+    ) {
+        result.think = parsed.delta.thinking;
     } else if (parsed.type === 'content_block_delta' && parsed.delta && parsed.delta.text) {
         result.text = parsed.delta.text;
     } else if (parsed.type === 'content_block_stop') {
         const toolBlock = toolUseMap.get(parsed.index);
         if (toolBlock) {
-            let toolInput = {};
-            try {
-                toolInput = toolBlock.argsJson ? JSON.parse(toolBlock.argsJson) : {};
-            } catch (_e) {
-                toolInput = {};
-            }
-            result.completedToolCall = {
-                id: toolBlock.id,
-                type: 'function',
-                function: { name: toolBlock.name, arguments: JSON.stringify(toolInput) },
-            };
+            toolUseMap.delete(parsed.index);
+            result.completedToolCall = finalizeAnthropicToolBlock(toolBlock);
         }
     } else if (parsed.type === 'message_start' && parsed.message?.usage) {
-        // Anthropic reports prompt tokens up front on message_start.
-        result.promptTokens = Number(parsed.message.usage.input_tokens) || 0;
-    } else if (parsed.type === 'message_delta' && parsed.usage?.output_tokens !== undefined) {
-        // message_delta carries the cumulative output token count.
-        result.outputTokens = Number(parsed.usage.output_tokens) || 0;
+        // Anthropic reports prompt tokens up front on message_start (including
+        // prompt-cache creation/read tokens when present).
+        const u = parsed.message.usage;
+        result.promptTokens =
+            (Number(u.input_tokens) || 0) +
+            (Number(u.cache_creation_input_tokens) || 0) +
+            (Number(u.cache_read_input_tokens) || 0);
+    } else if (parsed.type === 'message_delta') {
+        if (typeof parsed.delta?.stop_reason === 'string' && parsed.delta.stop_reason) {
+            result.stopReason = parsed.delta.stop_reason;
+        }
+        if (parsed.usage?.output_tokens !== undefined) {
+            // message_delta carries the cumulative output token count.
+            result.outputTokens = Number(parsed.usage.output_tokens) || 0;
+        }
     }
 
     return result;
@@ -200,8 +432,11 @@ export function parseAnthropicChunk(parsed, toolUseMap) {
 /**
  * Merge OpenAI-style streaming tool-call fragments into the response state's
  * accumulated tool calls (index-based assembly). Mutates `responseState`
- * (`_toolCallsByIndex`, `accumulatedToolCalls`) exactly like the original
- * method did.
+ * (`_toolCallsByIndex`, `accumulatedToolCalls`).
+ *
+ * Also handles OpenAI-compatible proxies/runners that omit `tc.index` (matching
+ * by `tc.id`, or appending nameless continuation fragments to the latest entry),
+ * incremental `function.name` deltas, and object-valued `function.arguments`.
  */
 export function accumulateStreamingToolCalls(responseState, deltaToolCalls) {
     if (!Array.isArray(deltaToolCalls)) {
@@ -211,12 +446,37 @@ export function accumulateStreamingToolCalls(responseState, deltaToolCalls) {
         responseState._toolCallsByIndex = new Map();
     }
 
+    const map = responseState._toolCallsByIndex;
+
     for (const tc of deltaToolCalls) {
-        const index = Number.isInteger(tc.index) ? tc.index : responseState._toolCallsByIndex.size;
-        let entry = responseState._toolCallsByIndex.get(index);
+        if (!tc || typeof tc !== 'object') {
+            continue;
+        }
+
+        let index;
+        if (Number.isInteger(tc.index) && tc.index >= 0) {
+            index = tc.index;
+        } else if (tc.id) {
+            let foundIdx = -1;
+            for (const [k, existing] of map.entries()) {
+                if (existing.id && existing.id === tc.id) {
+                    foundIdx = k;
+                    break;
+                }
+            }
+            index = foundIdx >= 0 ? foundIdx : map.size;
+        } else if (!tc.function?.name && map.size > 0) {
+            // Unindexed argument continuation fragment — append to the most
+            // recently started tool call instead of shattering it into N calls.
+            index = Math.max(...map.keys());
+        } else {
+            index = map.size;
+        }
+
+        let entry = map.get(index);
         if (!entry) {
             entry = { id: '', type: 'function', function: { name: '', arguments: '' } };
-            responseState._toolCallsByIndex.set(index, entry);
+            map.set(index, entry);
         }
         if (tc.id) {
             entry.id = tc.id;
@@ -224,17 +484,29 @@ export function accumulateStreamingToolCalls(responseState, deltaToolCalls) {
         if (tc.type) {
             entry.type = tc.type;
         }
-        if (tc.function) {
-            if (tc.function.name) {
-                entry.function.name = tc.function.name;
+        if (tc.function && typeof tc.function === 'object') {
+            if (typeof tc.function.name === 'string' && tc.function.name) {
+                if (!entry.function.name) {
+                    entry.function.name = tc.function.name;
+                } else if (tc.function.name !== entry.function.name) {
+                    entry.function.name += tc.function.name;
+                }
             }
-            if (tc.function.arguments) {
-                entry.function.arguments += tc.function.arguments;
+            if (tc.function.arguments !== undefined && tc.function.arguments !== null) {
+                if (typeof tc.function.arguments === 'string') {
+                    entry.function.arguments += tc.function.arguments;
+                } else if (typeof tc.function.arguments === 'object') {
+                    try {
+                        entry.function.arguments = JSON.stringify(tc.function.arguments);
+                    } catch (_e) {
+                        /* ignore non-serializable object */
+                    }
+                }
             }
         }
     }
 
-    responseState.accumulatedToolCalls = [...responseState._toolCallsByIndex.entries()]
+    responseState.accumulatedToolCalls = [...map.entries()]
         .sort((a, b) => a[0] - b[0])
         .map(([, value]) => value);
 }
@@ -244,6 +516,9 @@ export function accumulateStreamingToolCalls(responseState, deltaToolCalls) {
  * none of the fields carry a finite number.
  */
 export function extractOllamaMetrics(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
     const metrics = {
         total_duration: numberOrNull(payload.total_duration),
         load_duration: numberOrNull(payload.load_duration),
@@ -261,7 +536,7 @@ export function extractOllamaMetrics(payload) {
  * the chunk is missing or carries no finite numbers.
  */
 export function extractDeepSeekMetrics(usageChunk) {
-    if (!usageChunk) {
+    if (!usageChunk || typeof usageChunk !== 'object') {
         return null;
     }
 

@@ -24,14 +24,73 @@ import {
     SYNTHESIS_OUTLINE_CRITIQUE_PROMPT,
     parsePlannerResponse,
 } from './prompts.js';
+import { buildCitationSummary } from './citationTracker.js';
 
 export const GAP_ANALYSIS_MAX_TOKENS = 512;
 export const CAUSAL_CHAIN_MAX_TOKENS = 512;
 export const CAUSAL_CHAIN_MAX_QUERIES = 3;
 export const MID_RESEARCH_CRITIQUE_MAX_TOKENS = 640;
 export const SYNTHESIS_OUTLINE_MAX_TOKENS = 1024;
-export const SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS = 512;
+export const SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS = 1024;
 export const RESEARCH_QUALITY_CHECK_MAX_TOKENS = 640;
+
+/**
+ * Extract the first valid JSON object from a raw LLM response, stripping
+ * optional markdown code fences and scanning balanced braces (safe against
+ * braces inside string literals or surrounding prose).
+ */
+function _extractJsonObject(text) {
+    const clean = String(text || '').trim();
+    if (!clean) return null;
+
+    const tryParseObj = (candidate) => {
+        try {
+            const parsed = JSON.parse(candidate);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+        } catch (_e) {
+            return null;
+        }
+    };
+
+    const direct = tryParseObj(clean);
+    if (direct) return direct;
+
+    const fence = clean.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
+    if (fence) {
+        const fenced = tryParseObj(fence[1].trim());
+        if (fenced) return fenced;
+    }
+
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < clean.length; i++) {
+        const ch = clean[i];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (ch === '\\') escaped = true;
+            else if (ch === '"') inString = false;
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === '{') {
+            if (depth === 0) start = i;
+            depth++;
+        } else if (ch === '}' && depth > 0) {
+            depth--;
+            if (depth === 0 && start >= 0) {
+                const candidate = tryParseObj(clean.slice(start, i + 1));
+                if (candidate) return candidate;
+                start = -1;
+            }
+        }
+    }
+    return null;
+}
 
 /**
  * Gap analysis: review initial findings against the user's question and
@@ -201,28 +260,32 @@ export async function runRePlanningCritique(host, completedResults, remainingPla
             modelOverride,
         });
 
-        // Parse JSON response
-        const clean = String(response || '').trim();
-        let parsed;
-        try {
-            parsed = JSON.parse(clean);
-        } catch (_) {
-            // Try to extract JSON from markdown wrapping
-            const jsonMatch = clean.match(/\{[\s\S]*\}/);
-            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-        }
-
+        const parsed = _extractJsonObject(response);
         if (parsed) {
             const sufficient = !!parsed.sufficient;
+            const contradictions = Array.isArray(parsed.contradictions)
+                ? parsed.contradictions
+                : [];
+            const adjustments = Array.isArray(parsed.adjustments)
+                ? parsed.adjustments.filter((a) => a && typeof a === 'object')
+                : [];
+            const drop_indices = Array.isArray(parsed.drop_indices)
+                ? parsed.drop_indices.filter((i) => Number.isInteger(i) && i >= 0)
+                : [];
+            const new_branches = Array.isArray(parsed.new_branches)
+                ? parsed.new_branches.filter(
+                      (nb) => nb && typeof nb === 'object' && nb.search_query,
+                  )
+                : [];
             log(
-                `[Katab:critique] Sufficient: ${sufficient}, adjustments: ${(parsed.adjustments || []).length}, drops: ${(parsed.drop_indices || []).length}, spawns: ${(parsed.new_branches || []).length}`,
+                `[Katab:critique] Sufficient: ${sufficient}, adjustments: ${adjustments.length}, drops: ${drop_indices.length}, spawns: ${new_branches.length}`,
             );
             return {
                 sufficient,
-                contradictions: parsed.contradictions || [],
-                adjustments: parsed.adjustments || [],
-                drop_indices: (parsed.drop_indices || []).filter((i) => Number.isInteger(i)),
-                new_branches: (parsed.new_branches || []).filter((nb) => nb && nb.search_query),
+                contradictions,
+                adjustments,
+                drop_indices,
+                new_branches,
             };
         }
 
@@ -308,14 +371,21 @@ export async function runCausalChainCheck(host, allFindings, originalQuery) {
  * @param {object} host see module header
  * @param {Array} allFindings - Combined branch + refinement findings
  * @param {string} originalQuery
+ * @param {object|null} [citationTracker] - Optional citation tracker for [N] mapping
  * @returns {Promise<{sections: Array}|null>}
  */
-export async function buildSynthesisOutline(host, allFindings, originalQuery) {
+export async function buildSynthesisOutline(
+    host,
+    allFindings,
+    originalQuery,
+    citationTracker = null,
+) {
     const {
         requestCompletion,
         modelOverride = undefined,
         getCancellable = () => null,
         isCancelled = () => false,
+        getCitationTracker = () => null,
     } = host;
 
     if (!allFindings || allFindings.length === 0) return null;
@@ -339,11 +409,15 @@ export async function buildSynthesisOutline(host, allFindings, originalQuery) {
         return null;
     }
 
+    const tracker = citationTracker || getCitationTracker();
+    const citationBlock = tracker ? buildCitationSummary(tracker) : '';
+    const citationSection = citationBlock ? `\n\n${citationBlock}` : '';
+
     const messages = [
         { role: 'system', content: SYNTHESIS_OUTLINE_SYSTEM_PROMPT },
         {
             role: 'user',
-            content: `USER'S QUESTION: "${originalQuery}"\n\nALL RESEARCH FINDINGS:\n${findingSummaries}\n\nGenerate a structured outline for the final report. Output as JSON.`,
+            content: `USER'S QUESTION: "${originalQuery}"\n\nALL RESEARCH FINDINGS:\n${findingSummaries}${citationSection}\n\nGenerate a structured outline for the final report. Output as JSON.`,
         },
     ];
 
@@ -354,33 +428,10 @@ export async function buildSynthesisOutline(host, allFindings, originalQuery) {
             modelOverride,
         });
 
-        // Parse the JSON outline
-        const clean = String(response || '').trim();
-        // Try direct parse
-        try {
-            const parsed = JSON.parse(clean);
-            if (parsed.sections && Array.isArray(parsed.sections)) {
-                log(`[Katab:synthesis] Outline generated — ${parsed.sections.length} sections.`);
-                return parsed;
-            }
-        } catch (_) {
-            /* not pure JSON */
-        }
-
-        // Try to find JSON object in the response
-        const jsonMatch = clean.match(/\{[\s\S]*"sections"[\s\S]*\}/);
-        if (jsonMatch) {
-            try {
-                const parsed = JSON.parse(jsonMatch[0]);
-                if (parsed.sections && Array.isArray(parsed.sections)) {
-                    log(
-                        `[Katab:synthesis] Outline extracted — ${parsed.sections.length} sections.`,
-                    );
-                    return parsed;
-                }
-            } catch (_) {
-                /* invalid */
-            }
+        const parsed = _extractJsonObject(response);
+        if (parsed && Array.isArray(parsed.sections)) {
+            log(`[Katab:synthesis] Outline generated — ${parsed.sections.length} sections.`);
+            return parsed;
         }
 
         log('[Katab:synthesis] Outline parsing failed — proceeding without outline.');
@@ -403,10 +454,22 @@ export async function buildSynthesisOutline(host, allFindings, originalQuery) {
  * @param {string} reportText - The final report text
  * @param {string} originalQuery - The user's research question
  * @param {Array<{claim: string, url?: string}>} facts - Research facts to ground against
+ * @param {object|null} [citationTracker] - Optional citation tracker for [N] verification
  * @returns {Promise<object|null>}
  */
-export async function runQualityCheck(host, reportText, originalQuery, facts = []) {
-    const { requestCompletion, modelOverride = undefined, getCancellable = () => null } = host;
+export async function runQualityCheck(
+    host,
+    reportText,
+    originalQuery,
+    facts = [],
+    citationTracker = null,
+) {
+    const {
+        requestCompletion,
+        modelOverride = undefined,
+        getCancellable = () => null,
+        getCitationTracker = () => null,
+    } = host;
 
     // Build a capped fact list so the evaluator can ground claims against
     // the actual evidence gathered during research.
@@ -419,11 +482,15 @@ export async function runQualityCheck(host, reportText, originalQuery, facts = [
                   .join('\n')
             : '\n\nRESEARCH FACTS: (none provided)';
 
+    const tracker = citationTracker || getCitationTracker();
+    const citationBlock = tracker ? buildCitationSummary(tracker) : '';
+    const citationSection = citationBlock ? `\n\n${citationBlock}` : '';
+
     const messages = [
         { role: 'system', content: RESEARCH_QUALITY_CHECK_SYSTEM_PROMPT },
         {
             role: 'user',
-            content: `USER'S QUESTION: "${originalQuery}"\n\nREPORT:\n${reportText.slice(0, 6000)}${factsBlock}\n\nRate the report and output JSON.`,
+            content: `USER'S QUESTION: "${originalQuery}"\n\nREPORT:\n${reportText.slice(0, 6000)}${factsBlock}${citationSection}\n\nRate the report and output JSON.`,
         },
     ];
 
@@ -434,14 +501,7 @@ export async function runQualityCheck(host, reportText, originalQuery, facts = [
             modelOverride,
         });
 
-        const clean = String(response || '').trim();
-        let parsed;
-        try {
-            parsed = JSON.parse(clean);
-        } catch (_) {
-            const jsonMatch = clean.match(/\{[\s\S]*\}/);
-            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
-        }
+        const parsed = _extractJsonObject(response);
 
         // Accept the new two-axis shape, and fall back to the legacy single
         // `score` field so older check prompts still work.
@@ -467,11 +527,8 @@ export async function runQualityCheck(host, reportText, originalQuery, facts = [
                 ? parsed.unverified_citations.map(String).filter(Boolean)
                 : [];
 
-        // A totally unparseable response leaves `parsed` undefined and the
-        // expression above short-circuits to undefined — treat that the same
-        // as a parsed-but-unscored response (original only checked null, which
-        // recorded a result with an undefined score and skipped the gate
-        // silently).
+        // A totally unparseable response leaves `parsed` undefined/null — treat
+        // that the same as a parsed-but-unscored response.
         if (coverage === null || coverage === undefined) {
             log('[Katab:quality] No usable score parsed — skipping quality gate.');
             return null;
@@ -545,29 +602,9 @@ export async function critiqueAndRefineOutline(host, outline, allFindings, origi
             maxTokens: SYNTHESIS_OUTLINE_CRITIQUE_MAX_TOKENS,
             modelOverride,
         });
-        const clean = String(response || '').trim();
-        try {
-            const parsed = JSON.parse(clean);
-            if (parsed.sections && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
-                return parsed;
-            }
-        } catch (_) {
-            /* not pure JSON */
-        }
-        const jsonMatch = clean.match(/\{[\s\S]*"sections"[\s\S]*\}/);
-        if (jsonMatch) {
-            try {
-                const parsed = JSON.parse(jsonMatch[0]);
-                if (
-                    parsed.sections &&
-                    Array.isArray(parsed.sections) &&
-                    parsed.sections.length > 0
-                ) {
-                    return parsed;
-                }
-            } catch (_) {
-                /* invalid */
-            }
+        const parsed = _extractJsonObject(response);
+        if (parsed && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
+            return parsed;
         }
         log('[Katab:outline] Critique parsing failed — keeping previous outline.');
         return null;

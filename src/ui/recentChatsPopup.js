@@ -16,6 +16,7 @@ import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
+import Atk from 'gi://Atk';
 import { HistoryManager } from '../core/historyManager.js';
 
 export class RecentChatsPopup {
@@ -29,11 +30,10 @@ export class RecentChatsPopup {
         this._host = host;
 
         this._popup = null;
-        this._clickLocked = false;
         this._hoverTimeout = 0;
         this._leaveTimeout = 0;
         this._repositionId = 0;
-        this._closeHandler = null;
+        this._closeHandler = 0;
     }
 
     get popup() {
@@ -75,17 +75,22 @@ export class RecentChatsPopup {
             return GLib.SOURCE_REMOVE;
         });
 
-        // Auto-close when clicking elsewhere on the stage
+        // Auto-close when clicking elsewhere on the stage (use event.get_source(),
+        // NOT the stage actor parameter which is always global.stage).
         if (!this._closeHandler) {
-            this._closeHandler = global.stage.connect('button-press-event', (actor, _event) => {
+            this._closeHandler = global.stage.connect('button-press-event', (_stage, event) => {
+                const target = event?.get_source?.();
+                const historyBtn = this._host.getHistoryButton();
                 if (
                     this._popup?.visible &&
-                    !this._popup.contains(actor) &&
-                    actor !== this._host.getHistoryButton() &&
-                    !this._host.getHistoryButton().contains(actor)
+                    target &&
+                    !this._popup.contains(target) &&
+                    target !== historyBtn &&
+                    (!historyBtn || !historyBtn.contains(target))
                 ) {
                     this.hide();
                 }
+                return Clutter.EVENT_PROPAGATE;
             });
         }
     }
@@ -95,8 +100,15 @@ export class RecentChatsPopup {
         if (this._popup) {
             this._popup.visible = false;
         }
-        this._clickLocked = false;
+        this._disconnectCloseHandler();
         this._clearTimeouts();
+    }
+
+    _disconnectCloseHandler() {
+        if (this._closeHandler) {
+            global.stage.disconnect(this._closeHandler);
+            this._closeHandler = 0;
+        }
     }
 
     // Pointer entered the history-button trigger.
@@ -105,7 +117,10 @@ export class RecentChatsPopup {
             GLib.source_remove(this._leaveTimeout);
             this._leaveTimeout = 0;
         }
-        if (!this._clickLocked && !this._popup?.visible) {
+        if (!this._popup?.visible) {
+            if (this._hoverTimeout) {
+                GLib.source_remove(this._hoverTimeout);
+            }
             this._hoverTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
                 this._hoverTimeout = 0;
                 this.show();
@@ -120,13 +135,14 @@ export class RecentChatsPopup {
             GLib.source_remove(this._hoverTimeout);
             this._hoverTimeout = 0;
         }
-        if (!this._clickLocked) {
-            this._leaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                this._leaveTimeout = 0;
-                this.hide();
-                return GLib.SOURCE_REMOVE;
-            });
+        if (this._leaveTimeout) {
+            GLib.source_remove(this._leaveTimeout);
         }
+        this._leaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+            this._leaveTimeout = 0;
+            this.hide();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     // Clear any pending hover/leave/reposition timeouts.
@@ -148,10 +164,7 @@ export class RecentChatsPopup {
     /** Disconnect the stage close handler + pending timers on dialog destroy. */
     destroy() {
         this._clearTimeouts();
-        if (this._closeHandler) {
-            global.stage.disconnect(this._closeHandler);
-            this._closeHandler = null;
-        }
+        this._disconnectCloseHandler();
     }
 
     // Position the popup below the history button, clamped to overlay bounds.
@@ -212,6 +225,7 @@ export class RecentChatsPopup {
                 reactive: true,
                 can_focus: true,
                 track_hover: true,
+                accessible_role: Atk.Role.PUSH_BUTTON,
             });
 
             let titleLabel = new St.Label({
@@ -234,12 +248,27 @@ export class RecentChatsPopup {
             row._katabDateLabel = dateLabel;
             row._katabEntry = null;
 
-            row.connect('button-press-event', () => {
+            const activateRow = () => {
                 if (row._katabEntry) {
                     this.hide();
                     this._host.loadConversation(row._katabEntry);
                 }
+            };
+            row.connect('button-press-event', () => {
+                activateRow();
                 return Clutter.EVENT_STOP;
+            });
+            row.connect('key-press-event', (_actor, event) => {
+                const sym = event.get_key_symbol();
+                if (
+                    sym === Clutter.KEY_Return ||
+                    sym === Clutter.KEY_KP_Enter ||
+                    sym === Clutter.KEY_space
+                ) {
+                    activateRow();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
             });
 
             popup.add_child(row);
@@ -255,13 +284,14 @@ export class RecentChatsPopup {
             return Clutter.EVENT_PROPAGATE;
         });
         popup.connect('leave-event', () => {
-            if (!this._clickLocked) {
-                this._leaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                    this._leaveTimeout = 0;
-                    this.hide();
-                    return GLib.SOURCE_REMOVE;
-                });
+            if (this._leaveTimeout) {
+                GLib.source_remove(this._leaveTimeout);
             }
+            this._leaveTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                this._leaveTimeout = 0;
+                this.hide();
+                return GLib.SOURCE_REMOVE;
+            });
             return Clutter.EVENT_PROPAGATE;
         });
 
@@ -279,6 +309,7 @@ export class RecentChatsPopup {
                 if (title.length > 48) title = title.slice(0, 45) + '…';
                 row._katabTitleLabel.set_text(title);
                 row._katabDateLabel.set_text(this._formatRelativeTime(entry.timestamp));
+                row.accessible_name = `Open chat: ${title}`;
                 row._katabEntry = entry;
                 row.visible = true;
             } else {

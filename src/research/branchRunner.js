@@ -369,7 +369,10 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
         // No pages crawled — return search snippets as fallback
         const snippetText = searchResults
             .slice(0, 5)
-            .map((r) => `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`)
+            .map(
+                (r) =>
+                    `- **${r.title || r.url}**\n  ${r.content || r.snippet || ''}\n  [source](${r.url})`,
+            )
             .join('\n\n');
         updateProgress(index, RESEARCH_PROGRESS_DONE, `${searchResults.length} results (snippets)`);
 
@@ -402,7 +405,7 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
         });
     };
 
-    let findings;
+    let findings = '';
     let facts = [];
     const sources = pages.map((p) => p.url);
 
@@ -420,12 +423,26 @@ export async function executeResearchBranch(host, subTask, config, cancellable) 
         facts = compressed.facts;
         findings = compressed.findings || '';
 
-        // Register facts in citation tracker
+        if (!findings.trim()) {
+            // Every page compression failed or returned empty — preserve raw excerpts
+            // so the crawled pages still contribute evidence to synthesis.
+            findings = pages
+                .map((p) => `### Page: ${p.url}\n${p.text.slice(0, 3000)}...`)
+                .join('\n\n---\n\n');
+        }
+
+        // Register facts and all crawled sources (including code-heavy pages) in citation tracker
         const tracker = getCitationTracker();
         if (tracker && facts.length > 0) {
             registerFacts(tracker, facts);
         }
+        if (tracker) {
+            for (const url of sources) {
+                registerSource(tracker, url);
+            }
+        }
     } catch (e) {
+        if (isCancelled(e)) throw e;
         log(`[Katab:research] Branch "${sub_task}" compression failed: ${e.message}`);
         // Fallback: raw page summaries
         findings = pages
@@ -659,7 +676,14 @@ export async function runResearchBranches(host, plan) {
 
         // ── Mid-research re-planning critique — every N branches ────
         if ((i + 1) % MID_RESEARCH_CRITIQUE_INTERVAL === 0 && i + 1 < plan.length) {
-            const remaining = plan.slice(i + 1);
+            const remainingMeta = [];
+            for (let j = i + 1; j < plan.length; j++) {
+                if (!droppedSet.has(j)) {
+                    remainingMeta.push({ absIdx: j, task: plan[j] });
+                }
+            }
+            if (remainingMeta.length === 0) continue;
+            const remaining = remainingMeta.map((m) => m.task);
             const critique = await runRePlanningCritique(
                 getPipelineHost(),
                 results,
@@ -671,8 +695,8 @@ export async function runResearchBranches(host, plan) {
                     `[Katab:critique] Findings sufficient after ${i + 1} branches — skipping remaining ${remaining.length}.`,
                 );
                 // Mark remaining branches as skipped
-                for (let j = i + 1; j < plan.length; j++) {
-                    updateProgress(j, RESEARCH_PROGRESS_DONE, 'Skipped (sufficient)');
+                for (const { absIdx } of remainingMeta) {
+                    updateProgress(absIdx, RESEARCH_PROGRESS_DONE, 'Skipped (sufficient)');
                 }
                 break; // Exit the branch loop early
             }
@@ -680,8 +704,12 @@ export async function runResearchBranches(host, plan) {
             // Apply targeted search query adjustments to remaining angles.
             if (critique.adjustments && critique.adjustments.length > 0) {
                 for (const adj of critique.adjustments) {
-                    if (adj.index >= 0 && adj.index < remaining.length) {
-                        const target = remaining[adj.index];
+                    if (
+                        Number.isInteger(adj.index) &&
+                        adj.index >= 0 &&
+                        adj.index < remainingMeta.length
+                    ) {
+                        const target = remainingMeta[adj.index].task;
                         if (target && adj.new_query) {
                             log(
                                 `[Katab:critique] Adjusted angle "${target.sub_task}" query → "${adj.new_query}" (${adj.rationale})`,
@@ -695,8 +723,8 @@ export async function runResearchBranches(host, plan) {
             // Drop remaining angles the critic judged redundant / low-value.
             if (critique.drop_indices && critique.drop_indices.length > 0) {
                 for (const relIdx of critique.drop_indices) {
-                    const absIdx = i + 1 + relIdx;
-                    if (absIdx < plan.length) {
+                    if (Number.isInteger(relIdx) && relIdx >= 0 && relIdx < remainingMeta.length) {
+                        const absIdx = remainingMeta[relIdx].absIdx;
                         droppedSet.add(absIdx);
                         log(
                             `[Katab:critique] Dropping remaining angle "${plan[absIdx]?.sub_task}" (redundant/low-value).`,
@@ -758,6 +786,7 @@ export async function runRefinementResearch(host, gapQueries) {
         getCancellable = () => null,
         isCancelled = () => false,
         getCitationTracker = () => null,
+        getGlobalContext = () => null,
         getOriginalQuery = () => '',
         getActivePlanLength = () => 0,
         updateProgress = () => {},
@@ -772,13 +801,22 @@ export async function runRefinementResearch(host, gapQueries) {
 
     log(`[Katab:research] Starting refinement phase — ${gapQueries.length} follow-up queries...`);
 
-    // Extend the progress card with refinement rows
-    extendProgressCardForRefinement(gapQueries);
+    // Extend the progress card with refinement rows. Capture the base index
+    // returned by extendProgressCardForRefinement if provided, or fall back to
+    // getActivePlanLength() so multiple refinement rounds don't overwrite each other.
+    const extendedStartIndex = extendProgressCardForRefinement(gapQueries);
+    const baseRefIndex = Number.isInteger(extendedStartIndex)
+        ? extendedStartIndex
+        : getActivePlanLength();
+
+    const globalContext = getGlobalContext();
+    const coveredUrls =
+        globalContext?.coveredUrls instanceof Set ? globalContext.coveredUrls : null;
 
     const refinementResults = [];
     for (let i = 0; i < gapQueries.length; i++) {
         const gap = gapQueries[i];
-        const refIndex = getActivePlanLength() + i;
+        const refIndex = baseRefIndex + i;
         updateProgress(refIndex, RESEARCH_PROGRESS_REFINING, 'Searching...');
 
         // Step 1: Search
@@ -817,11 +855,13 @@ export async function runRefinementResearch(host, gapQueries) {
             continue;
         }
 
-        // Step 2: Crawl top results (only 2 for refinement)
-        const topUrls = searchResults
-            .slice(0, REFINEMENT_CRAWL_COUNT)
-            .map((r) => r.url)
-            .filter(Boolean);
+        // Step 2: Crawl top results (only 2 for refinement), preferring novel URLs
+        let candidateUrls = searchResults.map((r) => r.url).filter(Boolean);
+        if (coveredUrls && coveredUrls.size > 0) {
+            const novel = candidateUrls.filter((u) => !coveredUrls.has(normalizeUrlKey(u)));
+            if (novel.length > 0) candidateUrls = novel;
+        }
+        const topUrls = candidateUrls.slice(0, REFINEMENT_CRAWL_COUNT);
         // Inject the refinement search query for BM25 relevance scoring
         branchCrawlConfig.query = gap.search_query;
         updateProgress(refIndex, RESEARCH_PROGRESS_SCRAPING, `Scraping ${topUrls.length} pages...`);
@@ -859,6 +899,9 @@ export async function runRefinementResearch(host, gapQueries) {
             const excludeKeys = new Set();
             for (const url of topUrls) excludeKeys.add(normalizeUrlKey(url));
             for (const page of pages) excludeKeys.add(normalizeUrlKey(page.url));
+            if (coveredUrls && coveredUrls.size > 0) {
+                for (const url of coveredUrls) excludeKeys.add(String(url));
+            }
             const followTargets = selectFollowLinks(pages, gap.search_query, {
                 exclude: excludeKeys,
                 max: configuredMaxFollow,
@@ -900,13 +943,22 @@ export async function runRefinementResearch(host, gapQueries) {
         if (!pages.length) {
             const snippetText = searchResults
                 .slice(0, 3)
-                .map((r) => `- **${r.title}**\n  ${r.snippet}\n  [source](${r.url})`)
+                .map(
+                    (r) =>
+                        `- **${r.title || r.url}**\n  ${r.content || r.snippet || ''}\n  [source](${r.url})`,
+                )
                 .join('\n\n');
             updateProgress(
                 refIndex,
                 RESEARCH_PROGRESS_DONE,
                 `${searchResults.length} results (snippets)`,
             );
+            const tracker = getCitationTracker();
+            if (tracker) {
+                for (const r of searchResults) {
+                    registerSource(tracker, r.url, r.title);
+                }
+            }
             refinementResults.push({
                 topic: gap.rationale,
                 findings: `Refinement search for "${gap.search_query}":\n\n${snippetText}`,
@@ -915,6 +967,13 @@ export async function runRefinementResearch(host, gapQueries) {
                 pageCount: 0,
             });
             continue;
+        }
+
+        // Record crawled URLs so later refinement rounds avoid re-crawling them
+        if (coveredUrls) {
+            for (const page of pages) {
+                coveredUrls.add(normalizeUrlKey(page.url));
+            }
         }
 
         // Step 3: Compress
@@ -932,7 +991,7 @@ export async function runRefinementResearch(host, gapQueries) {
             });
         };
 
-        let findings;
+        let findings = '';
         let facts = [];
         const sources = pages.map((p) => p.url);
 
@@ -950,18 +1009,24 @@ export async function runRefinementResearch(host, gapQueries) {
             facts = compressed.facts;
             findings = compressed.findings || '';
 
+            if (!findings.trim()) {
+                findings = pages
+                    .map((p) => `### Page: ${p.url}\n${p.text.slice(0, 2000)}...`)
+                    .join('\n\n---\n\n');
+            }
+
             // Register in citation tracker
             const tracker = getCitationTracker();
             if (tracker && facts.length > 0) {
                 registerFacts(tracker, facts);
             }
-            // Also register sources
             if (tracker) {
                 for (const url of sources) {
                     registerSource(tracker, url);
                 }
             }
         } catch (e) {
+            if (isCancelled(e)) throw e;
             log(`[Katab:research] Refinement compression failed: ${e.message}`);
             findings = pages
                 .map((p) => `### Page: ${p.url}\n${p.text.slice(0, 2000)}...`)

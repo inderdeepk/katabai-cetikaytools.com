@@ -27,12 +27,14 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import urlparse
 
 import chromadb
 import httpx
 import ollama
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from chromadb.api import ClientAPI
@@ -116,6 +118,7 @@ _bm25_metas: dict[str, list] = defaultdict(list)  # corpus index → metadata
 # the single source of truth.  rank_bm25 cannot delete documents, so without
 # this the corpus would serve deleted content forever (and grow unbounded).
 _bm25_dirty: set[str] = set()
+_bm25_gen: dict[str, int] = defaultdict(int)
 _bm25_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
@@ -128,6 +131,37 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("katab-rag")
+
+# ---------------------------------------------------------------------------
+# Ollama client helper
+# ---------------------------------------------------------------------------
+
+_ollama_clients: dict[tuple, object] = {}
+_ollama_clients_lock = threading.Lock()
+
+
+def _validate_ollama_url(ollama_url: str) -> str:
+    url = str(ollama_url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(f"Invalid Ollama URL '{ollama_url}': expected http(s)://host[:port]")
+    return url
+
+
+def _get_ollama_client(ollama_url: str, timeout: httpx.Timeout):
+    url = _validate_ollama_url(ollama_url)
+    client_cls = ollama.Client
+    key = (client_cls, url, timeout.read)
+    with _ollama_clients_lock:
+        client = _ollama_clients.get(key)
+        if client is None:
+            client = client_cls(host=url, timeout=timeout)
+            # Keep cache tiny (typical use: 1–2 hosts × 3 timeout classes)
+            if len(_ollama_clients) > 16:
+                _ollama_clients.clear()
+            _ollama_clients[key] = client
+        return client
+
 
 # ---------------------------------------------------------------------------
 # Chunking
@@ -242,7 +276,7 @@ def generate_embeddings(
     Uses an explicit Ollama host so embeddings can come from a remote
     AI PC rather than requiring a local Ollama installation.
     """
-    client = ollama.Client(host=ollama_url, timeout=OLLAMA_EMBED_TIMEOUT)
+    client = _get_ollama_client(ollama_url, OLLAMA_EMBED_TIMEOUT)
     all_embeddings: list[list[float]] = []
 
     for i in range(0, len(texts), MAX_BATCH_SIZE):
@@ -304,7 +338,7 @@ def ensure_embedding_model(
     model: str, ollama_url: str = "http://localhost:11434"
 ) -> None:
     """Check if the embedding model is available; attempt pull if missing."""
-    client = ollama.Client(host=ollama_url, timeout=OLLAMA_EMBED_TIMEOUT)
+    client = _get_ollama_client(ollama_url, OLLAMA_EMBED_TIMEOUT)
     try:
         model_names = _ollama_model_names(client.list())
         # Also check short names (some APIs return "nomic-embed-text:latest")
@@ -361,6 +395,13 @@ def _compute_storage_size_mb() -> float:
 # full walk from every delta /index request (the main per-message cost before).
 _storage_size_cache: dict = {"value": 0.0, "ts": 0.0}
 STORAGE_SIZE_CACHE_TTL_S = 60
+_last_storage_evict_ts: float = 0.0
+STORAGE_EVICT_COOLDOWN_S = 30.0
+
+
+def _invalidate_storage_size_cache() -> None:
+    """Force the next storage-size check to re-measure on-disk usage."""
+    _storage_size_cache["ts"] = 0.0
 
 
 def estimate_storage_size_mb(force: bool = False) -> float:
@@ -400,8 +441,8 @@ def _warm_embedding_model(
 
 
 def _tokenize(text: str) -> list[str]:
-    """Simple whitespace + punctuation tokenizer for BM25."""
-    return re.findall(r"[a-zA-Z0-9]+", str(text).lower())
+    """Unicode-aware word tokenizer for BM25."""
+    return re.findall(r"\w+", str(text).lower())
 
 
 def _collection_names(client: ClientAPI) -> list[str]:
@@ -428,20 +469,23 @@ def _build_bm25_index(col_name: str) -> Optional["_BM25OkapiType"]:
         metas = data.get("metadatas", []) or []
 
         if not docs:
-            _bm25_corpora[col_name] = []
-            _bm25_id_maps[col_name] = []
-            _bm25_metas[col_name] = []
-            _bm25_indices[col_name] = None
+            with _bm25_lock:
+                _bm25_corpora[col_name] = []
+                _bm25_id_maps[col_name] = []
+                _bm25_metas[col_name] = []
+                _bm25_indices[col_name] = None
             return None
 
         tokenized = [_tokenize(d) for d in docs]
-        _bm25_corpora[col_name] = docs
-        _bm25_id_maps[col_name] = ids
-        _bm25_metas[col_name] = metas
         assert BM25Okapi is not None  # guaranteed by the _BM25_AVAILABLE guard above
-        _bm25_indices[col_name] = BM25Okapi(tokenized)
+        built = BM25Okapi(tokenized)
+        with _bm25_lock:
+            _bm25_corpora[col_name] = docs
+            _bm25_id_maps[col_name] = ids
+            _bm25_metas[col_name] = metas
+            _bm25_indices[col_name] = built
         log.info("BM25 index built for '%s': %d documents", col_name, len(docs))
-        return _bm25_indices[col_name]
+        return built
     except Exception as exc:
         log.warning("Failed to build BM25 index for '%s': %s", col_name, exc)
         return None
@@ -454,23 +498,32 @@ def _add_to_bm25(
     if not _BM25_AVAILABLE or not chunk_docs:
         return
 
-    _bm25_corpora[col_name].extend(chunk_docs)
-    _bm25_id_maps[col_name].extend(chunk_ids)
-    _bm25_metas[col_name].extend(chunk_metas)
+    with _bm25_lock:
+        # If the collection is already dirty (e.g. after replace_ids or eviction),
+        # skip incremental rebuild — the next hybrid search rebuilds cleanly from ChromaDB.
+        if col_name in _bm25_dirty or col_name not in _bm25_indices:
+            _bm25_dirty.add(col_name)
+            _bm25_gen[col_name] += 1
+            return
 
-    # Rebuild the BM25 index for this collection
-    tokenized = [_tokenize(d) for d in _bm25_corpora[col_name]]
-    if tokenized:
-        assert BM25Okapi is not None  # guaranteed by the _BM25_AVAILABLE guard above
-        _bm25_indices[col_name] = BM25Okapi(tokenized)
-    else:
-        _bm25_indices[col_name] = None
+        _bm25_corpora[col_name].extend(chunk_docs)
+        _bm25_id_maps[col_name].extend(chunk_ids)
+        _bm25_metas[col_name].extend(chunk_metas)
+        docs_snapshot = list(_bm25_corpora[col_name])
+        gen_before = _bm25_gen[col_name]
+
+    tokenized = [_tokenize(d) for d in docs_snapshot]
+    built = BM25Okapi(tokenized) if tokenized and BM25Okapi is not None else None
+    with _bm25_lock:
+        if _bm25_gen[col_name] == gen_before and col_name not in _bm25_dirty:
+            _bm25_indices[col_name] = built
 
 
 def _mark_bm25_dirty(col_name: str) -> None:
     """Invalidate a collection's BM25 corpus (chunks were deleted/replaced)."""
     with _bm25_lock:
         _bm25_dirty.add(col_name)
+        _bm25_gen[col_name] += 1
 
 
 def _ensure_bm25_fresh(col_name: str) -> None:
@@ -480,15 +533,19 @@ def _ensure_bm25_fresh(col_name: str) -> None:
         needs_build = col_name in _bm25_dirty or col_name not in _bm25_indices
         if not needs_build:
             return
+        gen_before = _bm25_gen[col_name]
     _build_bm25_index(col_name)
     with _bm25_lock:
-        _bm25_dirty.discard(col_name)
+        # Only clear dirty if no concurrent mutation bumped the generation during rebuild.
+        if _bm25_gen[col_name] == gen_before:
+            _bm25_dirty.discard(col_name)
 
 
 def _clear_bm25(col_name: str) -> None:
     """Drop all in-memory BM25 state for a collection (deleted/cleared)."""
     with _bm25_lock:
         _bm25_dirty.discard(col_name)
+        _bm25_gen[col_name] += 1
         _bm25_indices.pop(col_name, None)
         _bm25_corpora.pop(col_name, None)
         _bm25_id_maps.pop(col_name, None)
@@ -532,15 +589,21 @@ def _bm25_search(
     # Rebuild from ChromaDB if the corpus was invalidated by deletes/eviction.
     _ensure_bm25_fresh(col_name)
 
-    index = _bm25_indices.get(col_name)
-    if index is None:
-        return []
+    with _bm25_lock:
+        index = _bm25_indices.get(col_name)
+        if index is None:
+            return []
+        corpus = list(_bm25_corpora.get(col_name, []))
+        id_map = list(_bm25_id_maps.get(col_name, []))
+        meta_map = list(_bm25_metas.get(col_name, []))
 
     tokenized_query = _tokenize(query)
+    if not tokenized_query:
+        return []
     scores = index.get_scores(tokenized_query)
-    corpus = _bm25_corpora.get(col_name, [])
-    id_map = _bm25_id_maps.get(col_name, [])
-    meta_map = _bm25_metas.get(col_name, [])
+    max_score = float(max(scores)) if len(scores) > 0 else 0.0
+    if max_score <= 0.0:
+        return []
 
     # Pair (idx, score), sort by score descending, take top k
     ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
@@ -556,7 +619,7 @@ def _bm25_search(
                 id_map[idx] if idx < len(id_map) else f"bm25_{col_name}_{idx}",
                 corpus[idx] if idx < len(corpus) else "",
                 base_meta,
-                min(score / max(scores) if max(scores) > 0 else 0.0, 1.0),
+                min(float(score) / max_score, 1.0),
             )
         )
     return results
@@ -648,7 +711,7 @@ def _rerank_results(
     if not candidates:
         return [], False
 
-    client = ollama.Client(host=ollama_url, timeout=OLLAMA_CHAT_TIMEOUT)
+    client = _get_ollama_client(ollama_url, OLLAMA_CHAT_TIMEOUT)
 
     # Check if reranker model is available
     try:
@@ -663,13 +726,15 @@ def _rerank_results(
         log.warning("Could not list models for reranker check — proceeding anyway")
 
     reranked: list[tuple[str, str, dict, float]] = []
+    any_batch_scored = False
 
     for i in range(0, len(candidates), RERANK_BATCH_SIZE):
         batch = candidates[i : i + RERANK_BATCH_SIZE]
+        # Always include every candidate index so returned score array length
+        # matches len(batch) even if a chunk's content is empty.
         docs_text = "\n\n".join(
-            f"[{j}] {content[:1200]}"
+            f"[{j}] {(content[:1200] if content else '(empty)')}"
             for j, (_rid, content, _m, _s) in enumerate(batch)
-            if content
         )
         prompt = RERANK_BATCH_PROMPT_TEMPLATE.format(query=query, documents=docs_text)
         scores: Optional[list[float]] = None
@@ -696,8 +761,12 @@ def _rerank_results(
             )
             reranked.extend(batch)
         else:
+            any_batch_scored = True
             for (rid, content, meta, _score), score in zip(batch, scores):
                 reranked.append((rid, content, meta, score))
+
+    if not any_batch_scored:
+        return candidates, False
 
     # Sort by reranker score descending
     reranked.sort(key=lambda x: x[3], reverse=True)
@@ -787,14 +856,17 @@ class HealthResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 _chroma_client: Optional[ClientAPI] = None
+_chroma_lock = threading.Lock()
 
 
 def get_chroma() -> ClientAPI:
     global _chroma_client
     if _chroma_client is None:
-        os.makedirs(CHROMADB_PATH, exist_ok=True)
-        _chroma_client = chromadb.PersistentClient(path=CHROMADB_PATH)
-        log.info("ChromaDB initialized at %s", CHROMADB_PATH)
+        with _chroma_lock:
+            if _chroma_client is None:
+                os.makedirs(CHROMADB_PATH, exist_ok=True)
+                _chroma_client = chromadb.PersistentClient(path=CHROMADB_PATH)
+                log.info("ChromaDB initialized at %s", CHROMADB_PATH)
     return _chroma_client
 
 
@@ -1054,9 +1126,68 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def _reject_browser_cross_origin(request: Request, call_next):
+    """Block cross-origin browser requests (CSRF / DNS-rebinding defense).
+
+    Katab's GNOME Shell extension and local CLI tools never send a browser
+    `Origin` header; rejecting requests that carry one prevents malicious web
+    pages from hitting localhost:11435 (`/clear`, `/export`, `/index`).
+    """
+    if request.headers.get("origin"):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Cross-origin browser requests are not allowed."},
+        )
+    return await call_next(request)
+
+
 # ---------------------------------------------------------------------------
 # POST /index
 # ---------------------------------------------------------------------------
+
+
+def _find_replace_ids(collection, prefixes: list[str]) -> list[str]:
+    """Locate existing chunk ids matching any replace_ids prefix or source_id."""
+    if not prefixes:
+        return []
+    to_delete: set[str] = set()
+    try:
+        # Fast path: exact metadata.source_id match
+        found = collection.get(where={"source_id": {"$in": prefixes}}, include=[])
+        to_delete.update(found.get("ids") or [])
+    except Exception as exc:
+        log.warning(
+            "replace_ids metadata filter failed — falling back to full scan: %s",
+            exc,
+        )
+
+    # Fallback scan for legacy rows (missing source_id) OR multi-part rows whose
+    # source_id uses the `prefix#part-N` convention that exact $in cannot match.
+    if not to_delete:
+        try:
+            existing = collection.get(include=["metadatas"])
+            all_ids = existing.get("ids") or []
+            all_metas = existing.get("metadatas") or []
+            for i, cid in enumerate(all_ids):
+                source_id = ""
+                if i < len(all_metas) and all_metas[i]:
+                    source_id = str(all_metas[i].get("source_id") or "")
+                for prefix in prefixes:
+                    if (
+                        cid == prefix
+                        or cid.startswith(prefix + "_")
+                        or cid.startswith(prefix + "#")
+                        or source_id == prefix
+                        or source_id.startswith(prefix + "#")
+                    ):
+                        to_delete.add(cid)
+                        break
+        except Exception as exc:
+            log.warning(
+                "Replace fallback scan failed for %s: %s", prefixes[:3], exc
+            )
+    return list(to_delete)
 
 
 @app.post("/index", response_model=IndexResponse)
@@ -1067,6 +1198,8 @@ def index_texts(req: IndexRequest):
     growth.  When auto_prune is enabled and a collection is at capacity,
     the oldest chunks are evicted to make room.
     """
+    global _last_storage_evict_ts
+
     # ── Input-size guardrails ────────────────────────────────────────────
     if len(req.texts) > MAX_TEXTS_PER_INDEX_REQUEST:
         raise HTTPException(
@@ -1083,8 +1216,10 @@ def index_texts(req: IndexRequest):
             f"per-document limit: {', '.join(oversized[:5])}",
         )
 
-    chunk_size = req.chunk_size or DEFAULT_CHUNK_SIZE
-    chunk_overlap = req.chunk_overlap or DEFAULT_CHUNK_OVERLAP
+    chunk_size = req.chunk_size if req.chunk_size is not None else DEFAULT_CHUNK_SIZE
+    chunk_overlap = (
+        req.chunk_overlap if req.chunk_overlap is not None else DEFAULT_CHUNK_OVERLAP
+    )
     model = req.embedding_model or DEFAULT_EMBEDDING_MODEL
     max_chunks = req.max_chunks_per_collection
     max_mb = req.max_total_size_mb
@@ -1118,95 +1253,29 @@ def index_texts(req: IndexRequest):
     if not all_chunks:
         return IndexResponse(indexed=len(req.texts), chunks=0, model=model)
 
-    # ── Collection cap check ─────────────────────────────────────────────
+    # ── Collection lookup (always cosine space) ──────────────────────────
     client = get_chroma()
-    collection = client.get_or_create_collection(name=req.collection)
+    collection = _get_or_create_collection(client, req.collection)
 
-    # ── Replace old chunks (for re-indexing) ──────────────────────────────
-    if req.replace_ids:
-        old_deleted = 0
-        prefixes = [str(p) for p in req.replace_ids if p]
-        to_delete: list[str] = []
-        filter_ok = False
-        if prefixes:
-            try:
-                # Fast path: every chunk stores its parent document id in
-                # metadata.source_id, so ONE filtered lookup finds all old
-                # chunks without scanning the whole collection — this runs on
-                # every delta conversation index request.
-                found = collection.get(
-                    where={"source_id": {"$in": prefixes}}, include=[]
-                )
-                to_delete = list(found.get("ids") or [])
-                filter_ok = True
-            except Exception as exc:
-                log.warning(
-                    "replace_ids metadata filter failed — falling back to full scan: %s",
-                    exc,
-                )
-        if prefixes and not filter_ok:
-            # Fallback (legacy rows without source_id): full scan + prefix match
-            # on chunk ids (`id`, `id_chunk0`) and source_id (`id#part-0`).
-            try:
-                existing = collection.get(include=["metadatas"])
-                all_ids = existing.get("ids") or []
-                all_metas = existing.get("metadatas") or []
-                for i, cid in enumerate(all_ids):
-                    source_id = ""
-                    if i < len(all_metas) and all_metas[i]:
-                        source_id = str(all_metas[i].get("source_id") or "")
-                    for prefix in prefixes:
-                        if (
-                            cid == prefix
-                            or cid.startswith(prefix + "_")
-                            or cid.startswith(prefix + "#")
-                            or source_id == prefix
-                            or source_id.startswith(prefix + "#")
-                        ):
-                            to_delete.append(cid)
-                            break
-            except Exception as exc:
-                log.warning(
-                    "Replace fallback scan failed for %s: %s", req.replace_ids[:3], exc
-                )
-        try:
-            if to_delete:
-                collection.delete(ids=to_delete)
-                old_deleted = len(to_delete)
-        except Exception as exc:
-            log.warning("Replace delete failed for %s: %s", req.replace_ids[:3], exc)
-        if old_deleted > 0:
-            _mark_bm25_dirty(req.collection)
-            log.info("Replaced %d old chunk(s) before indexing", old_deleted)
+    # Identify chunks that will be replaced — do NOT delete them yet! Deleting
+    # before cap checks and embedding generation would destroy existing data if
+    # the cap rejects the write or Ollama is down.
+    prefixes = [str(p) for p in (req.replace_ids or []) if p]
+    pending_replace_ids = _find_replace_ids(collection, prefixes) if prefixes else []
 
     current_count = collection.count()
+    effective_after_replace = max(0, current_count - len(pending_replace_ids))
     rejected = 0
     reason = ""
 
-    if max_chunks > 0 and current_count >= max_chunks:
-        if req.auto_prune:
-            # LRU-style eviction: remove the oldest chunks to make room
-            overflow = current_count + len(all_chunks) - max_chunks
-            if overflow > 0:
-                evict_count = min(overflow, current_count)
-                log.info(
-                    "Collection '%s' at cap (%d/%d chunks) — evicting %d oldest",
-                    req.collection,
-                    current_count,
-                    max_chunks,
-                    evict_count,
-                )
-                evicted = _evict_oldest_chunks(collection, evict_count)
-                if evicted > 0:
-                    _mark_bm25_dirty(req.collection)
-                    log.info("Evicted %d chunks from '%s'", evicted, req.collection)
-        else:
-            # Hard reject when auto-prune is off and the collection is full.
-            # `indexed` stays 0 so clients can't mistake this for success.
+    if max_chunks > 0 and effective_after_replace + len(all_chunks) > max_chunks:
+        if not req.auto_prune:
+            # Hard reject when auto-prune is off and the write would exceed the cap.
             rejected = len(all_chunks)
             reason = (
-                f"Collection '{req.collection}' is at its cap of {max_chunks} chunks "
-                f"and auto-pruning is disabled. Clear some space or enable auto-prune."
+                f"Collection '{req.collection}' would exceed its cap of {max_chunks} chunks "
+                f"({effective_after_replace} existing + {len(all_chunks)} new) and "
+                "auto-pruning is disabled. Clear some space or enable auto-prune."
             )
             log.warning("Rejected %d chunks — %s", rejected, reason)
             return IndexResponse(
@@ -1217,48 +1286,25 @@ def index_texts(req: IndexRequest):
                 reason=reason,
             )
 
-    # ── Total storage cap check ───────────────────────────────────────────
-    if max_mb > 0:
-        est_mb = estimate_storage_size_mb()
-        if est_mb >= max_mb:
-            if req.auto_prune:
-                log.info(
-                    "Total storage at %.1f MB (cap %d MB) — attempting eviction",
-                    est_mb,
-                    max_mb,
-                )
-                # Evict ~20% of the oldest chunks across all collections
-                for cname in _collection_names(client):
-                    try:
-                        col = client.get_collection(name=cname)
-                        to_evict = max(1, int(col.count() * 0.2))
-                        evicted = _evict_oldest_chunks(col, to_evict)
-                        if evicted > 0:
-                            _mark_bm25_dirty(cname)
-                            log.info(
-                                "Storage eviction: removed %d from '%s'",
-                                evicted,
-                                cname,
-                            )
-                    except Exception as exc:
-                        log.warning("Storage eviction failed for '%s': %s", cname, exc)
-            else:
-                rejected = len(all_chunks)
-                reason = (
-                    f"Total storage estimated at {est_mb:.0f} MB exceeds the "
-                    f"{max_mb} MB cap and auto-pruning is disabled. "
-                    "Clear some space or enable auto-prune."
-                )
-                log.warning("Rejected %d chunks — %s", rejected, reason)
-                return IndexResponse(
-                    indexed=0,
-                    chunks=0,
-                    model=model,
-                    rejected=rejected,
-                    reason=reason,
-                )
+    # ── Total storage cap check (before embedding/deletion) ──────────────
+    est_mb = estimate_storage_size_mb() if max_mb > 0 else 0.0
+    if max_mb > 0 and est_mb >= max_mb and not req.auto_prune:
+        rejected = len(all_chunks)
+        reason = (
+            f"Total storage estimated at {est_mb:.0f} MB exceeds the "
+            f"{max_mb} MB cap and auto-pruning is disabled. "
+            "Clear some space or enable auto-prune."
+        )
+        log.warning("Rejected %d chunks — %s", rejected, reason)
+        return IndexResponse(
+            indexed=0,
+            chunks=0,
+            model=model,
+            rejected=rejected,
+            reason=reason,
+        )
 
-    # Generate embeddings (structured 503 when the embedding backend is down)
+    # Generate embeddings BEFORE mutating ChromaDB (structured 503 on outage)
     chunk_texts = [c["content"] for c in all_chunks]
     t_embed = time.monotonic()
     try:
@@ -1271,20 +1317,90 @@ def index_texts(req: IndexRequest):
         )
     embed_s = time.monotonic() - t_embed
 
-    # Store in ChromaDB
-    collection.add(
-        ids=[c["id"] for c in all_chunks],
-        documents=chunk_texts,
-        metadatas=[c["metadata"] for c in all_chunks],
-        embeddings=embeddings,  # type: ignore[reportArgumentType]
-    )
+    # Now safe to delete replaced chunks (embeddings succeeded & caps passed)
+    if pending_replace_ids:
+        try:
+            collection.delete(ids=pending_replace_ids)
+            _mark_bm25_dirty(req.collection)
+            log.info(
+                "Replaced %d old chunk(s) before indexing", len(pending_replace_ids)
+            )
+        except Exception as exc:
+            log.warning("Replace delete failed for %s: %s", prefixes[:3], exc)
+
+    # Re-check collection cap and auto-prune oldest chunks if needed
+    current_count = collection.count()
+    if max_chunks > 0 and current_count + len(all_chunks) > max_chunks and req.auto_prune:
+        overflow = current_count + len(all_chunks) - max_chunks
+        evict_count = min(overflow, current_count)
+        if evict_count > 0:
+            log.info(
+                "Collection '%s' at cap (%d/%d chunks) — evicting %d oldest",
+                req.collection,
+                current_count,
+                max_chunks,
+                evict_count,
+            )
+            evicted = _evict_oldest_chunks(collection, evict_count)
+            if evicted > 0:
+                _mark_bm25_dirty(req.collection)
+                log.info("Evicted %d chunks from '%s'", evicted, req.collection)
+
+    # Storage auto-prune with cooldown so SQLite WAL/freelist latency cannot
+    # trigger a wipe-everything eviction death spiral on consecutive requests.
+    if max_mb > 0 and est_mb >= max_mb and req.auto_prune:
+        now_mono = time.monotonic()
+        if (now_mono - _last_storage_evict_ts) >= STORAGE_EVICT_COOLDOWN_S:
+            _last_storage_evict_ts = now_mono
+            log.info(
+                "Total storage at %.1f MB (cap %d MB) — attempting eviction",
+                est_mb,
+                max_mb,
+            )
+            for cname in _collection_names(client):
+                try:
+                    col = client.get_collection(name=cname)
+                    col_count = col.count()
+                    if col_count <= 0:
+                        continue
+                    to_evict = max(1, int(col_count * 0.2))
+                    evicted = _evict_oldest_chunks(col, to_evict)
+                    if evicted > 0:
+                        _mark_bm25_dirty(cname)
+                        log.info(
+                            "Storage eviction: removed %d from '%s'",
+                            evicted,
+                            cname,
+                        )
+                except Exception as exc:
+                    log.warning("Storage eviction failed for '%s': %s", cname, exc)
+
+    # Store in ChromaDB (upsert avoids DuplicateIDError on concurrent re-index)
+    chunk_ids = [c["id"] for c in all_chunks]
+    chunk_metas = [c["metadata"] for c in all_chunks]
+    if hasattr(collection, "upsert"):
+        collection.upsert(
+            ids=chunk_ids,
+            documents=chunk_texts,
+            metadatas=chunk_metas,
+            embeddings=embeddings,  # type: ignore[reportArgumentType]
+        )
+    else:
+        collection.add(
+            ids=chunk_ids,
+            documents=chunk_texts,
+            metadatas=chunk_metas,
+            embeddings=embeddings,  # type: ignore[reportArgumentType]
+        )
+
+    _invalidate_storage_size_cache()
 
     # Phase 3: also add to BM25 index (with per-chunk metadata)
     _add_to_bm25(
         req.collection,
-        [c["id"] for c in all_chunks],
+        chunk_ids,
         chunk_texts,
-        [c["metadata"] for c in all_chunks],
+        chunk_metas,
     )
 
     elapsed = time.monotonic() - t0
@@ -1327,14 +1443,13 @@ def search_texts(req: SearchRequest):
     stage_s = {"embed": 0.0, "dense": 0.0, "bm25": 0.0, "rerank": 0.0}
 
     # ── Determine fetch sizes ──────────────────────────────────────────
+    # Honor req.rerank_k even when BOTH hybrid and rerank are enabled.
+    rerank_target = max(k, min(req.rerank_k, 50)) if req.rerank else k
     if req.hybrid:
-        dense_k = k * 2  # fetch more for fusion
-        bm25_k = k * 2
-    elif req.rerank:
-        dense_k = max(k, min(req.rerank_k, 50))
-        bm25_k = 0
+        dense_k = max(rerank_target, k * 2)
+        bm25_k = max(rerank_target, k * 2)
     else:
-        dense_k = k
+        dense_k = rerank_target
         bm25_k = 0
 
     # ── Dense retrieval (always) ───────────────────────────────────────
@@ -1390,6 +1505,9 @@ def search_texts(req: SearchRequest):
             log.warning("Error querying collection '%s': %s", col_name, exc)
             continue
 
+    # Sort globally across collections by score BEFORE reciprocal rank fusion so
+    # collection order never biases RRF rankings.
+    dense_results.sort(key=lambda r: r[3], reverse=True)
     stage_s["dense"] = time.monotonic() - t_embed - stage_s["embed"]
 
     # Per-id similarity scores (0–1) so hybrid fusion can still report a
@@ -1414,6 +1532,9 @@ def search_texts(req: SearchRequest):
         for col_name in collections_to_search:
             bm25_results.extend(_bm25_search(req.query, col_name, bm25_k))
 
+        # Sort globally across collections before RRF
+        bm25_results.sort(key=lambda r: r[3], reverse=True)
+
         bm25_scores = {
             rid: min(1.0, max(0.0, score)) for rid, _c, _m, score in bm25_results
         }
@@ -1433,7 +1554,7 @@ def search_texts(req: SearchRequest):
 
     stage_s["bm25"] = time.monotonic() - t_bm25
 
-    # Sort by score, take top candidates
+    # Sort by score (RRF rank when hybrid, cosine similarity when dense-only)
     all_results.sort(key=lambda r: r[3], reverse=True)
 
     # ── Reranking (if enabled) ─────────────────────────────────────────
@@ -1444,14 +1565,34 @@ def search_texts(req: SearchRequest):
         candidates_for_rerank = all_results[:rerank_k]
 
         if len(candidates_for_rerank) >= k:
-            all_results, applied = _rerank_results(
+            # When hybrid RRF produced ~0.016 rank scores, supply comparable
+            # 0–1 fallback scores to the reranker so if a single rerank batch
+            # fails, its scores stay on the same 0–1 scale as scored batches.
+            rerank_input = (
+                [
+                    (
+                        rid,
+                        content,
+                        meta,
+                        min(
+                            1.0,
+                            max(0.0, dense_scores.get(rid, bm25_scores.get(rid, 0.0))),
+                        ),
+                    )
+                    for rid, content, meta, _rrf in candidates_for_rerank
+                ]
+                if req.hybrid
+                else candidates_for_rerank
+            )
+            reranked_out, applied = _rerank_results(
                 req.query,
-                candidates_for_rerank,
+                rerank_input,
                 model=req.rerank_model,
                 ollama_url=req.ollama_url,
             )
             reranked = applied
             if applied:
+                all_results = reranked_out
                 mode_parts.append("reranked")
             log.info(
                 "Reranking '%s': %d candidates → %d scored (applied=%s)",
@@ -1550,8 +1691,9 @@ def health_check(
         for name in col_names:
             try:
                 col = client.get_collection(name=name)
-                collections[name] = col.count()
-                total_chunks += col.count()
+                count = col.count()
+                collections[name] = count
+                total_chunks += count
             except Exception:
                 collections[name] = -1
 
@@ -1566,9 +1708,9 @@ def health_check(
             "url": ollama_url,
             "error": "",
         }
-        model_names: list = []
+        model_names: set[str] = set()
         try:
-            ollama_client = ollama.Client(host=ollama_url, timeout=OLLAMA_PROBE_TIMEOUT)
+            ollama_client = _get_ollama_client(ollama_url, OLLAMA_PROBE_TIMEOUT)
             model_names = _ollama_model_names(ollama_client.list())
         except Exception as exc:
             embedding_status["error"] = f"Ollama unreachable at {ollama_url}: {exc}"
@@ -1592,6 +1734,11 @@ def health_check(
             for mn in model_names
         )
 
+        with _bm25_lock:
+            bm25_col_count = sum(
+                1 for idx in _bm25_indices.values() if idx is not None
+            )
+
         return HealthResponse(
             ok=True,
             version="1.3.0",
@@ -1605,9 +1752,7 @@ def health_check(
                 # Phase 3
                 "reranker_available": reranker_available,
                 "bm25_available": _BM25_AVAILABLE,
-                "bm25_collections": sum(
-                    1 for idx in _bm25_indices.values() if idx is not None
-                ),
+                "bm25_collections": bm25_col_count,
                 "score_space": EMBEDDING_SPACE,
             },
         )
@@ -1629,6 +1774,7 @@ def delete_collection(name: str):
         client = get_chroma()
         client.delete_collection(name=name)
         _clear_bm25(name)
+        _invalidate_storage_size_cache()
         log.info("Deleted collection '%s'", name)
         return {"ok": True, "collection": name}
     except Exception as exc:
@@ -1715,6 +1861,9 @@ def delete_chunks(req: DeleteRequest):
                 status_code=500, detail=f"Delete failed for '{name}': {exc}"
             )
 
+    if deleted > 0:
+        _invalidate_storage_size_cache()
+
     return {"ok": True, "deleted": deleted}
 
 
@@ -1746,19 +1895,24 @@ def export_data(offset: int = 0, limit: int = EXPORT_PAGE_SIZE):
     client = get_chroma()
     col_names = _collection_names(client)
 
-    # First pass: count total chunks for pagination info
+    # First pass: snapshot collection sizes so pagination never stalls if a
+    # collection fails during pass 2.
+    col_counts: dict[str, int] = {}
     total_chunks = 0
     for name in col_names:
         try:
             col = client.get_collection(name=name)
-            total_chunks += col.count()
+            cnt = col.count()
+            col_counts[name] = cnt
+            total_chunks += cnt
         except Exception:
-            continue
+            col_counts[name] = 0
 
     # Second pass: fetch a page of data
     result: dict[str, list[dict]] = {}
     collected = 0
     skipped = 0
+    advanced = 0
     has_more = False
 
     for name in col_names:
@@ -1766,36 +1920,46 @@ def export_data(offset: int = 0, limit: int = EXPORT_PAGE_SIZE):
             has_more = True
             break
 
+        col_total = col_counts.get(name, 0)
+        if col_total == 0:
+            result[name] = []
+            continue
+
+        remaining_in_page = limit - collected
+        fetch_start = max(0, offset - skipped) if offset > skipped else 0
+        fetch_count = min(remaining_in_page, col_total - fetch_start)
+
+        if fetch_count <= 0:
+            skipped += col_total
+            continue
+
         try:
             col = client.get_collection(name=name)
-            col_total = col.count()
-            if col_total == 0:
-                result[name] = []
-                continue
-
-            # Calculate how many to fetch from this collection
-            remaining_in_page = limit - collected
-            fetch_start = max(0, offset - skipped) if offset > skipped else 0
-            fetch_count = min(remaining_in_page, col_total - fetch_start)
-
-            if fetch_count <= 0:
-                skipped += col_total
-                continue
-
-            # ChromaDB doesn't have native offset — we fetch from start and
-            # slice in Python.  For very large collections this is a known
-            # limitation; the page size cap keeps it bounded.
-            data = col.get(
-                limit=min(fetch_start + fetch_count, col_total),
-                include=["documents", "metadatas"],
-            )
-            ids = data.get("ids", [])[fetch_start : fetch_start + fetch_count]
-            docs = (data.get("documents", []) or [])[
-                fetch_start : fetch_start + fetch_count
-            ]
-            metas = (data.get("metadatas", []) or [])[
-                fetch_start : fetch_start + fetch_count
-            ]
+            # Prefer native ChromaDB offset+limit pagination; fall back to
+            # slicing when a stub/older client does not accept offset.
+            try:
+                data = col.get(
+                    offset=fetch_start,
+                    limit=fetch_count,
+                    include=["documents", "metadatas"],
+                )
+                ids = data.get("ids", []) or []
+                docs = data.get("documents", []) or []
+                metas = data.get("metadatas", []) or []
+            except TypeError:
+                data = col.get(
+                    limit=min(fetch_start + fetch_count, col_total),
+                    include=["documents", "metadatas"],
+                )
+                ids = (data.get("ids", []) or [])[
+                    fetch_start : fetch_start + fetch_count
+                ]
+                docs = (data.get("documents", []) or [])[
+                    fetch_start : fetch_start + fetch_count
+                ]
+                metas = (data.get("metadatas", []) or [])[
+                    fetch_start : fetch_start + fetch_count
+                ]
 
             entries = []
             for i in range(len(ids)):
@@ -1811,14 +1975,17 @@ def export_data(offset: int = 0, limit: int = EXPORT_PAGE_SIZE):
                 result[name] = entries
                 collected += len(entries)
                 log.info("Exported %d entries from collection '%s'", len(entries), name)
-
-            skipped += col_total
+            advanced += fetch_count
         except Exception as exc:
             log.warning("Error exporting collection '%s': %s", name, exc)
             result[name] = []
+            # Advance past the failed slice so callers never infinite-loop at the same offset
+            advanced += fetch_count
+        finally:
+            skipped += col_total
 
-    next_offset = offset + collected if collected > 0 else offset
-    has_more = has_more or (offset + collected) < total_chunks
+    next_offset = offset + advanced
+    has_more = (has_more or next_offset < total_chunks) and advanced > 0
 
     return ExportResponse(
         collections=result,
@@ -1857,6 +2024,7 @@ def clear_all():
         except Exception as exc:
             log.warning("Failed to clear collection '%s': %s", name, exc)
 
+    _invalidate_storage_size_cache()
     return ClearResponse(ok=True, dropped=dropped)
 
 

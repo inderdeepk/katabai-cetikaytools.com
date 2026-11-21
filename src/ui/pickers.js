@@ -178,6 +178,18 @@ export class Pickers {
             onActivate();
             return Clutter.EVENT_STOP;
         });
+        row.connect('key-press-event', (_actor, event) => {
+            const sym = event.get_key_symbol();
+            if (
+                sym === Clutter.KEY_Return ||
+                sym === Clutter.KEY_KP_Enter ||
+                sym === Clutter.KEY_space
+            ) {
+                onActivate();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
 
         return row;
     }

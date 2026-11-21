@@ -41,18 +41,19 @@ export function splitTextIntoBoundedChunks(text, maxChars) {
 
 // Convert AI-returned HTML into clean plain text suitable for Pango markup.
 // Block-level elements gain newlines so references don't run together;
-// all remaining tags are removed, preserving inner text content.
+// remaining HTML-like tags are removed while preserving math comparisons
+// such as "x < 5 && y > 3".
 function stripHtmlTags(text) {
     let result = String(text ?? '');
     // <br> variants → newline
     result = result.replace(/<br\s*\/?>/gi, '\n');
     // <li> opens a bullet; </li> adds a newline
-    result = result.replace(/<li[^>]*>/gi, '• ');
+    result = result.replace(/<li(?:\s[^<>]*)?>/gi, '• ');
     result = result.replace(/<\/li>/gi, '\n');
     // </p>, </div>, </ol>, </ul>, </h1>-</h6> → newline for separation
     result = result.replace(/<\/(?:p|div|ol|ul|h[1-6])>/gi, '\n');
-    // strip every remaining HTML/XML tag
-    result = result.replace(/<[^>]*>/g, '');
+    // strip remaining HTML/XML tags (must start with a tag name, not spaces/digits)
+    result = result.replace(/<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>/gi, '');
     return result;
 }
 
@@ -126,14 +127,18 @@ function extractLinks(text) {
 }
 
 export function formatInlineMarkdown(text) {
-    let escapedText = escapeMarkup(stripHtmlTags(text));
+    let raw = String(text ?? '');
     let codeTokens = [];
 
-    escapedText = escapedText.replace(/`([^`\n]+)`/g, (_match, code) => {
+    // Extract inline code spans BEFORE stripping HTML tags so literal code like
+    // `<div>`, `Vec<T>`, or `a < b && c > d` is preserved verbatim and escaped.
+    raw = raw.replace(/`([^`\n]+)`/g, (_match, code) => {
         let token = `@@KATAB_CODE_${codeTokens.length}@@`;
-        codeTokens.push(`<span font_family="monospace" weight="600">${code}</span>`);
+        codeTokens.push(`<span font_family="monospace" weight="600">${escapeMarkup(code)}</span>`);
         return token;
     });
+
+    let escapedText = escapeMarkup(stripHtmlTags(raw));
 
     escapedText = escapedText.replace(/\*\*([^\n]+?)\*\*/g, '<b>$1</b>');
     escapedText = escapedText.replace(/__([^\n]+?)__/g, '<b>$1</b>');
@@ -141,10 +146,11 @@ export function formatInlineMarkdown(text) {
     escapedText = escapedText.replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
 
     // Note: [N] citation markers are NOT styled here — they are rendered
-    // as clickable St.Button widgets by _createTextWithCitationButtons.
+    // as clickable markers by _createTextWithCitationButtons.
 
     for (let i = 0; i < codeTokens.length; i++) {
-        escapedText = escapedText.replace(`@@KATAB_CODE_${i}@@`, codeTokens[i]);
+        const replacement = codeTokens[i];
+        escapedText = escapedText.replace(`@@KATAB_CODE_${i}@@`, () => replacement);
     }
 
     return escapedText;

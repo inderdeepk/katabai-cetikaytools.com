@@ -10,6 +10,8 @@ import { gettext as _, format } from '../../shared/i18n.js';
 export function buildDeepSeekPage(ctx) {
     const {
         watch,
+        isDisposed,
+        onDestroy,
         settings,
         window,
         createProviderPage,
@@ -25,6 +27,18 @@ export function buildDeepSeekPage(ctx) {
         stylePreferenceRow,
         addPreferenceRow,
     } = ctx;
+
+    const activeSessions = new Set();
+    onDestroy(() => {
+        for (const s of activeSessions) {
+            try {
+                s.abort();
+            } catch (_e) {
+                /* already aborted */
+            }
+        }
+        activeSessions.clear();
+    });
 
     // --- DeepSeek Settings ---
     const deepseekPage = createProviderPage('deepseek');
@@ -128,6 +142,32 @@ export function buildDeepSeekPage(ctx) {
         ),
     });
 
+    // Backend selector: off / ollama / openai.
+    const visionBackendValues = ['', 'ollama', 'openai'];
+    const visionBackendLabels = [_('Disabled'), _('Ollama (local)'), _('OpenAI-compatible')];
+    const visionBackendRow = createChoiceRow(
+        _('Vision Backend'),
+        _(
+            'Ollama reuses your existing Ollama URL, sampling settings (including loaded presets), and installed models. OpenAI-compatible uses any vision-capable endpoint with a URL and optional API key.',
+        ),
+        deepseekVisionGroup,
+    );
+    setStringList(visionBackendRow, visionBackendLabels);
+    visionBackendRow._choiceValues = visionBackendValues;
+    const syncVisionBackendRow = () => {
+        const current = settings.get_string('deepseek-vision-backend') || '';
+        const idx = visionBackendValues.indexOf(current);
+        visionBackendRow.selected = idx >= 0 ? idx : 0;
+    };
+    syncVisionBackendRow();
+    watch('changed::deepseek-vision-backend', syncVisionBackendRow);
+    visionBackendRow.connect('notify::selected', () => {
+        const value = visionBackendRow._choiceValues?.[visionBackendRow.selected] || '';
+        if (settings.get_string('deepseek-vision-backend') !== value) {
+            settings.set_string('deepseek-vision-backend', value);
+        }
+    });
+
     // Routing mode: preprocess (default) vs direct.
     const visionModeValues = ['preprocess', 'direct'];
     const visionModeLabels = [
@@ -157,32 +197,6 @@ export function buildDeepSeekPage(ctx) {
         }
     });
 
-    // Backend selector: off / ollama / openai.
-    const visionBackendValues = ['', 'ollama', 'openai'];
-    const visionBackendLabels = [_('Disabled'), _('Ollama (local)'), _('OpenAI-compatible')];
-    const visionBackendRow = createChoiceRow(
-        _('Vision Backend'),
-        _(
-            'Ollama reuses your existing Ollama URL, sampling settings (including loaded presets), and installed models. OpenAI-compatible uses any vision-capable endpoint with a URL and optional API key.',
-        ),
-        deepseekVisionGroup,
-    );
-    setStringList(visionBackendRow, visionBackendLabels);
-    visionBackendRow._choiceValues = visionBackendValues;
-    const syncVisionBackendRow = () => {
-        const current = settings.get_string('deepseek-vision-backend') || '';
-        const idx = visionBackendValues.indexOf(current);
-        visionBackendRow.selected = idx >= 0 ? idx : 0;
-    };
-    syncVisionBackendRow();
-    watch('changed::deepseek-vision-backend', syncVisionBackendRow);
-    visionBackendRow.connect('notify::selected', () => {
-        const value = visionBackendRow._choiceValues?.[visionBackendRow.selected] || '';
-        if (settings.get_string('deepseek-vision-backend') !== value) {
-            settings.set_string('deepseek-vision-backend', value);
-        }
-    });
-
     // "Pick installed Ollama model" helper (Ollama backend only).
     const visionOllamaPickerRow = createButtonRow(
         _('Installed Ollama Models'),
@@ -206,6 +220,7 @@ export function buildDeepSeekPage(ctx) {
 
             const session = new Soup.Session();
             session.timeout = 8;
+            activeSessions.add(session);
             const message = Soup.Message.new('GET', `${ollamaUrl}/api/tags`);
             message.request_headers.append('Accept', 'application/json');
             const btn = visionOllamaPickerRow.activatable_widget;
@@ -214,6 +229,8 @@ export function buildDeepSeekPage(ctx) {
                 btn.sensitive = false;
             }
             session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, result) => {
+                activeSessions.delete(session);
+                if (isDisposed()) return;
                 if (btn) {
                     btn.set_label(_('Pick Model…'));
                     btn.sensitive = true;
@@ -313,7 +330,7 @@ export function buildDeepSeekPage(ctx) {
     const visionGuardRow = createInstructionRow(
         _('DeepSeek text models cannot see images'),
         _(
-            'The Vision Model is set to a text-only DeepSeek model, which cannot analyze images. Choose a vision-capable model instead (e.g. deepseek-flash).',
+            'The Vision Model is set to a text-only DeepSeek model, which cannot analyze images. Choose a vision-capable model instead (e.g. deepseek-flash or deepseek-vl2).',
         ),
         deepseekVisionGroup,
     );
@@ -339,15 +356,18 @@ export function buildDeepSeekPage(ctx) {
     const syncVisionVisibility = () => {
         const backend = settings.get_string('deepseek-vision-backend') || '';
         const enabled = backend !== '';
-        const model = (settings.get_string('deepseek-vision-model') || '').toLowerCase();
+        const model = (settings.get_string('deepseek-vision-model') || '').trim().toLowerCase();
         // Mirror extension.js::_isDeepSeekNativeVisionModel — the Flash
-        // family (V4.1+) accepts images natively; only other deepseek-*
-        // models are text-only.
-        const isFlashFamily =
-            model.startsWith('deepseek-flash') || model.startsWith('deepseek-v4-flash');
+        // family (V4.1+) and deepseek-vl* models accept images natively;
+        // only other deepseek-* models are text-only.
+        const isNativeVision =
+            model.startsWith('deepseek-flash') ||
+            model.startsWith('deepseek-v4-flash') ||
+            model.startsWith('deepseek-vl');
+        visionModeRow.visible = enabled;
         visionModelRow.visible = enabled;
         visionFallbackRow.visible = enabled;
-        visionGuardRow.visible = enabled && model.startsWith('deepseek-') && !isFlashFamily;
+        visionGuardRow.visible = enabled && model.startsWith('deepseek-') && !isNativeVision;
         visionOllamaPickerRow.visible = backend === 'ollama';
         visionUrlRow.visible = backend === 'openai';
         visionKeyRow.visible = backend === 'openai';
@@ -527,36 +547,43 @@ export function buildDeepSeekPage(ctx) {
     addPreferenceRow(deepseekBalanceGroup, refreshBtnRow);
 
     refreshBalanceBtn.connect('clicked', () => {
-        refreshBalanceBtn.set_label(_('Checking...'));
+        refreshBalanceBtn.set_label(_('Checking…'));
         refreshBalanceBtn.sensitive = false;
-        refreshDeepSeekBalance(settings, () => {
+        refreshDeepSeekBalance(settings, activeSessions, (outcome) => {
+            if (isDisposed()) return;
             refreshBalanceBtn.set_label(_('Refresh Balance'));
             refreshBalanceBtn.sensitive = true;
+            if (outcome?.message && typeof window.add_toast === 'function') {
+                window.add_toast(new Adw.Toast({ title: outcome.message, timeout: 3 }));
+            }
         });
     });
 
     deepseekPage.add(deepseekBalanceGroup);
 }
 
-async function refreshDeepSeekBalance(settings, onDone) {
-    let baseUrl = settings.get_string('deepseek-url');
-    let apiKey = settings.get_string('deepseek-api-key');
+async function refreshDeepSeekBalance(settings, activeSessions, onDone) {
+    let baseUrl = (settings.get_string('deepseek-url') || '').trim();
+    let apiKey = (settings.get_string('deepseek-api-key') || '').trim();
 
     if (!baseUrl || !apiKey) {
-        onDone();
+        onDone({ ok: false, message: _('Set DeepSeek Base URL and API Key first.') });
         return;
     }
 
     // Strip trailing slash so joinUrl-like behaviour works
     baseUrl = baseUrl.replace(/\/+$/, '');
     let url = `${baseUrl}/user/balance`;
+    let session = null;
 
     try {
-        let session = new Soup.Session();
+        session = new Soup.Session();
         session.timeout = 8; // seconds, same as health monitor probe
+        activeSessions?.add(session);
 
         let message = Soup.Message.new('GET', url);
         message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
+        message.get_request_headers().append('Accept', 'application/json');
 
         let bytes = await new Promise((resolve, reject) => {
             session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (s, res) => {
@@ -571,17 +598,22 @@ async function refreshDeepSeekBalance(settings, onDone) {
         if (message.status_code === 402) {
             settings.set_boolean('deepseek-balance-available', false);
             settings.set_int64('deepseek-balance-last-checked', Date.now());
-            onDone();
+            onDone({ ok: true, message: _('Balance unavailable — top up needed.') });
             return;
         }
 
         if (message.status_code < 200 || message.status_code >= 300) {
-            onDone();
+            onDone({
+                ok: false,
+                message: format(_('Balance check failed (HTTP {code}).'), {
+                    code: message.status_code,
+                }),
+            });
             return;
         }
 
         let decoder = new TextDecoder('utf-8');
-        let responseBody = decoder.decode(bytes);
+        let responseBody = decoder.decode(bytes?.get_data() || new Uint8Array());
         let parsed = JSON.parse(responseBody);
 
         let balanceInfo = parsed.balance_infos?.[0] ?? null;
@@ -591,9 +623,10 @@ async function refreshDeepSeekBalance(settings, onDone) {
         settings.set_string('deepseek-balance-granted', balanceInfo?.granted_balance ?? '');
         settings.set_string('deepseek-balance-topped-up', balanceInfo?.topped_up_balance ?? '');
         settings.set_int64('deepseek-balance-last-checked', Date.now());
+        onDone({ ok: true, message: _('DeepSeek balance updated.') });
     } catch (_e) {
-        // Silently ignore errors — the UI already shows '—' for missing data.
+        onDone({ ok: false, message: _('Could not reach the DeepSeek balance endpoint.') });
+    } finally {
+        if (session) activeSessions?.delete(session);
     }
-
-    onDone();
 }

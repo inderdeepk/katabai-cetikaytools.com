@@ -23,6 +23,14 @@ export const DEEPSEEK_TIER_PRICING = {
         offPeak: { hit: 0.022, miss: 0.66, out: 1.98 },
         peak: { hit: 0.044, miss: 1.32, out: 3.96 },
     },
+    'deepseek-chat': {
+        offPeak: { hit: 0.07, miss: 0.27, out: 1.1 },
+        peak: { hit: 0.07, miss: 0.27, out: 1.1 },
+    },
+    'deepseek-reasoner': {
+        offPeak: { hit: 0.14, miss: 0.55, out: 2.19 },
+        peak: { hit: 0.14, miss: 0.55, out: 2.19 },
+    },
 };
 
 export const DEEPSEEK_DEFAULT_PRICING_MODEL = 'deepseek-flash';
@@ -34,7 +42,8 @@ const DEEPSEEK_PEAK_WINDOWS_UTC = [
 
 /** Whether a given epoch (ms) falls inside DeepSeek's peak billing window. */
 export function isDeepSeekPeakHour(epochMs = Date.now()) {
-    const d = new Date(epochMs);
+    const ts = epochMs == null || !Number.isFinite(Number(epochMs)) ? Date.now() : Number(epochMs);
+    const d = new Date(ts);
     const day = d.getUTCDay();
     if (day === 0 || day === 6) {
         return false;
@@ -43,9 +52,11 @@ export function isDeepSeekPeakHour(epochMs = Date.now()) {
     return DEEPSEEK_PEAK_WINDOWS_UTC.some((w) => hour >= w.startHour && hour < w.endHour);
 }
 
-/** Resolve the effective rate card for a model id (falls back to Flash). */
+/** Resolve the effective rate card for a model id (case-insensitive; falls back to Flash). */
 export function deepseekPricingForModel(model) {
-    const key = String(model || '').trim();
+    const key = String(model || '')
+        .trim()
+        .toLowerCase();
     return DEEPSEEK_TIER_PRICING[key] || DEEPSEEK_TIER_PRICING[DEEPSEEK_DEFAULT_PRICING_MODEL];
 }
 

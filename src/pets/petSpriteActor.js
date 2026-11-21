@@ -65,7 +65,14 @@ export const PetSpriteActor = GObject.registerClass(
             });
             this.add_child(this._fallback);
 
-            this.connect('notify::mapped', () => this._syncAnimation());
+            this.connect('notify::mapped', () => {
+                if (this.is_mapped() && this._pose === 'sleep') {
+                    this._pose = 'idle';
+                    this._frame = 1;
+                    this._render();
+                }
+                this._syncAnimation();
+            });
             this.connect('destroy', () => this._clearTimers());
         }
 
@@ -149,7 +156,13 @@ export const PetSpriteActor = GObject.registerClass(
         }
 
         _shouldAnimate() {
-            if (!this._animate || !this._form || this._pose !== 'idle' || !this.is_mapped())
+            if (
+                !this._animate ||
+                !this._form ||
+                this._stageKey === 'egg' ||
+                this._pose !== 'idle' ||
+                !this.is_mapped()
+            )
                 return false;
             try {
                 return St.Settings.get().enable_animations;

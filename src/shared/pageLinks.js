@@ -169,9 +169,10 @@ export function normalizeLinkList(links, baseUrl, { max = 100, excludePdfs = fal
 // ── HTML anchor extraction ───────────────────────────────────────────────────
 
 // Matches <a ... href="...">text</a> with double-quoted, single-quoted, or
-// unquoted hrefs.  Anchor bodies are stripped of inner tags before use.
+// unquoted hrefs. Requires leading whitespace before `href` so `data-href=`
+// is never matched. Anchor bodies are stripped of inner tags before use.
 const ANCHOR_TAG_REGEX =
-    /<a\b[^>]*?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))[^>]*>([\s\S]*?)<\/a>/gi;
+    /<a\b[^>]*?\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))[^>]*>([\s\S]*?)<\/a>/gi;
 
 /**
  * Extract links (with anchor text) from raw HTML.  Used by read_url so the
@@ -186,17 +187,21 @@ export function extractHtmlLinks(html, baseUrl, { max = 50 } = {}) {
     const source = String(html || '');
     if (!source || !baseUrl) return [];
 
+    const normalizedBase = resolveLinkHref(baseUrl, baseUrl).replace(/\/+$/, '').toLowerCase();
     const found = [];
     ANCHOR_TAG_REGEX.lastIndex = 0;
     let match;
     while ((match = ANCHOR_TAG_REGEX.exec(source)) !== null) {
-        const rawHref = match[1] ?? match[2] ?? match[3] ?? '';
+        const rawHref = decodeHtmlEntities(match[1] ?? match[2] ?? match[3] ?? '').trim();
+        // Skip pure in-page anchor self-links (`#section`)
+        if (!rawHref || rawHref.startsWith('#')) continue;
         const anchorHtml = match[4] || '';
         const anchorText = decodeHtmlEntities(anchorHtml.replace(/<[^>]+>/g, ' '))
             .replace(/\s+/g, ' ')
             .trim();
         const href = resolveLinkHref(rawHref, baseUrl);
         if (!href || isNoiseHref(href) || isAssetHref(href)) continue;
+        if (normalizedBase && href.replace(/\/+$/, '').toLowerCase() === normalizedBase) continue;
         found.push({
             href,
             text: anchorText,
@@ -317,7 +322,11 @@ export function formatLinksSection(links, { max = READ_URL_MAX_LINKS } = {}) {
     if (list.length === 0) return '';
 
     const lines = [`${LINKS_SECTION_PREFIX} (${list.length}) ---`];
-    list.forEach((link, index) => {
+    let charCount = lines[0].length;
+    let trimmed = false;
+
+    for (let index = 0; index < list.length; index++) {
+        const link = list[index];
         // Brackets inside the label would break the markdown link syntax.
         const rawLabel = String(link.text || link.title || link.href || '')
             .replace(/\s+/g, ' ')
@@ -327,29 +336,37 @@ export function formatLinksSection(links, { max = READ_URL_MAX_LINKS } = {}) {
             rawLabel.length > LINK_LABEL_MAX_CHARS
                 ? `${rawLabel.slice(0, LINK_LABEL_MAX_CHARS - 1).trimEnd()}…`
                 : rawLabel;
+        // Escape parentheses in URLs (e.g. Wikipedia disambiguation links)
+        const safeHref = String(link.href || '')
+            .replace(/\)/g, '%29')
+            .replace(/\(/g, '%28');
         const suffix = link.external ? ' (external)' : '';
-        lines.push(`${index + 1}. [${label}](${link.href})${suffix}`);
-    });
-
-    let section = lines.join('\n');
-    if (section.length > LINKS_SECTION_MAX_CHARS) {
-        section = `${section.slice(0, LINKS_SECTION_MAX_CHARS).trimEnd()}\n[...links trimmed]`;
+        const line = `${index + 1}. [${label}](${safeHref})${suffix}`;
+        if (charCount + 1 + line.length > LINKS_SECTION_MAX_CHARS) {
+            trimmed = true;
+            break;
+        }
+        lines.push(line);
+        charCount += 1 + line.length;
     }
-    return section;
+
+    if (trimmed) {
+        lines.push('[...links trimmed]');
+    }
+    return lines.join('\n');
 }
 
 /**
- * Split a tool-result block into `{head, tail}` at the links section.  The
- * tail keeps everything from the links heading onwards (including any
- * trailing safety guard / nudges), so progressive truncation can trim only
- * the page body and re-append the navigation surface intact.
+ * Split a tool-result block into `{head, tail}` at the links section.  Uses
+ * `lastIndexOf` so untrusted page content mentioning the marker cannot hijack
+ * progressive truncation.
  *
  * @param {string} text
  * @returns {{head: string, tail: string}} tail is '' when no section exists.
  */
 export function splitLinksSection(text) {
     const value = String(text || '');
-    const index = value.indexOf(LINKS_SECTION_PREFIX);
+    const index = value.lastIndexOf(LINKS_SECTION_PREFIX);
     if (index === -1) return { head: value, tail: '' };
     return { head: value.slice(0, index).trimEnd(), tail: value.slice(index) };
 }

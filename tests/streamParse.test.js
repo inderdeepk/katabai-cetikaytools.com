@@ -1,9 +1,11 @@
 // streamParse.test.js — Tests for the per-provider SSE chunk interpreters.
 import {
     splitThinkingTags,
+    flushThinkingCarry,
     parseOllamaChunk,
     parseOpenAiCompatChunk,
     parseAnthropicChunk,
+    flushPendingAnthropicToolCalls,
     accumulateStreamingToolCalls,
     extractOllamaMetrics,
     extractDeepSeekMetrics,
@@ -371,6 +373,100 @@ const tests = [
             assertEqual(other.text, '', 'unrelated frame inert');
             assertEqual(other.promptTokens, null, 'no prompt tokens');
             assertEqual(other.completedToolCall, null, 'no tool call');
+        },
+    ],
+
+    [
+        'splitThinkingTags + flushThinkingCarry: handles tags split across SSE chunk boundaries',
+        () => {
+            const carry = { carry: '', openTag: '' };
+            const s1 = splitThinkingTags('Hello <th', false, carry);
+            assertEqual(s1.text, 'Hello ', 'text before partial open tag');
+            assertEqual(s1.think, '', 'no think yet');
+            assertEqual(s1.isThinking, false, 'still outside think');
+
+            const s2 = splitThinkingTags('ink>step 1</th', s1.isThinking, carry);
+            assertEqual(s2.think, 'step 1', 'think body emitted');
+            assertEqual(s2.isThinking, true, 'still inside think until close completes');
+
+            const s3 = splitThinkingTags('ink>World<', s2.isThinking, carry);
+            assertEqual(s3.text, 'World', 'text after close tag');
+            assertEqual(s3.isThinking, false, 'closed');
+
+            const flushed = flushThinkingCarry(s3.isThinking, carry);
+            assertEqual(flushed.text, '<', 'dangling literal < flushed to text');
+            assertEqual(flushed.think, '', 'no dangling think');
+        },
+    ],
+
+    [
+        'parseAnthropicChunk: handles thinking_delta, error events, cache tokens, and pending flush',
+        () => {
+            const map = new Map();
+            const think = parseAnthropicChunk(
+                {
+                    type: 'content_block_delta',
+                    index: 0,
+                    delta: { type: 'thinking_delta', thinking: 'reasoning...' },
+                },
+                map,
+            );
+            assertEqual(think.think, 'reasoning...', 'thinking_delta captured');
+
+            const err = parseAnthropicChunk(
+                { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } },
+                map,
+            );
+            assert(err.error && err.error.includes('Overloaded'), 'error surfaced');
+
+            const started = parseAnthropicChunk(
+                {
+                    type: 'message_start',
+                    message: {
+                        usage: {
+                            input_tokens: 100,
+                            cache_read_input_tokens: 40,
+                            cache_creation_input_tokens: 10,
+                        },
+                    },
+                },
+                map,
+            );
+            assertEqual(started.promptTokens, 150, 'input + cache tokens combined');
+
+            parseAnthropicChunk(
+                {
+                    type: 'content_block_start',
+                    index: 1,
+                    content_block: { type: 'tool_use', id: 'tu_trunc', name: 'read_url' },
+                },
+                map,
+            );
+            parseAnthropicChunk(
+                {
+                    type: 'content_block_delta',
+                    index: 1,
+                    delta: { type: 'input_json_delta', partial_json: '{"url":"https://ex.com"}' },
+                },
+                map,
+            );
+            const flushed = flushPendingAnthropicToolCalls(map);
+            assertEqual(flushed.length, 1, 'pending tool call flushed');
+            assertEqual(flushed[0].id, 'tu_trunc', 'flushed tool call id');
+            assertEqual(map.size, 0, 'map cleared after flush');
+        },
+    ],
+
+    [
+        'parseOpenAiCompatChunk: surfaces embedded error payloads',
+        () => {
+            const chunk = parseOpenAiCompatChunk({
+                error: { message: 'rate limit exceeded' },
+            });
+            assert(
+                chunk.error && chunk.error.includes('rate limit exceeded'),
+                'OpenAI stream error extracted',
+            );
         },
     ],
 ];

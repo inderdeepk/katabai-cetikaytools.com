@@ -118,6 +118,32 @@ export function estimateDeepSeekMessageTokens(message) {
 
 // ── Context-window truncation ───────────────────────────────────────────────
 
+function isAnthropicToolResultMessage(message) {
+    return (
+        message?.role === 'user' &&
+        Array.isArray(message.content) &&
+        message.content.length > 0 &&
+        message.content.some((block) => block?.type === 'tool_result')
+    );
+}
+
+function isToolResultMessage(message) {
+    return message?.role === 'tool' || isAnthropicToolResultMessage(message);
+}
+
+function isAssistantToolCallMessage(message) {
+    if (message?.role !== 'assistant') {
+        return false;
+    }
+    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+        return true;
+    }
+    return (
+        Array.isArray(message.content) &&
+        message.content.some((block) => block?.type === 'tool_use')
+    );
+}
+
 export function truncateOllamaMessages(messages, { maxBodyChars = 200000 } = {}) {
     // Serialized size with image payloads collapsed to a fixed per-image
     // cost — base64 bytes are a transport detail and must not dwarf the
@@ -155,18 +181,29 @@ export function truncateOllamaMessages(messages, { maxBodyChars = 200000 } = {})
         return messages;
     }
 
-    // Keep the system prompt (index 0) and drop oldest middle messages
-    // until the serialized body fits under maxBodyChars.
-    const systemMsg = messages[0];
-    const systemSize = sizes[0];
-    for (let keep = messages.length; keep >= 2; keep--) {
-        const suffixSum = suffix[messages.length - keep + 1];
-        const size = Number.isFinite(suffixSum) ? systemSize + suffixSum + keep + 1 : Infinity;
+    // Preserve leading system prompt if present; otherwise start at index 0.
+    const hasLeadingSystem = messages[0]?.role === 'system';
+    const prefix = hasLeadingSystem ? [messages[0]] : [];
+    const prefixSize = hasLeadingSystem ? sizes[0] : 0;
+    const minStart = hasLeadingSystem ? 1 : 0;
+
+    // Step start forward, never starting on an orphaned tool-result message
+    // (which violates OpenAI/Ollama/Anthropic tool-call pairing).
+    for (let start = minStart; start < messages.length; start++) {
+        if (isToolResultMessage(messages[start])) {
+            continue;
+        }
+        const suffixCount = messages.length - start;
+        const totalCount = prefix.length + suffixCount;
+        const suffixSum = suffix[start];
+        const size = Number.isFinite(suffixSum)
+            ? prefixSize + suffixSum + totalCount + 1
+            : Infinity;
         if (size <= maxBodyChars) {
-            const candidate = [systemMsg, ...messages.slice(messages.length - keep + 1)];
+            const candidate = [...prefix, ...messages.slice(start)];
             const dropped = messages.length - candidate.length;
             const droppedRoles = messages
-                .slice(1, messages.length - keep + 1)
+                .slice(minStart, start)
                 .map(
                     (m) =>
                         `${m.role}${m.tool_calls ? '(tool_calls)' : m.tool_call_id ? '(tool_result)' : ''}`,
@@ -178,10 +215,20 @@ export function truncateOllamaMessages(messages, { maxBodyChars = 200000 } = {})
         }
     }
 
-    // Fallback: system + last message only
-    const minimal = [systemMsg, messages[messages.length - 1]];
+    // Fallback: keep prefix + the final atomic span (so if the last message is
+    // a tool result, its owning assistant(tool_calls) message stays attached).
+    let tailStart = messages.length - 1;
+    if (isToolResultMessage(messages[tailStart])) {
+        while (tailStart > minStart && isToolResultMessage(messages[tailStart - 1])) {
+            tailStart--;
+        }
+        if (tailStart > minStart && isAssistantToolCallMessage(messages[tailStart - 1])) {
+            tailStart--;
+        }
+    }
+    const minimal = [...prefix, ...messages.slice(tailStart)];
     log(
-        `[Katab:truncate] Heavy truncation: ${messages.length} → 2 msgs (${estimateSize(minimal)} chars)`,
+        `[Katab:truncate] Heavy truncation: ${messages.length} → ${minimal.length} msgs (${estimateSize(minimal)} chars)`,
     );
     return minimal;
 }
@@ -230,6 +277,10 @@ export function truncateDeepSeekMessages(
             .map((item) => item.message);
     }
 
+    // Walk backward contiguously from the newest turns. Stop as soon as the
+    // next span overflows budget rather than skipping it to cherry-pick older
+    // messages (which would break chronological order and produce consecutive
+    // same-role turns).
     for (let i = messages.length - 1; i >= prefixLength;) {
         if (selectedIndexes.has(i)) {
             i--;
@@ -250,8 +301,7 @@ export function truncateDeepSeekMessages(
         }
 
         if (selectedTokens + missingTokens > tokenBudget) {
-            i = span.start - 1;
-            continue;
+            break;
         }
 
         for (let retainedIndex of missingIndexes) {
@@ -278,7 +328,9 @@ function getDeepSeekContextPrefixLength(messages) {
     let preservedMessages = 0;
     while (prefixLength < messages.length && preservedMessages < DEEPSEEK_CONTEXT_PREFIX_MESSAGES) {
         let message = messages[prefixLength];
-        if (!message || message.role === 'tool') {
+        // Never keep an orphaned tool result or an assistant tool_calls turn
+        // separated from its following tool results in the prefix.
+        if (!message || isToolResultMessage(message) || isAssistantToolCallMessage(message)) {
             break;
         }
 
@@ -297,23 +349,16 @@ function getDeepSeekRetentionSpan(annotated, index, prefixLength) {
     let start = index;
     let end = index;
 
-    if (annotated[index]?.message?.role === 'tool') {
-        while (start > prefixLength && annotated[start - 1]?.message?.role === 'tool') {
+    if (isToolResultMessage(annotated[index]?.message)) {
+        while (start > prefixLength && isToolResultMessage(annotated[start - 1]?.message)) {
             start--;
         }
 
-        if (
-            start > prefixLength &&
-            annotated[start - 1]?.message?.role === 'assistant' &&
-            annotated[start - 1]?.message?.tool_calls !== undefined
-        ) {
+        if (start > prefixLength && isAssistantToolCallMessage(annotated[start - 1]?.message)) {
             start--;
         }
-    } else if (
-        annotated[index]?.message?.role === 'assistant' &&
-        annotated[index]?.message?.tool_calls !== undefined
-    ) {
-        while (end + 1 < annotated.length && annotated[end + 1]?.message?.role === 'tool') {
+    } else if (isAssistantToolCallMessage(annotated[index]?.message)) {
+        while (end + 1 < annotated.length && isToolResultMessage(annotated[end + 1]?.message)) {
             end++;
         }
     }
@@ -331,7 +376,10 @@ function getDeepSeekRetentionSpan(annotated, index, prefixLength) {
 // Progressively truncate tool-result text based on the current tool-call
 // iteration.  Early iterations keep full results; later iterations get
 // shorter content so the context stays within practical model limits.
-export function truncateToolResultForIteration(text, { toolName, iteration = 0, tiers } = {}) {
+export function truncateToolResultForIteration(
+    text,
+    { toolName, resultTruncationKey = null, iteration = 0, tiers } = {},
+) {
     if (!text || typeof text !== 'string') return text;
     if (!Array.isArray(tiers) || tiers.length === 0) return text;
     let tier = tiers[tiers.length - 1];
@@ -342,20 +390,21 @@ export function truncateToolResultForIteration(text, { toolName, iteration = 0, 
         }
     }
 
-    const isSearch = toolName === WEB_SEARCH_TOOL_NAME;
-    const isRead = toolName === READ_URL_TOOL_NAME;
+    const isSearch = resultTruncationKey === 'search' || toolName === WEB_SEARCH_TOOL_NAME;
+    const isRead = resultTruncationKey === 'readUrl' || toolName === READ_URL_TOOL_NAME;
     // explore_docs results (TOC + page summary) are bounded like crawl results.
-    const isCrawl = toolName === CRAWL4AI_TOOL_NAME || toolName === EXPLORE_DOCS_TOOL_NAME;
-    // knowledge_search results are capped too (registry resultTruncationKey
-    // is informational only — the switch lives here).
-    const isKnowledge = toolName === RAG_TOOL_NAME;
+    const isCrawl =
+        resultTruncationKey === 'crawl' ||
+        toolName === CRAWL4AI_TOOL_NAME ||
+        toolName === EXPLORE_DOCS_TOOL_NAME;
+    const isKnowledge = resultTruncationKey === 'knowledge' || toolName === RAG_TOOL_NAME;
 
     if (isRead || isCrawl || isKnowledge) {
         const maxChars = isRead
             ? tier.readUrlChars
             : isCrawl
-                ? tier.crawlChars
-                : tier.knowledgeChars || tier.crawlChars;
+              ? tier.crawlChars
+              : tier.knowledgeChars || tier.crawlChars;
         if (text.length > maxChars) {
             const trimNote = `[Content trimmed at iteration ${iteration} to manage context — re-read this page later if you need the rest.]`;
             if (isRead || isCrawl) {
@@ -364,8 +413,22 @@ export function truncateToolResultForIteration(text, { toolName, iteration = 0, 
                 // to subpages after the body is trimmed.
                 const { head, tail } = splitLinksSection(text);
                 if (tail) {
-                    const headBudget = Math.max(200, maxChars - tail.length - trimNote.length - 4);
-                    return `${head.slice(0, headBudget).trimEnd()}\n\n${trimNote}\n\n${tail}`;
+                    const availableForHead = maxChars - tail.length - trimNote.length - 4;
+                    if (availableForHead >= 200) {
+                        return `${head.slice(0, availableForHead).trimEnd()}\n\n${trimNote}\n\n${tail}`;
+                    }
+                    // When the tail alone consumes nearly the whole budget,
+                    // still preserve a short head + trimmed tail within maxChars.
+                    const headBudget = Math.min(
+                        head.length,
+                        Math.max(200, Math.floor(maxChars * 0.45)),
+                    );
+                    const tailBudget = Math.max(0, maxChars - headBudget - trimNote.length - 4);
+                    const keptTail =
+                        tailBudget >= tail.length ? tail : tail.slice(0, tailBudget).trimEnd();
+                    return keptTail
+                        ? `${head.slice(0, headBudget).trimEnd()}\n\n${trimNote}\n\n${keptTail}`
+                        : `${head.slice(0, maxChars).trimEnd()}\n\n${trimNote}`;
                 }
             }
             return `${text.slice(0, maxChars).trimEnd()}\n\n${trimNote}`;
@@ -375,30 +438,43 @@ export function truncateToolResultForIteration(text, { toolName, iteration = 0, 
     if (isSearch) {
         // For web_search results, we trim individual result snippets.
         // The block is line-based: "N. Title\n   URL: ...\n   snippet\n".
-        // We limit both the number of results and snippet length.
+        // We limit both the number of results and snippet length while keeping
+        // URL lines intact so citations/links are never corrupted.
         const lines = text.split('\n');
         const result = [];
-        let resultCount = 0;
+        let totalResultCount = 0;
         let inResult = false;
+        let keptCurrent = false;
         for (const line of lines) {
             if (/^\d+\.\s/.test(line)) {
-                resultCount++;
-                if (resultCount > tier.searchResults) break;
+                totalResultCount++;
                 inResult = true;
-                result.push(line);
-            } else if (inResult && line.startsWith('   ') && resultCount <= tier.searchResults) {
-                if (line.length > tier.searchSnippetChars + 3) {
-                    result.push(line.slice(0, tier.searchSnippetChars).trimEnd() + '…');
+                keptCurrent = totalResultCount <= tier.searchResults;
+                if (keptCurrent) {
+                    result.push(line);
+                }
+            } else if (inResult) {
+                if (!keptCurrent) {
+                    continue;
+                }
+                if (line.startsWith('   ')) {
+                    // Never truncate URL lines — broken URLs cause failed read_url calls.
+                    const isUrlLine = line.trimStart().startsWith('URL:');
+                    if (!isUrlLine && line.length > tier.searchSnippetChars + 3) {
+                        result.push(line.slice(0, tier.searchSnippetChars).trimEnd() + '…');
+                    } else {
+                        result.push(line);
+                    }
                 } else {
                     result.push(line);
                 }
-            } else if (!inResult || resultCount <= tier.searchResults) {
+            } else {
                 result.push(line);
             }
         }
-        if (resultCount > tier.searchResults) {
+        if (totalResultCount > tier.searchResults) {
             result.push(
-                `\n[${resultCount - tier.searchResults} more results trimmed — iteration ${iteration}.]`,
+                `\n[${totalResultCount - tier.searchResults} more results trimmed — iteration ${iteration}.]`,
             );
         }
         return result.join('\n');
@@ -435,7 +511,7 @@ export function messageHasImageAttachments(message) {
  *  Handles string content, array content (Anthropic content blocks),
  *  and tool results. Returns an empty string for unsearchable payloads. */
 export function extractMessageText(msg) {
-    let content = msg.content;
+    let content = msg?.content;
     if (typeof content === 'string') {
         return content;
     }
@@ -592,23 +668,47 @@ function cloneToolCalls(toolCalls) {
     });
 }
 
-/** Ollama expects `function.arguments` as an object; older turns may store a
- *  JSON string after a provider switch, so parse it back when possible. */
+function sanitizeAnthropicId(rawId, fallback) {
+    const cleaned = String(rawId || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '_');
+    return cleaned || fallback;
+}
+
+/** Ollama expects `function.arguments` as a JSON object/map; older turns may
+ *  store a JSON string, empty string, or non-object after a provider switch. */
 function normalizeOllamaToolCall(call) {
     if (!call || typeof call !== 'object') return call;
     const fn = call.function;
-    if (!fn || typeof fn !== 'object' || typeof fn.arguments !== 'string') return call;
-    const raw = fn.arguments.trim();
-    if (!raw) return call;
-    try {
-        const parsed = JSON.parse(raw);
-        if (parsed !== null && typeof parsed === 'object') {
-            return { ...call, function: { ...fn, arguments: parsed } };
-        }
-    } catch (_e) {
-        /* not JSON — leave the original string untouched */
+    if (!fn || typeof fn !== 'object') return call;
+    if (fn.arguments && typeof fn.arguments === 'object' && !Array.isArray(fn.arguments)) {
+        return call;
     }
-    return call;
+    if (typeof fn.arguments === 'string') {
+        const raw = fn.arguments.trim();
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    return { ...call, function: { ...fn, arguments: parsed } };
+                }
+            } catch (_e) {
+                /* fall through to empty object */
+            }
+        }
+    }
+    return { ...call, function: { ...fn, arguments: {} } };
+}
+
+function appendContextText(sanitized, ctxText) {
+    if (!ctxText) return;
+    if (Array.isArray(sanitized.content)) {
+        sanitized.content = [...sanitized.content, { type: 'text', text: String(ctxText) }];
+    } else if (typeof sanitized.content === 'string') {
+        sanitized.content = sanitized.content ? `${sanitized.content}\n\n${ctxText}` : ctxText;
+    } else if (sanitized.content === undefined) {
+        sanitized.content = ctxText;
+    }
 }
 
 /**
@@ -627,7 +727,8 @@ function finalizeAnthropicMessage(sanitized, message) {
             typeof sanitized.content === 'string'
                 ? sanitized.content
                 : extractMessageText({ content: sanitized.content ?? '' });
-        const toolUseId = String(message?.tool_call_id ?? message?.tool_calls?.[0]?.id ?? '');
+        const rawId = message?.tool_call_id ?? message?.tool_calls?.[0]?.id ?? '';
+        const toolUseId = sanitizeAnthropicId(rawId, 'toolu_0');
         return {
             role: 'user',
             content: [
@@ -641,7 +742,11 @@ function finalizeAnthropicMessage(sanitized, message) {
     }
 
     // Assistant tool calls → `tool_use` content blocks (text first, if any).
-    if (sanitized.role === 'assistant' && Array.isArray(sanitized.tool_calls)) {
+    if (
+        sanitized.role === 'assistant' &&
+        Array.isArray(sanitized.tool_calls) &&
+        sanitized.tool_calls.length > 0
+    ) {
         const blocks = [];
         const text =
             typeof sanitized.content === 'string'
@@ -650,25 +755,30 @@ function finalizeAnthropicMessage(sanitized, message) {
         if (text && text.trim()) {
             blocks.push({ type: 'text', text });
         }
+        let toolIdx = 0;
         for (const call of sanitized.tool_calls) {
             if (!call || typeof call !== 'object') continue;
             const fn = call.function && typeof call.function === 'object' ? call.function : {};
             let input = {};
-            if (fn.arguments && typeof fn.arguments === 'object') {
+            if (fn.arguments && typeof fn.arguments === 'object' && !Array.isArray(fn.arguments)) {
                 input = fn.arguments;
             } else if (typeof fn.arguments === 'string' && fn.arguments.trim()) {
                 try {
-                    input = JSON.parse(fn.arguments);
+                    const parsed = JSON.parse(fn.arguments);
+                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                        input = parsed;
+                    }
                 } catch (_e) {
                     input = {};
                 }
             }
             blocks.push({
                 type: 'tool_use',
-                id: String(call.id || `toolu_${blocks.length}`),
+                id: sanitizeAnthropicId(call.id, `toolu_${toolIdx}`),
                 name: String(fn.name || ''),
                 input,
             });
+            toolIdx++;
         }
         if (blocks.length > 0) {
             return { role: 'assistant', content: blocks };
@@ -734,23 +844,36 @@ export function sanitizeHistoryMessage(
     // When the provider is not Anthropic (i.e. DeepSeek, OpenAI, Ollama
     // or other OpenAI-compatible APIs), convert array-format content
     // blocks (e.g. Anthropic tool_use / tool_result turns that survive
-    // a provider switch mid-conversation) into the string format that
-    // these APIs expect.
+    // a provider switch mid-conversation) into the format these APIs expect.
     if (provider !== 'anthropic' && Array.isArray(sanitized.content) && !nativeVision) {
         const blocks = sanitized.content;
-        // Assistant tool_use blocks → convert to tool_calls payload.
-        if (sanitized.role === 'assistant' && blocks.every((b) => b?.type === 'tool_use')) {
-            sanitized.tool_calls = blocks.map((b) => ({
-                id: b.id || '',
+        const toolUseBlocks =
+            sanitized.role === 'assistant' ? blocks.filter((b) => b?.type === 'tool_use') : [];
+        // Assistant blocks containing tool_use (with or without leading text)
+        // → convert tool_use entries to tool_calls and preserve any text.
+        if (toolUseBlocks.length > 0) {
+            sanitized.tool_calls = toolUseBlocks.map((b, idx) => ({
+                id: b.id || `call_${idx}`,
                 type: 'function',
                 function: {
                     name: b.name || '',
-                    arguments: JSON.stringify(b.input || {}),
+                    arguments: JSON.stringify(
+                        b.input && typeof b.input === 'object' && !Array.isArray(b.input)
+                            ? b.input
+                            : {},
+                    ),
                 },
             }));
-            delete sanitized.content;
+            const textParts = blocks
+                .filter((b) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim())
+                .map((b) => b.text);
+            if (textParts.length > 0) {
+                sanitized.content = textParts.join('\n');
+            } else {
+                delete sanitized.content;
+            }
         } else {
-            // Everything else (tool_result blocks, mixed content, etc.)
+            // Everything else (tool_result blocks, mixed text content, etc.)
             // → flatten to a plain-text string so the API accepts it.
             sanitized.content = extractMessageText({ content: blocks });
             if (!sanitized.content) {
@@ -759,99 +882,118 @@ export function sanitizeHistoryMessage(
         }
     }
 
-    // DeepSeek and other OpenAI-compatible APIs reject any message
-    // field that is an object/map where a string is expected.  This can
-    // happen when switching from a provider that stores exotic types in
-    // message fields (e.g. an object slipped into `content` or `name`
-    // during a malformed response).  Coerce every known string-valued
-    // field to a plain string before serialization.
-    if (provider !== 'anthropic') {
-        // Coerce string-valued fields and also `role` (defence-in-depth).
-        for (const field of ['role', 'content', 'name', 'tool_call_id', 'reasoning_content']) {
-            const val = sanitized[field];
-            if (val !== undefined && val !== null && typeof val !== 'string') {
-                // Native DeepSeek Flash vision keeps `content` as an array
-                // of text/image_url blocks — do not stringify it.
-                if (field === 'content' && nativeVision && Array.isArray(val)) {
-                    continue;
-                }
-                sanitized[field] =
-                    typeof val === 'object' ? extractMessageText({ content: val }) : String(val);
-                if (!sanitized[field]) {
-                    delete sanitized[field];
-                }
-            }
-        }
-        // Strip every other field whose value is an object — DeepSeek
-        // (and other OpenAI-compatible APIs) will reject any unknown
-        // map-valued key.
-        for (const key of Object.keys(sanitized)) {
-            if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
-                // `tool_calls` is the only array-of-objects field the
-                // API accepts; let it through.
-                if (key === 'tool_calls' && Array.isArray(sanitized[key])) {
-                    continue;
-                }
-                // Native DeepSeek Flash vision also keeps array `content`.
-                if (key === 'content' && nativeVision && Array.isArray(sanitized[key])) {
-                    continue;
-                }
-                delete sanitized[key];
-            }
-        }
-    }
+    appendContextText(sanitized, message.webSearchContext);
+    appendContextText(sanitized, message.crawl4aiContext);
+    appendContextText(sanitized, message.knowledgeContext);
 
-    if (message.webSearchContext) {
-        if (typeof sanitized.content === 'string') {
-            sanitized.content = sanitized.content
-                ? `${sanitized.content}\n\n${message.webSearchContext}`
-                : message.webSearchContext;
-        } else if (sanitized.content === undefined) {
-            sanitized.content = message.webSearchContext;
-        }
-    }
-
-    if (message.crawl4aiContext) {
-        if (typeof sanitized.content === 'string') {
-            sanitized.content = sanitized.content
-                ? `${sanitized.content}\n\n${message.crawl4aiContext}`
-                : message.crawl4aiContext;
-        } else if (sanitized.content === undefined) {
-            sanitized.content = message.crawl4aiContext;
-        }
-    }
-
-    if (message.knowledgeContext) {
-        if (typeof sanitized.content === 'string') {
-            sanitized.content = sanitized.content
-                ? `${sanitized.content}\n\n${message.knowledgeContext}`
-                : message.knowledgeContext;
-        } else if (sanitized.content === undefined) {
-            sanitized.content = message.knowledgeContext;
-        }
-    }
-
-    if (message.tool_calls !== undefined) {
+    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
         // Clone before any dialect-specific normalization below so the stored
         // history keeps its original (provider-native) argument shape.
         sanitized.tool_calls = cloneToolCalls(message.tool_calls);
         // OpenAI-compatible APIs (DeepSeek, OpenAI, Ollama) require content
-        // to be null or absent when tool_calls is present. Strip empty/falsy
-        // content so the API does not reject the message or return an empty reply.
+        // to be null or absent when tool_calls is present and empty. Strip
+        // empty/falsy content so the API does not reject or return empty.
         if (!sanitized.content) {
             delete sanitized.content;
         }
     }
 
-    // OpenAI-compatible APIs are strict about message and tool_call shapes.
-    // Strip every key that is not part of the OpenAI Chat Completions schema
-    // so that provider-specific artifacts (index, documents, provider,
-    // metrics, etc.) never reach the API.
+    // Copy optional protocol fields BEFORE string coercion & key allowlisting
+    // so defense-in-depth validation runs over every outgoing field.
+    if (message.tool_call_id !== undefined) {
+        sanitized.tool_call_id = message.tool_call_id;
+    }
+    if (message.name !== undefined) {
+        sanitized.name = message.name;
+    }
+    if (provider === 'ollama' && sanitized.role === 'tool') {
+        const toolName = message.tool_name || message.name;
+        if (toolName) {
+            sanitized.tool_name = toolName;
+        }
+    }
+
+    // For DeepSeek: assistant messages that carry reasoning_content must
+    // echo it back. When the current request has thinking enabled the API
+    // requires it on *every* assistant message — even tool-call turns where
+    // thinking was disabled — to maintain chain-of-thought continuity.
+    // When thinking is disabled we still echo it on tool-call turns because
+    // the API generated that reasoning_content originally and expects it
+    // alongside the tool_calls.
+    if (provider === 'deepseek' && message.role === 'assistant') {
+        if (thinkingEnabled) {
+            // Thinking is ON: every assistant message MUST carry
+            // reasoning_content (at minimum an empty string).
+            sanitized.reasoning_content = message.reasoning_content || '';
+        } else if (
+            Array.isArray(message.tool_calls) &&
+            message.tool_calls.length > 0 &&
+            message.reasoning_content
+        ) {
+            // Thinking is OFF but this message had tool_calls with
+            // reasoning_content — echo it so the model can continue.
+            sanitized.reasoning_content = message.reasoning_content;
+        }
+    }
+
+    if (provider === 'ollama') {
+        const existingImages = Array.isArray(message.images) ? message.images.filter(Boolean) : [];
+        const images = [...existingImages, ...attachmentPayload.images].filter(Boolean);
+        if (images.length) {
+            sanitized.images = images;
+        }
+        // Ollama's native tool_calls expect `arguments` as an object (not the
+        // OpenAI JSON string) — restore it for turns recorded under another
+        // provider.
+        if (Array.isArray(sanitized.tool_calls)) {
+            sanitized.tool_calls = sanitized.tool_calls.map(normalizeOllamaToolCall);
+        }
+    }
+
+    // DeepSeek and other OpenAI-compatible APIs reject any message
+    // field that is an object/map where a string is expected, and reject
+    // unexpected UI-only keys.
     if (provider !== 'anthropic') {
+        for (const field of [
+            'role',
+            'content',
+            'name',
+            'tool_name',
+            'tool_call_id',
+            'reasoning_content',
+        ]) {
+            const val = sanitized[field];
+            if (val !== undefined && val !== null && typeof val !== 'string') {
+                if (field === 'content' && nativeVision && Array.isArray(val)) {
+                    continue;
+                }
+                sanitized[field] =
+                    typeof val === 'object' ? extractMessageText({ content: val }) : String(val);
+                if (!sanitized[field] && field !== 'reasoning_content') {
+                    delete sanitized[field];
+                }
+            }
+        }
+        for (const key of Object.keys(sanitized)) {
+            if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
+                if (key === 'tool_calls' && Array.isArray(sanitized[key])) {
+                    continue;
+                }
+                if (key === 'content' && nativeVision && Array.isArray(sanitized[key])) {
+                    continue;
+                }
+                if (key === 'images' && provider === 'ollama' && Array.isArray(sanitized[key])) {
+                    continue;
+                }
+                delete sanitized[key];
+            }
+        }
+
         const ALLOWED_MESSAGE_KEYS = new Set([
             'role',
             'content',
             'name',
+            'tool_name', // Ollama native /api/chat tool result identifier
             'tool_calls',
             'tool_call_id',
             'reasoning_content', // DeepSeek-specific, harmless for others
@@ -875,17 +1017,17 @@ export function sanitizeHistoryMessage(
 
         // Ensure tool_calls conform: only id / type / function, and
         // function only name / arguments (both strings).
-        // Ollama expects its native format (arguments as objects, no forced type field)
-        // — do NOT convert, or the server will 400 on the next turn.
+        // Ollama expects its native format (arguments as objects) — handled above.
         if (Array.isArray(sanitized.tool_calls) && provider !== 'ollama') {
-            for (const tc of sanitized.tool_calls) {
+            for (let idx = 0; idx < sanitized.tool_calls.length; idx++) {
+                const tc = sanitized.tool_calls[idx];
                 if (!tc || typeof tc !== 'object') continue;
-                // Strip unexpected keys from tool_call
                 for (const k of Object.keys(tc)) {
                     if (k !== 'id' && k !== 'type' && k !== 'function') {
                         delete tc[k];
                     }
                 }
+                if (!tc.id) tc.id = `call_${idx}`;
                 if (!tc.type) tc.type = 'function';
                 if (tc.function && typeof tc.function === 'object') {
                     for (const k of Object.keys(tc.function)) {
@@ -897,51 +1039,12 @@ export function sanitizeHistoryMessage(
                         tc.function.arguments =
                             tc.function.arguments != null
                                 ? JSON.stringify(tc.function.arguments)
-                                : '';
+                                : '{}';
+                    } else if (!tc.function.arguments.trim()) {
+                        tc.function.arguments = '{}';
                     }
                 }
             }
-        }
-    }
-
-    if (message.tool_call_id !== undefined) {
-        sanitized.tool_call_id = message.tool_call_id;
-    }
-
-    // For DeepSeek: assistant messages that carry reasoning_content must
-    // echo it back. When the current request has thinking enabled the API
-    // requires it on *every* assistant message — even tool-call turns where
-    // thinking was disabled — to maintain chain-of-thought continuity.
-    // When thinking is disabled we still echo it on tool-call turns because
-    // the API generated that reasoning_content originally and expects it
-    // alongside the tool_calls.
-    if (provider === 'deepseek' && message.role === 'assistant') {
-        if (thinkingEnabled) {
-            // Thinking is ON: every assistant message MUST carry
-            // reasoning_content (at minimum an empty string).
-            sanitized.reasoning_content = message.reasoning_content || '';
-        } else if (message.tool_calls !== undefined && message.reasoning_content) {
-            // Thinking is OFF but this message had tool_calls with
-            // reasoning_content — echo it so the model can continue.
-            sanitized.reasoning_content = message.reasoning_content;
-        }
-    }
-
-    if (message.name !== undefined) {
-        sanitized.name = message.name;
-    }
-
-    if (provider === 'ollama') {
-        const existingImages = Array.isArray(message.images) ? message.images.filter(Boolean) : [];
-        const images = [...existingImages, ...attachmentPayload.images].filter(Boolean);
-        if (images.length) {
-            sanitized.images = images;
-        }
-        // Ollama's native tool_calls expect `arguments` as an object (not the
-        // OpenAI JSON string) — restore it for turns recorded under another
-        // provider.
-        if (Array.isArray(sanitized.tool_calls)) {
-            sanitized.tool_calls = sanitized.tool_calls.map(normalizeOllamaToolCall);
         }
     }
 
@@ -952,4 +1055,136 @@ export function sanitizeHistoryMessage(
     }
 
     return sanitized;
+}
+
+/**
+ * Sanitize an entire message sequence for a target provider, handling 1-to-N
+ * and N-to-1 cross-provider tool history conversions:
+ *   - Anthropic → OpenAI/DeepSeek/Ollama: expands Anthropic `user` messages
+ *     carrying `tool_result` blocks into individual `role: 'tool'` messages
+ *     (preserving `tool_call_id` so OpenAI/DeepSeek don't return HTTP 400).
+ *   - OpenAI/DeepSeek/Ollama → Anthropic: coalesces consecutive `role: 'user'`
+ *     tool-result messages into a single `user` message with multiple
+ *     `tool_result` blocks and reconciles missing Ollama tool-call IDs.
+ *
+ * @param {Array<Object>} messages
+ * @param {Object} options - Same options passed to `sanitizeHistoryMessage`
+ * @returns {Array<Object>}
+ */
+export function sanitizeHistoryMessages(messages, options = {}) {
+    if (!Array.isArray(messages)) {
+        return [];
+    }
+    const provider = options.provider;
+    const out = [];
+
+    // Track tool-call IDs from the immediately preceding assistant turn so
+    // Ollama-origin tool messages without IDs match cleanly on Anthropic/OpenAI.
+    let pendingToolIds = [];
+    let pendingToolCursor = 0;
+
+    for (const msg of messages) {
+        if (!msg || typeof msg !== 'object') {
+            continue;
+        }
+
+        // Cross-provider Anthropic → OpenAI/DeepSeek/Ollama expansion:
+        // An Anthropic user message with `tool_result` blocks must become
+        // individual `role: 'tool'` rows following the assistant's `tool_calls`.
+        if (
+            provider !== 'anthropic' &&
+            msg.role === 'user' &&
+            Array.isArray(msg.content) &&
+            msg.content.some((b) => b?.type === 'tool_result' && b.tool_use_id)
+        ) {
+            const extraText = [];
+            for (const block of msg.content) {
+                if (block?.type === 'tool_result' && block.tool_use_id) {
+                    const toolMsg = {
+                        role: 'tool',
+                        tool_call_id: String(block.tool_use_id),
+                        content:
+                            typeof block.content === 'string'
+                                ? block.content
+                                : extractMessageText({ content: block.content }),
+                    };
+                    if (provider === 'deepseek') {
+                        toolMsg.type = 'tool';
+                    }
+                    out.push(toolMsg);
+                } else if (block?.type === 'text' && typeof block.text === 'string' && block.text) {
+                    extraText.push(block.text);
+                }
+            }
+            if (extraText.length > 0) {
+                out.push(
+                    sanitizeHistoryMessage({ ...msg, content: extraText.join('\n\n') }, options),
+                );
+            }
+            continue;
+        }
+
+        // Drop orphaned tool results with no preceding assistant tool_calls turn —
+        // OpenAI, DeepSeek, and Anthropic all reject orphan tool messages with HTTP 400.
+        if (msg.role === 'tool' && pendingToolIds.length === 0) {
+            continue;
+        }
+
+        // Pair missing tool_call_id on Ollama-origin tool messages with the
+        // synthesized IDs from the preceding assistant tool_calls turn.
+        let effectiveMsg = msg;
+        if (msg.role === 'tool' && !msg.tool_call_id && pendingToolCursor < pendingToolIds.length) {
+            effectiveMsg = { ...msg, tool_call_id: pendingToolIds[pendingToolCursor++] };
+        }
+
+        const sanitized = sanitizeHistoryMessage(effectiveMsg, options);
+
+        if (effectiveMsg.role === 'assistant') {
+            if (Array.isArray(sanitized.tool_calls) && sanitized.tool_calls.length > 0) {
+                pendingToolIds = sanitized.tool_calls.map((tc, i) => tc.id || `call_${i}`);
+                pendingToolCursor = 0;
+            } else if (
+                provider === 'anthropic' &&
+                Array.isArray(sanitized.content) &&
+                sanitized.content.some((b) => b?.type === 'tool_use')
+            ) {
+                pendingToolIds = sanitized.content
+                    .filter((b) => b?.type === 'tool_use')
+                    .map((b) => b.id);
+                pendingToolCursor = 0;
+            } else {
+                pendingToolIds = [];
+                pendingToolCursor = 0;
+            }
+        } else if (effectiveMsg.role !== 'tool') {
+            pendingToolIds = [];
+            pendingToolCursor = 0;
+        }
+
+        // For Anthropic, merge consecutive same-role messages (e.g. parallel
+        // tool results) immediately so downstream callers get valid alternation.
+        if (
+            provider === 'anthropic' &&
+            sanitized.role !== 'system' &&
+            out.length > 0 &&
+            out[out.length - 1].role === sanitized.role
+        ) {
+            const prev = out[out.length - 1];
+            const prevBlocks = Array.isArray(prev.content)
+                ? prev.content
+                : prev.content
+                  ? [{ type: 'text', text: String(prev.content) }]
+                  : [];
+            const nextBlocks = Array.isArray(sanitized.content)
+                ? sanitized.content
+                : sanitized.content
+                  ? [{ type: 'text', text: String(sanitized.content) }]
+                  : [];
+            prev.content = [...prevBlocks, ...nextBlocks];
+        } else {
+            out.push(sanitized);
+        }
+    }
+
+    return out;
 }
