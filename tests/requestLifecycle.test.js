@@ -36,6 +36,10 @@ const tests = [
             assert(lc.isResponding(), 'awaiting-model responds');
             lc.markPhase(S.TOOL_LOOP);
             assert(lc.isResponding(), 'tool-loop responds');
+            lc.markPhase(S.AWAITING_USER);
+            assert(lc.isResponding(), 'awaiting-user responds');
+            assert(lc.canStop(), 'awaiting-user can stop');
+            lc.markPhase(S.TOOL_LOOP);
             lc.markPhase(S.SYNTHESIS);
             assert(lc.isResponding(), 'synthesis responds');
             lc.stop();
@@ -151,7 +155,13 @@ const tests = [
     [
         'stop is legal from every working state, flagged elsewhere',
         () => {
-            for (const phase of [S.ENRICHING, S.AWAITING_MODEL, S.TOOL_LOOP, S.SYNTHESIS]) {
+            for (const phase of [
+                S.ENRICHING,
+                S.AWAITING_MODEL,
+                S.TOOL_LOOP,
+                S.AWAITING_USER,
+                S.SYNTHESIS,
+            ]) {
                 const lc = fresh();
                 lc.begin(phase, 'k1');
                 const res = lc.stop();

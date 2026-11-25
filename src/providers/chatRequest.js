@@ -30,8 +30,8 @@ function buildBaseHeaders(apiKey) {
 }
 
 // Shared dialect tool assembly: each family gates independently and is
-// appended in webSearch → crawl → exploreDocs → rag order. Guards against
-// missing tool-name lists and never leaves an empty `payload.tools = []`
+// appended in webSearch → crawl → exploreDocs → rag → askUser order. Guards
+// against missing tool-name lists and never leaves an empty `payload.tools = []`
 // (which OpenAI, DeepSeek, and Anthropic reject with HTTP 400).
 function appendDialectToolGroups(payload, advertise = {}, toolNames = {}, dialect = 'openai') {
     const collected = [];
@@ -46,6 +46,9 @@ function appendDialectToolGroups(payload, advertise = {}, toolNames = {}, dialec
     }
     if (advertise.rag && Array.isArray(toolNames.rag)) {
         collected.push(...buildToolSchemasFor(toolNames.rag, dialect));
+    }
+    if (advertise.askUser && Array.isArray(toolNames.askUser)) {
+        collected.push(...buildToolSchemasFor(toolNames.askUser, dialect));
     }
     if (collected.length > 0) {
         payload.tools = collected;
@@ -403,9 +406,13 @@ export function buildDeepSeekStreamRequest({
 
     // Tools and JSON mode are mutually exclusive on DeepSeek.  Each tool
     // family gates independently — web search may be off (or suppressed by a
-    // strong KB hit) while crawl/exploreDocs/RAG tools are still active.
+    // strong KB hit) while crawl/exploreDocs/RAG/askUser tools are still active.
     const hasTools =
-        (advertise.webSearch || advertise.crawl || advertise.exploreDocs || advertise.rag) &&
+        (advertise.webSearch ||
+            advertise.crawl ||
+            advertise.exploreDocs ||
+            advertise.rag ||
+            advertise.askUser) &&
         !jsonMode;
     if (hasTools) {
         appendDialectToolGroups(payload, advertise, toolNames, 'openai');

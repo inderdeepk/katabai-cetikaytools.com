@@ -38,6 +38,7 @@ const tests = [
         () => {
             assertEqual(getToolTimeoutMs('web_search'), TOOL_TIMEOUTS_MS.web_search, 'web_search');
             assertEqual(getToolTimeoutMs('crawl_url'), TOOL_TIMEOUTS_MS.crawl_url, 'crawl_url');
+            assertEqual(getToolTimeoutMs('ask_user'), 0, 'ask_user disables timeout');
             assertEqual(
                 getToolTimeoutMs('unknown_custom_tool'),
                 DEFAULT_TOOL_TIMEOUT_MS,
@@ -518,6 +519,41 @@ const tests = [
             assertEqual(results[1].result, 'u1 done', 'u1 completed');
             assertEqual(results[2].cancelled, true, 'u2 cancelled before starting');
             assertEqual(results[2].error, true, 'cancelled u2 flagged as error');
+        },
+    ],
+
+    [
+        'executeToolBatch: ask_user runs serially without artificial delay and zero-timeout cancellable does not auto-expire',
+        async () => {
+            const parent = new Gio.Cancellable();
+            const guard = createLinkedTimeoutCancellable(parent, getToolTimeoutMs('ask_user'));
+            await delayMs(20);
+            assertEqual(guard.isTimedOut(), false, '0ms timeout never auto-fires');
+            assertEqual(guard.cancellable.is_cancelled(), false, 'child stays active');
+            guard.cleanup();
+
+            const order = [];
+            const calls = normalizeToolCalls([
+                { id: 'u1', function: { name: 'update_knowledge', arguments: '{}' } },
+                {
+                    id: 'a1',
+                    function: { name: 'ask_user', arguments: '{"question":"Continue?"}' },
+                },
+            ]);
+            const startMs = Date.now();
+            const results = await executeToolBatch({
+                toolCalls: calls,
+                serialDelayMs: 500,
+                classifyDanger: () => DANGER_POTENTIALLY_UNSAFE,
+                executeOne: async (tc) => {
+                    order.push(tc.function.name);
+                    return { result: `done:${tc.function.name}` };
+                },
+            });
+            const elapsed = Date.now() - startMs;
+            assertDeepEqual(order, ['update_knowledge', 'ask_user'], 'serial order preserved');
+            assertEqual(results[1].result, 'done:ask_user', 'ask_user result preserved');
+            assert(elapsed < 250, `expected no serialDelayMs before ask_user (took ${elapsed}ms)`);
         },
     ],
 ];

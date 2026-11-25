@@ -9,6 +9,7 @@ import GLib from 'gi://GLib';
 import { assert, assertEqual, runTests, createMockSettings } from './testUtils.js';
 import { readCrawl4AIConfig } from '../src/tools/crawl4aiTools.js';
 import { readRagConfig } from '../src/tools/ragTools.js';
+import { readAskUserConfig } from '../src/tools/askUserTools.js';
 
 function resolveSchemaPath() {
     const candidates = [];
@@ -125,6 +126,7 @@ const throwingSettings = {
     },
 };
 const rag = readRagConfig(throwingSettings);
+const askUser = readAskUserConfig(throwingSettings);
 
 const tests = [
     [
@@ -183,6 +185,18 @@ const tests = [
             assertIntMatches(rag.maxTotalSizeMb, 'rag-max-total-size-mb');
             assertIntMatches(rag.rerankCandidateMultiplier, 'rag-rerank-candidate-multiplier');
             assertDoubleMatches(rag.fallbackThreshold, 'rag-fallback-threshold');
+        },
+    ],
+
+    [
+        'askUser: fallbacks match schema defaults',
+        () => {
+            assertEqual(
+                askUser.enabled,
+                schemaDefault('ask-user-enabled') === 'true',
+                'ask-user-enabled fallback matches schema default',
+            );
+            assertIntMatches(askUser.maxPerTurn, 'ask-user-max-per-turn');
         },
     ],
 

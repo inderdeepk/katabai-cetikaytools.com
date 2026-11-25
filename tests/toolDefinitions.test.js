@@ -39,6 +39,7 @@ const tests = [
                 'deep_research',
                 'knowledge_search',
                 'forget_knowledge',
+                'ask_user',
             ];
             for (const name of expected) {
                 assert(names.includes(name), `${name} is registered`);
@@ -152,6 +153,20 @@ const tests = [
         },
     ],
 
+    [
+        'toolDefinitions: ask_user registration',
+        () => {
+            const tool = lookupTool('ask_user');
+            assert(tool !== undefined, 'ask_user exists');
+            assertEqual(tool.dangerLevel, DANGER_POTENTIALLY_UNSAFE, 'potentially_unsafe');
+            assertEqual(tool.isMeta, false, 'not meta');
+            assertEqual(tool.uiLabel, 'Guide', 'ui label');
+            assertEqual(tool.command, '/guide', 'slash command');
+            assert(tool.parameters !== null, 'has parameters');
+            assert(tool.parameters.required.includes('questions'), 'requires questions');
+        },
+    ],
+
     // ── Danger level partitioning ──────────────────────────────────────────
 
     [
@@ -162,12 +177,13 @@ const tests = [
 
             // web_search, read_url, crawl_url, deep_research, knowledge_search, explore_docs
             assertEqual(readOnly.length, 6, '6 read_only tools');
-            // document + update_knowledge + forget_knowledge are potentially_unsafe
-            assertEqual(unsafe.length, 3, '3 potentially_unsafe tools');
+            // document + update_knowledge + forget_knowledge + ask_user are potentially_unsafe
+            assertEqual(unsafe.length, 4, '4 potentially_unsafe tools');
             const unsafeNames = unsafe.map((t) => t.name);
             assert(unsafeNames.includes('document'), 'document is unsafe');
             assert(unsafeNames.includes('update_knowledge'), 'update_knowledge is unsafe');
             assert(unsafeNames.includes('forget_knowledge'), 'forget_knowledge is unsafe');
+            assert(unsafeNames.includes('ask_user'), 'ask_user is unsafe');
         },
     ],
 

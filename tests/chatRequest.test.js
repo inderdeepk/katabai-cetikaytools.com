@@ -18,6 +18,7 @@ import {
     EXPLORE_DOCS_TOOL_NAME,
     UPDATE_KNOWLEDGE_TOOL_NAME,
     FORGET_KNOWLEDGE_TOOL_NAME,
+    ASK_USER_TOOL_NAME,
 } from '../src/tools/toolDefinitions.js';
 import { RAG_TOOL_NAME } from '../src/tools/ragTools.js';
 import { assert, assertEqual, runTests } from './testUtils.js';
@@ -27,6 +28,7 @@ const NAMES = {
     crawl: [CRAWL4AI_TOOL_NAME],
     exploreDocs: [EXPLORE_DOCS_TOOL_NAME],
     rag: [RAG_TOOL_NAME, UPDATE_KNOWLEDGE_TOOL_NAME, FORGET_KNOWLEDGE_TOOL_NAME],
+    askUser: [ASK_USER_TOOL_NAME],
 };
 
 const toolNameOf = (tool) => tool.function?.name ?? tool.name;
@@ -591,6 +593,73 @@ const tests = [
             const names = built.payload.tools.map(toolNameOf);
             assert(!names.includes(WEB_SEARCH_TOOL_NAME), 'web search not seeded');
             assert(names.includes(CRAWL4AI_TOOL_NAME), 'crawl advertised');
+        },
+    ],
+
+    [
+        'askUser: advertised across OpenAI, Anthropic, Ollama, and DeepSeek (respecting jsonMode)',
+        () => {
+            const openai = buildOpenAiCompatStreamRequest({
+                provider: 'openai',
+                baseUrl: 'https://api.openai.com/v1',
+                model: 'gpt-4o',
+                messages: [],
+                advertise: { askUser: true },
+                toolNames: NAMES,
+            });
+            assert(
+                openai.payload.tools.map(toolNameOf).includes(ASK_USER_TOOL_NAME),
+                'openai advertises ask_user',
+            );
+
+            const anthropic = buildAnthropicStreamRequest({
+                baseUrl: 'https://api.anthropic.com',
+                model: 'claude-3-5-sonnet-20241022',
+                messages: [{ role: 'user', content: 'hi' }],
+                advertise: { askUser: true },
+                toolNames: NAMES,
+            });
+            assert(
+                anthropic.payload.tools.map(toolNameOf).includes(ASK_USER_TOOL_NAME),
+                'anthropic advertises ask_user',
+            );
+
+            const ollama = buildOllamaStreamRequest({
+                baseUrl: 'http://localhost:11434',
+                model: 'qwen3',
+                messages: [],
+                advertise: { askUser: true },
+                toolNames: NAMES,
+            });
+            assert(
+                ollama.payload.tools.map(toolNameOf).includes(ASK_USER_TOOL_NAME),
+                'ollama advertises ask_user',
+            );
+
+            const deepseek = buildDeepSeekStreamRequest({
+                baseUrl: 'https://api.deepseek.com',
+                model: 'deepseek-flash',
+                messages: [{ role: 'user', content: 'hi' }],
+                maxTokens: 1000,
+                advertise: { askUser: true },
+                toolNames: NAMES,
+            });
+            assert(
+                deepseek.payload.tools.map(toolNameOf).includes(ASK_USER_TOOL_NAME),
+                'deepseek advertises ask_user',
+            );
+            assertEqual(deepseek.payload.tool_choice, 'auto', 'deepseek tool_choice set');
+
+            const deepseekJson = buildDeepSeekStreamRequest({
+                baseUrl: 'https://api.deepseek.com',
+                model: 'deepseek-flash',
+                messages: [{ role: 'user', content: 'hi' }],
+                jsonMode: true,
+                maxTokens: 1000,
+                advertise: { askUser: true },
+                toolNames: NAMES,
+            });
+            assertEqual(deepseekJson.payload.tools, undefined, 'jsonMode suppresses ask_user');
         },
     ],
 ];

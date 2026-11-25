@@ -17,6 +17,7 @@ import { RAG_TOOL_NAME, RAG_TOOL_COMMAND, RAG_TOOL_ICON } from './ragTools.js';
 
 // ── Explore Docs (agent-directed documentation navigation) ───────────────────
 import { EXPLORE_DOCS_TOOL_NAME } from './exploreDocsTools.js';
+import { ASK_USER_TOOL_NAME, ASK_USER_TOOL_COMMAND, ASK_USER_TOOL_ICON } from './askUserTools.js';
 import { gettext as _ } from '../shared/i18n.js';
 
 // NOTE: only UI-facing `uiLabel` strings are translated (lazy getters — module
@@ -364,6 +365,78 @@ registerTool({
     providerScoped: false,
 });
 
+// ── Ask User (interactive clarification & guided walkthrough) ────────────────
+
+const ASK_USER_PARAMS = {
+    type: 'object',
+    properties: {
+        title: {
+            type: 'string',
+            description:
+                'Optional short header for the interactive question card (e.g. "Before we start" or "Step 2 check-in").',
+        },
+        questions: {
+            type: 'array',
+            description:
+                '1 to 6 concise questions to ask the user. Keep it to 1-3 focused questions when possible.',
+            items: {
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        description: 'Short identifier for the question (e.g. "status", "pace").',
+                    },
+                    question: {
+                        type: 'string',
+                        description: 'The clear, specific question to show the user.',
+                    },
+                    options: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description:
+                            'Optional clickable answer choices (2-6 short options). Omit for freeform text input.',
+                    },
+                    multi_select: {
+                        type: 'boolean',
+                        description:
+                            'Set true when the user may select more than one option (default false).',
+                    },
+                    allow_custom: {
+                        type: 'boolean',
+                        description:
+                            'Set true (default) to also show a freeform text field alongside options.',
+                    },
+                    placeholder: {
+                        type: 'string',
+                        description: 'Optional hint text for the freeform input field.',
+                    },
+                },
+                required: ['question'],
+            },
+        },
+    },
+    required: ['questions'],
+};
+
+registerTool({
+    name: ASK_USER_TOOL_NAME,
+    description:
+        'Pause and ask the user 1-3 concise clarifying questions in an interactive card, and wait for their answer before continuing. ' +
+        'Use this BEFORE writing speculative drafts when a task is ambiguous, depends on the user current progress/environment, or is a multi-step checklist/workflow where you should confirm what is already done or how they want to proceed. ' +
+        'Do not call this for simple factual questions or when the user already provided all needed details.',
+    parameters: ASK_USER_PARAMS,
+    dangerLevel: DANGER_POTENTIALLY_UNSAFE,
+    handler: createNotReadyHandler(ASK_USER_TOOL_NAME),
+    get uiLabel() {
+        return _('Guide');
+    },
+    uiIcon: ASK_USER_TOOL_ICON,
+    command: ASK_USER_TOOL_COMMAND,
+    resultTruncationKey: null,
+    isMeta: false,
+    providerScoped: false,
+});
+
 // ── Tool name constants (backward-compatible exports) ─────────────────────────
 
 export const WEB_SEARCH_TOOL_NAME = 'web_search';
@@ -371,8 +444,8 @@ export const READ_URL_TOOL_NAME = 'read_url';
 export const CRAWL4AI_TOOL_NAME = 'crawl_url';
 export const DEEP_RESEARCH_TOOL_NAME = 'deep_research';
 export const KNOWLEDGE_SEARCH_TOOL_NAME = RAG_TOOL_NAME;
-// Re-export the explore_docs name (imported from exploreDocsTools.js above).
-export { EXPLORE_DOCS_TOOL_NAME };
+// Re-export the explore_docs & ask_user constants.
+export { EXPLORE_DOCS_TOOL_NAME, ASK_USER_TOOL_NAME, ASK_USER_TOOL_COMMAND, ASK_USER_TOOL_ICON };
 
 // ── Command constants ─────────────────────────────────────────────────────────
 

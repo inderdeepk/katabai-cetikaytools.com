@@ -19,6 +19,7 @@ export const REQUEST_STATES = Object.freeze({
     ENRICHING: 'enriching', // KB/RAG enrichment + pre-send work
     AWAITING_MODEL: 'awaiting-model', // request sent, awaiting stream chunks
     TOOL_LOOP: 'tool-loop', // executing local tools / research branches
+    AWAITING_USER: 'awaiting-user', // paused on interactive ask_user card
     SYNTHESIS: 'synthesis', // final answer synthesis after tools
     STOPPING: 'stopping', // user pressed stop; finalisation in progress
     DONE: 'done', // completed (settled; next begin starts fresh)
@@ -29,6 +30,7 @@ const ACTIVE_STATES = new Set([
     REQUEST_STATES.ENRICHING,
     REQUEST_STATES.AWAITING_MODEL,
     REQUEST_STATES.TOOL_LOOP,
+    REQUEST_STATES.AWAITING_USER,
     REQUEST_STATES.SYNTHESIS,
     REQUEST_STATES.STOPPING,
 ]);
@@ -37,6 +39,7 @@ const PHASE_STATES = new Set([
     REQUEST_STATES.ENRICHING,
     REQUEST_STATES.AWAITING_MODEL,
     REQUEST_STATES.TOOL_LOOP,
+    REQUEST_STATES.AWAITING_USER,
     REQUEST_STATES.SYNTHESIS,
 ]);
 
@@ -45,6 +48,7 @@ const PHASE_STATES = new Set([
 const RESPONDING_STATES = new Set([
     REQUEST_STATES.AWAITING_MODEL,
     REQUEST_STATES.TOOL_LOOP,
+    REQUEST_STATES.AWAITING_USER,
     REQUEST_STATES.SYNTHESIS,
     REQUEST_STATES.STOPPING,
 ]);

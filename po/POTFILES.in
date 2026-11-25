@@ -29,6 +29,7 @@ src/shared/i18n.js
 src/shared/networkGuard.js
 src/shared/pageLinks.js
 src/shared/toolModes.js
+src/tools/askUserTools.js
 src/tools/crawl4aiTools.js
 src/tools/documentTools.js
 src/tools/exploreDocsTools.js
@@ -36,6 +37,7 @@ src/tools/ragTools.js
 src/tools/toolDefinitions.js
 src/tools/toolRegistry.js
 src/tools/webSearchTools.js
+src/ui/askUserCard.js
 src/ui/assistantRender.js
 src/ui/headerBar.js
 src/ui/historyView.js
@@ -52,6 +54,7 @@ src/ui/prefs/tools/crawler.js
 src/ui/prefs/tools/deepResearch.js
 src/ui/prefs/tools/document.js
 src/ui/prefs/tools/index.js
+src/ui/prefs/tools/interactive.js
 src/ui/prefs/tools/knowledge.js
 src/ui/prefs/tools/webSearch.js
 src/ui/prefs/widgets.js

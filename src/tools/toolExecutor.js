@@ -20,6 +20,7 @@ export const TOOL_TIMEOUTS_MS = Object.freeze({
     knowledge_search: 30000,
     update_knowledge: 30000,
     forget_knowledge: 30000,
+    ask_user: 0, // Interactive human-in-the-loop prompt: wait for user input until cancelled
 });
 
 const KNOWLEDGE_MUTATING_TOOLS = new Set(['update_knowledge', 'forget_knowledge']);
@@ -27,12 +28,16 @@ const CACHE_REFERENCE_THRESHOLD_CHARS = 1600;
 const CACHE_REFERENCE_EXCERPT_CHARS = 900;
 
 /**
- * Resolve the per-tool timeout in milliseconds.
+ * Resolve the per-tool timeout in milliseconds. Returns `0` when the tool
+ * explicitly disables wall-clock timeouts (e.g. interactive `ask_user`).
  * @param {string} toolName
  * @returns {number}
  */
 export function getToolTimeoutMs(toolName) {
     const specific = TOOL_TIMEOUTS_MS[toolName];
+    if (specific === 0) {
+        return 0;
+    }
     return Number.isFinite(specific) && specific > 0 ? specific : DEFAULT_TOOL_TIMEOUT_MS;
 }
 
@@ -873,7 +878,7 @@ export async function executeToolBatch({
     // 2. Potentially-unsafe tasks: execute serially in original order.
     for (let u = 0; u < unsafeTasks.length; u++) {
         const task = unsafeTasks[u];
-        if (u > 0 && !cancellable?.is_cancelled?.()) {
+        if (u > 0 && task.toolName !== 'ask_user' && !cancellable?.is_cancelled?.()) {
             const delayMs = resolveDelay();
             if (delayMs > 0) {
                 await sleepCancellable(delayMs, cancellable);

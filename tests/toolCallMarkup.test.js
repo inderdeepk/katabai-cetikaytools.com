@@ -113,9 +113,10 @@ const tests = [
     [
         'parse: XML invoke with named parameters',
         () => {
-            const text =
-                '<invoke name="read_url">\n<parameter name="url">https://example.com/page</parameter>\n</invoke>';
-            const calls = parseTextToolCalls(text, ['read_url']);
+            const calls = parseTextToolCalls(
+                '<invoke name="read_url">\n<parameter name="url">https://example.com/page</parameter>\n</invoke>',
+                ['read_url'],
+            );
             assert(calls !== null && calls.length === 1, 'one call extracted');
             assertEqual(
                 JSON.parse(calls[0].function.arguments).url,
@@ -231,6 +232,22 @@ const tests = [
             assert(cleaned.includes('Prose before.'), 'prose kept');
             assert(!cleaned.includes('<invoke'), 'truncated invoke removed');
             assert(!cleaned.includes('<parameter'), 'truncated parameter removed');
+        },
+    ],
+
+    [
+        'parse & strip: ask_user recovered from JSON/XML markup and stripped',
+        () => {
+            const jsonText =
+                '{"name":"ask_user","arguments":{"questions":[{"question":"Which step first?"}]}}';
+            const recovered = parseTextToolCalls(jsonText, ['ask_user']);
+            assert(recovered !== null && recovered.length === 1, 'ask_user JSON recovered');
+            assertEqual(recovered[0].function.name, 'ask_user', 'tool name');
+
+            const xml =
+                '<invoke name="ask_user"><parameter name="question">Continue?</parameter></invoke>';
+            assertEqual(contentLooksLikeToolCalls(xml), true, 'ask_user XML detected');
+            assertEqual(stripTruncatedToolCallMarkup(xml), '', 'ask_user XML stripped');
         },
     ],
 ];

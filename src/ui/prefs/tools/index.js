@@ -4,6 +4,7 @@ import { buildWebSearchSection } from './webSearch.js';
 import { buildCrawlerSection } from './crawler.js';
 import { buildKnowledgeSection } from './knowledge.js';
 import { buildDeepResearchSection } from './deepResearch.js';
+import { buildInteractiveSection } from './interactive.js';
 import { gettext as _ } from '../../../shared/i18n.js';
 
 // Builds the Tools page: the index card group listing available tools plus
@@ -36,6 +37,7 @@ export function buildToolsPage(ctx) {
     const crawl4aiSubpage = buildCrawlerSection(ctx);
     const ragSubpage = buildKnowledgeSection(ctx);
     const deepResearchSubpage = buildDeepResearchSection(ctx);
+    const interactiveSubpage = buildInteractiveSection(ctx);
 
     // Tool index rows (order defines display order on the Tools page).
     createToolIndexRow(toolsIndexGroup, {
@@ -82,5 +84,13 @@ export function buildToolsPage(ctx) {
         ),
         iconName: 'content-loading-symbolic',
         navPage: deepResearchSubpage.navPage,
+    });
+
+    createToolIndexRow(toolsIndexGroup, {
+        title: _('Interactive Prompts'),
+        subtitle: _('Clarifying question cards and /guide step-by-step walkthrough mode.'),
+        iconName: 'dialog-question-symbolic',
+        enabledKey: 'ask-user-enabled',
+        navPage: interactiveSubpage.navPage,
     });
 }

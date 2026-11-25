@@ -24,6 +24,7 @@ const EXCLUDED_FILES = new Set([
     'src/ui/messageBubble.js',
     'src/ui/assistantRender.js',
     'src/ui/pendingIndicator.js',
+    'src/ui/askUserCard.js',
 ]);
 
 // GTK4/libadwaita are imported by the preferences-side modules

@@ -728,5 +728,17 @@
       <summary>Deep Research Synthesis Model</summary>
       <description>Model used for strategic deep-research roles (planning, mid-research critique, gap analysis, outline, quality check). Leave empty to use the active provider's model. A stronger model here improves report quality.</description>
     </key>
+
+    <!-- Interactive Prompts & Guided Mode Settings -->
+    <key name="ask-user-enabled" type="b">
+      <default>true</default>
+      <summary>Enable Interactive Prompts</summary>
+      <description>Allow models to pause and ask structured clarifying questions in an interactive card before generating a response, and enable Guided Walkthrough Mode (/guide).</description>
+    </key>
+    <key name="ask-user-max-per-turn" type="i">
+      <default>3</default>
+      <summary>Max Prompts Per Turn</summary>
+      <description>Maximum number of interactive ask_user prompt cards the model may present within a single user turn (1–10).</description>
+    </key>
   </schema>
 </schemalist>

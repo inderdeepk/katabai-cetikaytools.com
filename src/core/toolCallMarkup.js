@@ -10,7 +10,7 @@
 // is routed through normalizeToolCallMarkup() before matching.
 
 const KNOWN_TOOL_NAMES_PATTERN =
-    'web_search|read_url|crawl_url|explore_docs|knowledge_search|update_knowledge|forget_knowledge|python|terminal';
+    'web_search|read_url|crawl_url|explore_docs|knowledge_search|update_knowledge|forget_knowledge|ask_user|python|terminal';
 
 const DEFAULT_POSITIONAL_PARAM_BY_TOOL = Object.freeze({
     web_search: 'query',
@@ -20,6 +20,7 @@ const DEFAULT_POSITIONAL_PARAM_BY_TOOL = Object.freeze({
     explore_docs: 'url',
     forget_knowledge: 'about',
     update_knowledge: 'fact',
+    ask_user: 'question',
 });
 
 /**

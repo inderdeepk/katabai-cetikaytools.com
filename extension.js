@@ -75,6 +75,18 @@ import {
 } from './src/tools/crawl4aiTools.js';
 import { ExploreDocsRuntime, buildExploreDocsResultBlock } from './src/tools/exploreDocsTools.js';
 import {
+    ASK_USER_TOOL_NAME,
+    ASK_USER_TOOL_COMMAND,
+    ASK_USER_TOOL_ICON,
+    readAskUserConfig,
+    parseGuideCommand,
+    normalizeAskUserArgs,
+    formatAskUserResult,
+    buildAskUserSummary,
+    buildInteractiveSystemInstruction,
+} from './src/tools/askUserTools.js';
+import { createAskUserCard, createAskUserSummaryCard } from './src/ui/askUserCard.js';
+import {
     loadPresets,
     applyPresetToSettings,
     updatePresetFromSettings,
@@ -362,6 +374,15 @@ const RAG_LOCAL_TOOL = {
     icon: RAG_TOOL_ICON,
     gicon: null, // Set dynamically in KatabDialog constructor
     toolName: RAG_TOOL_NAME,
+};
+
+const ASK_USER_LOCAL_TOOL = {
+    get label() {
+        return _('Guide');
+    },
+    command: ASK_USER_TOOL_COMMAND,
+    icon: ASK_USER_TOOL_ICON,
+    toolName: ASK_USER_TOOL_NAME,
 };
 
 // Default fallback cap for sequential tool-call rounds a single user turn may
@@ -1471,6 +1492,9 @@ class KatabDialog {
         this._crawl4aiMode = TOOL_MODE_AUTO;
         this._deepResearchMode = TOOL_MODE_OFF;
         this._knowledgeSearchMode = TOOL_MODE_AUTO;
+        this._askUserMode = TOOL_MODE_AUTO;
+        this._askUserCountThisTurn = 0;
+        this._activeAskUserCard = null;
 
         // ── Deep Research planner state ────────────────────────────────
         this._activeResearchPlan = []; // Array of { sub_task, search_query, status, ... }
@@ -1695,6 +1719,7 @@ class KatabDialog {
             'crawl4ai-enabled',
             'crawl4ai-autonomous-enabled',
             'rag-autonomous-enabled',
+            'ask-user-enabled',
         ]) {
             this._connectSetting(`changed::${toolKey}`, () => {
                 this._updateToolsUI();
@@ -2463,6 +2488,12 @@ class KatabDialog {
         // after the user asked it to stop.
         this._deferredChatTitle = null;
 
+        const wasAwaitingUser = this._lifecycle.state === REQUEST_STATES.AWAITING_USER;
+        if (this._activeAskUserCard) {
+            this._activeAskUserCard.markCancelled();
+            this._activeAskUserCard = null;
+        }
+
         // Phase-6 dual-run recorder (bookkeeping only).
         const lcStop = this._lifecycle.stop();
         if (!lcStop.ok) {
@@ -2496,9 +2527,11 @@ class KatabDialog {
                 ? format(_("Stopped while downloading model '{model}'."), { model: modelName })
                 : mode === 'document' && modelName
                   ? format(_("Stopped while preparing '{model}'."), { model: modelName })
-                  : mode === 'tool'
-                    ? _('Response stopped while running local tools.')
-                    : _('Response stopped.');
+                  : wasAwaitingUser
+                    ? _('Response stopped while waiting for your answer.')
+                    : mode === 'tool'
+                      ? _('Response stopped while running local tools.')
+                      : _('Response stopped.');
 
         if (!finalContent) {
             if (mode === 'pull' && modelName) {
@@ -3089,12 +3122,13 @@ class KatabDialog {
 
     _isModeControlledTool(toolName) {
         const tool = lookupTool(toolName);
-        // All read_only tools are mode-controlled (Search, Scrape, Research)
+        // All read_only tools + deep_research + ask_user (Guide) are mode-controlled
         return (
             (tool !== undefined && !tool.isMeta && tool.dangerLevel === 'read_only') ||
             toolName === WEB_SEARCH_TOOL_NAME ||
             toolName === CRAWL4AI_TOOL_NAME ||
-            toolName === DEEP_RESEARCH_TOOL_NAME
+            toolName === DEEP_RESEARCH_TOOL_NAME ||
+            toolName === ASK_USER_TOOL_NAME
         );
     }
 
@@ -3111,6 +3145,8 @@ class KatabDialog {
                 return _('Scrape');
             case DEEP_RESEARCH_TOOL_NAME:
                 return _('Research');
+            case ASK_USER_TOOL_NAME:
+                return _('Guide');
             case 'terminal':
                 return _('Term');
             default:
@@ -3130,6 +3166,9 @@ class KatabDialog {
         }
         if (toolName === RAG_TOOL_NAME) {
             return this._knowledgeSearchMode || TOOL_MODE_AUTO;
+        }
+        if (toolName === ASK_USER_TOOL_NAME) {
+            return this._askUserMode || TOOL_MODE_AUTO;
         }
         return TOOL_MODE_AUTO;
     }
@@ -3155,6 +3194,8 @@ class KatabDialog {
             }
         } else if (toolName === RAG_TOOL_NAME) {
             this._knowledgeSearchMode = mode;
+        } else if (toolName === ASK_USER_TOOL_NAME) {
+            this._askUserMode = mode;
         } else {
             return;
         }
@@ -3218,6 +3259,39 @@ class KatabDialog {
             return false;
         }
         return this._settings.get_boolean('rag-enabled');
+    }
+
+    _isAskUserEnabled(mode = this._askUserMode) {
+        if (mode === TOOL_MODE_ON) {
+            return true;
+        }
+        if (mode === TOOL_MODE_OFF) {
+            return false;
+        }
+        return readAskUserConfig(this._settings).enabled;
+    }
+
+    _isGuidedWorkflowActive() {
+        return this._getToolMode(ASK_USER_TOOL_NAME) === TOOL_MODE_ON;
+    }
+
+    _notifyAwaitingUserInput(title = '') {
+        if (this.isOpen) return;
+        let showDesktopNotify = true;
+        try {
+            showDesktopNotify = this._settings.get_boolean('token-desktop-notifications-enabled');
+        } catch (_e) {
+            /* keep default true on older schemas */
+        }
+        if (showDesktopNotify) {
+            Main.notify(
+                'Katab',
+                title
+                    ? format(_('Question: {title}'), { title })
+                    : _('Katab has a quick question for you.'),
+            );
+        }
+        this._playCompletionSound(false);
     }
 
     // ── RAG Phase 2: Sentinel file management ────────────────────────────
@@ -4446,6 +4520,9 @@ class KatabDialog {
         if (tool.toolName === RAG_TOOL_NAME) {
             return this._isRagEnabled(mode);
         }
+        if (tool.toolName === ASK_USER_TOOL_NAME) {
+            return this._isAskUserEnabled(mode);
+        }
         return true;
     }
 
@@ -4503,6 +4580,8 @@ class KatabDialog {
         // Deep Research is a meta-mode that raises iteration limits — always
         // available when web tools are installed.
         tools.push(DEEP_RESEARCH_LOCAL_TOOL);
+        // Guide (interactive clarifying questions & step-by-step walkthrough).
+        tools.push(ASK_USER_LOCAL_TOOL);
         // Knowledge Base (local RAG) — always available as a local tool.
         tools.push(RAG_LOCAL_TOOL);
         return tools;
@@ -4572,7 +4651,10 @@ class KatabDialog {
         lines.push('');
         lines.push('Provider-specific commands above depend on your current engine.');
         lines.push(
-            'Use the Tools menu next to the input bar to cycle Web Search, Scrape, Knowledge Base, and Deep Research between Auto, On, and Off.',
+            'Use the Tools menu next to the input bar to cycle Web Search, Scrape, Guide, Knowledge Base, and Deep Research between Auto, On, and Off.',
+        );
+        lines.push(
+            '/guide [task] — Enable Guided Walkthrough Mode (asks clarifying questions and walks through tasks step by step).',
         );
         lines.push(
             '/research — Toggle Deep Research mode (plans multi-step research with expanded tool limits).',
@@ -5333,6 +5415,7 @@ class KatabDialog {
         if (this._webSearchMode && this._webSearchMode !== TOOL_MODE_AUTO) count++;
         if (this._crawl4aiMode && this._crawl4aiMode !== TOOL_MODE_AUTO) count++;
         if (this._deepResearchMode === TOOL_MODE_ON) count++;
+        if (this._askUserMode && this._askUserMode !== TOOL_MODE_AUTO) count++;
         if (this._knowledgeSearchMode && this._knowledgeSearchMode !== TOOL_MODE_AUTO) count++;
         if (count > 0) {
             this._toolsGearBadgeLabel.set_text(String(count));
@@ -7513,6 +7596,38 @@ class KatabDialog {
         return { messageTokens, toolResultTokens };
     }
 
+    _resolveInteractivePromptState(
+        provider = this._currentProvider,
+        { maxToolIterations = this._getMaxToolIterations() } = {},
+    ) {
+        const askUserConfig = readAskUserConfig(this._settings);
+        const activeEligible =
+            (this._toolIterations || 0) < maxToolIterations &&
+            !this._forceSynthesisActive &&
+            !this._isDeepResearchActive();
+        const advertiseAskUser =
+            this._isAskUserEnabled() &&
+            (this._askUserCountThisTurn || 0) < askUserConfig.maxPerTurn &&
+            activeEligible;
+        const guided =
+            this._isGuidedWorkflowActive() &&
+            !this._forceSynthesisActive &&
+            !this._isDeepResearchActive();
+        let deepseekJsonMode = false;
+        if (provider === 'deepseek') {
+            try {
+                deepseekJsonMode = this._settings.get_boolean('deepseek-json-mode');
+            } catch (_e) {
+                deepseekJsonMode = false;
+            }
+        }
+        return {
+            advertiseAskUser,
+            guided,
+            canCallAskUser: advertiseAskUser && !deepseekJsonMode,
+        };
+    }
+
     // Token estimate for the system prompt that would be sent with the next
     // request (mirrors the assembly in _streamResponse / the request builders).
     _estimateSystemPromptTokens(provider = this._currentProvider, apiMessages = null) {
@@ -7522,6 +7637,25 @@ class KatabDialog {
         const deepResearchInstruction = this._isDeepResearchActive()
             ? DEEP_RESEARCH_SYSTEM_INSTRUCTION
             : '';
+        const { guided, canCallAskUser } = this._resolveInteractivePromptState(provider);
+        let ollamaSupportsTools = true;
+        if (provider === 'ollama') {
+            try {
+                const key = this._getOllamaCacheKey(
+                    this._settings.get_string('ollama-url'),
+                    this._settings.get_string('ollama-model'),
+                );
+                if (this._ollamaModelInfoCache.get(key)?.tools === false) {
+                    ollamaSupportsTools = false;
+                }
+            } catch (_e) {
+                /* ignore settings read failure */
+            }
+        }
+        const interactiveInstruction = buildInteractiveSystemInstruction({
+            guided,
+            canCallAskUser: canCallAskUser && ollamaSupportsTools,
+        });
         const synthesisInstruction = this._forceSynthesisActive
             ? this._noResultsSynthesis
                 ? NO_RESULTS_SYNTHESIS_SYSTEM_INSTRUCTION
@@ -7533,6 +7667,7 @@ class KatabDialog {
             this._buildDateSystemPromptLine(),
             webContentSafetyPolicy,
             deepResearchInstruction,
+            interactiveInstruction,
             synthesisInstruction,
         );
         if (provider === 'deepseek') {
@@ -7583,6 +7718,9 @@ class KatabDialog {
             const notUnsloth = provider !== 'unsloth';
             const underIterationCap = (this._toolIterations || 0) < maxToolIterations;
             const notForceSynthesis = !this._forceSynthesisActive;
+            const { advertiseAskUser } = this._resolveInteractivePromptState(provider, {
+                maxToolIterations,
+            });
 
             let toolNames = [];
             if (notUnsloth && webSearchAutonomous && underIterationCap && notForceSynthesis) {
@@ -7602,6 +7740,9 @@ class KatabDialog {
                     UPDATE_KNOWLEDGE_TOOL_NAME,
                     FORGET_KNOWLEDGE_TOOL_NAME,
                 );
+            }
+            if (advertiseAskUser) {
+                toolNames.push(ASK_USER_TOOL_NAME);
             }
 
             if (toolNames.length > 0) {
@@ -9167,6 +9308,13 @@ class KatabDialog {
         this._synthesisRetries = 0;
         this._toolIterations = 0;
         this._lastTurnToolIterations = 0;
+        this._askUserCountThisTurn = 0;
+        if (this._activeAskUserCard) {
+            this._activeAskUserCard.markCancelled();
+            this._activeAskUserCard = null;
+        }
+        this._askUserMode = TOOL_MODE_AUTO;
+        this._updateToolsUI();
         this._currentUsage = 0;
         this._resetDraftUsage();
         this._deepResearchCumulativeTokens = 0;
@@ -9227,6 +9375,15 @@ class KatabDialog {
                 }
                 if (msg.role === 'user') {
                     if (this._isToolResultOnlyMessage(msg)) {
+                        if (Array.isArray(msg.askUserSummaries)) {
+                            for (const summary of msg.askUserSummaries) {
+                                try {
+                                    this._messageList.add_child(createAskUserSummaryCard(summary));
+                                } catch (err) {
+                                    if (!this._isDisposedWidgetError(err)) throw err;
+                                }
+                            }
+                        }
                         continue;
                     }
                     if (Array.isArray(msg.knowledgeUsage)) {
@@ -9242,6 +9399,15 @@ class KatabDialog {
                         _showMissingAttachmentNotice: true,
                     });
                 } else if (msg.role === 'tool') {
+                    if (msg.askUserSummary) {
+                        try {
+                            this._messageList.add_child(
+                                createAskUserSummaryCard(msg.askUserSummary),
+                            );
+                        } catch (err) {
+                            if (!this._isDisposedWidgetError(err)) throw err;
+                        }
+                    }
                     // Knowledge-base tool results carry a lightweight usage
                     // record so the footer pill survives a reload. Older
                     // conversations without the record fall back to a generic
@@ -9497,6 +9663,13 @@ class KatabDialog {
         this._deepResearchCumulativeTokens = 0;
         this._toolIterations = 0;
         this._lastTurnToolIterations = 0;
+        this._askUserCountThisTurn = 0;
+        if (this._activeAskUserCard) {
+            this._activeAskUserCard.markCancelled();
+            this._activeAskUserCard = null;
+        }
+        this._askUserMode = TOOL_MODE_AUTO;
+        this._updateToolsUI();
         this._resetDraftUsage();
         this._resetSessionCacheSavings();
 
@@ -12673,6 +12846,7 @@ class KatabDialog {
             RAG_TOOL_NAME,
             UPDATE_KNOWLEDGE_TOOL_NAME,
             FORGET_KNOWLEDGE_TOOL_NAME,
+            ASK_USER_TOOL_NAME,
         ];
         for (const name of expected) {
             const tool = lookupTool(name);
@@ -12690,6 +12864,9 @@ class KatabDialog {
     // readable label for the tool-call log rows (VS Code-style presentation).
     _friendlyToolLabel(rawName) {
         const name = String(rawName || '').trim();
+        if (name === ASK_USER_TOOL_NAME) {
+            return _('Clarify');
+        }
         // Look up from the tool registry first
         const tool = lookupTool(name);
         if (tool && tool.uiLabel) return tool.uiLabel;
@@ -12701,6 +12878,7 @@ class KatabDialog {
             [RAG_TOOL_NAME]: 'Knowledge base',
             [UPDATE_KNOWLEDGE_TOOL_NAME]: 'Update memory',
             [FORGET_KNOWLEDGE_TOOL_NAME]: 'Forget memory',
+            [ASK_USER_TOOL_NAME]: 'Clarify',
             python: 'Python',
             terminal: 'Terminal',
         };
@@ -14186,6 +14364,35 @@ class KatabDialog {
         this._totalReadUrlFailuresThisTurn = 0;
         this._allEnginesDown = false;
         this._totalReadUrlAttemptsThisTurn = 0;
+        this._askUserCountThisTurn = 0;
+
+        // ── Guided Walkthrough mode (/guide) ────────────────────────────────
+        const guideCommand = parseGuideCommand(promptText);
+        if (guideCommand?.isCommand) {
+            if (this._askUserMode === TOOL_MODE_OFF) {
+                this._addSystemMessage(
+                    _(
+                        'Guide is off for this session. Set Guide to Auto or On in the Tools menu before using /guide.',
+                    ),
+                    { variant: 'warning' },
+                );
+                return null;
+            }
+            this._setToolMode(ASK_USER_TOOL_NAME, TOOL_MODE_ON);
+            if (!guideCommand.prompt) {
+                this._entry.set_text('');
+                this._resetDraftUsage();
+                this._setPendingDocument(null);
+                this._addSystemMessage(
+                    _(
+                        'Guided Mode is now On. Describe your task or attach a checklist and Katab will walk you through it step by step.',
+                    ),
+                    { variant: 'info' },
+                );
+                return null;
+            }
+            promptText = guideCommand.prompt;
+        }
         // Deep Research turn tracking: decrement the turns-remaining counter
         // at the start of each send.  When it reaches 0 the mode is
         // auto-reset to OFF.  Infinity means persistent (UI toggle).
@@ -14856,6 +15063,12 @@ class KatabDialog {
             UPDATE_KNOWLEDGE_TOOL_NAME,
             FORGET_KNOWLEDGE_TOOL_NAME,
         ];
+        const {
+            advertiseAskUser,
+            guided: guidedWorkflowActive,
+            canCallAskUser,
+        } = this._resolveInteractivePromptState(provider, { maxToolIterations });
+        const askUserToolNames = [ASK_USER_TOOL_NAME];
 
         // Compute DeepSeek effective thinking state early so it can be threaded
         // into message sanitization for reasoning_content echo.
@@ -14869,12 +15082,11 @@ class KatabDialog {
             const thinkingEnabled = this._settings.get_boolean('deepseek-thinking-enabled');
             const jsonMode = this._settings.get_boolean('deepseek-json-mode');
             // Must mirror the hasTools gate in the payload builder below: crawl,
-            // explore_docs, and RAG tools are all structured tool_calls too, so
-            // they must disable Flash thinking just like web_search does.  Only
-            // counting advertiseLocalTools here left thinking on for Flash when
-            // web search was off but crawl/explore_docs were advertised.
+            // explore_docs, RAG, and ask_user tools are all structured tool_calls too,
+            // so they must disable Flash thinking just like web_search does.
             const hasTools =
-                (advertiseLocalTools || advertiseCrawl4AI || advertiseRag) && !jsonMode;
+                (advertiseLocalTools || advertiseCrawl4AI || advertiseRag || advertiseAskUser) &&
+                !jsonMode;
             const isProModel = model === 'deepseek-v4-pro';
             deepseekEffectiveThinking =
                 thinkingEnabled && (!hasTools || isProModel) && !this._forceSynthesisActive;
@@ -14897,6 +15109,15 @@ class KatabDialog {
         const deepResearchInstruction = this._isDeepResearchActive()
             ? DEEP_RESEARCH_SYSTEM_INSTRUCTION
             : '';
+        // Ollama checks /api/show capability after this point, so its
+        // interactive instruction is merged after ollamaAdvertise is finalized.
+        const interactiveInstruction =
+            provider === 'ollama'
+                ? ''
+                : buildInteractiveSystemInstruction({
+                      guided: guidedWorkflowActive,
+                      canCallAskUser,
+                  });
         // When synthesis is forced (tools removed), inject a high-priority
         // system directive.  Without this, DeepSeek V4 Pro continues emitting
         // raw tool-call XML even when no tools are advertised, because the
@@ -14919,6 +15140,7 @@ class KatabDialog {
             this._buildDateSystemPromptLine(),
             webContentSafetyPolicy,
             deepResearchInstruction,
+            interactiveInstruction,
             synthesisInstruction,
         );
         const apiMessagesWithSystemPolicy = this._withSystemPromptText(
@@ -14932,12 +15154,14 @@ class KatabDialog {
             crawl: advertiseCrawl4AI,
             exploreDocs: advertiseExploreDocs,
             rag: advertiseRag,
+            askUser: advertiseAskUser,
         };
         const builderToolNames = {
             webSearch: webSearchToolNames,
             crawl: crawlToolNames,
             exploreDocs: exploreDocsToolNames,
             rag: ragToolNames,
+            askUser: askUserToolNames,
         };
 
         // Consume _forcedTool once for the initial request of this turn so
@@ -15124,7 +15348,8 @@ class KatabDialog {
                     builderAdvertise.webSearch ||
                     builderAdvertise.crawl ||
                     builderAdvertise.exploreDocs ||
-                    builderAdvertise.rag;
+                    builderAdvertise.rag ||
+                    builderAdvertise.askUser;
                 if (anyAdvertised) {
                     log(
                         `[Katab:ollama] Model '${model}' does not advertise 'tools' capability — suppressing tool schemas.`,
@@ -15135,6 +15360,7 @@ class KatabDialog {
                     crawl: false,
                     exploreDocs: false,
                     rag: false,
+                    askUser: false,
                 };
             }
 
@@ -15144,9 +15370,14 @@ class KatabDialog {
             } catch (_e) {
                 ollamaSystemPrompt = DEFAULT_OLLAMA_SYSTEM_PROMPT;
             }
+            const ollamaInteractiveInstruction = buildInteractiveSystemInstruction({
+                guided: guidedWorkflowActive,
+                canCallAskUser: Boolean(ollamaAdvertise.askUser),
+            });
             const ollamaSystemText = this._mergeSystemPromptParts(
                 ollamaSystemPrompt,
                 autoSystemContext,
+                ollamaInteractiveInstruction,
             );
             const ollamaMessages = this._withSystemPromptText(apiMessages, ollamaSystemText);
 
@@ -17171,6 +17402,19 @@ class KatabDialog {
                           : 'Page URL';
                 expandValue = u;
             }
+        } else if (toolName === ASK_USER_TOOL_NAME) {
+            const title = String(args.title ?? '').trim();
+            const firstQ = Array.isArray(args.questions)
+                ? typeof args.questions[0] === 'string'
+                    ? args.questions[0]
+                    : String(args.questions[0]?.question ?? '')
+                : String(args.question ?? args.prompt ?? '');
+            const preview = (title || firstQ).trim();
+            argsSummary = preview ? preview.slice(0, 60) + (preview.length > 60 ? '…' : '') : '';
+            if (preview) {
+                expandLabel = 'Prompt';
+                expandValue = preview;
+            }
         }
 
         // Fast path: turn-scoped cache hit or in-flight batch deduplication.
@@ -17722,6 +17966,172 @@ class KatabDialog {
                         resultText = `Could not delete the memory "${about}": ${forgetOutcome?.error || 'unknown error'}.`;
                     }
                 }
+            } else if (toolName === ASK_USER_TOOL_NAME) {
+                cacheable = false;
+                if (!this._isAskUserEnabled()) {
+                    hadError = true;
+                    resultText =
+                        'Interactive prompts (ask_user) are currently disabled (mode: Off). Proceed directly using your best judgment.';
+                    this._updateToolCallLogEntry(logEntry, { status: 'error', error: resultText });
+                } else {
+                    const askConfig = readAskUserConfig(this._settings);
+                    if ((this._askUserCountThisTurn || 0) >= askConfig.maxPerTurn) {
+                        hadError = true;
+                        resultText = `Interactive prompt limit (${askConfig.maxPerTurn} per turn) reached. Proceed with the information already gathered.`;
+                        this._updateToolCallLogEntry(logEntry, {
+                            status: 'error',
+                            error: resultText,
+                        });
+                    } else {
+                        const normalizedAsk = normalizeAskUserArgs(args);
+                        if (!normalizedAsk.ok) {
+                            hadError = true;
+                            resultText = normalizedAsk.error || 'Invalid ask_user arguments.';
+                            this._updateToolCallLogEntry(logEntry, {
+                                status: 'error',
+                                error: resultText,
+                            });
+                        } else {
+                            this._askUserCountThisTurn = (this._askUserCountThisTurn || 0) + 1;
+                            const { title, questions } = normalizedAsk;
+                            this._lifecycle.markPhase(REQUEST_STATES.AWAITING_USER);
+                            this._updateToolCallLogEntry(logEntry, {
+                                status: 'pending',
+                                detail: _('Waiting for your answer…'),
+                            });
+                            this._applyAssistantRender(uiElements, _('Waiting for your answer…'), {
+                                plain: true,
+                            });
+
+                            let card = null;
+                            let cancelHandlerId = 0;
+                            const outcome = await new Promise((resolve) => {
+                                let done = false;
+                                const finish = (payload) => {
+                                    if (done) return;
+                                    done = true;
+                                    resolve(payload);
+                                };
+
+                                card = createAskUserCard({
+                                    title,
+                                    questions,
+                                    scrollToBottom: () => this._scrollToBottom(),
+                                    onSubmit: (answers) =>
+                                        finish({ cancelled: false, skipped: false, answers }),
+                                    onSkip: () =>
+                                        finish({ cancelled: false, skipped: true, answers: null }),
+                                });
+
+                                if (!this._responseUiAlive(uiElements) || !this._messageList) {
+                                    finish({ cancelled: true });
+                                    return;
+                                }
+
+                                try {
+                                    this._messageList.add_child(card.actor);
+                                } catch (addErr) {
+                                    if (!this._isDisposedWidgetError(addErr)) {
+                                        log(
+                                            `[Katab:askUser] Failed to attach card: ${addErr.message || addErr}`,
+                                        );
+                                    }
+                                    finish({ cancelled: true });
+                                    return;
+                                }
+
+                                this._activeAskUserCard = card;
+                                this._scrollToBottom();
+                                if (this.isOpen) {
+                                    card.focus();
+                                } else {
+                                    this._notifyAwaitingUserInput(title);
+                                }
+
+                                if (toolCancellable?.is_cancelled?.()) {
+                                    finish({ cancelled: true });
+                                    return;
+                                }
+                                if (
+                                    toolCancellable &&
+                                    typeof toolCancellable.connect === 'function'
+                                ) {
+                                    cancelHandlerId = toolCancellable.connect(() => {
+                                        finish({ cancelled: true });
+                                    });
+                                }
+                            });
+
+                            if (cancelHandlerId && toolCancellable) {
+                                try {
+                                    toolCancellable.disconnect(cancelHandlerId);
+                                } catch (_e) {
+                                    /* already disconnected */
+                                }
+                                cancelHandlerId = 0;
+                            }
+
+                            if (this._activeAskUserCard === card) {
+                                this._activeAskUserCard = null;
+                            }
+
+                            if (
+                                outcome?.cancelled ||
+                                cancellable?.is_cancelled?.() ||
+                                !this._responseUiAlive(uiElements)
+                            ) {
+                                card?.markCancelled();
+                                this._updateToolCallLogEntry(logEntry, {
+                                    status: 'stopped',
+                                    detail: _('Stopped'),
+                                });
+                                return {
+                                    result: 'Tool execution cancelled.',
+                                    error: true,
+                                    cancelled: true,
+                                    cacheable: false,
+                                    meta: { knowledgeUsage: null },
+                                };
+                            }
+
+                            this._lifecycle.markPhase(REQUEST_STATES.TOOL_LOOP);
+                            const summary = buildAskUserSummary({
+                                title,
+                                questions,
+                                answers: outcome.answers,
+                                skipped: outcome.skipped,
+                            });
+                            card?.markResolved(summary);
+                            resultText = formatAskUserResult({
+                                title,
+                                questions,
+                                answers: outcome.answers,
+                                skipped: outcome.skipped,
+                            });
+                            const countDetail = outcome.skipped
+                                ? _('Skipped')
+                                : format(
+                                      ngettext(
+                                          'Answered {count} question',
+                                          'Answered {count} questions',
+                                          questions.length,
+                                      ),
+                                      { count: questions.length },
+                                  );
+                            this._updateToolCallLogEntry(logEntry, {
+                                status: 'success',
+                                detail: withElapsed(countDetail),
+                            });
+                            return {
+                                result: resultText,
+                                error: false,
+                                cancelled: false,
+                                cacheable: false,
+                                meta: { knowledgeUsage: null, askUserSummary: summary },
+                            };
+                        }
+                    }
+                }
             } else {
                 hadError = true;
                 cacheable = false;
@@ -17880,7 +18290,13 @@ class KatabDialog {
         const total = normalizedCalls.length;
         const formatProgressText = (completed, activeCount) => {
             if (total === 1) {
-                const label = this._friendlyToolLabel(normalizedCalls[0].function?.name);
+                const singleName = normalizedCalls[0].function?.name;
+                if (singleName === ASK_USER_TOOL_NAME) {
+                    return completed >= total
+                        ? _('Processing your answer…')
+                        : _('Waiting for your answer…');
+                }
+                const label = this._friendlyToolLabel(singleName);
                 return format(_('Running {tool}…'), { tool: label });
             }
             if (completed >= total) {
@@ -17930,6 +18346,7 @@ class KatabDialog {
         }
 
         const anthropicResultBlocks = [];
+        const anthropicAskUserSummaries = [];
         const freshIndexableResults = [];
 
         // Push tool results in original toolCalls order (required by strict APIs).
@@ -17939,6 +18356,7 @@ class KatabDialog {
             const toolName = tc.function?.name || '';
             const resultText = item.result || '';
             const knowledgeUsage = item.meta?.knowledgeUsage || null;
+            const askUserSummary = item.meta?.askUserSummary || null;
 
             if (activeProvider === 'anthropic') {
                 anthropicResultBlocks.push({
@@ -17946,6 +18364,9 @@ class KatabDialog {
                     tool_use_id: tc.id,
                     content: resultText,
                 });
+                if (askUserSummary) {
+                    anthropicAskUserSummaries.push(askUserSummary);
+                }
             } else {
                 const toolMsg = {
                     role: 'tool',
@@ -17956,6 +18377,9 @@ class KatabDialog {
                 if (knowledgeUsage) {
                     toolMsg.knowledgeUsage = knowledgeUsage;
                 }
+                if (askUserSummary) {
+                    toolMsg.askUserSummary = askUserSummary;
+                }
                 pendingMessages.push(toolMsg);
             }
 
@@ -17965,7 +18389,11 @@ class KatabDialog {
         }
 
         if (activeProvider === 'anthropic' && anthropicResultBlocks.length > 0) {
-            pendingMessages.push({ role: 'user', content: anthropicResultBlocks });
+            const anthropicToolMsg = { role: 'user', content: anthropicResultBlocks };
+            if (anthropicAskUserSummaries.length > 0) {
+                anthropicToolMsg.askUserSummaries = anthropicAskUserSummaries;
+            }
+            pendingMessages.push(anthropicToolMsg);
         }
 
         for (const message of pendingMessages) {
