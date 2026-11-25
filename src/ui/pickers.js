@@ -20,8 +20,9 @@ import Pango from 'gi://Pango';
 import Atk from 'gi://Atk';
 
 import { DEEPSEEK_MODELS, PROVIDER_LABELS } from '../providers/catalog.js';
+import { formatBytesCompact } from '../providers/ollamaCapabilities.js';
 import { loadPresets, deletePreset } from '../usage/presetManager.js';
-import { gettext as _ } from '../shared/i18n.js';
+import { gettext as _, format } from '../shared/i18n.js';
 
 /**
  * Owns the three picker panels (presets / providers / DeepSeek models).
@@ -212,7 +213,7 @@ export class Pickers {
         picker.add_child(pickerHeader);
 
         const pickerTitle = new St.Label({
-            text: _('Ollama Presets'),
+            text: _('Ollama Models & Presets'),
             style_class: 'katab-preset-picker-title',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
@@ -268,22 +269,22 @@ export class Pickers {
         if (!this._presetListBox) return;
 
         // Destroy all current rows
-        let child = this._presetListBox.get_first_child();
-        while (child) {
-            const next = child.get_next_sibling();
-            this._presetListBox.remove_child(child);
-            child.destroy();
-            child = next;
-        }
+        this._presetListBox.destroy_all_children();
 
         const presets = loadPresets();
         const activePresetId = this._host.settings.get_string('ollama-active-preset');
 
+        const presetsHeader = new St.Label({
+            text: _('Saved Presets'),
+            style_class: 'katab-picker-section-title',
+        });
+        this._presetListBox.add_child(presetsHeader);
+
         if (presets.length === 0) {
             const emptyLabel = new St.Label({
-                text: 'No presets saved yet.\nCreate presets in the Preferences → Ollama page.',
+                text: _('No presets saved yet. Create presets in Preferences → Ollama.'),
                 style_class: 'katab-preset-empty-label',
-                x_align: Clutter.ActorAlign.CENTER,
+                x_align: Clutter.ActorAlign.START,
                 y_align: Clutter.ActorAlign.CENTER,
                 x_expand: true,
             });
@@ -291,7 +292,6 @@ export class Pickers {
             emptyLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
             emptyLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
             this._presetListBox.add_child(emptyLabel);
-            return;
         }
 
         for (const preset of presets) {
@@ -379,6 +379,222 @@ export class Pickers {
             btnBox.add_child(deleteBtn);
 
             this._presetListBox.add_child(row);
+        }
+
+        // ── Installed & Running Ollama Models section ────────────────────────
+        const modelsHeader = new St.Label({
+            text: _('Installed Models'),
+            style_class: 'katab-picker-section-title',
+        });
+        this._presetListBox.add_child(modelsHeader);
+
+        const modelsContainer = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+        });
+        this._presetListBox.add_child(modelsContainer);
+
+        const loadingLabel = new St.Label({
+            text: _('Checking installed models…'),
+            style_class: 'katab-preset-empty-label',
+            x_align: Clutter.ActorAlign.START,
+        });
+        modelsContainer.add_child(loadingLabel);
+
+        const fetchSerial = (this._ollamaModelsFetchSerial =
+            (this._ollamaModelsFetchSerial || 0) + 1);
+        if (typeof this._host.fetchOllamaModels === 'function') {
+            this._host
+                .fetchOllamaModels()
+                .then((data) => {
+                    if (
+                        fetchSerial !== this._ollamaModelsFetchSerial ||
+                        !this._presetPicker?.visible
+                    ) {
+                        return;
+                    }
+                    this._renderOllamaModelsSection(modelsContainer, data);
+                })
+                .catch(() => {
+                    if (
+                        fetchSerial !== this._ollamaModelsFetchSerial ||
+                        !this._presetPicker?.visible
+                    ) {
+                        return;
+                    }
+                    this._renderOllamaModelsSection(modelsContainer, {
+                        models: [],
+                        running: [],
+                        activeInfo: null,
+                        error: _('Could not reach Ollama.'),
+                    });
+                });
+        }
+    }
+
+    _renderOllamaModelsSection(
+        container,
+        { models = [], running = [], activeInfo = null, error = null },
+    ) {
+        if (!container) return;
+        container.destroy_all_children();
+
+        if (error && models.length === 0) {
+            const errLabel = new St.Label({
+                text: format(_('Could not load models: {error}'), { error }),
+                style_class: 'katab-preset-empty-label',
+                x_align: Clutter.ActorAlign.START,
+                x_expand: true,
+            });
+            errLabel.clutter_text.line_wrap = true;
+            errLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            container.add_child(errLabel);
+            return;
+        }
+
+        if (models.length === 0) {
+            const noneLabel = new St.Label({
+                text: _('No installed models reported by Ollama.'),
+                style_class: 'katab-preset-empty-label',
+                x_align: Clutter.ActorAlign.START,
+            });
+            container.add_child(noneLabel);
+            return;
+        }
+
+        const activeModel = (this._host.settings.get_string('ollama-model') || '').trim();
+        const runningByName = new Map();
+        for (const r of running) {
+            runningByName.set(r.name, r);
+            runningByName.set(r.model, r);
+        }
+
+        for (const model of models) {
+            const isActive = model.name === activeModel;
+            const runInfo = runningByName.get(model.name) || null;
+            const info = isActive
+                ? activeInfo || this._host.getCachedOllamaModelInfo?.(model.name)
+                : this._host.getCachedOllamaModelInfo?.(model.name);
+
+            const row = new St.BoxLayout({
+                style_class: isActive
+                    ? 'katab-preset-row katab-selection-row katab-preset-row-active katab-accent-ollama'
+                    : 'katab-preset-row katab-selection-row',
+                vertical: false,
+                x_expand: true,
+                reactive: true,
+                can_focus: true,
+                track_hover: true,
+                accessible_name: model.name,
+                accessible_role: Atk.Role.PUSH_BUTTON,
+            });
+
+            const textCol = new St.BoxLayout({
+                vertical: true,
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+                style_class: 'katab-selection-row-text',
+            });
+
+            textCol.add_child(
+                new St.Label({
+                    text: model.name,
+                    style_class: 'katab-preset-row-name',
+                }),
+            );
+
+            const metaParts = [];
+            if (model.parameterSize) metaParts.push(model.parameterSize);
+            if (model.quantizationLevel) metaParts.push(model.quantizationLevel);
+            if (model.size > 0) metaParts.push(formatBytesCompact(model.size));
+            if (model.isCloud) metaParts.push('Cloud');
+            if (runInfo) {
+                const vramText =
+                    runInfo.sizeVram > 0
+                        ? format(_('Loaded · {vram} VRAM'), {
+                              vram: formatBytesCompact(runInfo.sizeVram),
+                          })
+                        : _('Loaded · CPU');
+                metaParts.push(vramText);
+            }
+            if (info) {
+                const caps = [];
+                if (info.vision) caps.push('Vision');
+                if (info.tools) caps.push('Tools');
+                if (info.thinking) caps.push('Thinking');
+                if (caps.length > 0) metaParts.push(caps.join(' · '));
+            }
+
+            if (metaParts.length > 0) {
+                const metaLabel = new St.Label({
+                    text: metaParts.join('  ·  '),
+                    style_class: 'katab-preset-row-meta',
+                });
+                metaLabel.clutter_text.line_wrap = true;
+                metaLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+                textCol.add_child(metaLabel);
+            }
+            row.add_child(textCol);
+
+            if (runInfo && typeof this._host.unloadOllamaModel === 'function') {
+                const unloadBtn = new St.Button({
+                    label: _('Unload'),
+                    style_class: 'katab-ollama-unload-btn',
+                    can_focus: true,
+                    y_align: Clutter.ActorAlign.CENTER,
+                    accessible_name: format(_('Unload {model} from memory'), { model: model.name }),
+                });
+                unloadBtn.connect('clicked', () => {
+                    unloadBtn.reactive = false;
+                    unloadBtn.set_label(_('Unloading…'));
+                    this._host
+                        .unloadOllamaModel(model.name)
+                        .then(() => {
+                            if (this._presetPicker?.visible) {
+                                this.refreshPresetPicker();
+                            }
+                        })
+                        .catch(() => {
+                            if (this._presetPicker?.visible) {
+                                this.refreshPresetPicker();
+                            }
+                        });
+                });
+                row.add_child(unloadBtn);
+            }
+
+            if (isActive) {
+                row.add_child(
+                    new St.Label({
+                        text: _('Active'),
+                        style_class: 'katab-selection-row-badge',
+                        y_align: Clutter.ActorAlign.CENTER,
+                    }),
+                );
+            }
+
+            const selectModel = () => {
+                this._host.selectOllamaModel?.(model.name);
+                this._host.showChatView();
+            };
+            row.connect('button-press-event', () => {
+                selectModel();
+                return Clutter.EVENT_STOP;
+            });
+            row.connect('key-press-event', (_actor, event) => {
+                const sym = event.get_key_symbol();
+                if (
+                    sym === Clutter.KEY_Return ||
+                    sym === Clutter.KEY_KP_Enter ||
+                    sym === Clutter.KEY_space
+                ) {
+                    selectModel();
+                    return Clutter.EVENT_STOP;
+                }
+                return Clutter.EVENT_PROPAGATE;
+            });
+
+            container.add_child(row);
         }
     }
 

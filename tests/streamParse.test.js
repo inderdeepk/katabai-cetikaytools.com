@@ -99,20 +99,24 @@ const tests = [
     ],
 
     [
-        'parseOllamaChunk: done frame carries metrics',
+        'parseOllamaChunk: done frame carries metrics and doneReason',
         () => {
             const chunk = parseOllamaChunk({
                 done: true,
+                done_reason: 'length',
                 eval_count: 10,
                 prompt_eval_count: 5,
                 eval_duration: 1000,
             });
             assertEqual(chunk.done, true, 'done');
+            assertEqual(chunk.doneReason, 'length', 'doneReason');
             assertEqual(chunk.metrics.eval_count, 10, 'eval count');
             assertEqual(chunk.metrics.prompt_eval_count, 5, 'prompt eval count');
+            assertEqual(chunk.metrics.done_reason, 'length', 'metrics done_reason');
 
             const empty = parseOllamaChunk({ done: true });
             assertEqual(empty.done, true, 'done without metrics');
+            assertEqual(empty.doneReason, null, 'doneReason null when absent');
             assertEqual(empty.metrics, null, 'metrics null when no numbers');
         },
     ],

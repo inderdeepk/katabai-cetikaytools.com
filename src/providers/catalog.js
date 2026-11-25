@@ -68,7 +68,7 @@ export const PROVIDER_DETAILS = {
         pageTitle: 'Ollama',
         get description() {
             return _(
-                'Run local models with a fast desktop-native workflow and deep tuning controls.',
+                'Run local and Ollama Cloud models with automatic capability detection, native thinking controls, and deep tuning options.',
             );
         },
     },

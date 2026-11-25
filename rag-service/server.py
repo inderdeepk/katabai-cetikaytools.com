@@ -148,14 +148,18 @@ def _validate_ollama_url(ollama_url: str) -> str:
     return url
 
 
-def _get_ollama_client(ollama_url: str, timeout: httpx.Timeout):
+def _get_ollama_client(ollama_url: str, timeout: httpx.Timeout, api_key: str = ""):
     url = _validate_ollama_url(ollama_url)
     client_cls = ollama.Client
-    key = (client_cls, url, timeout.read)
+    clean_key = str(api_key or "").strip()
+    key = (client_cls, url, timeout.read, clean_key)
     with _ollama_clients_lock:
         client = _ollama_clients.get(key)
         if client is None:
-            client = client_cls(host=url, timeout=timeout)
+            kwargs = {"host": url, "timeout": timeout}
+            if clean_key:
+                kwargs["headers"] = {"Authorization": f"Bearer {clean_key}"}
+            client = client_cls(**kwargs)
             # Keep cache tiny (typical use: 1–2 hosts × 3 timeout classes)
             if len(_ollama_clients) > 16:
                 _ollama_clients.clear()
@@ -270,13 +274,14 @@ def generate_embeddings(
     texts: list[str],
     model: str = DEFAULT_EMBEDDING_MODEL,
     ollama_url: str = "http://localhost:11434",
+    ollama_api_key: str = "",
 ) -> list[list[float]]:
     """Generate L2-normalized embeddings via Ollama /api/embed.
 
     Uses an explicit Ollama host so embeddings can come from a remote
     AI PC rather than requiring a local Ollama installation.
     """
-    client = _get_ollama_client(ollama_url, OLLAMA_EMBED_TIMEOUT)
+    client = _get_ollama_client(ollama_url, OLLAMA_EMBED_TIMEOUT, api_key=ollama_api_key)
     all_embeddings: list[list[float]] = []
 
     for i in range(0, len(texts), MAX_BATCH_SIZE):
@@ -289,17 +294,27 @@ def generate_embeddings(
             ollama_url,
         )
         try:
-            resp = client.embed(model=model, input=batch, keep_alive=EMBED_KEEP_ALIVE)
+            resp = client.embed(
+                model=model, input=batch, truncate=True, keep_alive=EMBED_KEEP_ALIVE
+            )
         except TypeError:
-            # Older ollama clients don't accept keep_alive on embed()
-            resp = client.embed(model=model, input=batch)
+            # Older ollama clients don't accept truncate/keep_alive on embed()
+            try:
+                resp = client.embed(model=model, input=batch, keep_alive=EMBED_KEEP_ALIVE)
+            except TypeError:
+                resp = client.embed(model=model, input=batch)
 
-        if not resp or not resp.get("embeddings"):
+        embeddings_out = (
+            resp.get("embeddings")
+            if isinstance(resp, dict)
+            else getattr(resp, "embeddings", None)
+        )
+        if not resp or not embeddings_out:
             raise RuntimeError(
                 f"Ollama /api/embed returned no embeddings for model '{model}'"
             )
 
-        for j, emb in enumerate(resp["embeddings"]):
+        for j, emb in enumerate(embeddings_out):
             # Zero-vector validation
             magnitude = math.sqrt(sum(v * v for v in emb))
             if magnitude == 0.0:
@@ -696,11 +711,46 @@ def _parse_rerank_scores(answer: str, expected: int) -> Optional[list[float]]:
         return None
 
 
+RERANK_SCORES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scores": {
+            "type": "array",
+            "items": {"type": "number"},
+        }
+    },
+    "required": ["scores"],
+}
+
+
+def _extract_chat_message_fields(resp) -> tuple[str, str]:
+    """Extract `(content, thinking)` from either dict or Pydantic Ollama responses."""
+    if isinstance(resp, dict):
+        msg = resp.get("message") or {}
+        if isinstance(msg, dict):
+            return (
+                str(msg.get("content") or ""),
+                str(msg.get("thinking") or msg.get("reasoning") or ""),
+            )
+    msg_obj = getattr(resp, "message", None)
+    if msg_obj is not None:
+        return (
+            str(getattr(msg_obj, "content", "") or ""),
+            str(
+                getattr(msg_obj, "thinking", "")
+                or getattr(msg_obj, "reasoning", "")
+                or ""
+            ),
+        )
+    return ("", "")
+
+
 def _rerank_results(
     query: str,
     candidates: list[tuple[str, str, dict, float]],
     model: str = DEFAULT_RERANK_MODEL,
     ollama_url: str = "http://localhost:11434",
+    ollama_api_key: str = "",
 ) -> tuple[list[tuple[str, str, dict, float]], bool]:
     """Rerank candidate chunks with a batched scoring call per 10 candidates.
 
@@ -711,7 +761,7 @@ def _rerank_results(
     if not candidates:
         return [], False
 
-    client = _get_ollama_client(ollama_url, OLLAMA_CHAT_TIMEOUT)
+    client = _get_ollama_client(ollama_url, OLLAMA_CHAT_TIMEOUT, api_key=ollama_api_key)
 
     # Check if reranker model is available
     try:
@@ -739,14 +789,36 @@ def _rerank_results(
         prompt = RERANK_BATCH_PROMPT_TEMPLATE.format(query=query, documents=docs_text)
         scores: Optional[list[float]] = None
         try:
-            resp = client.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                format="json",
-                options={"temperature": 0.0, "num_predict": 32 + 12 * len(batch)},
-                keep_alive="10m",
-            )
-            answer = (resp.get("message", {}).get("content", "") or "").strip()
+            chat_kwargs = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "format": RERANK_SCORES_SCHEMA,
+                "options": {"temperature": 0.0, "num_predict": 32 + 12 * len(batch)},
+                "keep_alive": "10m",
+            }
+            try:
+                resp = client.chat(**chat_kwargs)
+            except Exception as schema_exc:
+                # Older Ollama versions or mock clients may reject schema dict `format`.
+                if "format" in str(schema_exc).lower() or isinstance(
+                    schema_exc, TypeError
+                ):
+                    chat_kwargs["format"] = "json"
+                    resp = client.chat(**chat_kwargs)
+                else:
+                    raise
+
+            raw_content, raw_thinking = _extract_chat_message_fields(resp)
+            answer = raw_content.strip()
+            if not answer and raw_thinking.strip():
+                # Thinking model consumed output budget in reasoning — retry with think=False.
+                try:
+                    chat_kwargs["think"] = False
+                    resp = client.chat(**chat_kwargs)
+                    raw_content, _ = _extract_chat_message_fields(resp)
+                    answer = raw_content.strip()
+                except Exception:
+                    pass
             scores = _parse_rerank_scores(answer, len(batch))
         except Exception as exc:
             log.warning(

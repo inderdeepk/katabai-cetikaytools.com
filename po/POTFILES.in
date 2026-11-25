@@ -13,6 +13,7 @@ src/providers/catalog.js
 src/providers/chatRequest.js
 src/providers/historyPayload.js
 src/providers/nonStreamingRequest.js
+src/providers/ollamaCapabilities.js
 src/providers/streamParse.js
 src/research/branchRunner.js
 src/research/citationTracker.js

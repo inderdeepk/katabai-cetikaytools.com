@@ -166,7 +166,8 @@ export function flushThinkingCarry(isThinking, carryState) {
  * inline flow, which bailed out after stashing the error).
  *
  * @returns {{ error: string|null, text: string, think: string,
- *             toolCalls: object[]|null, done: boolean, metrics: object|null }}
+ *             toolCalls: object[]|null, done: boolean, doneReason: string|null,
+ *             metrics: object|null }}
  */
 export function parseOllamaChunk(parsed) {
     const result = {
@@ -175,6 +176,7 @@ export function parseOllamaChunk(parsed) {
         think: '',
         toolCalls: null,
         done: false,
+        doneReason: null,
         metrics: null,
     };
 
@@ -207,6 +209,10 @@ export function parseOllamaChunk(parsed) {
 
     if (parsed.done === true) {
         result.done = true;
+        result.doneReason =
+            typeof parsed.done_reason === 'string' && parsed.done_reason
+                ? parsed.done_reason
+                : null;
         result.metrics = extractOllamaMetrics(parsed);
     }
 
@@ -513,7 +519,7 @@ export function accumulateStreamingToolCalls(responseState, deltaToolCalls) {
 
 /**
  * Extract Ollama final-metrics from a `done: true` frame. Returns null when
- * none of the fields carry a finite number.
+ * none of the numeric fields carry a finite number.
  */
 export function extractOllamaMetrics(payload) {
     if (!payload || typeof payload !== 'object') {
@@ -528,7 +534,14 @@ export function extractOllamaMetrics(payload) {
         eval_duration: numberOrNull(payload.eval_duration),
     };
 
-    return Object.values(metrics).some((value) => value !== null) ? metrics : null;
+    const hasNumericMetric = Object.values(metrics).some((value) => value !== null);
+    if (!hasNumericMetric) {
+        return null;
+    }
+    if (typeof payload.done_reason === 'string' && payload.done_reason) {
+        metrics.done_reason = payload.done_reason;
+    }
+    return metrics;
 }
 
 /**

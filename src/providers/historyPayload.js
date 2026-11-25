@@ -944,7 +944,17 @@ export function sanitizeHistoryMessage(
         }
         // Ollama's native tool_calls expect `arguments` as an object (not the
         // OpenAI JSON string) — restore it for turns recorded under another
-        // provider.
+        // provider. Also preserve `thinking` on assistant tool-call turns so
+        // multi-turn reasoning + tool calling keeps chain-of-thought continuity.
+        if (
+            message.role === 'assistant' &&
+            Array.isArray(message.tool_calls) &&
+            message.tool_calls.length > 0 &&
+            typeof message.thinking === 'string' &&
+            message.thinking
+        ) {
+            sanitized.thinking = message.thinking;
+        }
         if (Array.isArray(sanitized.tool_calls)) {
             sanitized.tool_calls = sanitized.tool_calls.map(normalizeOllamaToolCall);
         }
@@ -960,6 +970,7 @@ export function sanitizeHistoryMessage(
             'name',
             'tool_name',
             'tool_call_id',
+            'thinking',
             'reasoning_content',
         ]) {
             const val = sanitized[field];
@@ -996,6 +1007,7 @@ export function sanitizeHistoryMessage(
             'tool_name', // Ollama native /api/chat tool result identifier
             'tool_calls',
             'tool_call_id',
+            'thinking', // Ollama native /api/chat thinking trace
             'reasoning_content', // DeepSeek-specific, harmless for others
             'type', // DeepSeek-specific, harmless for others
             'images', // Ollama image attachments
@@ -1004,6 +1016,10 @@ export function sanitizeHistoryMessage(
             if (!ALLOWED_MESSAGE_KEYS.has(key)) {
                 delete sanitized[key];
             }
+        }
+
+        if (provider !== 'ollama') {
+            delete sanitized.thinking;
         }
 
         // DeepSeek requires a `type` field on every message (set to the role).
@@ -1078,9 +1094,12 @@ export function sanitizeHistoryMessages(messages, options = {}) {
     const provider = options.provider;
     const out = [];
 
-    // Track tool-call IDs from the immediately preceding assistant turn so
-    // Ollama-origin tool messages without IDs match cleanly on Anthropic/OpenAI.
+    // Track tool-call IDs (and names for Ollama `tool_name`) from the immediately
+    // preceding assistant turn so Ollama-origin tool messages without IDs match
+    // cleanly on Anthropic/OpenAI and Anthropic-origin tool_result blocks gain
+    // `tool_name` on Ollama.
     let pendingToolIds = [];
+    let pendingToolNamesById = new Map();
     let pendingToolCursor = 0;
 
     for (const msg of messages) {
@@ -1100,9 +1119,10 @@ export function sanitizeHistoryMessages(messages, options = {}) {
             const extraText = [];
             for (const block of msg.content) {
                 if (block?.type === 'tool_result' && block.tool_use_id) {
+                    const callId = String(block.tool_use_id);
                     const toolMsg = {
                         role: 'tool',
-                        tool_call_id: String(block.tool_use_id),
+                        tool_call_id: callId,
                         content:
                             typeof block.content === 'string'
                                 ? block.content
@@ -1110,6 +1130,12 @@ export function sanitizeHistoryMessages(messages, options = {}) {
                     };
                     if (provider === 'deepseek') {
                         toolMsg.type = 'tool';
+                    }
+                    if (provider === 'ollama') {
+                        const resolvedName = pendingToolNamesById.get(callId);
+                        if (resolvedName) {
+                            toolMsg.tool_name = resolvedName;
+                        }
                     }
                     out.push(toolMsg);
                 } else if (block?.type === 'text' && typeof block.text === 'string' && block.text) {
@@ -1140,8 +1166,28 @@ export function sanitizeHistoryMessages(messages, options = {}) {
         const sanitized = sanitizeHistoryMessage(effectiveMsg, options);
 
         if (effectiveMsg.role === 'assistant') {
+            pendingToolNamesById = new Map();
             if (Array.isArray(sanitized.tool_calls) && sanitized.tool_calls.length > 0) {
-                pendingToolIds = sanitized.tool_calls.map((tc, i) => tc.id || `call_${i}`);
+                pendingToolIds = sanitized.tool_calls.map((tc, i) => {
+                    const id = tc.id || `call_${i}`;
+                    if (tc.function?.name) {
+                        pendingToolNamesById.set(id, String(tc.function.name));
+                    }
+                    return id;
+                });
+                pendingToolCursor = 0;
+            } else if (
+                Array.isArray(effectiveMsg.content) &&
+                effectiveMsg.content.some((b) => b?.type === 'tool_use')
+            ) {
+                const toolUseBlocks = effectiveMsg.content.filter((b) => b?.type === 'tool_use');
+                pendingToolIds = toolUseBlocks.map((b) => {
+                    const id = String(b.id || '');
+                    if (id && b.name) {
+                        pendingToolNamesById.set(id, String(b.name));
+                    }
+                    return id;
+                });
                 pendingToolCursor = 0;
             } else if (
                 provider === 'anthropic' &&
@@ -1158,6 +1204,7 @@ export function sanitizeHistoryMessages(messages, options = {}) {
             }
         } else if (effectiveMsg.role !== 'tool') {
             pendingToolIds = [];
+            pendingToolNamesById = new Map();
             pendingToolCursor = 0;
         }
 

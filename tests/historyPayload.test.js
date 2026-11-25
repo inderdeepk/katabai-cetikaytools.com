@@ -918,6 +918,67 @@ const tests = [
             assertEqual(out[0].role, 'user', 'user turn kept');
         },
     ],
+
+    [
+        'sanitizeHistoryMessages: preserves Ollama thinking on tool-call turns & adds tool_name from Anthropic',
+        () => {
+            const ollamaHistory = [
+                { role: 'user', content: 'search' },
+                {
+                    role: 'assistant',
+                    content: '',
+                    thinking: 'Let me call web_search.',
+                    tool_calls: [
+                        {
+                            id: 'c1',
+                            type: 'function',
+                            function: { name: 'web_search', arguments: { query: 'x' } },
+                        },
+                    ],
+                },
+                { role: 'tool', tool_call_id: 'c1', name: 'web_search', content: 'results' },
+            ];
+            const forOllama = sanitizeHistoryMessages(ollamaHistory, { provider: 'ollama' });
+            assertEqual(
+                forOllama[1].thinking,
+                'Let me call web_search.',
+                'thinking preserved on Ollama tool turn',
+            );
+            assertEqual(forOllama[2].tool_name, 'web_search', 'tool_name set on Ollama tool turn');
+
+            const forOpenAI = sanitizeHistoryMessages(ollamaHistory, { provider: 'openai' });
+            assert(
+                !('thinking' in forOpenAI[1]),
+                'Ollama thinking stripped when switching to OpenAI',
+            );
+
+            const anthropicHistory = [
+                { role: 'user', content: 'check' },
+                {
+                    role: 'assistant',
+                    content: [
+                        {
+                            type: 'tool_use',
+                            id: 'tu_1',
+                            name: 'web_search',
+                            input: { query: 'hi' },
+                        },
+                    ],
+                },
+                {
+                    role: 'user',
+                    content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'found' }],
+                },
+            ];
+            const antToOllama = sanitizeHistoryMessages(anthropicHistory, { provider: 'ollama' });
+            assertEqual(antToOllama[2].role, 'tool', 'expanded to tool role');
+            assertEqual(
+                antToOllama[2].tool_name,
+                'web_search',
+                'tool_name resolved from tool_use block',
+            );
+        },
+    ],
 ];
 
 await runTests(tests);

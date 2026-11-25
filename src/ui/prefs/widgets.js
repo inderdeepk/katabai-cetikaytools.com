@@ -83,19 +83,19 @@ export function createPrefsContext({ settings, window, extensionPath }) {
 
     const ollamaSettingTypes = {
         format: 'string',
+        'format-schema': 'string',
         'frequency-penalty': 'double',
         'min-p': 'double',
-        mirostat: 'int',
-        'mirostat-eta': 'double',
-        'mirostat-tau': 'double',
         'presence-penalty': 'double',
-        raw: 'boolean',
         'repeat-penalty': 'double',
+        seed: 'int',
+        stop: 'string',
         temperature: 'double',
-        'tfs-z': 'double',
         think: 'boolean',
+        'think-level': 'string',
         'top-k': 'int',
         'top-p': 'double',
+        'use-model-defaults': 'boolean',
     };
 
     const addPreferenceRow = (group, row) => {

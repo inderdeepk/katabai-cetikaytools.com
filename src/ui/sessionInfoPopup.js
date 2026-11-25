@@ -257,6 +257,19 @@ export class SessionInfoPopup {
         } else {
             this._siResearchSection.visible = false;
         }
+
+        // ── Ollama Model Capabilities ─────────────────────────────────
+        const { ollamaModel: om } = info;
+        if (om) {
+            this._siOllamaSection.visible = true;
+            const sizeMeta = [om.parameterSize, om.quantizationLevel].filter(Boolean).join(' · ');
+            this._siOllamaName.set_text(sizeMeta ? `${om.model} (${sizeMeta})` : om.model);
+            this._siOllamaCaps.set_text(om.capabilities || '—');
+            this._siOllamaCtx.set_text(om.nativeContext || '—');
+            this._siOllamaThink.set_text(om.thinkStatus || '—');
+        } else {
+            this._siOllamaSection.visible = false;
+        }
     }
 
     // Create the Session Info floating popup.  Built once, updated in-place
@@ -546,6 +559,92 @@ export class SessionInfoPopup {
         this._siResearchSection.add_child(resCtxRow);
 
         popup.add_child(this._siResearchSection);
+
+        // ── Ollama Model section (shown only when Ollama is active) ───
+        this._siOllamaSection = new St.BoxLayout({
+            vertical: true,
+            style_class: 'katab-session-info-section',
+            visible: false,
+        });
+        const omTitle = new St.Label({
+            text: 'MODEL',
+            style_class: 'katab-session-info-section-title',
+        });
+        this._siOllamaSection.add_child(omTitle);
+
+        const omNameRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-session-info-row',
+        });
+        omNameRow.add_child(
+            new St.Label({
+                text: 'Active Model',
+                style_class: 'katab-session-info-row-label',
+                x_expand: true,
+            }),
+        );
+        this._siOllamaName = new St.Label({
+            text: '—',
+            style_class: 'katab-session-info-row-value',
+        });
+        omNameRow.add_child(this._siOllamaName);
+        this._siOllamaSection.add_child(omNameRow);
+
+        const omCapsRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-session-info-row',
+        });
+        omCapsRow.add_child(
+            new St.Label({
+                text: 'Capabilities',
+                style_class: 'katab-session-info-row-label',
+                x_expand: true,
+            }),
+        );
+        this._siOllamaCaps = new St.Label({
+            text: '—',
+            style_class: 'katab-session-info-row-value',
+        });
+        omCapsRow.add_child(this._siOllamaCaps);
+        this._siOllamaSection.add_child(omCapsRow);
+
+        const omCtxRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-session-info-row',
+        });
+        omCtxRow.add_child(
+            new St.Label({
+                text: 'Native Context',
+                style_class: 'katab-session-info-row-label',
+                x_expand: true,
+            }),
+        );
+        this._siOllamaCtx = new St.Label({
+            text: '—',
+            style_class: 'katab-session-info-row-value',
+        });
+        omCtxRow.add_child(this._siOllamaCtx);
+        this._siOllamaSection.add_child(omCtxRow);
+
+        const omThinkRow = new St.BoxLayout({
+            vertical: false,
+            style_class: 'katab-session-info-row',
+        });
+        omThinkRow.add_child(
+            new St.Label({
+                text: 'Thinking',
+                style_class: 'katab-session-info-row-label',
+                x_expand: true,
+            }),
+        );
+        this._siOllamaThink = new St.Label({
+            text: '—',
+            style_class: 'katab-session-info-row-value',
+        });
+        omThinkRow.add_child(this._siOllamaThink);
+        this._siOllamaSection.add_child(omThinkRow);
+
+        popup.add_child(this._siOllamaSection);
 
         // ── Summarize now + Compact Conversation buttons ─────────────
         // NOTE: St.BoxLayout has no 'spacing' GObject property — passing it

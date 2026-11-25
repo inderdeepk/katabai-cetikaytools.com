@@ -3826,6 +3826,29 @@
     font-size: 12px;
 }
 
+.katab-picker-section-title {
+    padding: 8px 14px 4px 14px;
+    font-size: 0.85em;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.50);
+}
+
+.katab-ollama-unload-btn {
+    background-color: rgba(255, 160, 80, 0.14);
+    border: 1px solid rgba(255, 160, 80, 0.28);
+    border-radius: 6px;
+    padding: 3px 9px;
+    margin-right: 6px;
+    color: rgba(255, 195, 130, 0.90);
+    font-size: 0.85em;
+}
+
+.katab-ollama-unload-btn:hover {
+    background-color: rgba(255, 160, 80, 0.24);
+}
+
 /* ── Selection rows (engine + DeepSeek model pickers) ───────────────────── */
 .katab-selection-row {
     spacing: 10px;
@@ -4020,6 +4043,20 @@
 
 .katab-theme-light .katab-preset-empty-label {
     color: rgba(0, 0, 0, 0.34);
+}
+
+.katab-theme-light .katab-picker-section-title {
+    color: rgba(0, 0, 0, 0.48);
+}
+
+.katab-theme-light .katab-ollama-unload-btn {
+    background-color: rgba(180, 90, 20, 0.10);
+    border-color: rgba(180, 90, 20, 0.24);
+    color: rgba(160, 75, 10, 0.90);
+}
+
+.katab-theme-light .katab-ollama-unload-btn:hover {
+    background-color: rgba(180, 90, 20, 0.18);
 }
 
 /* ════════════════════════════════════════════

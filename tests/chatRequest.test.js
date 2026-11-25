@@ -7,6 +7,7 @@ import {
     buildDeepSeekStreamRequest,
     buildOllamaStreamRequest,
     buildOllamaPreloadRequest,
+    buildOllamaUnloadRequest,
 } from '../src/providers/chatRequest.js';
 // Side-effect import: registers all tool definitions so buildToolSchemasFor
 // resolves real schemas (extension.js imports it the same way).
@@ -36,7 +37,7 @@ function makeGetOpt(values = {}) {
 
 const tests = [
     [
-        'ollama options: builds the full sampling/context set',
+        'ollama options: builds modern sampling/context/seed/stop set and omits deprecated/zero-thread keys',
         () => {
             const options = buildOllamaOptions(
                 makeGetOpt({
@@ -45,27 +46,66 @@ const tests = [
                     'num-predict': -1,
                     'num-keep': 0,
                     'use-mmap': true,
-                    'use-mlock': false,
                     'num-gpu': -1,
-                    'num-thread': 4,
+                    'num-thread': 0,
                     'top-k': 40,
                     'top-p': 0.9,
                     'min-p': 0.05,
-                    'tfs-z': 1.0,
-                    mirostat: 0,
-                    'mirostat-tau': 5.0,
-                    'mirostat-eta': 0.1,
+                    seed: 42,
+                    stop: 'END, ###',
                     'repeat-last-n': 64,
                     'repeat-penalty': 1.1,
                     'presence-penalty': 0.0,
                     'frequency-penalty': 0.0,
                 }),
             );
-            assertEqual(Object.keys(options).length, 19, 'all 19 keys present');
+            assertEqual(
+                Object.keys(options).length,
+                15,
+                'all 15 active keys present (num_thread=0 omitted)',
+            );
             assertEqual(options.temperature, 0.7, 'temperature');
             assertEqual(options.num_ctx, 8192, 'num_ctx');
             assertEqual(options.use_mmap, true, 'use_mmap');
             assertEqual(options.repeat_last_n, 64, 'repeat_last_n unchanged');
+            assertEqual(options.seed, 42, 'seed forwarded');
+            assertEqual(options.stop.join(','), 'END,###', 'stop sequences parsed');
+            assert(!('num_thread' in options), 'num_thread=0 omitted for auto-detect');
+            assert(!('mirostat' in options), 'deprecated mirostat removed');
+            assert(!('tfs_z' in options), 'deprecated tfs_z removed');
+            assert(!('use_mlock' in options), 'deprecated use_mlock removed');
+
+            const defaultsMode = buildOllamaOptions(
+                makeGetOpt({
+                    temperature: 0.7,
+                    'num-ctx': 8192,
+                    'top-k': 40,
+                    seed: 7,
+                }),
+                { useModelDefaults: true },
+            );
+            assertEqual(defaultsMode.num_ctx, 8192, 'num_ctx kept in model defaults mode');
+            assertEqual(defaultsMode.seed, 7, 'seed kept in model defaults mode');
+            assert(
+                !('temperature' in defaultsMode),
+                'temperature omitted when useModelDefaults=true',
+            );
+            assert(!('top_k' in defaultsMode), 'top_k omitted when useModelDefaults=true');
+
+            const runnerOnly = buildOllamaOptions(
+                makeGetOpt({
+                    temperature: 0.7,
+                    'num-ctx': 8192,
+                    'num-gpu': -1,
+                    'num-thread': 8,
+                    seed: 7,
+                }),
+                { runnerOnly: true },
+            );
+            assertEqual(runnerOnly.num_ctx, 8192, 'runnerOnly keeps num_ctx');
+            assertEqual(runnerOnly.num_thread, 8, 'runnerOnly keeps positive num_thread');
+            assert(!('temperature' in runnerOnly), 'runnerOnly omits samplers');
+            assert(!('seed' in runnerOnly), 'runnerOnly omits seed');
         },
     ],
 
@@ -387,7 +427,7 @@ const tests = [
     ],
 
     [
-        'ollama: endpoint, payload, format/raw conditionals',
+        'ollama: endpoint, payload, think omission/levels, structured format, auth',
         () => {
             const built = buildOllamaStreamRequest({
                 baseUrl: 'http://localhost:11434',
@@ -397,35 +437,34 @@ const tests = [
             });
             assertEqual(built.endpoint, 'http://localhost:11434/api/chat', 'endpoint suffix');
             assertEqual(built.headers['Content-Type'], 'application/json', 'content type');
-            assert(!('Authorization' in built.headers), 'no auth for local ollama');
+            assert(!('Authorization' in built.headers), 'no auth for local ollama without key');
             assertEqual(built.payload.model, 'llama3', 'model');
             assertEqual(built.payload.stream, true, 'stream');
             assertEqual(built.payload.keep_alive, '5m', 'default keep alive');
-            assertEqual(built.payload.think, true, 'default think');
+            assert(!('think' in built.payload), 'think omitted when undefined');
             assertEqual(built.payload.options.temperature, 0.7, 'options passed through');
             assert(!('format' in built.payload), 'no format when empty');
-            assert(!('raw' in built.payload), 'no raw when false');
+            assert(!('raw' in built.payload), 'raw never emitted on /api/chat');
 
-            const withFormat = buildOllamaStreamRequest({
-                baseUrl: 'http://localhost:11434/api/chat',
-                model: 'm',
+            const withSchemaAndAuth = buildOllamaStreamRequest({
+                baseUrl: 'https://ollama.com/api/chat',
+                apiKey: 'ol-key',
+                model: 'gemma4:31b',
                 messages: [],
                 keepAlive: '999999h',
-                think: false,
-                format: 'json',
-                raw: true,
+                think: 'high',
+                format: { type: 'object', properties: { answer: { type: 'string' } } },
             });
-            // Endpoint normalization strips trailing slashes before the suffix
-            // check, so an already-suffixed base URL keeps exactly one suffix.
             assertEqual(
-                withFormat.endpoint,
-                'http://localhost:11434/api/chat',
+                withSchemaAndAuth.endpoint,
+                'https://ollama.com/api/chat',
                 'suffix not doubled',
             );
-            assertEqual(withFormat.payload.keep_alive, '999999h', 'keep alive override');
-            assertEqual(withFormat.payload.think, false, 'think override');
-            assertEqual(withFormat.payload.format, 'json', 'format set');
-            assertEqual(withFormat.payload.raw, true, 'raw set');
+            assertEqual(withSchemaAndAuth.headers['Authorization'], 'Bearer ol-key', 'bearer auth');
+            assertEqual(withSchemaAndAuth.payload.keep_alive, '999999h', 'keep alive override');
+            assertEqual(withSchemaAndAuth.payload.think, 'high', 'think level forwarded');
+            assertEqual(withSchemaAndAuth.payload.format.type, 'object', 'JSON schema format set');
+            assert(!('options' in withSchemaAndAuth.payload), 'empty options omitted');
         },
     ],
 
@@ -526,6 +565,16 @@ const tests = [
                 'http://localhost:11434/api/generate',
                 'chat base URL mapped to generate',
             );
+
+            const unload = buildOllamaUnloadRequest({
+                baseUrl: 'http://localhost:11434/api',
+                apiKey: 'secret',
+                model: 'qwen3',
+            });
+            assertEqual(unload.endpoint, 'http://localhost:11434/api/generate', 'unload endpoint');
+            assertEqual(unload.headers['Authorization'], 'Bearer secret', 'unload auth');
+            assertEqual(unload.payload.keep_alive, 0, 'keep_alive 0 unloads');
+            assertEqual(unload.payload.prompt, '', 'empty prompt');
         },
     ],
 

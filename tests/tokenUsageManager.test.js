@@ -517,10 +517,25 @@ tests.push(
     ],
 
     [
-        'isLocalModelEndpoint: Ollama and Unsloth defaults',
+        'isLocalModelEndpoint: Ollama and Unsloth defaults, cloud endpoints and :cloud models',
         () => {
             assertEqual(isLocalModelEndpoint('ollama', ''), true, 'ollama default local');
             assertEqual(isLocalModelEndpoint('unsloth', ''), true, 'unsloth default local');
+            assertEqual(
+                isLocalModelEndpoint('ollama', 'https://ollama.com'),
+                false,
+                'ollama.com is cloud',
+            );
+            assertEqual(
+                isLocalModelEndpoint('ollama', 'http://localhost:11434', 'gemma4:31b:cloud'),
+                false,
+                ':cloud model tag is cloud',
+            );
+            assertEqual(
+                isLocalModelEndpoint('ollama', 'http://localhost:11434', 'qwen3:8b'),
+                true,
+                'local tag on localhost is local',
+            );
         },
     ],
 

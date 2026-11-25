@@ -6,6 +6,7 @@ import Gtk from 'gi://Gtk';
 import Soup from 'gi://Soup?version=3.0';
 
 import { gettext as _, format } from '../../shared/i18n.js';
+import { resolveOllamaEndpoint } from '../../providers/ollamaCapabilities.js';
 
 export function buildDeepSeekPage(ctx) {
     const {
@@ -221,8 +222,12 @@ export function buildDeepSeekPage(ctx) {
             const session = new Soup.Session();
             session.timeout = 8;
             activeSessions.add(session);
-            const message = Soup.Message.new('GET', `${ollamaUrl}/api/tags`);
+            const message = Soup.Message.new('GET', resolveOllamaEndpoint(ollamaUrl, '/api/tags'));
             message.request_headers.append('Accept', 'application/json');
+            const ollamaApiKey = (settings.get_string('ollama-api-key') || '').trim();
+            if (ollamaApiKey) {
+                message.request_headers.append('Authorization', `Bearer ${ollamaApiKey}`);
+            }
             const btn = visionOllamaPickerRow.activatable_widget;
             if (btn) {
                 btn.set_label(_('Loading…'));

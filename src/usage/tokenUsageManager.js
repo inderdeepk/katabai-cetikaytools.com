@@ -11,6 +11,7 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
 import { isBlockedHost } from '../shared/networkGuard.js';
+import { isOllamaCloudModel } from '../providers/ollamaCapabilities.js';
 import { gettext as _ } from '../shared/i18n.js';
 import {
     createEmptyCollectionState,
@@ -351,7 +352,10 @@ function trimTrailingZero(text) {
 
 // ── Locality ─────────────────────────────────────────────────────────────────
 
-export function isLocalModelEndpoint(provider, rawUrl) {
+export function isLocalModelEndpoint(provider, rawUrl, model = '') {
+    if (provider === 'ollama' && isOllamaCloudModel(model)) {
+        return false;
+    }
     const url = (rawUrl || '').trim();
     if (!url) return provider === 'ollama' || provider === 'unsloth';
     let host = '';

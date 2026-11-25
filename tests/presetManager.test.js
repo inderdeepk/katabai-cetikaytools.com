@@ -53,7 +53,7 @@ const tests = [
     [
         'PRESET_SETTINGS: all entries have required fields',
         () => {
-            assert(PRESET_SETTINGS.length >= 26, 'at least 26 preset keys');
+            assert(PRESET_SETTINGS.length >= 25, 'at least 25 preset keys');
             const validTypes = new Set(['string', 'int', 'boolean', 'double']);
             for (const entry of PRESET_SETTINGS) {
                 assert(
@@ -422,6 +422,29 @@ const tests = [
                 'unknown id → null',
             );
             assertDeepEqual(loadPresets(), before, 'store untouched');
+        },
+    ],
+
+    [
+        'legacy preset keys (raw/mirostat/tfs-z/use-mlock) are safely ignored on apply and match',
+        () => {
+            const settings = createMockSettings({
+                'ollama-model': 'gemma4',
+                'ollama-num-ctx': 8192,
+            });
+            const legacy = {
+                id: 'legacy_1',
+                name: 'Legacy',
+                model: 'gemma4',
+                'num-ctx': 8192,
+                raw: true,
+                mirostat: 1,
+                'tfs-z': 0.9,
+                'use-mlock': true,
+            };
+            applyPresetToSettings(settings, legacy);
+            assertEqual(settings.get_string('ollama-model'), 'gemma4', 'known key applied');
+            assert(settingsMatchPreset(settings, legacy), 'legacy unknown keys ignored on match');
         },
     ],
 

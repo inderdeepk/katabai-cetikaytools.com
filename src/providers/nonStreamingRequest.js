@@ -9,6 +9,8 @@
 // an already-suffixed base URL (e.g. "http://host/api/chat") keeps its single
 // suffix instead of receiving a second one.  Keep in sync with chatRequest.js.
 
+import { resolveOllamaEndpoint } from './ollamaCapabilities.js';
+
 /**
  * Build the HTTP request for a non-streaming chat completion.
  *
@@ -21,6 +23,10 @@
  * @param {number} [options.maxTokens]
  * @param {number} [options.ollamaNumPredict]  explicit Ollama num_predict cap
  *   (OpenAI-compatible dialects use maxTokens; Ollama has no max_tokens field)
+ * @param {string|number|null} [options.ollamaKeepAlive]  Ollama keep_alive value
+ * @param {object|null} [options.ollamaOptions]  Ollama runner options (num_ctx, num_gpu, etc.)
+ * @param {boolean|string|undefined} [options.ollamaThink]  resolved Ollama think parameter (omitted when undefined)
+ * @param {string|object|undefined} [options.ollamaFormat]  Ollama format ('json' or JSON schema)
  * @returns {{ url: string, headers: Record<string,string>, payload: object }}
  */
 export function buildNonStreamingChatRequest({
@@ -31,6 +37,10 @@ export function buildNonStreamingChatRequest({
     messages,
     maxTokens = 256,
     ollamaNumPredict = null,
+    ollamaKeepAlive = null,
+    ollamaOptions = null,
+    ollamaThink = undefined,
+    ollamaFormat = undefined,
 }) {
     let endpoint = String(baseUrl ?? '').replace(/\/+$/, '');
 
@@ -77,16 +87,27 @@ export function buildNonStreamingChatRequest({
             payload.system = systemParts.join('\n\n');
         }
     } else if (provider === 'ollama') {
-        if (!endpoint.endsWith('api/chat')) {
-            endpoint += '/api/chat';
+        endpoint = resolveOllamaEndpoint(baseUrl, '/api/chat');
+        if (apiKey) {
+            headers['Authorization'] = `Bearer ${apiKey}`;
         }
-        // Non-streaming calls (planner, gap analysis, compression) need
-        // fast, structured responses.  Disable think mode so the model
-        // produces output directly instead of getting stuck in a thinking
-        // phase that can time out or consume all output tokens.
-        payload = { model, messages, stream: false, think: false };
+        payload = { model, messages, stream: false };
+        if (ollamaKeepAlive !== null && ollamaKeepAlive !== undefined && ollamaKeepAlive !== '') {
+            payload.keep_alive = ollamaKeepAlive;
+        }
+        if (ollamaThink !== undefined && ollamaThink !== null) {
+            payload.think = ollamaThink;
+        }
+        if (ollamaFormat !== undefined && ollamaFormat !== null && ollamaFormat !== '') {
+            payload.format = ollamaFormat;
+        }
+        const mergedOptions =
+            ollamaOptions && typeof ollamaOptions === 'object' ? { ...ollamaOptions } : {};
         if (Number.isFinite(ollamaNumPredict) && ollamaNumPredict > 0) {
-            payload.options = { num_predict: ollamaNumPredict };
+            mergedOptions.num_predict = ollamaNumPredict;
+        }
+        if (Object.keys(mergedOptions).length > 0) {
+            payload.options = mergedOptions;
         }
     } else {
         // openai / unsloth / deepseek (OpenAI-compatible chat completions)

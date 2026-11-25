@@ -147,7 +147,20 @@ import {
     buildDeepSeekStreamRequest,
     buildOllamaStreamRequest,
     buildOllamaPreloadRequest,
+    buildOllamaUnloadRequest,
 } from './src/providers/chatRequest.js';
+import {
+    resolveOllamaEndpoint,
+    isOllamaCloudEndpoint,
+    looksLikeOllamaVisionModel,
+    parseOllamaShowResponse,
+    resolveOllamaThinkParam,
+    parseOllamaFormat,
+    parseOllamaPsResponse,
+    parseOllamaTagsResponse,
+    isOllamaUnsupportedThinkingError,
+    isOllamaUnsupportedToolsError,
+} from './src/providers/ollamaCapabilities.js';
 import {
     splitThinkingTags,
     flushThinkingCarry,
@@ -646,18 +659,6 @@ const QUALITY_RETRY_MAX_FOLLOWUP_QUERIES = 2; // targeted gap queries per retry 
 // conversation to reduce context pressure.
 const COMPACT_CONVERSATION_KEEP_EXCHANGES = 6;
 
-const OLLAMA_VISION_MODEL_HINTS = [
-    'vision',
-    'llava',
-    'bakllava',
-    'moondream',
-    'minicpm-v',
-    'qwen-vl',
-    'qwen2-vl',
-    'qwen2.5-vl',
-    'internvl',
-];
-
 function getProviderLabel(provider) {
     return PROVIDER_META[provider]?.label || provider;
 }
@@ -705,38 +706,6 @@ function setProviderIcon(
 
     actor.gicon = null;
     actor.icon_name = fallbackIconName;
-}
-
-function looksLikeVisionModel(modelName) {
-    const normalized = String(modelName || '')
-        .trim()
-        .toLowerCase();
-    if (!normalized) {
-        return false;
-    }
-
-    return OLLAMA_VISION_MODEL_HINTS.some((hint) => normalized.includes(hint));
-}
-
-function normalizeCapabilityTokens(value) {
-    if (Array.isArray(value)) {
-        return value
-            .map((entry) =>
-                String(entry || '')
-                    .trim()
-                    .toLowerCase(),
-            )
-            .filter(Boolean);
-    }
-
-    if (typeof value === 'string') {
-        return value
-            .split(/[\s,]+/)
-            .map((entry) => entry.trim().toLowerCase())
-            .filter(Boolean);
-    }
-
-    return [];
 }
 
 function createProviderIcon(
@@ -834,11 +803,9 @@ function getProviderConfig(settings, provider = null) {
         baseUrl = getProviderBaseUrl(activeProvider, settings.get_string(`${activeProvider}-url`));
     } catch (_e) {}
 
-    if (activeProvider !== 'ollama') {
-        try {
-            apiKey = settings.get_string(`${activeProvider}-api-key`).trim();
-        } catch (_e) {}
-    }
+    try {
+        apiKey = settings.get_string(`${activeProvider}-api-key`).trim();
+    } catch (_e) {}
 
     try {
         model = settings.get_string(`${activeProvider}-model`).trim();
@@ -1033,7 +1000,8 @@ class ProviderHealthMonitor {
         if (
             (config.provider === 'openai' ||
                 config.provider === 'anthropic' ||
-                config.provider === 'deepseek') &&
+                config.provider === 'deepseek' ||
+                (config.provider === 'ollama' && isOllamaCloudEndpoint(config.baseUrl))) &&
             !config.apiKey
         ) {
             return this._buildState({
@@ -1049,10 +1017,14 @@ class ProviderHealthMonitor {
 
     _buildProbe(config) {
         if (config.provider === 'ollama') {
+            const headers = {};
+            if (config.apiKey) {
+                headers['Authorization'] = `Bearer ${config.apiKey}`;
+            }
             return {
                 method: 'GET',
-                url: joinUrl(config.baseUrl, '/api/tags'),
-                headers: {},
+                url: resolveOllamaEndpoint(config.baseUrl, '/api/tags'),
+                headers,
                 body: null,
             };
         }
@@ -1486,7 +1458,7 @@ class KatabDialog {
     _initStateFields() {
         this._sessionDocuments = new Map();
         this._ragReconcileRunning = false;
-        this._ollamaVisionCapabilityCache = new Map();
+        this._ollamaModelInfoCache = new Map();
         this._pendingDocuments = [];
         this._clipboardTempFiles = []; // clipboard-pasted temp files for cleanup
         this._clipboardSaveLock = null; // serialises concurrent image paste saves
@@ -1565,9 +1537,9 @@ class KatabDialog {
         this._tokenizeSession.timeout = DEFAULT_PROVIDER_TIMEOUT_SECONDS;
         // Per-provider tokenize-probe support: null = untested, true = works,
         // false = endpoint definitively missing (404/405) — skip re-probing and
-        // use the character estimate.  Ollama has no public /api/tokenize
-        // route, so its first probe normally fails and is cached here.
-        this._tokenizeSupported = { unsloth: null, ollama: null };
+        // use the character estimate.  Only Unsloth exposes a public /tokenize
+        // route; Ollama uses the fast character estimate directly.
+        this._tokenizeSupported = { unsloth: null };
         // Dedicated session for the first-prompt chat-title request so its
         // short timeout (and cancellation) can never touch an in-flight chat
         // request on the shared session.
@@ -1788,6 +1760,14 @@ class KatabDialog {
                 this._maxContextSize = 0;
                 this._fetchMaxContext();
                 this._renderTokenCounter();
+                if (ctxKey === 'ollama-model') {
+                    this._updatePresetButton();
+                }
+            });
+        }
+        for (const ollamaConnKey of ['ollama-url', 'ollama-api-key']) {
+            this._connectSetting(`changed::${ollamaConnKey}`, () => {
+                this._ollamaModelInfoCache.clear();
             });
         }
         for (const usageKey of [
@@ -2350,7 +2330,11 @@ class KatabDialog {
                 exact,
                 source,
                 status,
-                local: isLocalModelEndpoint(provider, ctx.url),
+                local: isLocalModelEndpoint(
+                    provider,
+                    ctx.url,
+                    ctx.model || responseState.modelName || '',
+                ),
             });
             TokenUsageManager.prune(this._settings.get_int('token-usage-retention-days'));
             this._updateHeaderPetSprite();
@@ -5023,62 +5007,45 @@ class KatabDialog {
         this._attachmentBox.show();
     }
 
-    _extractOllamaVisionCapability(payload) {
-        const capabilityFields = [
-            payload?.capabilities,
-            payload?.details?.capabilities,
-            payload?.model_info?.capabilities,
-        ];
-
-        const tokens = capabilityFields.flatMap((field) => normalizeCapabilityTokens(field));
-        if (tokens.length > 0) {
-            return (
-                tokens.includes('vision') ||
-                tokens.includes('image') ||
-                tokens.includes('multimodal')
-            );
+    _getOllamaApiKey() {
+        try {
+            return (this._settings.get_string('ollama-api-key') || '').trim();
+        } catch (_e) {
+            return '';
         }
-
-        const payloadText = JSON.stringify(payload || {}).toLowerCase();
-        if (!payloadText) {
-            return null;
-        }
-
-        if (
-            payloadText.includes('"vision"') ||
-            payloadText.includes('projector') ||
-            payloadText.includes('.vision.') ||
-            payloadText.includes('_vision_') ||
-            payloadText.includes('vision.block_count')
-        ) {
-            return true;
-        }
-
-        return null;
     }
 
-    async _ollamaModelSupportsVision(model, { cancellable = null } = {}) {
-        if (looksLikeVisionModel(model)) {
-            return true;
+    _getOllamaCacheKey(baseUrl, model) {
+        return `${trimTrailingSlash(baseUrl)}::${String(model || '').trim()}`;
+    }
+
+    _getCachedOllamaModelInfo(model) {
+        const baseUrl =
+            (this._settings.get_string('ollama-url') || '').trim() || 'http://127.0.0.1:11434';
+        const cacheKey = this._getOllamaCacheKey(baseUrl, model);
+        return this._ollamaModelInfoCache.get(cacheKey) || null;
+    }
+
+    async _getOllamaModelInfo(model, { cancellable = null, forceRefresh = false } = {}) {
+        const targetModel = String(model || '').trim();
+        if (!targetModel) return null;
+
+        const baseUrl =
+            (this._settings.get_string('ollama-url') || '').trim() || 'http://127.0.0.1:11434';
+        const cacheKey = this._getOllamaCacheKey(baseUrl, targetModel);
+        if (!forceRefresh && this._ollamaModelInfoCache.has(cacheKey)) {
+            return this._ollamaModelInfoCache.get(cacheKey);
         }
 
-        let baseUrl = this._settings.get_string('ollama-url') || 'http://127.0.0.1:11434';
-        const cacheKey = `${trimTrailingSlash(baseUrl)}::${String(model || '').trim()}`;
-        if (this._ollamaVisionCapabilityCache.has(cacheKey)) {
-            return this._ollamaVisionCapabilityCache.get(cacheKey);
-        }
-
-        let endpoint = baseUrl;
-        if (!endpoint.endsWith('/')) {
-            endpoint += '/';
-        }
-        if (!endpoint.endsWith('api/show')) {
-            endpoint += 'api/show';
-        }
+        const endpoint = resolveOllamaEndpoint(baseUrl, '/api/show');
+        const apiKey = this._getOllamaApiKey();
 
         try {
-            const bodyBytes = new GLib.Bytes(JSON.stringify({ model }));
+            const bodyBytes = new GLib.Bytes(JSON.stringify({ model: targetModel }));
             const message = Soup.Message.new('POST', endpoint);
+            if (apiKey) {
+                message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
+            }
             message.set_request_body_from_bytes('application/json', bodyBytes);
 
             const bytes = await new Promise((resolve, reject) => {
@@ -5097,18 +5064,119 @@ class KatabDialog {
             });
 
             if (message.status_code !== 200) {
-                this._ollamaVisionCapabilityCache.set(cacheKey, null);
                 return null;
             }
 
             const responseText = new TextDecoder('utf-8').decode(bytes.get_data());
             const payload = JSON.parse(responseText);
-            const supportsVision = this._extractOllamaVisionCapability(payload);
-            this._ollamaVisionCapabilityCache.set(cacheKey, supportsVision);
-            return supportsVision;
+            const info = parseOllamaShowResponse(payload, targetModel);
+            if (this._ollamaModelInfoCache.size >= 64) {
+                const oldestKey = this._ollamaModelInfoCache.keys().next().value;
+                if (oldestKey !== undefined) {
+                    this._ollamaModelInfoCache.delete(oldestKey);
+                }
+            }
+            this._ollamaModelInfoCache.set(cacheKey, info);
+            return info;
         } catch (_error) {
-            this._ollamaVisionCapabilityCache.set(cacheKey, null);
             return null;
+        }
+    }
+
+    async _ollamaModelSupportsVision(model, { cancellable = null } = {}) {
+        if (looksLikeOllamaVisionModel(model)) {
+            return true;
+        }
+        const info = await this._getOllamaModelInfo(model, { cancellable });
+        if (info && info.vision !== null) {
+            return info.vision;
+        }
+        return null;
+    }
+
+    async _fetchOllamaModelsAndRunning() {
+        const baseUrl =
+            (this._settings.get_string('ollama-url') || '').trim() || 'http://127.0.0.1:11434';
+        const apiKey = this._getOllamaApiKey();
+        const activeModel = (this._settings.get_string('ollama-model') || '').trim();
+
+        const fetchJson = async (path) => {
+            const endpoint = resolveOllamaEndpoint(baseUrl, path);
+            const message = Soup.Message.new('GET', endpoint);
+            if (apiKey) {
+                message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
+            }
+            const bytes = await new Promise((resolve, reject) => {
+                this._soupSession.send_and_read_async(
+                    message,
+                    GLib.PRIORITY_DEFAULT,
+                    null,
+                    (session, res) => {
+                        try {
+                            resolve(session.send_and_read_finish(res));
+                        } catch (err) {
+                            reject(err);
+                        }
+                    },
+                );
+            });
+            if (message.status_code < 200 || message.status_code >= 300) {
+                throw new Error(`HTTP ${message.status_code}`);
+            }
+            return JSON.parse(new TextDecoder('utf-8').decode(bytes.get_data()));
+        };
+
+        const [tagsRes, psRes, activeInfo] = await Promise.allSettled([
+            fetchJson('/api/tags'),
+            fetchJson('/api/ps'),
+            activeModel ? this._getOllamaModelInfo(activeModel) : Promise.resolve(null),
+        ]);
+
+        const models = tagsRes.status === 'fulfilled' ? parseOllamaTagsResponse(tagsRes.value) : [];
+        const running = psRes.status === 'fulfilled' ? parseOllamaPsResponse(psRes.value) : [];
+        const info = activeInfo.status === 'fulfilled' ? activeInfo.value : null;
+        const error =
+            tagsRes.status === 'rejected'
+                ? tagsRes.reason?.message || 'Could not reach Ollama'
+                : null;
+
+        return { models, running, activeInfo: info, error };
+    }
+
+    async _unloadOllamaModel(modelName) {
+        const target = String(modelName || '').trim();
+        if (!target) return false;
+        const baseUrl =
+            (this._settings.get_string('ollama-url') || '').trim() || 'http://127.0.0.1:11434';
+        const apiKey = this._getOllamaApiKey();
+        const built = buildOllamaUnloadRequest({ baseUrl, apiKey, model: target });
+
+        try {
+            const message = Soup.Message.new('POST', built.endpoint);
+            for (const key in built.headers) {
+                message.get_request_headers().append(key, built.headers[key]);
+            }
+            message.set_request_body_from_bytes(
+                'application/json',
+                new GLib.Bytes(new TextEncoder().encode(JSON.stringify(built.payload))),
+            );
+            await new Promise((resolve, reject) => {
+                this._soupSession.send_and_read_async(
+                    message,
+                    GLib.PRIORITY_DEFAULT,
+                    null,
+                    (session, res) => {
+                        try {
+                            resolve(session.send_and_read_finish(res));
+                        } catch (err) {
+                            reject(err);
+                        }
+                    },
+                );
+            });
+            return message.status_code >= 200 && message.status_code < 300;
+        } catch (_e) {
+            return false;
         }
     }
 
@@ -5473,6 +5541,17 @@ class KatabDialog {
             },
             getDeepseekModelButton: () => this._deepseekModelBtn,
             getDeepseekModelButtonLabel: () => this._deepseekModelBtnLabel,
+            fetchOllamaModels: () => this._fetchOllamaModelsAndRunning(),
+            unloadOllamaModel: (modelName) => this._unloadOllamaModel(modelName),
+            selectOllamaModel: (modelName) => {
+                if (!modelName) return;
+                if (this._settings.get_string('ollama-model') !== modelName) {
+                    this._settings.set_string('ollama-model', modelName);
+                }
+                this._updatePresetButton();
+                this._getOllamaModelInfo(modelName).catch(() => {});
+            },
+            getCachedOllamaModelInfo: (modelName) => this._getCachedOllamaModelInfo(modelName),
         };
     }
 
@@ -6886,47 +6965,29 @@ class KatabDialog {
             this._renderTokenCounter();
         };
 
-        const canProbe =
-            (provider === 'unsloth' || provider === 'ollama') &&
-            this._tokenizeSupported[provider] !== false;
+        const canProbe = provider === 'unsloth' && this._tokenizeSupported[provider] !== false;
 
         if (canProbe) {
             let statusCode = 0;
             try {
-                let url;
-                if (provider === 'unsloth') {
-                    let baseUrl =
-                        this._settings.get_string('unsloth-url') || 'http://localhost:8888/v1';
-                    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-                    if (baseUrl.endsWith('/v1')) baseUrl = baseUrl.slice(0, -3);
-                    url = baseUrl + '/tokenize';
-                } else {
-                    let baseUrl =
-                        this._settings.get_string('ollama-url') || 'http://127.0.0.1:11434';
-                    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-                    url = baseUrl + '/api/tokenize';
-                }
-
-                let body =
-                    provider === 'ollama'
-                        ? JSON.stringify({
-                              model: this._settings.get_string('ollama-model') || 'llama3',
-                              prompt: text,
-                          })
-                        : JSON.stringify({ content: text });
+                let baseUrl =
+                    this._settings.get_string('unsloth-url') || 'http://localhost:8888/v1';
+                if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+                if (baseUrl.endsWith('/v1')) baseUrl = baseUrl.slice(0, -3);
+                const url = baseUrl + '/tokenize';
+                const body = JSON.stringify({ content: text });
 
                 let message = Soup.Message.new('POST', url);
                 message.set_request_body_from_bytes(
                     'application/json',
                     new GLib.Bytes(new TextEncoder().encode(body)),
                 );
-                if (provider === 'unsloth') {
-                    let apiKey = '';
-                    try {
-                        apiKey = this._settings.get_string('unsloth-api-key');
-                    } catch (_e) {}
-                    if (apiKey)
-                        message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
+                let apiKey = '';
+                try {
+                    apiKey = this._settings.get_string('unsloth-api-key');
+                } catch (_e) {}
+                if (apiKey) {
+                    message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
                 }
 
                 let bytes = await new Promise((resolve, reject) => {
@@ -7161,6 +7222,63 @@ class KatabDialog {
                   ? 'active'
                   : 'empty';
 
+        let ollamaModelInfo = null;
+        if (this._currentProvider === 'ollama') {
+            const activeModel = (this._settings.get_string('ollama-model') || '').trim();
+            if (activeModel) {
+                const cached = this._getCachedOllamaModelInfo(activeModel);
+                if (!cached) {
+                    this._getOllamaModelInfo(activeModel)
+                        .then((info) => {
+                            if (info && this._sessionInfoPopup?.visible) {
+                                this._refreshSessionInfoPopup();
+                            }
+                        })
+                        .catch(() => {});
+                }
+                const thinkEnabled = this._settings.get_boolean('ollama-think');
+                const thinkLevel = this._settings.get_string('ollama-think-level') || 'auto';
+                const resolvedThink = cached
+                    ? resolveOllamaThinkParam({
+                          enabled: thinkEnabled,
+                          level: thinkLevel,
+                          capabilities: cached,
+                      })
+                    : undefined;
+                const capLabels = [];
+                if (cached?.vision) capLabels.push('Vision');
+                if (cached?.tools) capLabels.push('Tools');
+                if (cached?.thinking) capLabels.push('Thinking');
+                ollamaModelInfo = {
+                    model: activeModel,
+                    parameterSize: cached?.parameterSize || '',
+                    quantizationLevel: cached?.quantizationLevel || '',
+                    capabilities:
+                        cached === null
+                            ? 'Inspecting…'
+                            : capLabels.length > 0
+                              ? capLabels.join(' · ')
+                              : 'Text only',
+                    nativeContext:
+                        cached?.contextLength > 0
+                            ? this._formatTokenCount(cached.contextLength)
+                            : '—',
+                    thinkStatus:
+                        cached === null
+                            ? thinkEnabled
+                                ? thinkLevel
+                                : 'Off'
+                            : cached.thinking === false
+                              ? 'Unsupported'
+                              : resolvedThink === undefined || resolvedThink === false
+                                ? 'Off'
+                                : resolvedThink === true
+                                  ? 'On'
+                                  : String(resolvedThink),
+                };
+            }
+        }
+
         return {
             contextWindow: {
                 used,
@@ -7189,6 +7307,7 @@ class KatabDialog {
                 pct: memoryPct,
                 status: memoryStatus,
             },
+            ollamaModel: ollamaModelInfo,
             research: hasResearch
                 ? {
                       cumulative: researchCumulative,
@@ -8727,7 +8846,7 @@ class KatabDialog {
     }
 
     /** Ollama sampling/context options from the current settings. */
-    _buildOllamaOptionsFromSettings() {
+    _buildOllamaOptionsFromSettings({ runnerOnly = false } = {}) {
         const getOpt = (prop, type) => {
             try {
                 return this._settings[`get_${type}`](`ollama-${prop}`);
@@ -8735,7 +8854,11 @@ class KatabDialog {
                 return null;
             }
         };
-        return buildOllamaOptions(getOpt);
+        let useModelDefaults = false;
+        try {
+            useModelDefaults = this._settings.get_boolean('ollama-use-model-defaults');
+        } catch (_e) {}
+        return buildOllamaOptions(getOpt, { runnerOnly, useModelDefaults });
     }
 
     _preloadOllamaModel() {
@@ -8750,11 +8873,13 @@ class KatabDialog {
 
         let model = '';
         let baseUrl = '';
+        let apiKey = '';
         let keepAlive = '5m';
         let options = {};
         try {
             model = (this._settings.get_string('ollama-model') || '').trim();
             baseUrl = (this._settings.get_string('ollama-url') || '').trim();
+            apiKey = this._getOllamaApiKey();
             keepAlive = normalizeOllamaKeepAlive(
                 this._settings.get_string('ollama-keep-alive') || '5m',
             );
@@ -8763,6 +8888,8 @@ class KatabDialog {
             return;
         }
         if (!model || !baseUrl) return;
+        // Never preload cloud-hosted or `:cloud` models.
+        if (!isLocalModelEndpoint('ollama', baseUrl, model)) return;
         // A zero keep-alive unloads the model immediately — nothing to warm.
         if (keepAlive === '0' || keepAlive === '0s') return;
 
@@ -8770,7 +8897,7 @@ class KatabDialog {
         this._modelPreloadAt = Date.now();
         this._modelPreloadInFlight = true;
 
-        const built = buildOllamaPreloadRequest({ baseUrl, model, keepAlive, options });
+        const built = buildOllamaPreloadRequest({ baseUrl, apiKey, model, keepAlive, options });
         let message;
         try {
             message = Soup.Message.new('POST', built.endpoint);
@@ -8822,7 +8949,17 @@ class KatabDialog {
     /** Local model backends serve one request at a time, so a cold model
      *  makes any concurrent request wait behind it. */
     _isLocalChatProvider(provider = this._currentProvider) {
-        return provider === 'ollama' || provider === 'unsloth';
+        if (provider === 'unsloth') return true;
+        if (provider === 'ollama') {
+            try {
+                const url = this._settings.get_string('ollama-url') || '';
+                const model = this._settings.get_string('ollama-model') || '';
+                return isLocalModelEndpoint('ollama', url, model);
+            } catch (_e) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Warm-up row slow-wait hint while the model reply is pending. */
@@ -14624,11 +14761,9 @@ class KatabDialog {
         const provider = this._settings.get_string('provider');
         let url = this._settings.get_string(`${provider}-url`);
         let apiKey = '';
-        if (provider !== 'ollama') {
-            try {
-                apiKey = this._settings.get_string(`${provider}-api-key`);
-            } catch (e) {}
-        }
+        try {
+            apiKey = this._settings.get_string(`${provider}-api-key`).trim();
+        } catch (e) {}
         let model = this._settings.get_string(`${provider}-model`);
 
         // ── Synthesis model switching (DeepSeek V4 Pro → Flash) ───────────
@@ -14853,10 +14988,13 @@ class KatabDialog {
             // responses, so the vision model's stream is handled the same way.)
             const visionConfig = this._getVisionModelConfig();
             let visionBaseUrl;
+            let visionApiKey = visionConfig.apiKey;
             if (visionConfig.backend === DEEPSEEK_VISION_BACKEND_OLLAMA) {
                 try {
                     visionBaseUrl = this._settings.get_string('ollama-url') || '';
                 } catch (_e) {}
+                visionApiKey = this._getOllamaApiKey();
+                endpoint = resolveOllamaEndpoint(visionBaseUrl, '/v1/chat/completions');
             } else {
                 visionBaseUrl =
                     visionConfig.url ||
@@ -14867,15 +15005,18 @@ class KatabDialog {
                             return '';
                         }
                     })();
-            }
-            endpoint = visionBaseUrl;
-            if (!endpoint.endsWith('/')) endpoint += '/';
-            if (!endpoint.endsWith('chat/completions') && !endpoint.includes('chat/completions')) {
-                endpoint += 'chat/completions';
+                endpoint = visionBaseUrl;
+                if (!endpoint.endsWith('/')) endpoint += '/';
+                if (
+                    !endpoint.endsWith('chat/completions') &&
+                    !endpoint.includes('chat/completions')
+                ) {
+                    endpoint += 'chat/completions';
+                }
             }
             headers['Content-Type'] = 'application/json';
-            if (visionConfig.apiKey) {
-                headers['Authorization'] = `Bearer ${visionConfig.apiKey}`;
+            if (visionApiKey) {
+                headers['Authorization'] = `Bearer ${visionApiKey}`;
             }
             model = visionConfig.model;
             // Keep the ledger/local-classification URL pointing at the endpoint
@@ -14926,45 +15067,76 @@ class KatabDialog {
             headers = built.headers;
             payload = built.payload;
         } else if (provider === 'ollama') {
+            const ollamaModelInfo = await this._getOllamaModelInfo(model, { cancellable });
+            // User pressed Stop during the capability probe — bail instead of
+            // re-arming streaming with the cancelled cancellable, which would
+            // leave the send button stuck on "Stop".
+            if (cancellable && cancellable.is_cancelled()) {
+                return;
+            }
+
             if (requestHasImages) {
-                const supportsVision = await this._ollamaModelSupportsVision(model, {
-                    cancellable,
-                });
-                // User pressed Stop during the vision-capability probe — the stop
-                // handler already cleaned up the response state. Bail instead of
-                // re-arming streaming with the cancelled cancellable, which would
-                // leave the send button stuck on "Stop".
-                if (cancellable && cancellable.is_cancelled()) {
-                    return;
-                }
+                let supportsVision = looksLikeOllamaVisionModel(model)
+                    ? true
+                    : ollamaModelInfo && ollamaModelInfo.vision !== null
+                      ? ollamaModelInfo.vision
+                      : null;
                 if (supportsVision === false) {
                     this._renderLocalAssistantError(
                         uiElements,
-                        `The Ollama model '${model || 'unknown'}' does not appear to support image inputs. Switch to a vision-capable model such as llama3.2-vision or llava before sending image attachments.`,
+                        `The Ollama model '${model || 'unknown'}' does not appear to support image inputs. Switch to a vision-capable model such as gemma4, llama3.2-vision, qwen2.5vl, or llava before sending image attachments.`,
                     );
                     return;
                 }
             }
 
-            // Sampling/context options (null pruning + the repeat_last_n = -1
-            // sentinel translation) live in chatRequest.js.  The warm-up
-            // preload reuses the same builder so the loaded runner options
-            // match and Ollama does not reload the model on the real request.
+            // Sampling/context options (null pruning, num_thread=0 auto-detect,
+            // and repeat_last_n=-1 sentinel translation) live in chatRequest.js.
+            // The warm-up preload reuses the same builder so the loaded runner
+            // options match and Ollama does not reload the model on the real request.
             const options = this._buildOllamaOptionsFromSettings();
 
             const keepAlive = normalizeOllamaKeepAlive(
                 this._settings.get_string('ollama-keep-alive'),
             );
-            const responseFormat = this._settings.get_string('ollama-format');
-            const rawMode = this._settings.get_boolean('ollama-raw');
+            const responseFormat = parseOllamaFormat(
+                this._settings.get_string('ollama-format'),
+                this._settings.get_string('ollama-format-schema'),
+            );
+
             // Disable think mode during forced synthesis — the model's thinking
             // phase can consume all available output tokens when processing
             // large tool-result contexts, leaving nothing for the actual answer.
-            // This mirrors the DeepSeek pattern where thinking is disabled when
-            // synthesis is forced and tools are removed.
-            const thinkMode = this._forceSynthesisActive
-                ? false
-                : this._settings.get_boolean('ollama-think');
+            // And omit `think` altogether when the model does not advertise
+            // thinking capability so standard models never fail with HTTP 400.
+            const resolvedThink = resolveOllamaThinkParam({
+                enabled: this._settings.get_boolean('ollama-think'),
+                level: this._settings.get_string('ollama-think-level') || 'auto',
+                capabilities: ollamaModelInfo,
+                forceDisable: this._forceSynthesisActive,
+            });
+
+            // Gate tool advertisement when `/api/show` reports the model lacks
+            // `tools` capability so Ollama does not reject with HTTP 400.
+            let ollamaAdvertise = builderAdvertise;
+            if (ollamaModelInfo?.tools === false) {
+                const anyAdvertised =
+                    builderAdvertise.webSearch ||
+                    builderAdvertise.crawl ||
+                    builderAdvertise.exploreDocs ||
+                    builderAdvertise.rag;
+                if (anyAdvertised) {
+                    log(
+                        `[Katab:ollama] Model '${model}' does not advertise 'tools' capability — suppressing tool schemas.`,
+                    );
+                }
+                ollamaAdvertise = {
+                    webSearch: false,
+                    crawl: false,
+                    exploreDocs: false,
+                    rag: false,
+                };
+            }
 
             let ollamaSystemPrompt = DEFAULT_OLLAMA_SYSTEM_PROMPT;
             try {
@@ -14980,14 +15152,14 @@ class KatabDialog {
 
             const built = buildOllamaStreamRequest({
                 baseUrl: url,
+                apiKey,
                 model,
                 messages: ollamaMessages,
                 keepAlive,
-                think: thinkMode,
+                think: resolvedThink,
                 format: responseFormat,
-                raw: rawMode,
                 options,
-                advertise: builderAdvertise,
+                advertise: ollamaAdvertise,
                 toolNames: builderToolNames,
             });
             endpoint = built.endpoint;
@@ -15108,6 +15280,65 @@ class KatabDialog {
                             currentCancellable,
                         );
                         const summaryText = extractErrorSummary(responseBody);
+
+                        // Automatic Ollama HTTP 400 capability recovery: if an
+                        // older Ollama or proxy omitted `capabilities` and
+                        // rejected `think` or `tools`, cache the negative
+                        // capability and retry once cleanly.
+                        if (
+                            provider === 'ollama' &&
+                            message.status_code === 400 &&
+                            retryAttempt < 1
+                        ) {
+                            const cacheKey = this._getOllamaCacheKey(url, model);
+                            const existingInfo = this._ollamaModelInfoCache.get(cacheKey) || {
+                                capabilities: [],
+                                vision: null,
+                                tools: null,
+                                thinking: null,
+                                thinkingValues: null,
+                                thinkingDefault: null,
+                                contextLength: null,
+                                family: '',
+                                parameterSize: '',
+                                quantizationLevel: '',
+                            };
+                            if (
+                                payload.think !== undefined &&
+                                isOllamaUnsupportedThinkingError(summaryText)
+                            ) {
+                                this._ollamaModelInfoCache.set(cacheKey, {
+                                    ...existingInfo,
+                                    thinking: false,
+                                });
+                                log(
+                                    `[Katab:ollama] Model '${model}' rejected 'think' parameter — caching thinking=false and retrying.`,
+                                );
+                                this._startStreamResponse(uiElements, {
+                                    cancellable: currentCancellable,
+                                    retryAttempt: retryAttempt + 1,
+                                });
+                                return;
+                            }
+                            if (
+                                Array.isArray(payload.tools) &&
+                                payload.tools.length > 0 &&
+                                isOllamaUnsupportedToolsError(summaryText)
+                            ) {
+                                this._ollamaModelInfoCache.set(cacheKey, {
+                                    ...existingInfo,
+                                    tools: false,
+                                });
+                                log(
+                                    `[Katab:ollama] Model '${model}' rejected 'tools' parameter — caching tools=false and retrying.`,
+                                );
+                                this._startStreamResponse(uiElements, {
+                                    cancellable: currentCancellable,
+                                    retryAttempt: retryAttempt + 1,
+                                });
+                                return;
+                            }
+                        }
 
                         if (
                             provider === 'deepseek' &&
@@ -15609,6 +15840,15 @@ class KatabDialog {
                         : 'The model was unable to synthesize a response.\n\n**Suggestions:**\n- Start a new chat and rephrase your request.';
             }
         }
+        if (
+            provider === 'ollama' &&
+            responseState._ollamaDoneReason === 'length' &&
+            finalContent &&
+            finalContent.trim()
+        ) {
+            finalContent +=
+                '\n\n*[Note: Output reached the token limit (`num_predict` or context length) before finishing.]*';
+        }
         this._applyAssistantRender(uiElements, finalContent, { final: true });
         const assistantMsg = this._buildAssistantHistoryMessage(
             finalContent,
@@ -15711,6 +15951,9 @@ class KatabDialog {
                         }
                     }
                     if (chunk.done) {
+                        if (chunk.doneReason) {
+                            responseState._ollamaDoneReason = chunk.doneReason;
+                        }
                         const metrics = chunk.metrics;
                         if (metrics) {
                             nextAssistantMeta = {
@@ -15726,13 +15969,15 @@ class KatabDialog {
 
                         if (
                             metrics &&
-                            metrics.prompt_eval_count !== null &&
-                            metrics.eval_count !== null
+                            (metrics.prompt_eval_count !== null || metrics.eval_count !== null)
                         ) {
-                            this._currentUsage += metrics.prompt_eval_count + metrics.eval_count;
-                            this._deepResearchCumulativeTokens +=
-                                metrics.prompt_eval_count + metrics.eval_count;
-                            this._renderTokenCounter();
+                            const deltaTokens =
+                                (metrics.prompt_eval_count || 0) + (metrics.eval_count || 0);
+                            if (deltaTokens > 0) {
+                                this._currentUsage += deltaTokens;
+                                this._deepResearchCumulativeTokens += deltaTokens;
+                                this._renderTokenCounter();
+                            }
                         }
                     }
                 } else if (lineStr.startsWith('data:')) {
@@ -16330,60 +16575,102 @@ class KatabDialog {
         soupSession.timeout = timeoutSeconds ?? defaultTimeout;
 
         let apiKey = '';
-        if (provider !== 'ollama') {
-            try {
-                apiKey = this._settings.get_string(`${provider}-api-key`);
-            } catch (_e) {}
-        }
+        try {
+            apiKey = this._settings.get_string(`${provider}-api-key`).trim();
+        } catch (_e) {}
 
-        // Provider request dialects (endpoint, headers, payload) live in
-        // src/providers/nonStreamingRequest.js so they stay unit-testable.
-        const request = buildNonStreamingChatRequest({
-            provider,
-            baseUrl: url,
-            model,
-            apiKey,
-            messages,
-            maxTokens,
-            ollamaNumPredict,
-        });
-        const endpoint = request.url;
-        const headers = request.headers;
-        const payload = request.payload;
-
-        const message = Soup.Message.new('POST', endpoint);
-        if (!message) {
-            return '';
-        }
-        for (const key in headers) {
-            message.get_request_headers().append(key, headers[key]);
-        }
-        message.set_request_body_from_bytes(
-            'application/json',
-            new GLib.Bytes(new TextEncoder().encode(JSON.stringify(payload))),
-        );
-
-        const bytes = await new Promise((resolve, reject) => {
-            soupSession.send_and_read_async(
-                message,
-                GLib.PRIORITY_DEFAULT,
-                cancellable,
-                (activeSession, res) => {
-                    try {
-                        resolve(activeSession.send_and_read_finish(res));
-                    } catch (e) {
-                        reject(e);
-                    }
-                },
+        let ollamaKeepAlive = null;
+        let ollamaOptions = null;
+        let ollamaThink = undefined;
+        let ollamaModelInfo = null;
+        if (provider === 'ollama') {
+            ollamaModelInfo = await this._getOllamaModelInfo(model, { cancellable });
+            if (cancellable && cancellable.is_cancelled()) {
+                return '';
+            }
+            ollamaKeepAlive = normalizeOllamaKeepAlive(
+                this._settings.get_string('ollama-keep-alive') || '5m',
             );
-        });
+            ollamaOptions = this._buildOllamaOptionsFromSettings({ runnerOnly: true });
+            ollamaThink = resolveOllamaThinkParam({
+                enabled: false,
+                capabilities: ollamaModelInfo,
+                forceDisable: true,
+            });
+        }
 
-        if (message.status_code !== 200) {
+        const sendOnce = async (thinkOverride) => {
+            const request = buildNonStreamingChatRequest({
+                provider,
+                baseUrl: url,
+                model,
+                apiKey,
+                messages,
+                maxTokens,
+                ollamaNumPredict,
+                ollamaKeepAlive,
+                ollamaOptions,
+                ollamaThink: thinkOverride,
+            });
+            const endpoint = request.url;
+            const headers = request.headers;
+            const payload = request.payload;
+
+            const message = Soup.Message.new('POST', endpoint);
+            if (!message) {
+                return { ok: false, statusCode: 0, text: '', parsed: null };
+            }
+            for (const key in headers) {
+                message.get_request_headers().append(key, headers[key]);
+            }
+            message.set_request_body_from_bytes(
+                'application/json',
+                new GLib.Bytes(new TextEncoder().encode(JSON.stringify(payload))),
+            );
+
+            const bytes = await new Promise((resolve, reject) => {
+                soupSession.send_and_read_async(
+                    message,
+                    GLib.PRIORITY_DEFAULT,
+                    cancellable,
+                    (activeSession, res) => {
+                        try {
+                            resolve(activeSession.send_and_read_finish(res));
+                        } catch (e) {
+                            reject(e);
+                        }
+                    },
+                );
+            });
+
+            const rawText = bytes ? new TextDecoder('utf-8').decode(bytes.get_data()) : '';
+            if (message.status_code !== 200) {
+                return { ok: false, statusCode: message.status_code, text: rawText, parsed: null };
+            }
+            return { ok: true, statusCode: 200, text: rawText, parsed: JSON.parse(rawText) };
+        };
+
+        let response = await sendOnce(ollamaThink);
+        if (
+            !response.ok &&
+            provider === 'ollama' &&
+            response.statusCode === 400 &&
+            ollamaThink !== undefined &&
+            isOllamaUnsupportedThinkingError(extractErrorSummary(response.text))
+        ) {
+            const cacheKey = this._getOllamaCacheKey(url, model);
+            const existing = this._ollamaModelInfoCache.get(cacheKey);
+            if (existing) {
+                this._ollamaModelInfoCache.set(cacheKey, { ...existing, thinking: false });
+            }
+            response = await sendOnce(undefined);
+        }
+
+        if (!response.ok || !response.parsed) {
             return '';
         }
 
-        const responseText = new TextDecoder('utf-8').decode(bytes.get_data());
-        const parsed = JSON.parse(responseText);
+        const parsed = response.parsed;
 
         // ── Capture token usage from non-streaming response ──────────
         // The deep research pipeline (planner, compression, gap analysis,
@@ -16433,51 +16720,39 @@ class KatabDialog {
 
         const promptText = text && text.trim() ? text : 'Describe the attached image(s) in detail.';
 
+        let headers = { 'Content-Type': 'application/json' };
+
         if (backend === DEEPSEEK_VISION_BACKEND_OLLAMA) {
             let ollamaUrl = '';
             try {
                 ollamaUrl = this._settings.get_string('ollama-url') || '';
             } catch (_e) {}
-            endpoint = ollamaUrl.trim();
-            if (!endpoint) {
+            const trimmedOllamaUrl = ollamaUrl.trim();
+            if (!trimmedOllamaUrl) {
                 return {
                     ok: false,
                     error: 'No Ollama URL configured for the vision model. Set the Ollama base URL or choose an OpenAI-compatible vision backend in the DeepSeek settings tab.',
                 };
             }
-            if (!endpoint.endsWith('/')) endpoint += '/';
-            endpoint += 'api/chat';
-
-            const getOpt = (prop, type) => {
-                try {
-                    return this._settings[`get_${type}`](`ollama-${prop}`);
-                } catch (e) {
-                    return null;
-                }
-            };
-            // Reuse the live Ollama sampling settings so a loaded Ollama preset
-            // applies to vision analysis too (native feel).
-            const options = {};
-            for (const [prop, type] of [
-                ['temperature', 'double'],
-                ['top-k', 'int'],
-                ['top-p', 'double'],
-                ['min-p', 'double'],
-                ['tfs-z', 'double'],
-                ['mirostat', 'int'],
-                ['mirostat-tau', 'double'],
-                ['mirostat-eta', 'double'],
-                ['repeat-last-n', 'int'],
-                ['repeat-penalty', 'double'],
-                ['presence-penalty', 'double'],
-                ['frequency-penalty', 'double'],
-                ['num-ctx', 'int'],
-                ['num-predict', 'int'],
-                ['num-keep', 'int'],
-            ]) {
-                const value = getOpt(prop, type);
-                if (value !== null && value !== undefined) options[prop] = value;
+            endpoint = resolveOllamaEndpoint(trimmedOllamaUrl, '/api/chat');
+            const ollamaApiKey = this._getOllamaApiKey();
+            if (ollamaApiKey) {
+                headers['Authorization'] = `Bearer ${ollamaApiKey}`;
             }
+
+            const options = this._buildOllamaOptionsFromSettings();
+            const keepAlive = normalizeOllamaKeepAlive(
+                this._settings.get_string('ollama-keep-alive') || '5m',
+            );
+            const visionModelInfo = await this._getOllamaModelInfo(model, { cancellable });
+            if (cancellable && cancellable.is_cancelled()) {
+                return { ok: false, error: 'Cancelled.' };
+            }
+            const thinkParam = resolveOllamaThinkParam({
+                enabled: false,
+                capabilities: visionModelInfo,
+                forceDisable: true,
+            });
 
             payload = {
                 model,
@@ -16489,8 +16764,9 @@ class KatabDialog {
                     },
                 ],
                 stream: false,
-                think: false,
-                options,
+                keep_alive: keepAlive,
+                ...(thinkParam !== undefined ? { think: thinkParam } : {}),
+                ...(Object.keys(options).length > 0 ? { options } : {}),
             };
         } else {
             // OpenAI-compatible vision endpoint.  Default to the DeepSeek base
@@ -16530,7 +16806,6 @@ class KatabDialog {
             };
         }
 
-        const headers = { 'Content-Type': 'application/json' };
         if (backend === DEEPSEEK_VISION_BACKEND_OPENAI && apiKey) {
             headers['Authorization'] = `Bearer ${apiKey}`;
         }
@@ -16740,6 +17015,8 @@ class KatabDialog {
             }
             if (activeProvider === 'deepseek') {
                 assistantToolMsg.reasoning_content = reasoningContent || '';
+            } else if (activeProvider === 'ollama' && reasoningContent) {
+                assistantToolMsg.thinking = reasoningContent;
             }
             pendingMessages.push(assistantToolMsg);
         }
@@ -18049,18 +18326,19 @@ class KatabDialog {
             },
         );
 
-        let provider = this._settings.get_string('provider');
-        let url = this._settings.get_string(`${provider}-url`);
-        let endpoint = url;
-        if (!endpoint.endsWith('/')) endpoint += '/';
-        endpoint += 'api/pull';
+        let url = this._settings.get_string('ollama-url') || 'http://localhost:11434';
+        const endpoint = resolveOllamaEndpoint(url, '/api/pull');
+        const apiKey = this._getOllamaApiKey();
 
         let payload = {
-            name: model,
+            model,
             stream: true,
         };
 
         let message = Soup.Message.new('POST', endpoint);
+        if (apiKey) {
+            message.get_request_headers().append('Authorization', `Bearer ${apiKey}`);
+        }
         let bodyBytes = new GLib.Bytes(JSON.stringify(payload));
         message.set_request_body_from_bytes('application/json', bodyBytes);
 
@@ -18153,6 +18431,10 @@ class KatabDialog {
                     } catch (_e) {
                         /* already disposed */
                     }
+                    const baseUrl =
+                        (this._settings.get_string('ollama-url') || '').trim() ||
+                        'http://127.0.0.1:11434';
+                    this._ollamaModelInfoCache.delete(this._getOllamaCacheKey(baseUrl, model));
                     this._applyAssistantRender(
                         uiElements,
                         `Model '${model}' pulled. Resuming request...`,
@@ -18163,7 +18445,34 @@ class KatabDialog {
                 }
 
                 let lineStr = new TextDecoder('utf-8').decode(lineBytes).trim();
+                if (!lineStr) {
+                    this._readPullSSE(dataInputStream, model, uiElements, cancellable, cancelBtn);
+                    return;
+                }
                 let parsed = JSON.parse(lineStr);
+
+                if (parsed.error) {
+                    try {
+                        cancelBtn?.destroy();
+                    } catch (_e) {
+                        /* already disposed */
+                    }
+                    try {
+                        dataInputStream.close(null);
+                    } catch (_e) {}
+                    const errText =
+                        typeof parsed.error === 'string'
+                            ? parsed.error
+                            : parsed.error?.message || 'Unknown pull error';
+                    this._renderLocalAssistantError(
+                        uiElements,
+                        format(_("Failed to pull model '{model}': {error}"), {
+                            model,
+                            error: errText,
+                        }),
+                    );
+                    return;
+                }
 
                 if (parsed.status) {
                     let text = format(_("Downloading model '{model}'...\n{status}"), {

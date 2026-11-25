@@ -12,6 +12,7 @@
 //   2. DeepSeek web-search schemas are only seeded when webSearch is advertised
 // The tests pin the fixed behaviour.
 import { buildToolSchemasFor } from '../tools/toolRegistry.js';
+import { parseOllamaStopSequences, resolveOllamaEndpoint } from './ollamaCapabilities.js';
 
 // Strip trailing slashes so the suffix checks below recognise an
 // already-suffixed base URL (e.g. "…/api/chat") and do not append the suffix
@@ -182,23 +183,38 @@ export function buildOpenAiCompatStreamRequest({
  * next real request.  Used while the user types so a cold model load is not
  * added to the first reply's turnaround time.
  */
-export function buildOllamaPreloadRequest({ baseUrl, model, keepAlive = '5m', options = {} }) {
-    let endpoint = normalizeBaseUrl(baseUrl);
-    // Accept the same forms as the chat builder, including a base URL that
-    // already points at /api/chat.
-    if (endpoint.endsWith('/api/chat')) {
-        endpoint = endpoint.slice(0, -'/api/chat'.length);
-    }
-    if (!endpoint.endsWith('api/generate')) {
-        endpoint += '/api/generate';
-    }
+export function buildOllamaPreloadRequest({
+    baseUrl,
+    apiKey = '',
+    model,
+    keepAlive = '5m',
+    options = {},
+}) {
+    const endpoint = resolveOllamaEndpoint(baseUrl, '/api/generate');
+    const headers = buildBaseHeaders(apiKey);
+    headers['Content-Type'] = 'application/json';
     return {
         endpoint,
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         // `options` must mirror the chat request's runner options (num_ctx,
         // GPU layers, …) — Ollama reloads the model when they differ, which
         // would defeat the warm-up.
         payload: { model, prompt: '', stream: false, keep_alive: keepAlive, options },
+    };
+}
+
+/**
+ * Build an Ollama unload request (`keep_alive: 0`) to evict a model from
+ * VRAM immediately.
+ */
+export function buildOllamaUnloadRequest({ baseUrl, apiKey = '', model }) {
+    const endpoint = resolveOllamaEndpoint(baseUrl, '/api/generate');
+    const headers = buildBaseHeaders(apiKey);
+    headers['Content-Type'] = 'application/json';
+    return {
+        endpoint,
+        headers,
+        payload: { model, prompt: '', stream: false, keep_alive: 0 },
     };
 }
 
@@ -251,44 +267,45 @@ export function buildAnthropicStreamRequest({
 }
 
 /**
- * Build the streaming request for Ollama (/api/chat). The vision-capability
- * probe and all send-side effects stay in the extension; `keepAlive` is
- * expected to be pre-normalized via normalizeOllamaKeepAlive.
+ * Build the streaming request for Ollama (/api/chat). The capability probe and
+ * all send-side effects stay in the extension; `keepAlive` is expected to be
+ * pre-normalized via normalizeOllamaKeepAlive, and `think` via
+ * resolveOllamaThinkParam (omitted when undefined so non-thinking models never
+ * fail with HTTP 400).
  */
 export function buildOllamaStreamRequest({
     baseUrl,
+    apiKey = '',
     model,
     messages,
     keepAlive = '5m',
-    think = true,
-    format = '',
-    raw = false,
+    think = undefined,
+    format = undefined,
     options = {},
     advertise = {},
     toolNames = {},
 }) {
-    let endpoint = normalizeBaseUrl(baseUrl);
-    if (!endpoint.endsWith('api/chat')) {
-        endpoint += '/api/chat';
-    }
-
-    const headers = { 'Content-Type': 'application/json' };
+    const endpoint = resolveOllamaEndpoint(baseUrl, '/api/chat');
+    const headers = buildBaseHeaders(apiKey);
+    headers['Content-Type'] = 'application/json';
 
     const payload = {
         model: model,
         messages: messages,
         stream: true,
         keep_alive: keepAlive,
-        think: think,
-        options: options,
     };
 
-    if (format) {
-        payload.format = format;
+    if (think !== undefined && think !== null) {
+        payload.think = think;
     }
 
-    if (raw) {
-        payload.raw = true;
+    if (options && typeof options === 'object' && Object.keys(options).length > 0) {
+        payload.options = options;
+    }
+
+    if (format && (typeof format === 'string' || typeof format === 'object')) {
+        payload.format = format;
     }
 
     appendDialectToolGroups(payload, advertise, toolNames, 'openai');
@@ -406,33 +423,51 @@ export function buildDeepSeekStreamRequest({
 /**
  * Build the Ollama `options` object from a settings getter.
  *
- * @param {(prop: string, type: 'int'|'double'|'boolean') => (number|boolean|null)} getOpt
+ * @param {(prop: string, type: 'int'|'double'|'boolean'|'string') => (number|boolean|string|null)} getOpt
  *        reads `ollama-<prop>` with the given type; returns null when unset.
- * @returns {object} options with null/undefined entries removed and the
- *          repeat_last_n sentinel translated.
+ * @param {object} [flags]
+ * @param {boolean} [flags.runnerOnly=false]  When true, emit only runner/context
+ *        options (`num_ctx`, `num_predict`, `num_keep`, `use_mmap`, `num_gpu`,
+ *        `num_thread`) so non-streaming helper requests share the exact loaded
+ *        runner configuration without sampler noise.
+ * @param {boolean} [flags.useModelDefaults=false]  When true, omit sampling and
+ *        repetition overrides so Ollama uses the model's packaged Modelfile defaults.
+ * @returns {object} options with null/undefined/deprecated entries removed and
+ *          the repeat_last_n sentinel translated.
  */
-export function buildOllamaOptions(getOpt) {
+export function buildOllamaOptions(getOpt, { runnerOnly = false, useModelDefaults = false } = {}) {
     const options = {
-        temperature: getOpt('temperature', 'double'),
         num_ctx: getOpt('num-ctx', 'int'),
         num_predict: getOpt('num-predict', 'int'),
         num_keep: getOpt('num-keep', 'int'),
         use_mmap: getOpt('use-mmap', 'boolean'),
-        use_mlock: getOpt('use-mlock', 'boolean'),
         num_gpu: getOpt('num-gpu', 'int'),
         num_thread: getOpt('num-thread', 'int'),
-        top_k: getOpt('top-k', 'int'),
-        top_p: getOpt('top-p', 'double'),
-        min_p: getOpt('min-p', 'double'),
-        tfs_z: getOpt('tfs-z', 'double'),
-        mirostat: getOpt('mirostat', 'int'),
-        mirostat_tau: getOpt('mirostat-tau', 'double'),
-        mirostat_eta: getOpt('mirostat-eta', 'double'),
-        repeat_last_n: getOpt('repeat-last-n', 'int'),
-        repeat_penalty: getOpt('repeat-penalty', 'double'),
-        presence_penalty: getOpt('presence-penalty', 'double'),
-        frequency_penalty: getOpt('frequency-penalty', 'double'),
     };
+
+    if (!runnerOnly) {
+        if (!useModelDefaults) {
+            Object.assign(options, {
+                temperature: getOpt('temperature', 'double'),
+                top_k: getOpt('top-k', 'int'),
+                top_p: getOpt('top-p', 'double'),
+                min_p: getOpt('min-p', 'double'),
+                repeat_last_n: getOpt('repeat-last-n', 'int'),
+                repeat_penalty: getOpt('repeat-penalty', 'double'),
+                presence_penalty: getOpt('presence-penalty', 'double'),
+                frequency_penalty: getOpt('frequency-penalty', 'double'),
+            });
+        }
+        const seed = getOpt('seed', 'int');
+        if (typeof seed === 'number' && Number.isFinite(seed) && seed >= 0) {
+            options.seed = seed;
+        }
+        const stopRaw = getOpt('stop', 'string');
+        const stopList = parseOllamaStopSequences(stopRaw);
+        if (stopList) {
+            options.stop = stopList;
+        }
+    }
 
     // Remove nulls just in case, though GSettings should provide defaults
     Object.keys(options).forEach((key) => {
@@ -440,6 +475,11 @@ export function buildOllamaOptions(getOpt) {
             delete options[key];
         }
     });
+
+    // num_thread = 0 means auto-detect optimal physical cores — omit so Ollama chooses.
+    if (typeof options.num_thread === 'number' && options.num_thread <= 0) {
+        delete options.num_thread;
+    }
 
     // Newer Ollama releases (via llama.cpp) reject repeat_last_n = -1 with
     // HTTP 400: "Value must be between 0 <= value <= 2147483647, but got -1".

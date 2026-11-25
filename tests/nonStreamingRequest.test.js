@@ -50,7 +50,7 @@ const tests = [
     // ── ollama ─────────────────────────────────────────────────────────────
 
     [
-        'ollama: api/chat suffix, stream false, think false',
+        'ollama: api/chat suffix, stream false, safe think omission, optional auth',
         () => {
             const req = buildNonStreamingChatRequest({
                 provider: 'ollama',
@@ -60,13 +60,27 @@ const tests = [
             });
             assertEqual(req.url, 'http://localhost:11434/api/chat', 'endpoint');
             assertEqual(req.payload.stream, false, 'stream false');
-            assertEqual(req.payload.think, false, 'think disabled');
-            assert(!('Authorization' in req.headers), 'no auth header');
+            assert(!('think' in req.payload), 'think omitted when undefined');
+            assert(!('Authorization' in req.headers), 'no auth header when key empty');
+
+            const withThinkAndAuth = buildNonStreamingChatRequest({
+                provider: 'ollama',
+                baseUrl: 'https://ollama.com/api',
+                apiKey: 'ol-secret',
+                model: 'qwen3',
+                messages: MESSAGES,
+                ollamaThink: false,
+                ollamaKeepAlive: '10m',
+            });
+            assertEqual(withThinkAndAuth.url, 'https://ollama.com/api/chat', 'cloud endpoint');
+            assertEqual(withThinkAndAuth.headers['Authorization'], 'Bearer ol-secret', 'auth');
+            assertEqual(withThinkAndAuth.payload.think, false, 'explicit think forwarded');
+            assertEqual(withThinkAndAuth.payload.keep_alive, '10m', 'keep_alive forwarded');
         },
     ],
 
     [
-        'ollama: explicit num_predict cap is forwarded via options',
+        'ollama: explicit num_predict merges cleanly with runner options',
         () => {
             const req = buildNonStreamingChatRequest({
                 provider: 'ollama',
@@ -74,8 +88,10 @@ const tests = [
                 model: 'llama3',
                 messages: MESSAGES,
                 ollamaNumPredict: 24,
+                ollamaOptions: { num_ctx: 16384, num_gpu: -1 },
             });
             assertEqual(req.payload.options.num_predict, 24, 'num_predict');
+            assertEqual(req.payload.options.num_ctx, 16384, 'runner num_ctx preserved');
             assert(!('max_tokens' in req.payload), 'no OpenAI max_tokens field');
 
             const uncapped = buildNonStreamingChatRequest({
