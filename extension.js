@@ -2128,6 +2128,10 @@ class KatabDialog {
             );
         }
         this._dismissPendingIndicator(this._activeResponseState?.uiElements);
+        if (this._activeAskUserCard) {
+            this._activeAskUserCard.markCancelled();
+            this._activeAskUserCard = null;
+        }
         this._activeResponseState = null;
         this._cancellable = null;
         this._setStreamingState(false);
@@ -7718,7 +7722,7 @@ class KatabDialog {
             const notUnsloth = provider !== 'unsloth';
             const underIterationCap = (this._toolIterations || 0) < maxToolIterations;
             const notForceSynthesis = !this._forceSynthesisActive;
-            const { advertiseAskUser } = this._resolveInteractivePromptState(provider, {
+            const { canCallAskUser } = this._resolveInteractivePromptState(provider, {
                 maxToolIterations,
             });
 
@@ -7741,7 +7745,7 @@ class KatabDialog {
                     FORGET_KNOWLEDGE_TOOL_NAME,
                 );
             }
-            if (advertiseAskUser) {
+            if (canCallAskUser) {
                 toolNames.push(ASK_USER_TOOL_NAME);
             }
 
@@ -12878,7 +12882,6 @@ class KatabDialog {
             [RAG_TOOL_NAME]: 'Knowledge base',
             [UPDATE_KNOWLEDGE_TOOL_NAME]: 'Update memory',
             [FORGET_KNOWLEDGE_TOOL_NAME]: 'Forget memory',
-            [ASK_USER_TOOL_NAME]: 'Clarify',
             python: 'Python',
             terminal: 'Terminal',
         };

@@ -264,7 +264,7 @@ export function createAskUserCard({
             for (const item of optionButtons) {
                 const isSelected = selectedSet.has(item.value);
                 item.checkIcon.visible = isSelected;
-                item.button.accessible_checked = isSelected;
+                item.button.checked = isSelected;
                 if (isSelected) {
                     item.button.add_style_class_name('selected');
                 } else {
